@@ -14,4 +14,4 @@ torchvision
 wand
 watchfiles
 screeninfo
-PyWavelets
+pyopencl

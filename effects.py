@@ -354,7 +354,7 @@ class CropEffect(Effect):
 # AI ノイズ除去
 class AINoiseReductonEffect(Effect):
     __net = None
-    __noise2void = None
+    __module = None
 
     def set2widget(self, widget, param):
         widget.ids["switch_ai_noise_reduction"].active = False if param.get('ai_noise_reduction', 0) == 0 else True
@@ -370,12 +370,12 @@ class AINoiseReductonEffect(Effect):
         else:
             param_hash = hash((nr))
             if self.hash != param_hash:
-                if AINoiseReductonEffect.__noise2void is None:
-                    AINoiseReductonEffect.__noise2void = importlib.import_module('noise2void')
+                if AINoiseReductonEffect.__module is None:
+                    AINoiseReductonEffect.__module = importlib.import_module('SCUNet')
                 if AINoiseReductonEffect.__net is None:
-                    AINoiseReductonEffect.__net = AINoiseReductonEffect.__noise2void.setup_predict()
+                    AINoiseReductonEffect.__net = AINoiseReductonEffect.__module.setup_model(device=config.get_config('gpu_type'))
 
-                self.diff = AINoiseReductonEffect.__noise2void.predict(img, AINoiseReductonEffect.__net, config.get_config('gpu_type'))
+                self.diff = AINoiseReductonEffect.__module.denoise_image_helper(AINoiseReductonEffect.__net, img, config.get_config('gpu_type'))
                 self.hash = param_hash
         
         return self.diff
