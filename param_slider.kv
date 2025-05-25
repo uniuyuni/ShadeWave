@@ -32,6 +32,7 @@
     ParamLabel:
         id: label
         ref_width: self.parent.label_width
+        width: self.parent.label_width
         
     MDSlider:
         id: slider
@@ -51,6 +52,7 @@
         multiline: False
         size_hint_x: None
         ref_width: 40
+        for_float: root.for_float
         on_text_validate: root.on_input_text_validate()
 
     BoxLayout:

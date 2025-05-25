@@ -4,6 +4,8 @@ from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
 from kivy.metrics import dp
 
+import switchable_float_input
+
 class ParamSlider(KVBoxLayout):
     text = KVStringProperty()
     min = KVNumericProperty(-100)
@@ -12,10 +14,10 @@ class ParamSlider(KVBoxLayout):
     step = KVNumericProperty(1)
     for_float = KVBooleanProperty(False)
     slider = KVNumericProperty(float('inf')) #　最初の変更は必ずコールバックが呼ばれるようにする
-    #label_width = KVNumericProperty(dp(100))
+    label_width = KVNumericProperty(100)
 
-    def __init__(self, **kwargs):
-        super(ParamSlider, self).__init__(**kwargs)
+    #def __init__(self, **kwargs):
+    #    super(ParamSlider, self).__init__(**kwargs)
     
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)
@@ -24,8 +26,9 @@ class ParamSlider(KVBoxLayout):
         self.reset_value = self.value
         self.ids['label'].text = self.text
         #self.ids['label'].width = self.label_width
-        self.ids['slider'].min = self.min
+        self.ids['slider'].value = self.value
         self.ids['slider'].max = self.max
+        self.ids['slider'].min = self.min
         self.ids['slider'].value = self.value
         self.ids['slider'].step = self.step
         self.ids['input'].set_value(self.value)
