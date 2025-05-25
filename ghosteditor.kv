@@ -1,0 +1,31 @@
+
+#:include param_slider.kv
+
+<GhostEditor>:
+    orientation: 'horizontal'
+    image_widget: image_widget
+    param_container: param_grid
+
+    BoxLayout:
+        size_hint_x: 0.3
+        orientation: 'vertical'
+
+        ScrollView:
+            id: param_scroll
+            scroll_type: ['bars', 'content']
+            bar_width: dp(10)
+
+            BoxLayout:
+                id: param_grid
+                orientation: 'vertical'
+                #cols: 1
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: dp(5)
+                padding: dp(5)
+
+    Image:
+        id: image_widget
+        size_hint_x: 0.7
+        allow_stretch: True
+        keep_ratio: True
