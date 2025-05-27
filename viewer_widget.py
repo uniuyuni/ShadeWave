@@ -21,6 +21,8 @@ from kivy.properties import Property as KVProperty, StringProperty as KVStringPr
 from kivy.clock import mainthread
 from kivy.metrics import dp
 
+from draggable_widget import DraggableWidget
+
 #import AppKit
 #from Cocoa import NSDragOperationCopy
 
@@ -65,8 +67,6 @@ class ThumbnailCard(MDCard):
         self.label = KVLabel(text=name, bold=True, size_hint_y=3)
         vbox.add_widget(self.label)
 
-        self.bind(on_touch_down=self.on_card_touch_down)
-
     @mainthread
     def set_image(self, exif, thumb):
         self.exif_data = exif
@@ -78,22 +78,8 @@ class ThumbnailCard(MDCard):
         self.image.size = (thumb.shape[1], thumb.shape[0])
         self.image.texture = self.texture
 
-    def on_card_touch_down(self, instance, touch):
-        if self.collide_point(*touch.pos):
-            # macOSのペーストボードにファイルをセット
-            self.start_dragging()
 
-    def start_dragging(self):
-        """
-        # macOSのNSPasteboardを使って、ドラッグ&ドロップ用の情報をペーストボードに配置
-        pasteboard = AppKit.NSPasteboard.generalPasteboard()
-        pasteboard.declareTypes_owner_([AppKit.NSFilenamesPboardType], None)
-        pasteboard.setPropertyList_forType_([self.file_path], AppKit.NSFilenamesPboardType)
-        """
-        # ドラッグ操作を開始
-        print(f"Dragging: {self.file_path}")
-
-class ViewerWidget(MDBoxLayout):
+class ViewerWidget(MDBoxLayout, DraggableWidget):
     last_selected = KVObjectProperty(None, allownone=True)
     cols = KVNumericProperty(4)
     grid_width = KVNumericProperty(dp(180))
@@ -220,7 +206,7 @@ class ViewerWidget(MDBoxLayout):
     # @mainthread
     def add_image_to_grid(self, file_path, index=0):
         card = ThumbnailCard(file_path=file_path, grid_width=self.grid_width)
-        card.bind(on_touch_down=self.on_select)
+        card.bind(on_touch_up=self.on_select)
         self.ids['grid_layout'].add_widget(card, index=index)
         return card
 
@@ -293,6 +279,9 @@ class ViewerWidget(MDBoxLayout):
         self.selected_cards.clear()
 
     def on_select(self, instance, touch):
+        if touch.grab_current is not instance:
+            return
+        
         if instance.exif_data is not None and instance.collide_point(*touch.pos):
             if touch.is_mouse_scrolling or (touch.button == 'left'):
                 if 'shift' in KVWindow.modifiers and self.last_selected:
@@ -359,6 +348,12 @@ class ViewerWidget(MDBoxLayout):
                 pass
                 #macos.fadvice(card.file_path, True)
                 #self.cache_system.register_for_preload(card.file_path, card.exif_data)
+
+    def get_drag_files(self):
+        file_paths = []
+        for card in self.get_selected_cards():
+            file_paths.append((card.file_path, (card.thumb_source * 255).astype(np.uint8)))
+        return file_paths
 
 # テストアプリケーション
 class Viewer_WidgetApp(MDApp):
