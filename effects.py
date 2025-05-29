@@ -16,13 +16,13 @@ import core
 import cubelut
 import mask_editor
 import crop_editor
-import microcontrast
 import subpixel_shift
 import film_simulation
 import lens_simulator
 import config
 import pipeline
-import hlsrgb
+import filter
+import local_contrast
 
 class EffectConfig():
 
@@ -111,6 +111,9 @@ class SubpixelShiftEffect(Effect):
         
         return self.diff
     
+import io
+import imageio as iio
+
 class InpaintDiff:
     def __init__(self, **kwargs):
         self.disp_info = kwargs.get('disp_info', None)
@@ -119,12 +122,16 @@ class InpaintDiff:
     def image2list(self):
         if type(self.image) is np.ndarray:
             self.image = (self.image.shape, list(bz2.compress(self.image.tobytes(), 1)))
-            #self.image = self.image.tolist()
+            #output = io.BytesIO()
+            #iio.imwrite(output, self.image, plugin="pillow", extension=".avif")
+            #self.image = (self.image.shape, list(output.getvalue()))
 
     def list2image(self):
         if type(self.image) is list:
             self.image = np.reshape(np.frombuffer(bz2.decompress(bytearray(self.image[1])), dtype=np.float32), self.image[0])
-            #self.image = np.array(self.image)
+            #ary = np.frombuffer(bytearray(self.image[1]))
+            #bgr = cv2.imdecode(ary)
+            #self.image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 class InpaintEffect(Effect):
     __iopaint = None
@@ -375,6 +382,7 @@ class AINoiseReductonEffect(Effect):
                 if AINoiseReductonEffect.__net is None:
                     AINoiseReductonEffect.__net = AINoiseReductonEffect.__module.setup_model(device=config.get_config('gpu_type'))
 
+                #img = np.clip(img, 0, 1)
                 self.diff = AINoiseReductonEffect.__module.denoise_image_helper(AINoiseReductonEffect.__net, img, config.get_config('gpu_type'))
                 self.hash = param_hash
         
@@ -492,7 +500,7 @@ class LensblurFilterEffect(Effect):
         else:
             param_hash = hash((lpfr))
             if self.hash != param_hash:
-                self.diff = core.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.disp_info[4]))
+                self.diff = filter.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.disp_info[4]))
                 self.hash = param_hash
 
         return self.diff
@@ -524,7 +532,7 @@ class GlowEffect(Effect):
                 hls[:,:,1] = core.apply_level_adjustment(hls[:,:,1], gb, 127+gg/2, 255)
                 rgb2 = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
                 if gg > 0:
-                    rgb2 = core.lensblur_filter(rgb2, gg*2-1)
+                    rgb2 = filter.lensblur_filter(rgb2, gg*2-1)
                 go = go/100.0
                 self.diff = cv2.addWeighted(rgb, 1.0-go, core.blend_screen(rgb, rgb2), go, 0)
                 self.hash = param_hash
@@ -713,6 +721,48 @@ class ContrastEffect(Effect):
             self.hash = param_hash
 
         return self.diff
+
+class ClarityEffect(Effect):
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_clarity"].set_slider_value(param.get('clarity', 0))
+
+    def set2param(self, param, widget):
+        param['clarity'] = widget.ids["slider_clarity"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        con = param.get('clarity', 0)
+        param_hash = hash((con))
+        if con == 0:
+            self.diff = None
+            self.hash = None
+
+        elif self.hash != param_hash:
+            self.diff = local_contrast.apply_clarity_luminance(rgb, con)
+            self.hash = param_hash
+
+        return self.diff
+
+class TextureEffect(Effect):
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_texture"].set_slider_value(param.get('texture', 0))
+
+    def set2param(self, param, widget):
+        param['texture'] = widget.ids["slider_texture"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        con = param.get('texture', 0)
+        param_hash = hash((con))
+        if con == 0:
+            self.diff = None
+            self.hash = None
+
+        elif self.hash != param_hash:
+            self.diff = local_contrast.apply_texture_advanced(rgb, con)
+            self.hash = param_hash
+
+        return self.diff
     
 class MicroContrastEffect(Effect):
 
@@ -730,7 +780,7 @@ class MicroContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff, _ = microcontrast.calculate_microcontrast(rgb, 7, con)
+            self.diff = local_contrast.apply_microcontrast(rgb, con)
             self.hash = param_hash
 
         return self.diff
@@ -770,13 +820,13 @@ class ToneEffect(Effect):
 class HighlightCompressEffect(Effect):
 
     def set2widget(self, widget, param):
-        widget.ids["switch_highlight_compress"].active = True if param.get('highlight_compress', 1) == 1 else False
+        widget.ids["switch_highlight_compress"].active = True if param.get('highlight_compress', 0) == 1 else False
 
     def set2param(self, param, widget):
         param['highlight_compress'] = 1 if widget.ids["switch_highlight_compress"].active == True else 0
 
     def make_diff(self, rgb, param, efconfig):
-        hc = param.get('highlight_compress', 1)
+        hc = param.get('highlight_compress', 0)
         if hc <= 0:
             self.diff = None
             self.hash = None
@@ -1481,6 +1531,8 @@ def create_effects():
  
     lv2['exposure'] = ExposureEffect()
     lv2['contrast'] = ContrastEffect()
+    lv2['clarity'] = ClarityEffect()
+    lv2['texture'] = TextureEffect()
     lv2['microcontrast'] = MicroContrastEffect()
     lv2['tone'] = ToneEffect()
 

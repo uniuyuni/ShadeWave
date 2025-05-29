@@ -8,6 +8,9 @@
 #:include export_dialog.kv
 #:include hover_spinner.kv
 
+#:set clear_color 0, 0, 0, 0
+#:set dark_color 0.08, 0.08, 0.08, 1
+
 <ParamChip@MDChip>:
     type: 'filter'
     pos_hint: {"center_x": .5, "center_y": .5}
@@ -61,6 +64,12 @@
                 HistogramWidget:
                     id: histogram
                     size_hint: 1, 0.2
+                    canvas:
+                        Color:
+                            rgba: dark_color
+                        Rectangle:
+                            size: self.size
+                            pos: self.pos                    
 
                 MDScrollView:
                     size_hint: 1, 0.8
@@ -134,6 +143,12 @@
                     Image:
                         id: preview
                         pos_hint: {'x':0, 'y': 0}
+                        canvas:
+                            Color:
+                                rgba: dark_color if not self.texture else clear_color
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
  
                     MaskEditor2:
                         id: mask_editor2
@@ -141,7 +156,7 @@
                         pos_hint: {'x':0, 'top': 1}
                         canvas.before:
                             Color:
-                                rgba: 0, 0, 0, 0
+                                rgba: clear_color
                             Rectangle:
                                 size: self.size
                                 pos: self.pos
@@ -283,6 +298,24 @@
                             
                             HeadLabel:
                                 text: ' Precence'
+
+                            ParamSlider:
+                                id: slider_clarity
+                                text: "Clarity"
+                                min: -100
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'clarity')
+
+                            ParamSlider:
+                                id: slider_texture
+                                text: "Texture"
+                                min: -100
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'texture')
 
                             ParamSlider:
                                 id: slider_microcontrast
@@ -650,7 +683,7 @@
                                     size_hint_x: 0.45
                                 ParamChip:
                                     id: switch_highlight_compress
-                                    active: True
+                                    active: False
                                     on_active: root.apply_effects_lv(2, 'highlight_compress')
                                     ParamChipText:
                                         text: "Compress"
