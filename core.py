@@ -14,6 +14,7 @@ from scipy.ndimage import label
 from scipy.ndimage import gaussian_filter
 import logging
 import math
+from numba import njit, prange
 
 import config
 import sigmoid
@@ -24,34 +25,33 @@ import util
 
 jax.config.update("jax_platform_name", "METAL")
 
-@jit
+
 def normalize_image(image_data):
-    min_val = jnp.min(image_data)
-    max_val = jnp.max(image_data)
+    min_val = np.min(image_data)
+    max_val = np.max(image_data)
     normalized_image = (image_data - min_val) / (max_val - min_val)
     return normalized_image
 
-@jit
 def calculate_ev_from_image(image_data):
     #if image_data.size == 0:
     #    raise ValueError("画像データが空です。")
 
-    average_value = jnp.mean(image_data)
+    average_value = np.mean(image_data)
 
     # ここで基準を明確に設定
     # 例えば、EV0が0.5に相当する場合
-    ev = jnp.log2(0.5 / average_value)  # 0.5を基準
+    ev = np.log2(0.5 / average_value)  # 0.5を基準
 
     return ev, average_value
 
-def calculate_correction_value(ev_histogram, ev_setting):
+def calculate_correction_value(ev_histogram, ev_setting, maxvalue=4):
     correction_value = ev_setting - ev_histogram
     
     # 補正値を適切にクリッピング
-    if correction_value > 4:  # 過剰補正を避ける
-        correction_value = 4
-    elif correction_value < -4:  # 過剰補正を避ける
-        correction_value = -4
+    if correction_value > maxvalue:  # 過剰補正を避ける
+        correction_value = maxvalue
+    elif correction_value < -maxvalue:  # 過剰補正を避ける
+        correction_value = -maxvalue
 
     return correction_value
 
@@ -221,19 +221,6 @@ def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
     return np.array(array)
 
 
-def lensblur_filter(image, radius):
-    # カーネルを生成
-    kernel_size = 2 * radius + 1
-    kernel = np.zeros((kernel_size, kernel_size), np.float32)
-    
-    # カーネルに円を描く
-    cv2.circle(kernel, (radius, radius), radius, 1, -1)
-    kernel /= np.sum(kernel)
-
-    # レンズブラーを適用
-    blurred_image = cv2.filter2D(np.array(image), -1, kernel)
-    return blurred_image
-
 @partial(jit, static_argnums=1)
 def lucy_richardson_gauss(srcf, iteration):
 
@@ -365,40 +352,24 @@ def blend_screen(base, over):
 
     return result
 
-def modify_lens(img, exif_data, is_cm=True, is_sd=True, is_gd=True):
-    #logging.info(exif_data['Make'], exif_data['Model'])
-    #logging.info(exif_data['LensMake'], exif_data['LensModel'])
-    #logging.info(exif_data['FocalLength'], exif_data['ApertureValue'])
+def log_transform(x, base=np.e):
+    """
+    対数関数を適用する。x は0以上の値。
+    出力は0-1の範囲に正規化されることを前提。
+    """
+    # x が0-1の範囲なら、出力も0-1に正規化
+    # max_val = 1.0 (入力の最大値)
+    return np.log(1 + x) / np.log(1 + 1.0)
 
-    db = lensfunpy.Database()
-    cam = db.find_cameras(exif_data['Make'], exif_data['Model'], loose_search=True)
-    lens = db.find_lenses(cam[0], exif_data['LensMake'], exif_data['LensModel'], loose_search=True)
+import aces_tonemapping
 
-    height, width = img.shape[0], img.shape[1]
-    mod = lensfunpy.Modifier(lens[0], cam[0].crop_factor, width, height)
-    mod.initialize(float(exif_data['FocalLength'][0:-3]), exif_data['ApertureValue'], pixel_format=np.float32)
-
-    modimg = img
-    if is_cm == True:
-        modimg = img.copy()
-        did_apply = mod.apply_color_modification(modimg)
-        logging.info("Apply Color Modification is Failed")
-
-    if is_sd == True:
-        undist_coords = mod.apply_subpixel_distortion()
-        modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
-        modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
-        modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
-
-    if is_gd == True:
-        undist_coords = mod.apply_geometry_distortion()
-        modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
-
-    return np.clip(modimg, 0, 1)
-
+def adjust_exposure_v2(x, n):
+    x = adjust_exposure(x, n)
+    #x = aces_tonemapping.aces_tonemapping(x) 
+    x = tone_mapping_np(x)
+    return x
 
 # 露出補正
-@jit
 def adjust_exposure(rgb, ev):
     # img: 変換元画像
     # ev: 補正値 -4.0〜4.0
@@ -409,7 +380,7 @@ def adjust_exposure(rgb, ev):
 
 # コントラスト補正
 @partial(jit, static_argnums=(1,2,))
-def adjust_contrast(img, cf, c):
+def adjust_contrast(img, cf, c=0.5):
     # img: 変換元画像
     # cf: コントラストファクター -100.0〜100.0
     # c: 中心値 0〜1.0
@@ -951,14 +922,13 @@ def set_temperature_to_param(param, temp, tint, Y):
     param['color_Y'] = Y
 
 # 上下または左右の余白を追加
-@jit
 def adjust_shape(img):
     imax = max(img.shape[1], img.shape[0])
 
     # イメージを正方形にする
     offset_y = (imax-img.shape[0])//2
     offset_x = (imax-img.shape[1])//2
-    img = jnp.pad(img, ((offset_y, imax-(offset_y+img.shape[0])), (offset_x, imax-(offset_x+img.shape[1])), (0, 0)), constant_values=0)
+    img = np.pad(img, ((offset_y, imax-(offset_y+img.shape[0])), (offset_x, imax-(offset_x+img.shape[1])), (0, 0)), constant_values=0)
 
     return img
 
@@ -1798,3 +1768,34 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s):
 
     return adjusted_hls
 
+
+@njit(parallel=True, fastmath=True)
+def floyd_steinberg_dither_fast(image):
+    """
+    Numbaで高速化したFloyd-Steinbergディザリング
+    - 並列処理とメモリ最適化を適用
+    - 入力: [H, W, 3] float32 (0.0~1.0)
+    - 出力: [H, W, 3] uint8
+    """
+    h, w, c = image.shape
+    img = image.copy()
+    
+    for y in prange(h):
+        for x in range(w):
+            for ch in range(c):
+                old_val = img[y, x, ch]
+                new_val = np.round(old_val * 255) / 255
+                quant_error = old_val - new_val
+                img[y, x, ch] = new_val
+
+                # 誤差分散
+                if x < w-1:
+                    img[y, x+1, ch] = min(1.0, max(0.0, img[y, x+1, ch] + quant_error * 0.4375))  # 7/16
+                if y < h-1:
+                    if x > 0:
+                        img[y+1, x-1, ch] = min(1.0, max(0.0, img[y+1, x-1, ch] + quant_error * 0.1875))  # 3/16
+                    img[y+1, x, ch] = min(1.0, max(0.0, img[y+1, x, ch] + quant_error * 0.3125))  # 5/16
+                    if x < w-1:
+                        img[y+1, x+1, ch] = min(1.0, max(0.0, img[y+1, x+1, ch] + quant_error * 0.0625))  # 1/16
+
+    return (img * 255).astype(np.uint8)

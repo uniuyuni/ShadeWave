@@ -1143,7 +1143,6 @@ class FreeDrawMask(BaseMask):
     def update_brush_cursor(self, x, y):
         self.translate.x, self.translate.y = x - self.brush_size / 2, y - self.brush_size / 2
         self.brush_cursor.ellipse = (0, 0, self.brush_size, self.brush_size)
-        #self.brush_color.rgba = (1, 1, 1, 0.5)
 
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
@@ -1155,7 +1154,6 @@ class FreeDrawMask(BaseMask):
             self.draw_mask_to_fbo()
 
     def get_mask_image(self):
-            
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         nline = len(self.lines)
@@ -1179,110 +1177,181 @@ class FreeDrawMask(BaseMask):
 
         return self.image_mask_cache
     
-    def draw_line(self, image_size, lines):
-        # 画像の初期化（透明背景）
-        width, height = image_size
-        image = np.zeros((height, width), dtype=np.float32)
+    def create_natural_brush(self, size, softness=1.2):
+        """自然なブラシを作成"""
+        brush_size = int(size * 2)  # 直径
+        brush_radius = size
+        center = (brush_size // 2, brush_size // 2)
         
-        # 各線を描画
-        for line in lines:
-            # 点が0個の場合はスキップ
-            if len(line.points) == 0:
-                continue
-                
-            # 線の太さとソフトネス
-            brush_size = line.size
-            brush_radius = brush_size / 2
-            brush_soft = line.soft
-            is_erasing = line.is_erasing
+        # 基本の円形ブラシ
+        y, x = np.ogrid[:brush_size, :brush_size]
+        distances = np.sqrt((x - center[0])**2 + (y - center[1])**2)
+        
+        # ガウシアンっぽい自然な減衰
+        brush = np.zeros((brush_size, brush_size), dtype=np.float32)
+        
+        # 中心から外側への自然な減衰
+        mask = distances <= brush_radius
+        normalized_dist = distances / brush_radius
+        
+        # より自然なフォールオフ（ガウシアン＋べき乗の組み合わせ）
+        intensity = np.exp(-2.0 * normalized_dist**2)  # ガウシアン成分
+        intensity *= (1 - normalized_dist**(1/softness))  # ソフトエッジ成分
+        intensity = np.maximum(0, intensity)
+        
+        brush[mask] = intensity[mask]
+        return brush
+    
+    def safe_array_slice(self, array, y_min, y_max, x_min, x_max):
+        """安全な配列スライス（境界チェック付き）"""
+        h, w = array.shape[:2]
+        
+        # 境界を画像サイズに制限
+        y_min = max(0, min(h-1, y_min))
+        y_max = max(y_min+1, min(h, y_max))
+        x_min = max(0, min(w-1, x_min))
+        x_max = max(x_min+1, min(w, x_max))
+        
+        return array[y_min:y_max, x_min:x_max], (y_min, y_max, x_min, x_max)
+    
+    def apply_brush_at_point(self, image, x, y, brush, is_erasing=False, opacity=1.0):
+        """指定位置にブラシを適用（安全な境界チェック付き）"""
+        if brush.size == 0:
+            return
             
-            # 点が1つだけの場合は、その点にブラシを適用
-            if len(line.points) == 1:
-                p = self.editor.tcg_to_texture(*line.points[0])
-                x, y = int(p[0]), int(p[1])
+        brush_h, brush_w = brush.shape
+        brush_center_x, brush_center_y = brush_w // 2, brush_h // 2
+        
+        # 画像上の適用範囲を計算
+        img_y_min = int(y - brush_center_y)
+        img_y_max = int(y - brush_center_y + brush_h)
+        img_x_min = int(x - brush_center_x)
+        img_x_max = int(x - brush_center_x + brush_w)
+        
+        # 画像の境界内に制限
+        img_h, img_w = image.shape
+        img_y_min_clipped = max(0, img_y_min)
+        img_y_max_clipped = min(img_h, img_y_max)
+        img_x_min_clipped = max(0, img_x_min)
+        img_x_max_clipped = min(img_w, img_x_max)
+        
+        # 適用範囲が有効かチェック
+        if (img_y_min_clipped >= img_y_max_clipped or 
+            img_x_min_clipped >= img_x_max_clipped):
+            return
+        
+        # ブラシの対応部分を計算
+        brush_y_min = img_y_min_clipped - img_y_min
+        brush_y_max = brush_y_min + (img_y_max_clipped - img_y_min_clipped)
+        brush_x_min = img_x_min_clipped - img_x_min
+        brush_x_max = brush_x_min + (img_x_max_clipped - img_x_min_clipped)
+        
+        # 境界チェック
+        brush_y_min = max(0, min(brush_h-1, brush_y_min))
+        brush_y_max = max(brush_y_min+1, min(brush_h, brush_y_max))
+        brush_x_min = max(0, min(brush_w-1, brush_x_min))
+        brush_x_max = max(brush_x_min+1, min(brush_w, brush_x_max))
+        
+        try:
+            # ブラシ部分を取得
+            brush_part = brush[brush_y_min:brush_y_max, brush_x_min:brush_x_max]
+            if brush_part.size == 0:
+                return
                 
-                # OpenCVを使用して円を描画
-                center = (x, y)
-                # ブラシの形状を作成（円形）
-                brush_img = np.zeros((int(brush_size*2), int(brush_size*2)), dtype=np.float32)
-                cv2.circle(brush_img, (int(brush_size), int(brush_size)), int(brush_radius), 1.0, -1)
-                
-                # ソフトエッジを適用
-                if brush_soft > 1.0:
-                    # ソフトエッジ効果を作成
-                    dist_img = np.zeros_like(brush_img)
-                    cv2.circle(dist_img, (int(brush_size), int(brush_size)), int(brush_radius), 1.0, -1)
-                    dist_img = cv2.distanceTransform(dist_img.astype(np.uint8), cv2.DIST_L2, 3)
-                    dist_img = dist_img / np.max(dist_img)
-                    brush_img = np.power(dist_img, 1.0/brush_soft)
-                
-                # ブラシを画像に適用
-                x_min = max(0, x - int(brush_size))
-                y_min = max(0, y - int(brush_size))
-                x_max = min(width, x + int(brush_size))
-                y_max = min(height, y + int(brush_size))
-                
-                # x_minがx_maxより大きい、またはy_minがy_maxより大きい場合の修正
-                if x_min > x_max:
-                    x_min, x_max = x_max, x_min
-                if y_min > y_max:
-                    y_min, y_max = y_max, y_min
-                
-                # ブラシの対応部分を切り出し
-                brush_x_min = max(0, int(brush_size) - x)
-                brush_y_min = max(0, int(brush_size) - y)
-                brush_x_max = brush_x_min + (x_max - x_min)
-                brush_y_max = brush_y_min + (y_max - y_min)
-                
-                brush_part = brush_img[brush_y_min:brush_y_max, brush_x_min:brush_x_max]
-                
-                if is_erasing:
-                    # 消しゴムモード
-                    image[y_min:y_max, x_min:x_max] = np.maximum(0, image[y_min:y_max, x_min:x_max] - brush_part)
-                else:
-                    # 描画モード
-                    image[y_min:y_max, x_min:x_max] = np.minimum(1, image[y_min:y_max, x_min:x_max] + brush_part)
-                continue
+            # 不透明度を適用
+            brush_part = brush_part * opacity
             
-            # 複数点がある場合は、各点を結ぶ線を描画
-            # 全ての点をテクスチャ座標に変換
-            points = [self.editor.tcg_to_texture(*p) for p in line.points]
-            
-            # OpenCVのpolylines関数用に点を整形
-            cv_points = np.array([[int(p[0]), int(p[1])] for p in points], dtype=np.int32)
-            
-            # 線の描画用のマスク画像
-            line_mask = np.zeros((height, width), dtype=np.uint8)
-            
-            # 太い線を描画
-            cv2.polylines(line_mask, [cv_points], False, 255, int(brush_size))
-            
-            # 線の端点も円で描画して繋ぎ目を滑らかに
-            for p in cv_points:
-                cv2.circle(line_mask, (p[0], p[1]), int(brush_radius), 255, -1)
-            
-            # ブラシのソフトエッジを適用
-            if brush_soft > 1.0:
-                # 距離変換でソフトエッジを作成
-                dist_img = cv2.distanceTransform((line_mask > 0).astype(np.uint8), cv2.DIST_L2, 3)
-                max_dist = np.max(dist_img)
-                if max_dist > 0:
-                    dist_img = dist_img / max_dist
-                    # ソフトネスを適用
-                    soft_mask = np.power(dist_img, 1.0/brush_soft)
-                    line_mask = (soft_mask * 255).astype(np.uint8)
-            
-            # 最終的なマスクを適用
-            line_mask_float = line_mask.astype(np.float32) / 255.0
+            # 画像に適用
+            target_region = image[img_y_min_clipped:img_y_max_clipped, 
+                                img_x_min_clipped:img_x_max_clipped]
             
             if is_erasing:
                 # 消しゴムモード
-                image = np.maximum(0, image - line_mask_float)
+                image[img_y_min_clipped:img_y_max_clipped, 
+                     img_x_min_clipped:img_x_max_clipped] = np.maximum(0, target_region - brush_part)
             else:
                 # 描画モード
-                image = np.minimum(1, image + line_mask_float)
+                image[img_y_min_clipped:img_y_max_clipped, 
+                     img_x_min_clipped:img_x_max_clipped] = np.minimum(1, target_region + brush_part)
+        except (IndexError, ValueError) as e:
+            # エラーが発生した場合は無視して続行
+            pass
+    
+    def draw_smooth_line(self, image, points, brush_size, softness, is_erasing=False):
+        """滑らかな線を描画"""
+        if len(points) == 0:
+            return
         
-        return image
+        # ブラシを作成
+        brush = self.create_natural_brush(brush_size / 2, softness)
+        
+        # 単一点の場合
+        if len(points) == 1:
+            p = self.editor.tcg_to_texture(*points[0])
+            self.apply_brush_at_point(image, int(p[0]), int(p[1]), brush, is_erasing)
+            return
+        
+        # 複数点の場合は補間して滑らかに
+        texture_points = [self.editor.tcg_to_texture(*p) for p in points]
+        
+        for i in range(len(texture_points) - 1):
+            p1 = texture_points[i]
+            p2 = texture_points[i + 1]
+            
+            # 2点間の距離を計算
+            distance = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+            
+            # 補間点数を距離に応じて調整（密度を一定に保つ）
+            steps = max(1, int(distance / (brush_size * 0.2)))
+            
+            for j in range(steps + 1):
+                t = j / max(1, steps)
+                x = p1[0] + t * (p2[0] - p1[0])
+                y = p1[1] + t * (p2[1] - p1[1])
+                
+                # 速度に基づく不透明度調整（速く動かすと薄くなる）
+                speed_factor = min(1.0, 10.0 / max(1.0, distance))
+                opacity = 0.3 + 0.7 * speed_factor
+                
+                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, opacity)
+    
+    def draw_line(self, image_size, lines):
+        """改良された線描画メソッド"""
+        try:
+            # 画像の初期化（透明背景）
+            width, height = image_size
+            if width <= 0 or height <= 0:
+                return np.zeros((100, 100), dtype=np.float32)
+                
+            image = np.zeros((height, width), dtype=np.float32)
+            
+            # 各線を描画
+            for line in lines:
+                if not hasattr(line, 'points') or len(line.points) == 0:
+                    continue
+                
+                try:
+                    # 線のパラメータを安全に取得
+                    brush_size = getattr(line, 'size', 50)
+                    brush_soft = getattr(line, 'soft', 1.2)
+                    is_erasing = getattr(line, 'is_erasing', False)
+                    
+                    # パラメータの範囲チェック
+                    brush_size = max(1, min(200, brush_size))
+                    brush_soft = max(0.1, min(5.0, brush_soft))
+                    
+                    # 滑らかな線を描画
+                    self.draw_smooth_line(image, line.points, brush_size, brush_soft, is_erasing)
+                    
+                except Exception as e:
+                    # 個別の線でエラーが発生しても他の線は描画を続ける
+                    continue
+            
+            return image
+            
+        except Exception as e:
+            # 全体的なエラーの場合は空の画像を返す
+            return np.zeros((max(1, image_size[1]), max(1, image_size[0])), dtype=np.float32)
 
 # セグメントマスクのクラス
 class SegmentMask(BaseMask):

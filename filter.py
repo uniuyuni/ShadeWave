@@ -1,6 +1,20 @@
+
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
+
+def lensblur_filter(image, radius):
+    # カーネルを生成
+    kernel_size = 2 * radius + 1
+    kernel = np.zeros((kernel_size, kernel_size), np.float32)
+    
+    # カーネルに円を描く
+    cv2.circle(kernel, (radius, radius), radius, 1, -1)
+    kernel /= np.sum(kernel)
+
+    # レンズブラーを適用
+    blurred_image = cv2.filter2D(np.array(image), -1, kernel)
+    return blurred_image
+
 
 def scratch_effect(image, scratch_intensity=1.0, shift_parcent=1.0):
     """

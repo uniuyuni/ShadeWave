@@ -956,7 +956,12 @@
                                     id: button_inpaint_predict
                                     on_press: root.apply_effects_lv(0, 'inpaint')
                                     ParamChipText:
-                                        text: "Predict"
+                                        text: "Erase"
+                                ToggleButton:
+                                    id: toggle_inpaint_edit
+                                    text: "Edit"
+                                    on_state: root.on_inpaint_edit_press(self.state)
+                                    #on_state: geometry.disabled = True if mask2.state == 'down' else False
 
                             ParamBoxLayout:
                                 ParamLabel:
@@ -1080,6 +1085,33 @@
                                 value: 0
                                 step: 2
                                 on_slider: root.apply_effects_lv(1, 'lensblur_filter')
+
+                            ParamSlider:
+                                id: slider_scratch
+                                text: "Scratch"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'scratch')
+
+                            ParamSlider:
+                                id: slider_frosted_glass
+                                text: "Frosted Glass"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'frosted_glass')
+
+                            ParamSlider:
+                                id: slider_mosaic
+                                text: "Mosaic"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'mosaic')
 
                             VSeparator:
 

@@ -505,6 +505,72 @@ class LensblurFilterEffect(Effect):
 
         return self.diff
 
+class ScratchEffect(Effect):
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_scratch"].set_slider_value(param.get('scratch', 0))
+
+    def set2param(self, param, widget):
+        param['scratch'] = widget.ids["slider_scratch"].value
+
+    def make_diff(self, img, param, efconfig):
+        fr = int(param.get('scratch', 0))
+        if fr == 0:
+            self.diff = None
+            self.hash = None
+
+        else:
+            param_hash = hash((fr))
+            if self.hash != param_hash:
+                self.diff = filter.scratch_effect(img, 1.0, fr / 100 * efconfig.disp_info[4])
+                self.hash = param_hash
+
+        return self.diff
+
+class FrostedGlassEffect(Effect):
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_frosted_glass"].set_slider_value(param.get('frosted_glass', 0))
+
+    def set2param(self, param, widget):
+        param['frosted_glass'] = widget.ids["slider_frosted_glass"].value
+
+    def make_diff(self, img, param, efconfig):
+        fr = int(param.get('frosted_glass', 0))
+        if fr == 0:
+            self.diff = None
+            self.hash = None
+
+        else:
+            param_hash = hash((fr))
+            if self.hash != param_hash:
+                self.diff = filter.frosted_glass_effect(img, fr / 10, fr / 1000 * efconfig.disp_info[4])
+                self.hash = param_hash
+
+        return self.diff
+
+class MosaicEffect(Effect):
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_mosaic"].set_slider_value(param.get('mosaic', 0))
+
+    def set2param(self, param, widget):
+        param['mosaic'] = widget.ids["slider_mosaic"].value
+
+    def make_diff(self, img, param, efconfig):
+        fr = int(param.get('mosaic', 0))
+        if fr == 0:
+            self.diff = None
+            self.hash = None
+
+        else:
+            param_hash = hash((fr))
+            if self.hash != param_hash:
+                self.diff = filter.mosaic_effect(img, int(fr * efconfig.disp_info[4]))
+                self.hash = param_hash
+
+        return self.diff
+
 class GlowEffect(Effect):
 
     def set2widget(self, widget, param):
@@ -1523,6 +1589,9 @@ def create_effects():
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
+    lv1['scratch'] = ScratchEffect()
+    lv1['frosted_glass'] = FrostedGlassEffect()
+    lv1['mosaic'] = MosaicEffect()
     lv1['glow'] = GlowEffect()
     
     lv2 = effects[2]

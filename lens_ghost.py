@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 import math
-import matplotlib.pyplot as plt
 import time
 
 def create_ghost(
@@ -318,12 +317,11 @@ if __name__ == "__main__":
         random_seed=42 # シード固定で再現性確保
     )
     end_time = time.time()
-
-    plt.figure(figsize=(10, 7))
-    plt.imshow(ghosted_image_sample1)
-    plt.title('Sample 1: Half-circle/Partial Ghost with Sharp Radial Irregularities (like DSC01878.jpg)')
-    plt.axis('off')
-    plt.show()
+    # Convert float32 image to uint8 for cv2 display
+    ghosted_image_sample1_display = (ghosted_image_sample1 * 255).astype(np.uint8)
+    cv2.imshow('Sample 1: Half-circle/Partial Ghost with Sharp Radial Irregularities (like DSC01878.jpg)', ghosted_image_sample1_display)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     print(f"Processing time: {end_time - start_time:.2f} seconds")
     print("-" * 50)
 
@@ -375,11 +373,11 @@ if __name__ == "__main__":
 
     end_time = time.time()
 
-    plt.figure(figsize=(10, 7))
-    plt.imshow(final_multi_ghost_image)
-    plt.title('Sample 2: Multiple Ghosts with Varied Radial Irregularities and Shapes')
-    plt.axis('off')
-    plt.show()
+    # Convert float32 image to uint8 for cv2 display
+    final_multi_ghost_image_display = (final_multi_ghost_image * 255).astype(np.uint8)
+    cv2.imshow('Sample 2: Multiple Ghosts with Varied Radial Irregularities and Shapes', final_multi_ghost_image_display)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     print(f"Processing time: {end_time - start_time:.2f} seconds")
     print("-" * 50)
 
@@ -564,10 +562,10 @@ if __name__ == "__main__":
         )
         end_time = time.time()
 
-        plt.figure(figsize=(10, 7))
-        plt.imshow(ghosted_image)
-        plt.title(name)
-        plt.axis('off')
-        plt.show()
+        # Convert float32 image to uint8 for cv2 display
+        ghosted_image_display = (ghosted_image * 255).astype(np.uint8)
+        cv2.imshow(name, ghosted_image_display)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         print(f"Processing time: {end_time - start_time:.2f} seconds")
         print("-" * 50)

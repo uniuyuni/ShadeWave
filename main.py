@@ -1,4 +1,7 @@
 
+#from splashscreen import display_splash_screen, close_splash_screen
+#display_splash_screen("platypus.png")
+
 import cv2
 import numpy as np
 
@@ -8,7 +11,6 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivy.core.window import Window as KVWindow
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.clock import Clock, mainthread
-from kivy.metrics import dp
 from functools import partial
 import re
 import multiprocessing
@@ -35,6 +37,7 @@ import color
 import file_cache_system
 import hover_spinner
 import switchable_float_input
+import bounding_box_viewer
 
 class MainWidget(MDBoxLayout):
 
@@ -57,6 +60,7 @@ class MainWidget(MDBoxLayout):
         self.is_draw_image = False
         self.cache_system = cache_system
         self.ids['viewer'].set_cache_system(self.cache_system)
+        self.inpaint_edit = None
 
         #self._keyboard = KVWindow.request_keyboard(self._keyboard_closed, self)
         #self._keyboard.bind(on_key_down=self._on_keyboard_down)
@@ -332,6 +336,36 @@ class MainWidget(MDBoxLayout):
         else:
             self._disable_mask2()
 
+    def _enable_inpaint_edit(self):
+        if self.inpaint_edit is None:
+            self.inpaint_edit = bounding_box_viewer.BoundingBoxViewer(size=(config.get_config('preview_size'), config.get_config('preview_size')),
+                                initial_view=self.primary_param['disp_info'],
+                                on_delete=self._on_inpaint_edit)
+            boxes = []
+            for inpaint_diff in self.primary_param.get('inpaint_diff_list', []):
+                boxes.append(inpaint_diff.disp_info)
+            self.inpaint_edit.set_boxes(boxes)
+            self.ids['preview_widget'].add_widget(self.inpaint_edit)
+            #print(f"Inpaint x:{self.inpaint_edit.x}, y:{self.inpaint_edit.y}")
+            #print(f"Preview x:{self.ids['preview'].x}, y:{self.ids['preview'].y}")
+            #print(f"Mask2 x:{self.ids['mask_editor2'].x}, y:{self.ids['mask_editor2'].y}")
+
+    def _disable_inpaint_edit(self):
+        if self.inpaint_edit is not None:
+            self.ids['preview_widget'].remove_widget(self.inpaint_edit)
+            del self.inpaint_edit
+            self.inpaint_edit = None
+
+    def _on_inpaint_edit(self, deleted_index, deleted_box):
+        self.primary_param['inpaint_diff_list'].pop(deleted_index)
+        self.apply_effects_lv(0, 'inpaint')
+
+    def on_inpaint_edit_press(self, value):
+        if value == "down":
+            self._enable_inpaint_edit()
+        else:
+            self._disable_inpaint_edit()
+
     def handle_for_dir_selection(self, selection):
         if selection is not None:
             config.set_config('import_path', selection[0].decode())
@@ -449,6 +483,8 @@ class MainApp(MDApp):
     
     def on_start(self):
         KVWindow.bind(on_resize=self.on_window_resize)
+
+        #close_splash_screen()
         return super().on_start()
 
     def on_stop(self):

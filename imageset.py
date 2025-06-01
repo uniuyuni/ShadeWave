@@ -188,7 +188,7 @@ class ImageSet:
                 Ev = math.log2((Av**2)/Tv)
                 Sv = math.log2(exif_data.get('ISO', 100)/100.0)
                 Ev = Ev + Sv
-                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev))
+                img_array = core.adjust_exposure_v2(img_array, core.calculate_correction_value(source_ev, Ev, 6))
             
             # 情報の設定
             core.set_image_param(param, exif_data)
@@ -218,7 +218,7 @@ class ImageSet:
             img_array = util.convert_to_float32(img_array)
 
             # 色空間変換
-            img_array = color.rgb_to_xyz(img_array, "sRGB", True)
+            #img_array = color.rgb_to_xyz(img_array, "sRGB", True)
             
             # 画像からホワイトバランスパラメータ取得
             core.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
