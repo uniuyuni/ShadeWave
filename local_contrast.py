@@ -367,7 +367,7 @@ def apply_texture_advanced(rgb_image, texture_amount):
         return rgb_image.copy()
     
     # パラメータ
-    strength = texture_amount / 100.0
+    strength = texture_amount / 100.0 * 10
     
     # 周波数分離（擬似ウェーブレット）
     # 複数のスケールでの分解

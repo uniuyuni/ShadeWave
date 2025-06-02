@@ -15,10 +15,12 @@ from functools import partial
 
 #from dcp_profile import DCPReader, DCPProcessor
 import config
+import local_contrast
 import util
 import viewer_widget
 import color
 import bit_depth_expansion
+import highlight_recovery
 
 class ImageSet:
 
@@ -132,7 +134,8 @@ class ImageSet:
                                         #user_black=0,
                                         no_auto_bright=True,
                                         highlight_mode=5,
-                                        auto_bright_thr=0.0005)
+                                        auto_bright_thr=0.0005,
+                                        fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Light)
             """
             # ブラックレベル補正
             raw_image = self._black(raw.raw_image_visible, raw.black_level_per_channel[0])
@@ -178,7 +181,7 @@ class ImageSet:
             
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
-            
+
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
                 source_ev, _ = core.calculate_ev_from_image(core.normalize_image(img_array))
@@ -188,8 +191,11 @@ class ImageSet:
                 Ev = math.log2((Av**2)/Tv)
                 Sv = math.log2(exif_data.get('ISO', 100)/100.0)
                 Ev = Ev + Sv
-                img_array = core.adjust_exposure_v2(img_array, core.calculate_correction_value(source_ev, Ev, 6))
-            
+                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 6))
+
+            # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
+            img_array = highlight_recovery.reconstruct_highlight_details(img_array)
+
             # 情報の設定
             core.set_image_param(param, exif_data)
 

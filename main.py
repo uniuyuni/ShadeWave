@@ -312,6 +312,8 @@ class MainWidget(MDBoxLayout):
 
         return path
 
+    #--------------------------------
+
     def _set_image_for_mask2(self, param):
         self.ids['mask_editor2'].set_orientation(param.get('rotation', 0), param.get('rotation2', 0), param.get('flip_mode', 0))
         self.ids['mask_editor2'].set_texture_size(self.texture_width, self.texture_height)
@@ -335,6 +337,8 @@ class MainWidget(MDBoxLayout):
             self._enable_mask2()
         else:
             self._disable_mask2()
+
+    #--------------------------------
 
     def _enable_inpaint_edit(self):
         if self.inpaint_edit is None:
@@ -366,9 +370,13 @@ class MainWidget(MDBoxLayout):
         else:
             self._disable_inpaint_edit()
 
+    #--------------------------------
+
     def handle_for_dir_selection(self, selection):
         if selection is not None:
             config.set_config('import_path', selection[0].decode())
+
+    #--------------------------------
 
     def on_lut_select_folder(self):
         macos.FileChooser(title="Select LUT Folder", mode="dir", filters=[("CUBE Files", "*.cube")], on_selection=self.handle_for_lut).run()
@@ -378,6 +386,8 @@ class MainWidget(MDBoxLayout):
             path = selection[0].decode()
             config.set_config('lut_path', path)
 
+    #--------------------------------
+
     def on_current_tab(self, current):
         if current.text == "Geometry":
             self.is_zoomed = False
@@ -385,9 +395,6 @@ class MainWidget(MDBoxLayout):
         if self.imgset is not None:
             self.apply_effects_lv(0, "crop")
 
-        #KVWindow.system_size = (KVWindow.width, KVWindow.height)
-        #MainApp.get_running_app().on_window_resize(KVWindow, KVWindow.width, KVWindow.height)
-        #Clock.schedule_once(lambda dt: MainApp.get_running_app().on_window_resize(KVWindow, KVWindow.width, KVWindow.height), 0.1)
 
     def set_lut_path(self, path):
         lut_values = ['None']
@@ -517,7 +524,7 @@ class MainApp(MDApp):
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    cv2.setUseOptimized(True)
+    #cv2.setUseOptimized(True)
     
     # メインプロセスでマネージャーを作成
     cache_system = file_cache_system.FileCacheSystem(max_cache_size=100, max_concurrent_loads=2)

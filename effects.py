@@ -738,7 +738,7 @@ class HLSColorEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = core.adjust_hls_color_one(hls, self.color_name, hue, lum/100*2, sat/100) - hls
+            self.diff = core.adjust_hls_color_one(hls, self.color_name, hue, lum/100, sat/100) - hls
             self.hash = param_hash
 
         return self.diff
@@ -783,7 +783,7 @@ class ContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = core.adjust_contrast(rgb, con, 0.5)
+            self.diff = core.adjust_tone(rgb, con, -con)
             self.hash = param_hash
 
         return self.diff

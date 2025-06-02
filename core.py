@@ -379,12 +379,12 @@ def adjust_exposure(rgb, ev):
     return rgb * (2.0**ev)
 
 # コントラスト補正
-@partial(jit, static_argnums=(1,2,))
+#@partial(jit, static_argnums=(1,2,))
 def adjust_contrast(img, cf, c=0.5):
     # img: 変換元画像
     # cf: コントラストファクター -100.0〜100.0
     # c: 中心値 0〜1.0
-    """
+    
     f = cf / 100.0 * 10.0  #-10.0〜10.0に変換
 
     if f == 0.0:
@@ -401,6 +401,7 @@ def adjust_contrast(img, cf, c=0.5):
     adjust = adjust_tone(img, cf, -cf)
 
     return adjust
+    """
 
 # 画像の明るさを制御点を元に補正する
 def apply_curve(image, control_points, control_values):    
@@ -577,114 +578,6 @@ def apply_lut(img, lut, max_value=1.0):
     result = jnp.take(lut, lut_indices)
     
     return result
-
-def __adjust_hls(hls_img, hue_condition, adjust):
-    """
-    HLS色空間での色調整をJAXで実装（jnp.whereを使用）
-    
-    Args:
-        hls_img: HLS形式の画像配列
-        hue_condition: 色相に対する条件式
-        adjust: 調整値の配列 [色相, 明度, 彩度]
-    """
-    # 各チャンネルごとにwhere演算で値を更新
-    h = jnp.where(hue_condition[..., None], 
-                  hls_img[..., 0:1] + adjust[0]*1.8,
-                  hls_img[..., 0:1])
-    
-    l = jnp.where(hue_condition[..., None],
-                  hls_img[..., 1:2] * (2.0**adjust[1]),
-                  hls_img[..., 1:2])
-    
-    s = jnp.where(hue_condition[..., None],
-                  hls_img[..., 2:3] * (2.0**adjust[2]),
-                  hls_img[..., 2:3])
-    
-    # 結果を結合
-    return jnp.concatenate([h, l, s], axis=-1)
-
-def adjust_hls_red(hls_img, red_adjust):
-    """
-    赤色領域の調整をJAXで実装
-    
-    Args:
-        hls_img: HLS形式の画像配列
-        red_adjust: 赤色の調整値 [色相, 明度, 彩度]
-    """
-    hue_img = hls_img[..., 0]
-    
-    # 赤色の条件式
-    red_condition = jnp.logical_or(
-        jnp.logical_and(hue_img >= 0, hue_img < 22.5),
-        jnp.logical_and(hue_img >= 337.5, hue_img < 360)
-    )
-    
-    return __adjust_hls(hls_img, red_condition, red_adjust)
-
-
-def adjust_hls_orange(hls_img, orange_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # オレンジ
-    orange_condition = jnp.logical_and(hue_img >= 22.5, hue_img < 45)
-    hls_img = __adjust_hls(hls_img, orange_condition, orange_adjust)
-
-    return hls_img
-
-def adjust_hls_yellow(hls_img, yellow_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # 黄色
-    yellow_condition = jnp.logical_and(hue_img >= 45, hue_img < 75)
-    hls_img = __adjust_hls(hls_img, yellow_condition, yellow_adjust)
-
-    return hls_img
-
-def adjust_hls_green(hls_img, green_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # 緑
-    green_condition = jnp.logical_and(hue_img >= 75, hue_img < 150)
-    hls_img = __adjust_hls(hls_img, green_condition, green_adjust)
-
-    return hls_img
-
-def adjust_hls_cyan(hls_img, cyan_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # シアン
-    cyan_condition = jnp.logical_and(hue_img >= 150, hue_img < 210)
-    hls_img = __adjust_hls(hls_img, cyan_condition, cyan_adjust)
-
-    return hls_img
-
-def adjust_hls_blue(hls_img, blue_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # 青
-    blue_condition = jnp.logical_and(hue_img >= 210, hue_img < 270)
-    hls_img = __adjust_hls(hls_img, blue_condition, blue_adjust)
-
-    return hls_img
-
-def adjust_hls_purple(hls_img, purple_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # 紫
-    purple_condition = jnp.logical_and(hue_img >= 270, hue_img < 300)
-    hls_img = __adjust_hls(hls_img, purple_condition, purple_adjust)
-
-    return hls_img
-
-def adjust_hls_magenta(hls_img, magenta_adjust):
-    hue_img = hls_img[:, :, 0]
-
-    # マゼンタ
-    magenta_condition = jnp.logical_and(hue_img >= 300, hue_img < 337.5)
-    hls_img = __adjust_hls(hls_img, magenta_condition, magenta_adjust)
-
-    return hls_img
-
 
 # マスクイメージの適用
 @jit
@@ -1525,18 +1418,18 @@ def resize_bicubic_fully_vectorized(image, target_height, target_width):
     
     return output
 
-@partial(jit, static_argnums=(1,2,))
+#@partial(jit, static_argnums=(1,2,))
 def smooth_step(x, edge0, edge1):
     """
     エルミート補間を用いた滑らかなステップ関数
     x が edge0 未満なら0、edge1 以上なら1、その間は滑らかな補間を行う
     """
     # クランプ
-    t = jnp.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    t = np.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
     # エルミート補間
     return t * t * (3.0 - 2.0 * t)
 
-@partial(jit, static_argnums=(1,2,3))
+#@partial(jit, static_argnums=(1,2,3))
 def circular_smooth_step(hue, center, width, fade_width):
     """
     円環上の色相空間で滑らかな重みを計算する
@@ -1551,22 +1444,22 @@ def circular_smooth_step(hue, center, width, fade_width):
         0-1の重み
     """
     # 色相の円環性を考慮して距離を計算
-    dist = jnp.abs((((hue - center) % 360) + 180) % 360 - 180)
+    dist = np.abs((((hue - center) % 360) + 180) % 360 - 180)
     
     # 完全適用領域なら1.0
     full_region = dist <= width
     
     # フェード領域なら徐々に減衰
-    fade_region = jnp.logical_and(dist > width, dist <= width + fade_width)
+    fade_region = np.logical_and(dist > width, dist <= width + fade_width)
     
     # フェード領域では滑らかなステップ関数を適用
     fade_weight = smooth_step(dist, width + fade_width, width)
     
     # 条件に応じた重みを返す
-    return jnp.where(full_region, 1.0, jnp.where(fade_region, fade_weight, 0.0))
+    return np.where(full_region, 1.0, np.where(fade_region, fade_weight, 0.0))
 
 #@partial(jit, static_argnums=(1,2,))
-@jit
+#@jit
 def adjust_hls_with_weight(hls_img, weight, adjust):
     """
     重み付きでHLS値を調整する
@@ -1588,15 +1481,13 @@ def adjust_hls_with_weight(hls_img, weight, adjust):
     
     # 各チャンネルに適用
     h = (hls_img[..., 0:1] + h_adj) % 360
-    #l = np.clip(hls_img[..., 1:2] * l_factor, None, None)  # クリップして0-1の範囲に収める
-    #s = np.clip(hls_img[..., 2:3] * s_factor, None, None)  # クリップして0-1の範囲に収める
     l = hls_img[..., 1:2] * l_factor
     s = hls_img[..., 2:3] * s_factor
     
     # 結果を結合
-    return jnp.concatenate([h, l, s], axis=-1)
+    return np.concatenate([h, l, s], axis=-1)
 
-@partial(jit, static_argnums=(1,2,))
+#@partial(jit, static_argnums=(1,2,))
 def calculate_ls_weight(hls_img, l_range=(0.0, 1.0), s_range=(0.0, 1.0)):
     """
     輝度と彩度に基づく重みを計算
@@ -1627,7 +1518,7 @@ def calculate_ls_weight(hls_img, l_range=(0.0, 1.0), s_range=(0.0, 1.0)):
     # 明度と彩度の重みを組み合わせる
     return l_weight * s_weight
 
-@jit
+#@partial(jit, static_argnums=(1,))
 def adjust_hls_colors(hls_img, color_settings):
     """
     複数の色相範囲を一度に調整する
@@ -1669,14 +1560,14 @@ def adjust_hls_colors(hls_img, color_settings):
         final_weight = hue_weight# * ls_weight
 
         # 重みをぼかす
-        final_weight = __gaussian_blur(final_weight, (127, 127), 0)
+        #final_weight = __gaussian_blur(final_weight, (127, 127), 0)
+        final_weight = cv2.GaussianBlur(final_weight, (127, 127), 0)
         
         # 重みを使って調整
         result = adjust_hls_with_weight(result, final_weight, adjust)
     
     return result
 
-# 使用例
 def adjust_hls_color_one(hls_img, color_name, h, l, s):
     # 色相の設定
     COLOR_SETTING = {
