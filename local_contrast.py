@@ -427,10 +427,10 @@ def apply_microcontrast(image, strength):
     enhanced_L = _multi_scale_local_contrast(L, normalized_strength)
     
     # LAB→RGB変換
-    lab[:, :, 0] = np.clip(enhanced_L * 100.0, 0, 100)
+    lab[:, :, 0] = enhanced_L * 100.0
     result = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
     
-    return np.clip(result, 0, 1)
+    return result
 
 def _multi_scale_local_contrast(luminance, strength):
     """
@@ -471,7 +471,7 @@ def _multi_scale_local_contrast(luminance, strength):
         # 負：ディテールを低下（減算、つまり平滑化方向）
         result = luminance + total_detail * strength_factor  # strength_factorが負なので減算になる
     
-    return np.clip(result, 0, 1)
+    return result
 
 def _guided_filter(I, p, r, eps):
     """

@@ -14,6 +14,7 @@ from kivy.clock import Clock, mainthread
 from functools import partial
 import re
 import multiprocessing
+import colour
 
 import core
 import imageset
@@ -108,10 +109,10 @@ class MainWidget(MDBoxLayout):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
             #util.print_nan_inf(img)
             
-            #img = color.xyz_to_rgb(img, config.get_config('display_color_gamut'), True)
-            #img = cv2.cvtColor(img, cv2.COLOR_XYZ2RGB)
             img = np.array(img)
             self.draw_histogram(img)
+            img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), 'CAT16',
+                                    apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
             img = np.clip(img, 0, 1)
             self.blit_image(img)
         self.is_draw_image = False

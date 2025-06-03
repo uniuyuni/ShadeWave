@@ -5,6 +5,7 @@ from wand.image import Image as WandImage
 from datetime import datetime as dt
 import json
 import exiftool
+import colour
 
 from imageset import ImageSet
 import effects
@@ -306,7 +307,8 @@ class ExportFile():
 
         load_json(self.file_path, self.param, self.mask_editor2)
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
-        img = color.xyz_to_rgb(img, self.color_space, True)
+        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', self.color_space, 'CAT16',
+                                apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
         img = np.clip(img, 0, 1)
 
         ex_ext = os.path.splitext(self.ex_path)[1]

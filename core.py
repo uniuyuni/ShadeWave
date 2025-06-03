@@ -57,7 +57,7 @@ def calculate_correction_value(ev_histogram, ev_setting, maxvalue=4):
 
 # RGBからグレイスケールへの変換
 @jit
-def __cvtToGrayColor(rgb):
+def _cvtToGrayColor(rgb):
     # 変換元画像 RGB
     #gry = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     gry = jnp.dot(rgb, jnp.array([0.2989, 0.5870, 0.1140]))
@@ -65,7 +65,7 @@ def __cvtToGrayColor(rgb):
     return gry
 
 def cvtToGrayColor(rgb):
-    array = __cvtToGrayColor(rgb)
+    array = _cvtToGrayColor(rgb)
     array.block_until_ready()
 
     return np.array(array)
@@ -319,6 +319,28 @@ def correct_overexposed_areas(image_rgb: np.ndarray,
     
     # 元の画像と補正色をブレンド
     result = image_rgb * (1 - correction_mask) + correction * correction_mask
+    
+    return result
+
+def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96)) -> np.ndarray:
+    """
+    float32形式のRGB画像（0-1）の白飛び部分を自然に補正する関数
+    
+    Parameters:
+    -----------
+    image_rgb : np.ndarray
+        入力画像（float32形式、RGB、値域0-1）
+        shape: (height, width, 3)
+    solod_color : tuple
+        補正に使用する色（デフォルト: わずかに青みがかった白）
+    """
+    # 補正色のマップを作成
+    correction = np.zeros_like(image_rgb, dtype=np.float32)
+    for i in range(3):
+        correction[:,:,i] = solid_color[i]
+        
+    # 元の画像と補正色をブレンド
+    result = correction
     
     return result
 
@@ -841,17 +863,18 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
     
     Returns:
         np.ndarray: 調整後の画像（クリッピングなし）
+        mask(tuple): 効果マスクリスト（Noneあり）
     """
 
     def _conditional_operation(x, img, pos_func, neg_func):
-        func = pos_func if x > 0 else neg_func if x < 0 else lambda img, x: img
+        func = pos_func if x > 0 else neg_func if x < 0 else lambda img, x: (img, None)
         
         return func(img, x)
 
     # 中間調の調整
     def enhance_midtones_positive(img, midtone):
         C = midtone / 100 * midtone_scale
-        return jnp.log(1 + img * C) / jax.lax.log(1 + C)
+        return jnp.log(1 + img * C) / jax.lax.log(1 + C), None
 
     def enhance_midtones_negative(img, midtone):
         C = -midtone / 100 * midtone_scale
@@ -867,25 +890,27 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         extended_result = f_1 + derivative_at_1 * (img - 1.0)
         
         # 条件マスクを使って結果を組み合わせる
-        return jnp.where(img <= 1.0, normal_result, extended_result)
+        return jnp.where(img <= 1.0, normal_result, extended_result), None
 
     midtone_scale = 4
-    img = _conditional_operation(midtone, img, enhance_midtones_positive, enhance_midtones_negative)
+    img, _ = _conditional_operation(midtone, img, enhance_midtones_positive, enhance_midtones_negative)
 
     # シャドウ（暗部）の調整
     def enhance_shadow_positive(img, shadows):
         factor = shadows / 100
         influence = jnp.exp(-5 * img)
-        return img * (1 + factor * influence)
+        mask = factor * influence
+        return img * (1 + mask), mask
     
     def enhance_shadow_negative(img, shadows):
         factor = shadows / 100
         influence = jnp.exp(-5 * img)
         min_val = img * 0.1;  # 最小でも元の値の10%は維持
-        raw_result = img * (1 + factor * influence)
-        return jnp.maximum(raw_result, min_val)
+        mask = (1 + factor * influence)
+        raw_result = img * mask
+        return jnp.maximum(raw_result, min_val), None
 
-    img = _conditional_operation(shadows, img, enhance_shadow_positive, enhance_shadow_negative)
+    img, shadows_mask = _conditional_operation(shadows, img, enhance_shadow_positive, enhance_shadow_negative)
     
     # ハイライト（明部）の調整
     def enhance_highlight_positive(img, highlights):
@@ -893,17 +918,19 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         max_val = jnp.max(img)
         base = img / max_val  # 0-1に正規化
         expansion = 1 + factor * (jnp.log1p(jnp.log1p(base)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
-        return img * expansion
+        return img * expansion, None
 
     def enhance_highlight_negative(img, highlights):
         factor = -highlights / 100
         max_val = jnp.max(img)
         target = jnp.log1p(jnp.log1p(img)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))
-        return img * (1-factor) + target * factor
+        mask = target * factor
+        return img * (1-factor) + mask, mask
 
     highlight_scale = 4
-    img = _conditional_operation(highlights, img, enhance_highlight_positive, enhance_highlight_negative)
+    img, highlight_mask = _conditional_operation(highlights, img, enhance_highlight_positive, enhance_highlight_negative)
 
+    """
     # 黒レベル（全体の暗い部分の引き下げ）
     def enhance_black_positive(img, black_level):
         factor = black_level / 100
@@ -936,88 +963,9 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
 
     white_level_scale = 4
     img = _conditional_operation(white_level, img, enhance_white_positive, enhance_white_negative)
-
-    return img
-
-def recover_saturated_pixels(rgb_data: np.ndarray, 
-                           exposure_time: float,
-                           iso: float,
-                           wb_gains: list) -> np.ndarray:
     """
-    飽和画素を修復する関数
-    
-    Parameters:
-    -----------
-    rgb_data : np.ndarray
-        Shape (H, W, 3) のRGB画像データ (float32)
-    exposure_time : float
-        露出時間（秒）
-    iso : float
-        ISO感度
-    wb_gains : list
-    
-    Returns:
-    --------
-    np.ndarray
-        修復されたRGB画像データ
-    """
-    # 入力チェック
-    assert rgb_data.dtype == np.float32
-    assert rgb_data.ndim == 3 and rgb_data.shape[2] == 3
-    
-    # 定数
-    SATURATION_THRESHOLD = 1.0
-    MAX_SCALING = 1.5  # 最大スケーリング係数
-    
-    # 出力用配列の準備
-    recovered = rgb_data.copy()
-    
-    # 飽和マスクの作成（チャンネルごと）
-    saturated_mask = rgb_data >= SATURATION_THRESHOLD
-    
-    # 各チャンネルのゲインを配列化
-    gains = np.array([wb_gains[0], wb_gains[1], wb_gains[2]])
-    
-    # チャンネルごとの最大理論値を計算
-    theoretical_max = exposure_time * iso * gains
-    theoretical_max = theoretical_max / np.max(theoretical_max)  # 正規化
-    
-    # 飽和ピクセルの位置を特定
-    saturated_pixels = np.any(saturated_mask, axis=2)
-    y_sat, x_sat = np.where(saturated_pixels)
-    
-    for y, x in zip(y_sat, x_sat):
-        pixel_values = rgb_data[y, x]
-        is_saturated = saturated_mask[y, x]
-        
-        # 飽和していないチャンネルの最大値を基準に補正
-        unsaturated_channels = ~is_saturated
-        if np.any(unsaturated_channels):
-            # 飽和していないチャンネルの最大値を見つける
-            max_unsaturated = np.max(pixel_values[unsaturated_channels] / 
-                                   gains[unsaturated_channels])
-            
-            # 飽和したチャンネルの補正
-            for ch in range(3):
-                if is_saturated[ch]:
-                    # 理論値に基づいて補正（必ず元の値より大きくなる）
-                    scale = theoretical_max[ch] / theoretical_max[np.argmax(pixel_values[unsaturated_channels])]
-                    corrected_value = max_unsaturated * gains[ch] * scale
-                    
-                    # 元の値より小さくならないように補正
-                    recovered[y, x, ch] = max(
-                        pixel_values[ch],
-                        min(corrected_value * MAX_SCALING, MAX_SCALING)  # 上限を設定
-                    )
-        else:
-            # すべてのチャンネルが飽和している場合
-            # 理論値の比率で補正（最大値で正規化）
-            max_value = np.max(pixel_values)
-            for ch in range(3):
-                scale = theoretical_max[ch] / np.max(theoretical_max)
-                recovered[y, x, ch] = max(pixel_values[ch], max_value * scale)
-    
-    return recovered
+
+    return img, (shadows_mask, highlight_mask)
 
 
 def get_exif_image_size(exif_data):
@@ -1690,3 +1638,72 @@ def floyd_steinberg_dither_fast(image):
                         img[y+1, x+1, ch] = min(1.0, max(0.0, img[y+1, x+1, ch] + quant_error * 0.0625))  # 1/16
 
     return (img * 255).astype(np.uint8)
+
+@njit(nopython=True, nogil=True, parallel=True, fastmath=True)
+def fast_median_filter(img, kernel_size=3, num_bins=256):
+    """
+    量子化とヒストグラムベースの高速メディアンフィルタ
+    float32画像を高速処理可能
+    
+    Parameters:
+        img (np.ndarray): 入力画像 (float32)
+        kernel_size (int): カーネルサイズ (奇数)
+        num_bins (int): 量子化ビン数 (速度/精度のトレードオフ)
+    
+    Returns:
+        np.ndarray: フィルタリング後の画像 (float32)
+    """
+    h, w = img.shape
+    pad = kernel_size // 2
+    median_index = (kernel_size * kernel_size) // 2
+    
+    # 画像の最小値/最大値を計算
+    min_val = np.min(img)
+    max_val = np.max(img)
+    scale = (num_bins - 1) / (max_val - min_val + 1e-7)
+    
+    # 量子化画像の作成
+    quantized = ((img - min_val) * scale).astype(np.float32)
+    
+    # パディング追加 (reflectモード)
+    padded = np.zeros((h + 2*pad, w + 2*pad), dtype=np.float32)
+    padded[pad:-pad, pad:-pad] = quantized
+    for i in range(pad):
+        padded[i, pad:-pad] = quantized[pad-i-1]  # 上端
+        padded[-(i+1), pad:-pad] = quantized[-(pad-i)]  # 下端
+        padded[pad:-pad, i] = quantized[:, pad-i-1]  # 左端
+        padded[pad:-pad, -(i+1)] = quantized[:, -(pad-i)]  # 右端
+    
+    # 出力画像初期化
+    result = np.zeros((h, w), dtype=np.float32)
+    
+    # メイン処理 (並列化)
+    for y in prange(h):
+        hist = np.zeros(num_bins, dtype=np.uint16)
+        # 初期ヒストグラム構築
+        for ky in range(kernel_size):
+            for kx in range(kernel_size):
+                val = padded[y + ky, kx]
+                hist[int(val)] += 1
+        
+        # 行方向にスライディング
+        for x in range(w):
+            # 中央値計算
+            cumsum = 0
+            for b in range(num_bins):
+                cumsum += hist[b]
+                if cumsum > median_index:
+                    result[y, x] = min_val + b / scale
+                    break
+            
+            # ヒストグラム更新 (左カラム削除/右カラム追加)
+            if x < w - 1:
+                for ky in range(kernel_size):
+                    # 左カラム削除
+                    left_val = padded[y + ky, x]
+                    hist[int(left_val)] -= 1
+                    # 右カラム追加
+                    right_val = padded[y + ky, x + kernel_size]
+                    hist[int(right_val)] += 1
+                    
+    return result

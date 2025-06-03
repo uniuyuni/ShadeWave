@@ -26,14 +26,14 @@ def reconstruct_highlight_details(hdr_img):
     ).process(contrast)
 
     # 全体にマイクロコントラストをかけてはっきりさせる
-    micro_contrast = local_contrast.apply_microcontrast(tonemapped, 60)
-    #micro_contrast = tonemapped
+    #micro_contrast = local_contrast.apply_microcontrast(tonemapped, 60)
+    micro_contrast = tonemapped
     
     # 赤のカラーバランスが崩れているので補正、ついでにディティールをはっきりさせる
     hls = cv2.cvtColor(micro_contrast, cv2.COLOR_RGB2HLS_FULL)
     hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
     rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-    rgb = local_contrast.apply_microcontrast(rgb, 100)
+    rgb = local_contrast.apply_microcontrast(rgb, 150)
     result = core.apply_mask(rgb, mask, micro_contrast) # ハイライトにのみ適用
 
     return result

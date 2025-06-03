@@ -1,8 +1,12 @@
 
+from re import L
+import scipy
+from typing_extensions import ItemsView
 import cv2
 import numpy as np
 import importlib
 import bz2
+from enum import Enum
 
 #import colorsys
 #import skimage
@@ -24,11 +28,18 @@ import pipeline
 import filter
 import local_contrast
 
+class EffectMode(Enum):
+    PREVIEW = 0
+    LOUPE = 1
+    EXPORT = 2
+
 class EffectConfig():
 
     def __init__(self, **kwargs):
         self.disp_info = None
         self.is_zoom = False
+        self.mode = EffectMode.PREVIEW
+        self.dpi_scale = 1.0
 
 # 補正基底クラス
 class Effect():
@@ -425,6 +436,70 @@ class NLMNoiseReductionEffect(Effect):
 
         return self.diff
 
+class LightNoiseReductionEffect(Effect):
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_light_noise_reduction"].set_slider_value(param.get('light_noise_reduction', 0))
+        widget.ids["slider_light_color_noise_reduction"].set_slider_value(param.get('light_color_noise_reduction', 0))
+
+    def set2param(self, param, widget):
+        param['light_noise_reduction'] = widget.ids["slider_light_noise_reduction"].value
+        param['light_color_noise_reduction'] = widget.ids["slider_light_color_noise_reduction"].value
+
+    def make_diff(self, img, param, efconfig):
+        its = int(param.get('light_noise_reduction', 0))
+        col = int(param.get('light_color_noise_reduction', 0))
+        if its == 0 and col == 0:
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((its, col))
+            if self.hash != param_hash:
+                """
+                lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
+                l = cv2.GaussianBlur(lab[..., 0], (7, 7), 0)
+                self.diff = cv2.ximgproc.guidedFilter(
+                                    guide=l, 
+                                    src=img,
+                                    radius=int(its * efconfig.disp_info[4]), 
+                                    eps=0.01)
+                """
+                #self.diff = cv2.bilateralFilter(img, *self.intensity_to_params(int(its * efconfig.disp_info[4])))
+                
+                its = its * efconfig.disp_info[4]
+                col = col * efconfig.disp_info[4]
+
+                # Lab色空間に変換（L: 輝度, a,b: 色度）
+                lab = cv2.cvtColor(img, cv2.COLOR_RGB2Lab)
+                l, a, b = cv2.split(lab)
+                
+                # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
+                if its > 0:
+                    d_l = max(1, min(15, int(3 + its * 0.15)))
+                    d_l = d_l + 1 if d_l % 2 == 0 else d_l
+                    sigma_l = 10 + its * 1.0
+                    l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
+                else:
+                    l_filtered = l
+                
+                if col > 0:
+                    # 色度チャンネル(a,b)のノイズ除去 - 強力な平滑化
+                    ksize = max(3, min(51, int(3 + col * 0.5)))
+                    ksize = ksize + 1 if ksize % 2 == 0 else ksize
+                    a_filtered = core.fast_median_filter(a, ksize)
+                    b_filtered = core.fast_median_filter(b, ksize)
+                else:
+                    a_filtered = a
+                    b_filtered = b
+                
+                # チャンネルを結合
+                filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
+                self.diff = cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)
+    
+
+                self.hash = param_hash
+
+        return self.diff
 
 # デブラーフィルタ
 class DeblurFilterEffect(Effect):
@@ -783,7 +858,7 @@ class ContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = core.adjust_tone(rgb, con, -con)
+            self.diff, _ = core.adjust_tone(rgb, con, -con)
             self.hash = param_hash
 
         return self.diff
@@ -854,32 +929,52 @@ class MicroContrastEffect(Effect):
 class ToneEffect(Effect):
 
     def set2widget(self, widget, param):
-        widget.ids["slider_black"].set_slider_value(param.get('black', 0))
-        widget.ids["slider_white"].set_slider_value(param.get('white', 0))
         widget.ids["slider_shadow"].set_slider_value(param.get('shadow', 0))
         widget.ids["slider_highlight"].set_slider_value(param.get('highlight', 0))
         widget.ids["slider_midtone"].set_slider_value(param.get('midtone', 0))
 
     def set2param(self, param, widget):
-        param['black'] = widget.ids["slider_black"].value
-        param['white'] = widget.ids["slider_white"].value
         param['shadow'] = widget.ids["slider_shadow"].value
         param['highlight'] = widget.ids["slider_highlight"].value
         param['midtone'] = widget.ids["slider_midtone"].value
 
     def make_diff(self, rgb, param, efconfig):
-        black = param.get('black', 0)
-        white = param.get('white', 0)
         shadow = param.get('shadow', 0)
         highlight =  param.get('highlight', 0)
         mt = param.get('midtone', 0)
-        param_hash = hash((black, white, shadow, highlight, mt))
-        if black == 0 and white == 0 and shadow == 0 and highlight == 0 and mt == 0:
+        param_hash = hash((shadow, highlight, mt))
+        if shadow == 0 and highlight == 0 and mt == 0:
             self.diff = None
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = core.adjust_tone(rgb, highlight, shadow, mt, white, black)
+            self.diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)
+            """
+            if masks[0] is not None:
+                mask = np.array(masks[0])
+                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+                mask = 1 - mask
+                threshold = np.max(mask)
+                mask[mask > threshold / 2] = 0.0
+                source = np.array(self.diff)
+                #cv2.imwrite("mask.jpg", cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+                #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
+                target = local_contrast.apply_microcontrast(source, 150)
+                mask = mask[..., np.newaxis]
+                self.diff = source * (1-mask) + target * mask
+            """
+            if masks[1] is not None:
+                mask = np.array(masks[1])
+                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+                threshold = np.max(mask)
+                mask[mask < threshold * 3 / 4] = 0.0
+                source = np.array(self.diff)
+                #cv2.imwrite("mask.jpg", cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+                #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
+                target = local_contrast.apply_microcontrast(source, 400)
+                mask = mask[..., np.newaxis]
+                self.diff = source * (1-mask) + target * mask
+
             self.hash = param_hash
         return self.diff
     
@@ -1508,43 +1603,36 @@ class Mask2Effect(Effect):
 
         return self.diff
 
-
-class CorrectOverexposedAreas(Effect):
+class SolidColorEffect(Effect):
 
     def set2widget(self, widget, param):
-        widget.ids["switch_correct_overexposed_areas"].active = False if param.get('correct_overexposed_areas', 0) == 0 else True
-        widget.ids["slider_correct_overexposed_areas_blur"].set_slider_value(param.get('correct_overexposed_areas_blur', 0))
-        widget.ids["cp_correct_overexposed_areas"].ids['slider_red'].set_slider_value(param.get('correct_overexposed_areas_red', 0))
-        widget.ids["cp_correct_overexposed_areas"].ids['slider_green'].set_slider_value(param.get('correct_overexposed_areas_green', 0))
-        widget.ids["cp_correct_overexposed_areas"].ids['slider_blue'].set_slider_value(param.get('correct_overexposed_areas_blue', 0))
+        widget.ids["switch_solid_color"].active = False if param.get('solid_color', 0) == 0 else True
+        widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(param.get('solid_color_red', 0))
+        widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(param.get('solid_color_green', 0))
+        widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(param.get('solid_color_blue', 0))
 
     def set2param(self, param, widget):
-        param['correct_overexposed_areas'] = 0 if widget.ids["switch_correct_overexposed_areas"].active == False else 1
-        param['correct_overexposed_areas_blur'] = widget.ids["slider_correct_overexposed_areas_blur"].value
-        param["correct_overexposed_areas_red"] = widget.ids["cp_correct_overexposed_areas"].ids['slider_red'].value
-        param["correct_overexposed_areas_green"] = widget.ids["cp_correct_overexposed_areas"].ids['slider_green'].value
-        param["correct_overexposed_areas_blue"] = widget.ids["cp_correct_overexposed_areas"].ids['slider_blue'].value
+        param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
+        param["solid_color_red"] = widget.ids["cp_solid_color"].ids['slider_red'].value
+        param["solid_color_green"] = widget.ids["cp_solid_color"].ids['slider_green'].value
+        param["solid_color_blue"] = widget.ids["cp_solid_color"].ids['slider_blue'].value
 
-    def make_diff(self, img, param, efconfig):
-        coa = param.get('correct_overexposed_areas', 0)
-        coabl = param.get('correct_overexposed_areas_blur', 0)
-        coar = param.get("correct_overexposed_areas_red", 0)
-        coag = param.get("correct_overexposed_areas_green", 0)
-        coab = param.get("correct_overexposed_areas_blue", 0)
+    def make_diff(self, rgb, param, efconfig):
+        coa = param.get('solid_color', 0)
+        coar = param.get("solid_color_red", 0)
+        coag = param.get("solid_color_green", 0)
+        coab = param.get("solid_color_blue", 0)
         if coa <= 0:
             self.diff = None
             self.hash = None
         else:        
-            param_hash = hash((coa, coabl, coar, coag, coab))
+            param_hash = hash((coa, coar, coag, coab))
             if self.hash != param_hash:
-                self.diff = (coabl, (coar/255, coag/255, coab/255))
+                self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255))
                 self.hash = param_hash
 
         return self.diff
     
-    def apply_diff(self, rgb):
-        return core.correct_overexposed_areas(rgb, blur_sigma=self.diff[0], correction_color=self.diff[1])
-
 class VignetteEffect(Effect):
 
     def set2widget(self, widget, param):
@@ -1586,6 +1674,7 @@ def create_effects():
     lv1 = effects[1]
     lv1['ai_noise_reduction'] = AINoiseReductonEffect()
     lv1['nlm_noise_reduction'] = NLMNoiseReductionEffect()
+    lv1['light_noise_reduction'] = LightNoiseReductionEffect()
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
@@ -1625,10 +1714,10 @@ def create_effects():
     lv2['lut'] = LUTEffect()
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_simulation'] = FilmSimulationEffect()
+    lv2['solid_color'] = SolidColorEffect()
 
     lv3 = effects[3]
     lv3['mask2'] = Mask2Effect()
-    lv3['correct_overexposed_areas'] = CorrectOverexposedAreas()
 
     lv4 = effects[4]
     lv4['vignette'] = VignetteEffect()

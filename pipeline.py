@@ -17,6 +17,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     efconfig = effects.EffectConfig()
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = is_zoomed
+    efconfig.mode = effects.EffectMode.PREVIEW
 
     # 背景レイヤー
     img0, reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
@@ -57,6 +58,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig = effects.EffectConfig()
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True
+    efconfig.mode = effects.EffectMode.EXPORT
 
     # 背景レイヤー
     img0, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig)

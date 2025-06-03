@@ -247,6 +247,8 @@
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'contrast')
 
+                            VSeparator:
+
                             ParamSlider:
                                 id: slider_midtone
                                 text: "Midtone"                            
@@ -255,8 +257,6 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'tone')
-
-                            VSeparator:
 
                             ParamSlider:
                                 id: slider_highlight
@@ -276,23 +276,37 @@
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'tone')
 
-                            ParamSlider:
-                                id: slider_white
-                                text: "Whites"
-                                min: -100
-                                max: 100
-                                value: 0
-                                step: 1
-                                on_slider: root.apply_effects_lv(2, 'tone')
+                            VSeparator:
+
+                            HeadLabel:
+                                text: ' Level'
 
                             ParamSlider:
-                                id: slider_black
-                                text: "Blacks"
-                                min: -100
-                                max: 100
+                                id: slider_black_level
+                                text: "Black Level"
+                                min: 0
+                                max: 253
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(2, 'tone')
+                                on_slider: root.apply_effects_lv(2, 'level')
+
+                            ParamSlider:
+                                id: slider_mid_level
+                                text: "Mid Level"
+                                min: 1
+                                max: 254
+                                value: 127
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'level')
+
+                            ParamSlider:
+                                id: slider_white_level
+                                text: "White Level"
+                                min: 2
+                                max: 255
+                                value: 255
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'level')
 
                             VSeparator:
                             
@@ -670,54 +684,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'vignette')
-
-                            VSeparator:
- 
-                            HeadLabel:
-                                text: ' Exception'
-
-                            ParamBoxLayout:
-                                ParamLabel:
-                                    text: "Highlight"
-                                VSpacer:
-                                    size_hint_x: 0.45
-                                ParamChip:
-                                    id: switch_highlight_compress
-                                    active: False
-                                    on_active: root.apply_effects_lv(2, 'highlight_compress')
-                                    ParamChipText:
-                                        text: "Compress"
-
-                            ParamBoxLayout:
-                                ParamLabel:
-                                    text: "Overexposed"
-                                VSpacer:
-                                    size_hint_x: 0.45
-                                ParamChip:
-                                    id: switch_correct_overexposed_areas
-                                    on_active: root.apply_effects_lv(3, 'correct_overexposed_areas')
-                                    ParamChipText:
-                                        text: "Correct"
-
-                            ParamSlider:
-                                id: slider_correct_overexposed_areas_blur
-                                text: "Blur"
-                                min: 0
-                                max: 100
-                                value: 0
-                                step: 1
-                                on_slider: root.apply_effects_lv(3, 'correct_overexposed_areas')
                             
-                            VSpacer:
-
-                            BoxLayout:
-                                size_hint_y: None
-                                orientation: "vertical"
-                                height: self.minimum_height
-                                
-                                CWColorPicker:
-                                    id: cp_correct_overexposed_areas
-                                    on_current_color: root.apply_effects_lv(3, 'correct_overexposed_areas')
+                            VSpacer
 
                 TabbedPanelItem:
                     text: 'Curves'
@@ -936,6 +904,24 @@
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'nlm_noise_reduction')
 
+                            ParamSlider:
+                                id: slider_light_noise_reduction
+                                text: "Luminace"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'light_noise_reduction')
+
+                            ParamSlider:
+                                id: slider_light_color_noise_reduction
+                                text: "Color"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'light_noise_reduction')
+
                             VSeparator:
 
                             HeadLabel:
@@ -1116,38 +1102,6 @@
                             VSeparator:
 
                             HeadLabel:
-                                text: ' Level'
-
-                            ParamSlider:
-                                id: slider_black_level
-                                text: "Black Level"
-                                min: 0
-                                max: 253
-                                value: 0
-                                step: 1
-                                on_slider: root.apply_effects_lv(2, 'level')
-
-                            ParamSlider:
-                                id: slider_mid_level
-                                text: "Mid Level"
-                                min: 1
-                                max: 254
-                                value: 127
-                                step: 1
-                                on_slider: root.apply_effects_lv(2, 'level')
-
-                            ParamSlider:
-                                id: slider_white_level
-                                text: "White Level"
-                                min: 2
-                                max: 255
-                                value: 255
-                                step: 1
-                                on_slider: root.apply_effects_lv(2, 'level')
-
-                            VSeparator:
-
-                            HeadLabel:
                                 text: ' Glow Effect'
 
                             ParamSlider:
@@ -1176,6 +1130,48 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'glow')
+
+                            VSeparator:
+ 
+                            HeadLabel:
+                                text: ' Exception'
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "Highlight"
+                                VSpacer:
+                                    size_hint_x: 0.45
+                                ParamChip:
+                                    id: switch_highlight_compress
+                                    active: False
+                                    on_active: root.apply_effects_lv(2, 'highlight_compress')
+                                    ParamChipText:
+                                        text: "Compress"
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "Solid Color"
+                                VSpacer:
+                                    size_hint_x: 0.45
+                                ParamChip:
+                                    id: switch_solid_color
+                                    on_active: root.apply_effects_lv(2, 'solid_color')
+                                    ParamChipText:
+                                        text: "Apply"
+
+                            VSpacer:
+                                ref_height: 4
+
+                            BoxLayout:
+                                size_hint_y: None
+                                orientation: "vertical"
+                                height: self.minimum_height
+                                
+                                CWColorPicker:
+                                    id: cp_solid_color
+                                    on_current_color: root.apply_effects_lv(2, 'solid_color')
+                            
+                            VSpacer:
 
                 TabbedPanelItem:
                     id: geometry

@@ -7,6 +7,7 @@ import math
 import logging
 import io
 import threading
+import colour
 from wand.image import Image as WandImage
 from PIL import Image as PILImage, ImageOps as PILImageOps
 import jax.numpy as jnp
@@ -123,8 +124,8 @@ class ImageSet:
                              
     def _load_raw(self, raw, file_path, exif_data, param):
         try:
-            img_array = raw.postprocess(output_color=rawpy.ColorSpace.Adobe,
-                                        demosaic_algorithm=rawpy.DemosaicAlgorithm.LINEAR,
+            img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB,
+                                        demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
                                         output_bps=16,
                                         no_auto_scale=False,
                                         use_camera_wb=True,
@@ -135,7 +136,7 @@ class ImageSet:
                                         no_auto_bright=True,
                                         highlight_mode=5,
                                         auto_bright_thr=0.0005,
-                                        fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Light)
+                                        fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
             """
             # ブラックレベル補正
             raw_image = self._black(raw.raw_image_visible, raw.black_level_per_channel[0])
@@ -159,19 +160,10 @@ class ImageSet:
             # float32へ
             img_array = util.convert_to_float32(img_array)
 
-            # 色空間変換
-            #img_array = color.rgb_to_xyz(img_array, "Adobe RGB")
-            #img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2XYZ)
+            # 色空間変更
+            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
+                                          apply_cctf_encoding=False, apply_gamut_mapping=True).astype(np.float32)
 
-            # 飽和ピクセル復元
-            """
-            wb = raw.camera_whitebalance
-            wb = np.array([wb[0], wb[1], wb[2]]).astype(np.float32)/1024.0
-            _, Tv = exif_data.get('ShutterSpeedValue', "1/100").split('/')
-            Tv = float(_) / float(Tv)
-            ISO = exif_data.get('ISO', 100)                
-            img_array = core.recover_saturated_pixels(img_array, Tv, ISO, wb)
-            """
             # プロファイルを適用
             #dcp_path = os.getcwd() + "/dcp/Fujifilm X-Pro3 Adobe Standard velvia.dcp"
             #reader = DCPReader(dcp_path)
@@ -191,10 +183,10 @@ class ImageSet:
                 Ev = math.log2((Av**2)/Tv)
                 Sv = math.log2(exif_data.get('ISO', 100)/100.0)
                 Ev = Ev + Sv
-                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 6))
+                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
 
-            # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
-            img_array = highlight_recovery.reconstruct_highlight_details(img_array)
+                # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
+                img_array = highlight_recovery.reconstruct_highlight_details(img_array)
 
             # 情報の設定
             core.set_image_param(param, exif_data)
@@ -223,8 +215,9 @@ class ImageSet:
             # float32へ
             img_array = util.convert_to_float32(img_array)
 
-            # 色空間変換
-            #img_array = color.rgb_to_xyz(img_array, "sRGB", True)
+            # 色空間変更
+            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
+                                          apply_cctf_encoding=False, apply_gamut_mapping=True).astype(np.float32)
             
             # 画像からホワイトバランスパラメータ取得
             core.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
