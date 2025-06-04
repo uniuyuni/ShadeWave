@@ -2,7 +2,6 @@
 #from splashscreen import display_splash_screen, close_splash_screen
 #display_splash_screen("platypus.png")
 
-import cv2
 import numpy as np
 
 import os
@@ -39,6 +38,7 @@ import file_cache_system
 import hover_spinner
 import switchable_float_input
 import bounding_box_viewer
+import param
 
 class MainWidget(MDBoxLayout):
 
@@ -159,7 +159,7 @@ class MainWidget(MDBoxLayout):
 
     def save_current_sidecar(self):
         if self.imgset is not None:
-            export.save_json(self.imgset.file_path, self.primary_param, self.ids['mask_editor2'])
+            param.save_json(self.imgset.file_path, self.primary_param, self.ids['mask_editor2'])
     
     @mainthread
     def on_select(self, card):
@@ -178,7 +178,7 @@ class MainWidget(MDBoxLayout):
             param = {}
             #core.set_image_param(param, exif_data)
             #self._set_image_for_mask2(param)
-            export.load_json(imgset.file_path, param, self.ids['mask_editor2'])
+            param.load_json(imgset.file_path, param, self.ids['mask_editor2'])
             #self.set2widget_all(self.primary_effects, param)
             #self.apply_effects_lv(0, 'crop') # 特別あつかい
             self._set_exif_data(exif_data)

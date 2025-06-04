@@ -124,7 +124,7 @@ class ImageSet:
                              
     def _load_raw(self, raw, file_path, exif_data, param):
         try:
-            img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB,
+            img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
                                         output_bps=16,
                                         no_auto_scale=False,
