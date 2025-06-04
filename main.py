@@ -37,7 +37,7 @@ import color
 import file_cache_system
 import hover_spinner
 import switchable_float_input
-import bounding_box_viewer
+import bbox_viewer
 import param
 
 class MainWidget(MDBoxLayout):
