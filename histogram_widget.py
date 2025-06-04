@@ -24,7 +24,7 @@ class HistogramWidget(KVImage):
         r_hist, g_hist, b_hist = [cv2.calcHist([pixels], [i], None, [256], [0, 2.0]) for i in range(3)]
         
         # 輝度の計算
-        luminance = core.cvtToGrayColor(pixels)
+        luminance = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
         #l_hist, _ = np.histogram(luminance, bins=256, range=(0, 1.0))
         l_hist = cv2.calcHist([luminance], [0], None, [256], [0, 2.0])
 

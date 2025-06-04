@@ -879,7 +879,7 @@ class ClarityEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = local_contrast.apply_clarity_luminance(rgb, con)
+            self.diff = local_contrast.apply_clarity_luminance(rgb, con * efconfig.disp_info[4])
             self.hash = param_hash
 
         return self.diff
@@ -900,7 +900,7 @@ class TextureEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = local_contrast.apply_texture_advanced(rgb, con)
+            self.diff = local_contrast.apply_texture_advanced(rgb, con * efconfig.disp_info[4])
             self.hash = param_hash
 
         return self.diff
@@ -921,7 +921,7 @@ class MicroContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = local_contrast.apply_microcontrast(rgb, con)
+            self.diff = local_contrast.apply_microcontrast(rgb, con * efconfig.disp_info[4])
             self.hash = param_hash
 
         return self.diff

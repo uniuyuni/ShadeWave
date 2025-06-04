@@ -8,7 +8,6 @@ from jax import jit
 from functools import partial
 import colour
 import lensfunpy
-from scipy.interpolate import PchipInterpolator
 from scipy.interpolate import splprep, splev
 from scipy.ndimage import label
 from scipy.ndimage import gaussian_filter
@@ -21,7 +20,6 @@ import sigmoid
 import dng_sdk
 import crop_editor
 import util
-#from scipyjax import interpolate
 
 jax.config.update("jax_platform_name", "METAL")
 
@@ -57,18 +55,13 @@ def calculate_correction_value(ev_histogram, ev_setting, maxvalue=4):
 
 # RGBからグレイスケールへの変換
 @jit
-def _cvtToGrayColor(rgb):
+def cvtColorRGB2Gray(rgb):
     # 変換元画像 RGB
     #gry = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     gry = jnp.dot(rgb, jnp.array([0.2989, 0.5870, 0.1140]))
 
     return gry
 
-def cvtToGrayColor(rgb):
-    array = _cvtToGrayColor(rgb)
-    array.block_until_ready()
-
-    return np.array(array)
 
 def convert_RGB2TempTint(rgb):
 
@@ -383,20 +376,11 @@ def log_transform(x, base=np.e):
     # max_val = 1.0 (入力の最大値)
     return np.log(1 + x) / np.log(1 + 1.0)
 
-import aces_tonemapping
-
-def adjust_exposure_v2(x, n):
-    x = adjust_exposure(x, n)
-    #x = aces_tonemapping.aces_tonemapping(x) 
-    x = tone_mapping_np(x)
-    return x
 
 # 露出補正
 def adjust_exposure(rgb, ev):
     # img: 変換元画像
     # ev: 補正値 -4.0〜4.0
-
-    #img2 = img*(2.0**ev)
 
     return rgb * (2.0**ev)
 
@@ -424,22 +408,6 @@ def adjust_contrast(img, cf, c=0.5):
 
     return adjust
     """
-
-# 画像の明るさを制御点を元に補正する
-def apply_curve(image, control_points, control_values):    
-    # image: 入力画像 HLS(float32)のLだけ
-    # control_points : ピクセル値の制御点 list of float32 
-    # control_values : 各制御点に対する補正値 list of float32
-
-    # エルミート補間
-    cs = PchipInterpolator(control_points, control_values)    
-    corrected_image = cs(image)
-
-    #corrected_image = interpolate(control_points, control_values, image)
-    #corrected_image.block_until_ready()
-    #return np.array(corrected_image).astype(np.float32)
-
-    return corrected_image.astype(np.float32)
 
 # レベル補正
 @partial(jit, static_argnums=(1,2,3,))

@@ -470,7 +470,7 @@ class MainApp(MDApp):
         self.title = "escargot"
         self.theme_cls.theme_style = 'Dark'
         self.theme_cls.primary_palette = 'Blue'
-
+        
         self.cache_system = cache_system
 
     def build(self): 

@@ -216,10 +216,22 @@ class BaseMask(Widget):
         if self.editor.crop_image_hls is not None:            
             himg = self.editor.crop_image_hls[..., 0]
             
-            hmin = self.effects_param.get('mask2_hue_min', 0) / 255
-            hmax = self.effects_param.get('mask2_hue_max', 359) / 359
-            if (hmin != 0) or (1 != hmax):
-                himg = np.where((himg < hmin) | (hmax < himg), 0, image)
+            hdist = self.effects_param.get('mask2_hue_distance', 179)
+            if hdist != 179:
+                cx, cy = self.editor.tcg_to_crop_image(*self.center)
+                print(f"point: {cx}, {cy}, {self.editor.crop_image_hls[int(cy), int(cx)]}")
+                center_hue = self.editor.crop_image_hls[int(cy), int(cx), 0]
+                
+                # 色相の範囲チェック（0-360の円状ループを考慮）
+                hmin = (center_hue - hdist) % 360
+                hmax = (center_hue + hdist) % 360
+                
+                if hmin <= hmax:
+                    # 通常の範囲チェック
+                    himg = np.where((himg < hmin) | (hmax < himg), 0, image)
+                else:
+                    # 0をまたぐ場合の範囲チェック
+                    himg = np.where(((himg < hmin) & (hmax < himg)), 0, image)
             else:
                 himg = image
 
@@ -237,10 +249,6 @@ class BaseMask(Widget):
                 limg = np.where((limg < lmin) | (lmax < limg), 0, image)
             else:
                 limg = image
-
-            #pw = (image_size[0]-limg.shape[1])//2
-            #ph = (image_size[1]-limg.shape[0])//2
-            #limg = np.pad(limg,((ph, ph), (pw, pw)))
 
             return limg
         
@@ -1893,6 +1901,12 @@ class MaskEditor2(FloatLayout):
         imax = max(self.image_size[0]/2, self.image_size[1]/2)
         cx, cy = self.center_rotate(cx, cy, self.center_rotate_rad)
         cx, cy = cx + imax, cy + imax
+        return (cx, cy)
+
+    def tcg_to_crop_image(self, cx, cy):
+        cx, cy = self.tcg_to_full_image(cx, cy)
+        cx = cx * (self.crop_image_hls.shape[1] / self.full_image_rgb.shape[1])
+        cy = cy * (self.crop_image_hls.shape[0] / self.full_image_rgb.shape[0])
         return (cx, cy)
 
     def apply_orientation(self, cx, cy):
