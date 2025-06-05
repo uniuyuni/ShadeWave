@@ -475,10 +475,28 @@ class LightNoiseReductionEffect(Effect):
                 
                 # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
                 if its > 0:
-                    d_l = max(1, min(15, int(3 + its * 0.15)))
+                    d_l = max(1, min(15, int(1 + its * 0.05)))
                     d_l = d_l + 1 if d_l % 2 == 0 else d_l
-                    sigma_l = 10 + its * 1.0
-                    l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
+                    sigma_l = 10 + its * 0.5
+
+                    # ノイズ低減処理付きSobel
+                    gray = l / 100.0
+                    denoised = cv2.bilateralFilter(gray, 5, 0.1, 5)
+                    sobel_x = cv2.Sobel(denoised, cv2.CV_32F, 1, 0)
+                    sobel_y = cv2.Sobel(denoised, cv2.CV_32F, 0, 1)
+                    mag = np.sqrt(sobel_x**2 + sobel_y**2)
+                    
+                    # ノイズ閾値処理
+                    noise_threshold = 0.05
+                    mag[mag < noise_threshold] = 0
+                    #cv2.imwrite("mag.jpg", (mag * 255).astype(np.uint8))
+                    l_filtered = cv2.ximgproc.jointBilateralFilter(
+                        mag, gray, 
+                        d_l, sigma_l / 10, sigma_l
+                    ) * 100.0
+                    print(f"jbf: {d_l}, {sigma_l/10}, {sigma_l}")
+
+                    #l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
                 else:
                     l_filtered = l
                 

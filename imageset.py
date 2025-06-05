@@ -104,7 +104,7 @@ class ImageSet:
             _, _, width, height = self._delete_exif_orientation(exif_data)
 
             # 情報の設定
-            width, height = core.set_image_param(param, exif_data)
+            width, height = core.set_image_param(param, img_array)
 
             # RAW画像のサイズに合わせてリサイズ
             img_array = cv2.resize(img_array, (width, height))
@@ -132,10 +132,12 @@ class ImageSet:
                                         user_wb = [1.0, 1.0, 1.0, 0.0],
                                         gamma=(1.0, 1.0),
                                         four_color_rgb=True,
+                                        half_size=False,
                                         #user_black=0,
                                         no_auto_bright=True,
                                         highlight_mode=5,
                                         auto_bright_thr=0.0005,
+
                                         fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
             """
             # ブラックレベル補正
@@ -149,7 +151,13 @@ class ImageSet:
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
             # サイズを整える
-            #top, left, width, height = core.get_exif_image_size(exif_data)
+            left = int(left * (img_array.shape[1] / width))
+            if img_array.shape[1] < left + width:
+                width = img_array.shape[1] - left
+            top = int(top * (img_array.shape[0] / height))
+            if img_array.shape[0] < top + height:
+                height = img_array.shape[0] - top
+
             img_array = img_array[top:top+height, left:left+width]
 
             # 下位2bit補完
@@ -189,7 +197,7 @@ class ImageSet:
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
 
             # 情報の設定
-            core.set_image_param(param, exif_data)
+            core.set_image_param(param, img_array)
 
             # 正方形にする
             img_array = core.adjust_shape(img_array)
@@ -226,7 +234,7 @@ class ImageSet:
             self._delete_exif_orientation(exif_data)
 
             # 情報の設定
-            core.set_image_param(param, exif_data)
+            core.set_image_param(param, img_array)
 
             # 正方形へ変換
             img_array = core.adjust_shape(img_array)

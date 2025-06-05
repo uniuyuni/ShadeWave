@@ -38,7 +38,7 @@ import file_cache_system
 import hover_spinner
 import switchable_float_input
 import bbox_viewer
-import param
+import params
 
 class MainWidget(MDBoxLayout):
 
@@ -159,7 +159,7 @@ class MainWidget(MDBoxLayout):
 
     def save_current_sidecar(self):
         if self.imgset is not None:
-            param.save_json(self.imgset.file_path, self.primary_param, self.ids['mask_editor2'])
+            params.save_json(self.imgset.file_path, self.primary_param, self.ids['mask_editor2'])
     
     @mainthread
     def on_select(self, card):
@@ -178,7 +178,7 @@ class MainWidget(MDBoxLayout):
             param = {}
             #core.set_image_param(param, exif_data)
             #self._set_image_for_mask2(param)
-            param.load_json(imgset.file_path, param, self.ids['mask_editor2'])
+            params.load_json(imgset.file_path, param, self.ids['mask_editor2'])
             #self.set2widget_all(self.primary_effects, param)
             #self.apply_effects_lv(0, 'crop') # 特別あつかい
             self._set_exif_data(exif_data)

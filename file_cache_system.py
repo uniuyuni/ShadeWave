@@ -160,7 +160,7 @@ class FileCacheSystem:
             
             # コールバックが指定されていればすぐに呼び出す
             if callback:
-                callback(file_path, imgset, exif_data, param)
+                callback(file_path, imgset, exif_data, param, CallbackFlag.FINISH)
                 
             return exif_data, imgset
                 

@@ -785,9 +785,9 @@ def get_multiple_mask_bbox(mask):
     
     return bboxes
 
-# EXIFから画像の初期設定を設定する
-def set_image_param(param, exif_data):
-    _, _, width, height = get_exif_image_size(exif_data)
+# 画像の初期設定を設定する
+def set_image_param(param, img):
+    height, width = img.shape[:2]
 
     # イメージサイズをパラメータに入れる
     param['original_img_size'] = (width, height)
