@@ -8,7 +8,7 @@
 		"keyboard.touchbar.enabled": false
 	},
 	"launch": {
-		"version": "0.6.9",
+		"version": "0.7.0",
 		"configurations": []
 	}
 }

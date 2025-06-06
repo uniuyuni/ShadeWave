@@ -28,7 +28,7 @@ from functools import partial
 import importlib
 
 import core
-import util
+import params
 import effects
 import export
 
@@ -103,7 +103,7 @@ class BaseMask(Widget):
         # エフェクトパラメータ保持
         self.effects = effects.create_effects()
         self.effects_param = {}
-        core.set_temperature_to_param(self.effects_param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
+        params.set_temperature_to_param(self.effects_param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
 
         self.is_draw_mask = True
         self.image_mask_cache = None

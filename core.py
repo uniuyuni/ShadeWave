@@ -15,10 +15,8 @@ import logging
 import math
 from numba import njit, prange
 
-import config
 import sigmoid
 import dng_sdk
-import crop_editor
 import util
 
 jax.config.update("jax_platform_name", "METAL")
@@ -785,24 +783,6 @@ def get_multiple_mask_bbox(mask):
     
     return bboxes
 
-# 画像の初期設定を設定する
-def set_image_param(param, img):
-    height, width = img.shape[:2]
-
-    # イメージサイズをパラメータに入れる
-    param['original_img_size'] = (width, height)
-    param['img_size'] = (width, height)
-    param['crop_rect'] = param.get('crop_rect', crop_editor.CropEditor.get_initial_crop_rect(width, height))
-    param['disp_info'] = crop_editor.CropEditor.convert_rect_to_info(param['crop_rect'], param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size']))
-
-    return (width, height)
-
-def set_temperature_to_param(param, temp, tint, Y):
-    param['color_temperature_reset'] = temp
-    param['color_temperature'] = temp
-    param['color_tint_reset'] = tint
-    param['color_tint'] = tint
-    param['color_Y'] = Y
 
 # 上下または左右の余白を追加
 def adjust_shape(img):

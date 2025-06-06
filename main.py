@@ -176,7 +176,7 @@ class MainWidget(MDBoxLayout):
 
             # 新しく開く画像のデータを全てセット
             param = {}
-            #core.set_image_param(param, exif_data)
+            #params.set_image_param(param, exif_data)
             #self._set_image_for_mask2(param)
             params.load_json(imgset.file_path, param, self.ids['mask_editor2'])
             #self.set2widget_all(self.primary_effects, param)
@@ -318,7 +318,7 @@ class MainWidget(MDBoxLayout):
     def _set_image_for_mask2(self, param):
         self.ids['mask_editor2'].set_orientation(param.get('rotation', 0), param.get('rotation2', 0), param.get('flip_mode', 0))
         self.ids['mask_editor2'].set_texture_size(self.texture_width, self.texture_height)
-        self.ids['mask_editor2'].set_image(param['original_img_size'], param.get('disp_info', None))
+        self.ids['mask_editor2'].set_image(param['original_img_size'], params.get_disp_info(param))
         self.ids['mask_editor2'].update()
 
     def _enable_mask2(self):
@@ -344,7 +344,7 @@ class MainWidget(MDBoxLayout):
     def _enable_inpaint_edit(self):
         if self.inpaint_edit is None:
             self.inpaint_edit = bounding_box_viewer.BoundingBoxViewer(size=(config.get_config('preview_size'), config.get_config('preview_size')),
-                                initial_view=self.primary_param['disp_info'],
+                                initial_view=params.get_disp_info(self.primary_param),
                                 on_delete=self._on_inpaint_edit)
             boxes = []
             for inpaint_diff in self.primary_param.get('inpaint_diff_list', []):

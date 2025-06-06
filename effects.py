@@ -27,6 +27,7 @@ import config
 import pipeline
 import filter
 import local_contrast
+import params
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -185,7 +186,7 @@ class InpaintEffect(Effect):
         if param['inpaint'] > 0:
             if self.mask_editor is None:
                 self.mask_editor = mask_editor.MaskEditor(param['img_size'][0], param['img_size'][1])
-                self.mask_editor.zoom = param['disp_info'][4]
+                self.mask_editor.zoom = param.get_disp_info(param)[4]
                 self.mask_editor.pos = [0, 0]
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
             
@@ -297,7 +298,7 @@ class CropEffect(Effect):
         param['aspect_ratio'] = widget.ids["spinner_acpect_ratio"].text
 
         # disp_info がないのはマスク
-        if param.get('crop_rect', None) is not None:
+        if params.get_crop_rect(param) is not None:
 
             # クロップエディタを開く
             if param['crop_enable'] == True:
@@ -319,13 +320,13 @@ class CropEffect(Effect):
 
     def make_diff(self, img, param, efconfig):
         ce = param.get('crop_enable', False)
-        disp_info = param.get('disp_info', None)
+        disp_info = params.get_disp_info(param)
         if ce == True or disp_info is None:
             self.diff = None
             self.hash = None
             param['img_size'] = (param['original_img_size'][0], param['original_img_size'][1])
             msize = max(param['original_img_size'][0], param['original_img_size'][1])
-            param['disp_info'] = (0, 0, msize, msize, disp_info[4])
+            params.set_disp_info(param, (0, 0, msize, msize, disp_info[4]))
         else:
             param_hash = hash((ce))
             if self.hash != param_hash:
@@ -340,28 +341,28 @@ class CropEffect(Effect):
     def _open_crop_editor(self, param, widget):
         if self.crop_editor is None:
             input_width, input_height = param['original_img_size']
-            x1, y1, x2, y2 = param['crop_rect']
+            x1, y1, x2, y2 = params.get_crop_rect(param)
             scale = config.get_config('preview_size')/max(input_width, input_height)
             self.crop_editor = crop_editor.CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
             self.crop_editor.set_editing_callback(self._crop_editing)
             widget.ids["preview_widget"].add_widget(self.crop_editor)
 
             # 編集中は一時的に変更
-            param['disp_info'] = crop_editor.CropEditor.get_initial_disp_info(input_width, input_height, scale)
+            params.set_disp_info(param, crop_editor.CropEditor.get_initial_disp_info(input_width, input_height, scale))
 
             # 保存しておく
             self.param = param
 
     def _close_crop_editor(self, param, widget):
         if self.crop_editor is not None:
-            param['crop_rect'] = self.crop_editor.get_crop_rect()
-            param['disp_info'] = self.crop_editor.get_disp_info()
+            params.set_crop_rect(param, self.crop_editor.get_crop_rect())
+            params.set_disp_info(param, self.crop_editor.get_disp_info())
 
             widget.ids["preview_widget"].remove_widget(self.crop_editor)
             self.crop_editor = None
 
     def _crop_editing(self):
-        self.param['crop_rect'] = self.crop_editor.get_crop_rect()
+        params.set_crop_rect(self.param, self.crop_editor.get_crop_rect())
         if self.crop_editor_callback is not None:
             self.crop_editor_callback()
 
@@ -454,18 +455,7 @@ class LightNoiseReductionEffect(Effect):
             self.hash = None
         else:
             param_hash = hash((its, col))
-            if self.hash != param_hash:
-                """
-                lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
-                l = cv2.GaussianBlur(lab[..., 0], (7, 7), 0)
-                self.diff = cv2.ximgproc.guidedFilter(
-                                    guide=l, 
-                                    src=img,
-                                    radius=int(its * efconfig.disp_info[4]), 
-                                    eps=0.01)
-                """
-                #self.diff = cv2.bilateralFilter(img, *self.intensity_to_params(int(its * efconfig.disp_info[4])))
-                
+            if self.hash != param_hash:  
                 its = its * efconfig.disp_info[4]
                 col = col * efconfig.disp_info[4]
 
@@ -1673,7 +1663,7 @@ class VignetteEffect(Effect):
             param_hash = hash((vi, vr))
             if self.hash != param_hash:
                 _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_size'), config.get_config('preview_size'), efconfig.disp_info)
-                self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, param.get('crop_rect'), (offset_x, offset_y))
+                self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y))
                 self.hash = param_hash
         
         return self.diff

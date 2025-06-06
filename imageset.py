@@ -16,7 +16,7 @@ from functools import partial
 
 #from dcp_profile import DCPReader, DCPProcessor
 import config
-import local_contrast
+import params
 import util
 import viewer_widget
 import color
@@ -46,7 +46,7 @@ class ImageSet:
         """
         wb[1] = np.sqrt(wb[1])
         #img_array /= wb
-        core.set_temperature_to_param(param, *core.invert_RGB2TempTint(wb))
+        params.set_temperature_to_param(param, *core.invert_RGB2TempTint(wb))
         return img_array
 
     def _delete_exif_orientation(self, exif_data):
@@ -104,7 +104,7 @@ class ImageSet:
             _, _, width, height = self._delete_exif_orientation(exif_data)
 
             # 情報の設定
-            width, height = core.set_image_param(param, img_array)
+            width, height = params.set_image_param(param, img_array)
 
             # RAW画像のサイズに合わせてリサイズ
             img_array = cv2.resize(img_array, (width, height))
@@ -122,7 +122,7 @@ class ImageSet:
         
         return raw
                              
-    def _load_raw(self, raw, file_path, exif_data, param):
+    def _load_raw(self, raw, file_path, exif_data, param, half=True):
         try:
             img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
@@ -132,7 +132,7 @@ class ImageSet:
                                         user_wb = [1.0, 1.0, 1.0, 0.0],
                                         gamma=(1.0, 1.0),
                                         four_color_rgb=True,
-                                        half_size=False,
+                                        half_size=half,
                                         #user_black=0,
                                         no_auto_bright=True,
                                         highlight_mode=5,
@@ -151,13 +151,14 @@ class ImageSet:
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
             # サイズを整える
+            """
             left = int(left * (img_array.shape[1] / width))
             if img_array.shape[1] < left + width:
                 width = img_array.shape[1] - left
             top = int(top * (img_array.shape[0] / height))
             if img_array.shape[0] < top + height:
                 height = img_array.shape[0] - top
-
+            """
             img_array = img_array[top:top+height, left:left+width]
 
             # 下位2bit補完
@@ -196,8 +197,11 @@ class ImageSet:
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
 
+
+            img_array = cv2.resize(img_array, (width, height))
+
             # 情報の設定
-            core.set_image_param(param, img_array)
+            params.set_image_param(param, img_array)
 
             # 正方形にする
             img_array = core.adjust_shape(img_array)
@@ -228,13 +232,13 @@ class ImageSet:
                                           apply_cctf_encoding=False, apply_gamut_mapping=True).astype(np.float32)
             
             # 画像からホワイトバランスパラメータ取得
-            core.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
+            params.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
             
             # クロップとexifデータの回転
             self._delete_exif_orientation(exif_data)
 
             # 情報の設定
-            core.set_image_param(param, img_array)
+            params.set_image_param(param, img_array)
 
             # 正方形へ変換
             img_array = core.adjust_shape(img_array)

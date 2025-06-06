@@ -4,14 +4,16 @@ import numpy as np
 import core
 import config
 import crop_editor
+import params
 import effects
 
 def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2):
     
     # クロップ情報を得る、ない場合元のクロップ情報から展開
-    disp_info = primary_param.get('disp_info', None)
+    disp_info = params.get_disp_info(primary_param)
     if disp_info is None:
-        disp_info = primary_param['disp_info'] = crop_editor.CropEditor.convert_rect_to_info(primary_param['crop_rect'], primary_param['original_img_size'], config.get_config('preview_size')/max(primary_param['original_img_size']))
+        disp_info = crop_editor.CropEditor.convert_rect_to_info(params.get_crop_rect(primary_param), primary_param['original_img_size'], config.get_config('preview_size')/max(primary_param['original_img_size']))
+        params.set_disp_info(primary_param, disp_info)
 
     # 環境設定
     efconfig = effects.EffectConfig()
@@ -21,14 +23,14 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
 
     # 背景レイヤー
     img0, reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
-    disp_info = primary_param['disp_info'] # Cropによって値が更新されてるかも
+    disp_info = params.get_disp_info(primary_param) # Cropによって値が更新されてるかも
 
     if crop_image is None or reset == True:
-        imgc, disp_info2 = core.crop_image(img0, disp_info, primary_param['crop_rect'], texture_width, texture_height, click_x, click_y, offset, is_zoomed)
+        imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, offset, is_zoomed)
         mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
         #mask_editor2.set_texture_size(texture_width, texture_height)
         mask_editor2.set_image(primary_param['original_img_size'], disp_info2)
-        primary_param['disp_info'] = disp_info2
+        params.set_disp_info(primary_param, disp_info2)
     else:
         imgc = crop_image
         disp_info2 = disp_info
@@ -54,7 +56,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
 def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     
     # 環境設定
-    disp_info = crop_editor.CropEditor.convert_rect_to_info(primary_param.get('crop_rect'), primary_param['original_img_size'], 1)
+    disp_info = crop_editor.CropEditor.convert_rect_to_info(params.get_crop_rect(primary_param), primary_param['original_img_size'], 1)
     efconfig = effects.EffectConfig()
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True
@@ -62,7 +64,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
 
     # 背景レイヤー
     img0, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig)
-    x1, y1, x2, y2 = primary_param.get('crop_rect')
+    x1, y1, x2, y2 = params.get_crop_rect(primary_param)
     imgc = img0[y1:y2, x1:x2] # ただのクロップ
     #imgc, disp_info2 = core.crop_image(img0, disp_info, *primary_param['original_img_size'], 0, 0, (0, 0), False)
     mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
