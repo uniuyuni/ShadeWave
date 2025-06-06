@@ -1,4 +1,5 @@
 
+import os
 import dis
 import json
 from datetime import datetime as dt
@@ -11,7 +12,7 @@ import config
 
 SPECIAL_PARAM = [
     # for set_image_param
-    'original_img_size',
+    #'original_img_size',
     'img_size',
     #'crop_rect',
     'disp_info',

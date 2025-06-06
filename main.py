@@ -63,8 +63,7 @@ class MainWidget(MDBoxLayout):
         self.ids['viewer'].set_cache_system(self.cache_system)
         self.inpaint_edit = None
 
-        #self._keyboard = KVWindow.request_keyboard(self._keyboard_closed, self)
-        #self._keyboard.bind(on_key_down=self._on_keyboard_down)
+        KVWindow.bind(on_key_down=self.on_key_down)
 
     def on_kv_post(self, *args, **kwargs):
         super(MainWidget, self).on_kv_post(*args, **kwargs)
@@ -172,7 +171,7 @@ class MainWidget(MDBoxLayout):
 
         if card is not None:
             self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
-            exif_data, imgset = self.cache_system.get_file(card.file_path, self.on_fcs_get_file)
+            exif_data, imgset = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5: file_cache_system.run_method(self, "on_fcs_get_file", f1, f2, f3, f4, f5))
 
             # 新しく開く画像のデータを全てセット
             param = {}
@@ -187,11 +186,11 @@ class MainWidget(MDBoxLayout):
             card.param = param
     
     @mainthread
-    def on_fcs_get_file(self, filename, imgset, exif_data, param, flag):
+    def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
 
-        if flag != file_cache_system.CallbackFlag.CONTINUE:
+        if flag == 0:
             # 最終的なパラメータを合成
-            card = self.ids['viewer'].get_card(filename)
+            card = self.ids['viewer'].get_card(file_path)
             if card is not None:
                 param.update(card.param)
 
@@ -199,11 +198,11 @@ class MainWidget(MDBoxLayout):
                 card.imgset = imgset
                 card.param = param
 
-            self.imgset = imgset
             self.primary_param = param
             self.set2widget_all(self.primary_effects, param)
             self.apply_effects_lv(0, 'crop') # 特別あつかい
             
+        self.imgset = imgset
         self.start_draw_image_and_crop(imgset)
 
     def on_image_touch_down(self, touch):
@@ -450,18 +449,11 @@ class MainWidget(MDBoxLayout):
     def shutdown(self):
         pass
         
-
-    """
-    def _keyboard_closed(self):
-        self._keyboard.unbind(on_key_down=self._on_keyboard_down)
-        self._keyboard = None
-
-    def _on_keyboard_down(self, keyboard, keycode, text, modifiers):
-        if keycode[1] == 'a':
-            self._trigger_layout()
-
-        return True
-    """
+    def on_key_down(self, window, key, scancode, codepoint, modifier):
+        print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
+        if (key == 115 and ('ctrl' in modifier or 'meta' in modifier)):  # Sキー
+            self.save_current_sidecar()
+            return True
     
 class MainApp(MDApp):
     def __init__(self, cache_system, **kwargs):

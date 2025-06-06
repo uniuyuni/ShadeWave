@@ -1,11 +1,12 @@
 numpy==1.26.4
 kivymd
-Opencv-python
+opencv-contrib-python
+jax==0.5.0
 jax-metal
 colour-science
-lensfunpy
-skimage
+scikit-image
 rawpy
+lensfunpy
 pyexiftool
 setuptools
 wheel
@@ -15,3 +16,7 @@ wand
 watchfiles
 screeninfo
 pyopencl
+numba
+thop
+einops
+timm

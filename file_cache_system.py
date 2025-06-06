@@ -1,19 +1,40 @@
+import concurrent
 import threading
 import time
 from typing import Dict, Any, Optional, Tuple
-import logging
-from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+import logging
 
-from imageset import ImageSet
+import imageset
 
-class CallbackFlag(Enum):
-    NONE = 0
-    CONTINUE = 1
-    FINISH = 2
+# メインプロセスで実行されるコールバック関数
+def _task_callback(file_callbacks, future):
+    try:
+        # タスクの結果を取得
+        if isinstance(future, concurrent.futures.Future):
+            # サブプロセス実行なら共有メモリから取得
+            file_path, shm, exif_data, param, flag = future.result()
+            imgset = imageset.shared_memory_to_imageset(*shm)
+        else:
+            # メインプロセス実行ならメモリから取得
+            file_path, imgset, exif_data, param, flag = future
+
+        # コールバックを実行
+        callback = file_callbacks.get(file_path, None)
+        if callback:
+            callback(file_path, imgset, exif_data, param, flag)
+            logging.info(f"FCS Callback executed for {file_path}, flag={flag}")
+
+    except Exception as e:
+        logging.error(f"FCS: {str(e)}")
+
+# インスタンスメソッド用ラッパー
+def run_method(obj, method_name, *args, **kwargs):
+    return getattr(obj, method_name)(*args, **kwargs)
 
 # ヘルパー関数（スレッド間で共有）
-def _load_file_thread(shared_resources, file_path, exif_data, param, imgset):
+def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, file_callbacks):
     """
     ファイル読み込みスレッド
     
@@ -23,47 +44,50 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset):
         exif_data: EXIFデータ
         param: 追加パラメータ
     """
+    # 共有リソースを解凍
+    cache = shared_resources['cache']
+    preload_registry = shared_resources['preload_registry']
+    active_processes = shared_resources['active_processes']
+    
+    logging.info(f"Loading thread started for {file_path}")
+    if imgset is None:
+        imgset = imageset.ImageSet()
+
     try:
-        # 共有リソースを解凍
-        cache = shared_resources['cache']
-        preload_registry = shared_resources['preload_registry']
-        active_processes = shared_resources['active_processes']
-        callback_flags = shared_resources['callback_flags']
-        
-        logging.info(f"Loading thread started for {file_path}")
-        if imgset is None:
-            imgset = ImageSet()
-        result = imgset.load(file_path, exif_data, param)
-        # 失敗？
-        if result == False:
-            pass
+        # ファイル読み込み準備？
+        result = imgset.preload(file_path, exif_data, param)
+        if result is not None:
+            # 続きの読み込みがある
+            with ProcessPoolExecutor(max_workers=len(result)) as executor:
+                futures = []
+                for i, task in enumerate(result):
+                    if i > 0:
+                        future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
+                        future.add_done_callback(lambda f: _task_callback(file_callbacks, f))  # コールバック登録
+                        futures.append(future)
+                result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
+                _task_callback(file_callbacks, result)
 
-        # 成功？
-        elif result == True:
-            # キャッシュに登録
-            cache[file_path] = (imgset, exif_data, param)
-
-        else:
-            # 中間結果をキャッシュに登録
-            cache[file_path] = (imgset, exif_data, param)
-            callback_flags[file_path] = CallbackFlag.CONTINUE   # 中間結果を表示
-
-            # 続きの実行
-            imgset.load(file_path, exif_data, param, result)
-
-            # キャッシュに登録
-            cache[file_path] = (imgset, exif_data, param)
+        # キャッシュに登録
+        cache[file_path] = (imgset, exif_data, param)
         
         # 先行読み込み登録から削除
         if file_path in preload_registry:
             del preload_registry[file_path]
-        
-        # 完了フラグを設定
-        callback_flags[file_path] = CallbackFlag.FINISH
-                
+
+        # スレッド終了
+        elapsed_time = time.time() - active_processes[file_path]
+        logging.info(f"FCS Finish loading {file_path} 経過時間 {elapsed_time:.3f} 秒.")
+
+        # 進行中のスレッドから削除
+        if file_path in active_processes:
+            del active_processes[file_path]
+
+
     except Exception as e:
-        logging.error(f"Loading file {file_path}: {e}")
-        
+        logging.error(f"FCS Error preloading {file_path}: {e}")
+        return
+    
     finally:        
         # 処理キューフラグを設定
         shared_resources['process_queue_flag'] = True
@@ -75,7 +99,6 @@ class FileCacheSystem:
             'cache': {},
             'preload_registry': {},
             'active_processes': {},
-            'callback_flags': {},
             'process_queue_flag': False
         }
         
@@ -90,51 +113,14 @@ class FileCacheSystem:
         self.max_concurrent_loads = max_concurrent_loads
         
         # 監視スレッドの開始
-        self.monitor_thread = threading.Thread(target=self._monitor_processes, daemon=True)
-        self.monitor_thread.start()
+        #self.monitor_thread = threading.Thread(target=self._monitor_processes, daemon=True)
+        #self.monitor_thread.start()
 
         # ThreadPool
         self.p = ThreadPoolExecutor(max_workers=max_concurrent_loads)
      
-    def _monitor_processes(self):
-        """スレッドと完了フラグを監視するスレッド"""
-        while True:
-            try:
-                # コールバックの実行
-                callback_flags = self.shared_resources['callback_flags']
-                for file_path in list(callback_flags.keys()):
-                    if callback_flags[file_path] != CallbackFlag.NONE:
-                        if file_path in self.cache:
-                            # キャッシュからデータを取得
-                            imgset, exif_data, param = self.cache[file_path]
-
-                            elapsed_time = time.time() - self.active_processes[file_path]
-                            if callback_flags[file_path] == CallbackFlag.CONTINUE:
-                                logging.info(f"Continue loading {file_path} 経過時間 {elapsed_time:.3f} 秒.")
-                            else:
-                                logging.info(f"Finish loading {file_path} 経過時間 {elapsed_time:.3f} 秒.")
-
-                            if file_path in self.file_callbacks:
-                                # コールバックを実行
-                                callback = self.file_callbacks[file_path]
-                                callback(file_path, imgset, exif_data, param, callback_flags[file_path])
-                        
-                        # 進行中のスレッドから削除
-                        if callback_flags[file_path] == CallbackFlag.FINISH and file_path in self.active_processes:
-                            del self.active_processes[file_path]
-
-                        # フラグをクリア
-                        del callback_flags[file_path]
-                
-                # キュー処理
-                self.process_preload_queue(self.max_concurrent_loads)
-
-            except Exception as e:
-                logging.error(f"Error in monitor thread: {e}")
-            
-            time.sleep(0.01)
      
-    def get_file(self, file_path: str, callback=None) -> Tuple[Dict[str, Any], Optional[ImageSet]]:
+    def get_file(self, file_path: str, callback=None) -> Tuple[Dict[str, Any], Optional[imageset.ImageSet]]:
         """
         ファイルを取得する関数
         
@@ -155,18 +141,18 @@ class FileCacheSystem:
         
         # キャッシュにある場合
         if file_path in self.cache:
-            logging.info(f"Cache hit: {file_path}")
+            logging.info(f"FCS Cache hit: {file_path}")
             imgset, exif_data, param = self.cache[file_path]
             
             # コールバックが指定されていればすぐに呼び出す
             if callback:
-                callback(file_path, imgset, exif_data, param, CallbackFlag.FINISH)
+                callback(file_path, imgset, exif_data, param, 0)
                 
             return exif_data, imgset
                 
         # 先行読み込み登録がある場合
         elif file_path in self.preload_registry:
-            logging.info(f"Preload registry hit: {file_path}")
+            logging.info(f"FCS Preload registry hit: {file_path}")
             exif_data, param, imgset = self.preload_registry[file_path]
             
             # まだ読み込みスレッドが開始されていなければ開始
@@ -202,7 +188,7 @@ class FileCacheSystem:
             return
         
         # 高速化のためここで作っとく
-        imgset = ImageSet()
+        imgset = imageset.ImageSet()
         imgset.file_path = file_path
         imgset.param = param
         
@@ -217,7 +203,7 @@ class FileCacheSystem:
             # 優先度が低い場合は自動的にキューを処理
             self.process_preload_queue(max_concurrent_loads=self.max_concurrent_loads)
 
-    def _start_loading_thread(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, imgset: ImageSet = None):
+    def _start_loading_thread(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, imgset: imageset.ImageSet = None):
         """読み込みスレッドを開始する内部関数"""
         if param is None:
             param = {}
@@ -239,9 +225,7 @@ class FileCacheSystem:
             thread = threading.Thread(target=_load_file_thread, args=[self.shared_resources, file_path, exif_data, param, imgset], daemon=True)
             thread.start()
         else:
-            future = self.p.submit(_load_file_thread, self.shared_resources, file_path, exif_data, param, imgset)
-
-            #process = self.p.apply_async(_load_file_process, args=(self.shared_resources, file_path, exif_data, param))
+            future = self.p.submit(_load_file_thread, self.shared_resources, file_path, exif_data, param, imgset, self.file_callbacks)
 
         logging.info(f"Started loading process for {file_path}")
             
@@ -318,7 +302,7 @@ class FileCacheSystem:
             if file_path not in self.active_processes:  # 既に進行中でないことを確認
                 exif_data, param, imgset = self.preload_registry[file_path]
                 self._start_loading_process(file_path, exif_data, param, imgset)
-                print(f"Starting loading processes for {file_path}")
+                logging.info(f"FCS Starting loading processes for {file_path}")
         
     def shutdown(self):
         """
@@ -330,4 +314,4 @@ class FileCacheSystem:
         
         self.p.shutdown()
         
-        logging.info("Cache system shutdown complete")
+        logging.info("FCS shutdown complete")

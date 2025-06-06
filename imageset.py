@@ -6,13 +6,13 @@ import rawpy
 import math
 import logging
 import io
-import threading
 import colour
 from wand.image import Image as WandImage
 from PIL import Image as PILImage, ImageOps as PILImageOps
 import jax.numpy as jnp
 from jax import jit
 from functools import partial
+from multiprocessing import shared_memory
 
 #from dcp_profile import DCPReader, DCPProcessor
 import config
@@ -22,6 +22,42 @@ import viewer_widget
 import color
 import bit_depth_expansion
 import highlight_recovery
+
+def imageset_to_shared_memory(imgset):
+    """
+    ImageSetを共有メモリに変換する
+    """
+    # 画像のサイズを取得
+    width, height = imgset.img.shape[:2]
+    # 共有メモリを作成
+    shm = shared_memory.SharedMemory(create=True, size=imgset.img.nbytes)
+    # 共有メモリに画像を書き込む
+    shared_array = np.ndarray(imgset.img.shape, dtype=imgset.img.dtype, buffer=shm.buf)
+    shared_array[:] = imgset.img[:]
+    # 共有メモリのサイズを返す
+    return (imgset.file_path, shm.name, imgset.img.shape, imgset.img.dtype)
+
+def shared_memory_to_imageset(file_path, shm_name, shape, dtype):
+    """
+    共有メモリからImageSetを作成する
+    """
+    # 共有メモリを読み込む
+    shm = shared_memory.SharedMemory(name=shm_name)
+    #
+    shared_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+    # 共有メモリから画像を読み込む
+    img = np.ndarray(shape, dtype=dtype)
+    img[:] = shared_array[:]
+    # 共有メモリを閉じる
+    shm.close()
+    # 共有メモリを削除
+    shm.unlink()
+    # ImageSetを作成
+    imgset = ImageSet()
+    imgset.file_path = file_path
+    imgset.img = img
+
+    return imgset
 
 class ImageSet:
 
@@ -121,9 +157,18 @@ class ImageSet:
             return False
         
         return raw
+
+    def _load_raw_fast(self, raw, file_path, exif_data, param):
+        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, True)
+        return (file_path, imgset, exif_data, param, 0)
+
+    def _load_raw(self, raw, file_path, exif_data, param):
+        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, False)
+        return (file_path, imageset_to_shared_memory(imgset), exif_data, param, 1)
                              
-    def _load_raw(self, raw, file_path, exif_data, param, half=True):
+    def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
         try:
+            raw = rawpy.imread(file_path)
             img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
                                         output_bps=16,
@@ -136,9 +181,8 @@ class ImageSet:
                                         #user_black=0,
                                         no_auto_bright=True,
                                         highlight_mode=5,
-                                        auto_bright_thr=0.0005,
-
-                                        fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
+                                        auto_bright_thr=0.0005)
+                                        #fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
             """
             # ブラックレベル補正
             raw_image = self._black(raw.raw_image_visible, raw.black_level_per_channel[0])
@@ -197,8 +241,9 @@ class ImageSet:
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
 
-
-            img_array = cv2.resize(img_array, (width, height))
+            # サイズを合わせる
+            if img_array.shape[1] != width or img_array.shape[0] != height:
+                img_array = cv2.resize(img_array, (width, height))
 
             # 情報の設定
             params.set_image_param(param, img_array)
@@ -211,12 +256,11 @@ class ImageSet:
 
         except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
             logging.warning("file is not supported " + file_path)
-            return False
         
         finally:
             raw.close()
 
-        return True
+        return (file_path, self, exif_data, param)
 
     def _load_rgb(self, file_path, exif_data, param):
         # RGB画像で読み込んでみる
@@ -245,21 +289,27 @@ class ImageSet:
             
         self.img = np.array(img_array)
         
-        return True
+        return 0
 
-    def load(self, file_path, exif_data, param, raw=None):
+    class Result():
+        def __init__(self, worker, source):
+            self.worker = worker
+            self.source = source
+
+    def preload(self, file_path, exif_data, param):
         self.file_path = file_path
 
         if file_path.lower().endswith(viewer_widget.supported_formats_raw):
-            if raw is None:
-                #return self._load_raw_preview(file_path, exif_data, param)   
-                raw = self._load_raw_preview(file_path, exif_data, param)   
-                return self._load_raw(raw, file_path, exif_data, param)         
-            else:
-                return self._load_raw(raw, file_path, exif_data, param)
+            raw = None #self._load_raw_preview(file_path, exif_data, param)
+            
+            result = []
+            result.append(ImageSet.Result(worker="_load_raw_fast", source=raw))
+            result.append(ImageSet.Result(worker="_load_raw", source=raw))
 
+            return result
+            
         elif file_path.lower().endswith(viewer_widget.supported_formats_rgb):
             return self._load_rgb(file_path, exif_data, param)
             
         logging.warning("file is not supported " + file_path)
-        return False
+        return 0

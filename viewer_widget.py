@@ -1,3 +1,4 @@
+
 import os
 import threading
 import base64
@@ -5,7 +6,6 @@ import rawpy
 import exiftool
 import numpy as np
 import cv2
-import subprocess
 from watchfiles import watch
 import time
 
@@ -23,11 +23,7 @@ from kivy.metrics import dp
 
 from draggable_widget import DraggableWidget
 
-#import AppKit
-#from Cocoa import NSDragOperationCopy
-
 import core
-import macos
 import util
 
 supported_formats_rgb = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
