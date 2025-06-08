@@ -142,20 +142,16 @@ class ExportFile():
         self.ex_path = ex_path
         self.color_space = color_space
         self.imgset = ImageSet()
-        result = self.imgset.load(self.file_path, self.exif_data, self.param)
-        if result == False:
-            return
-        elif result == True:
-            pass
-        else:
-            self.imgset.load(self.file_path, self.exif_data, self.param, result)
+        result = self.imgset.preload(self.file_path, self.exif_data, self.param)
+        self.imgset.load(result, self.file_path, self.exif_data, self.param)
+
         #self.mask_editor2.set_orientation(self.param.get('rotation', 0), self.param.get('rotation2', 0), self.param.get('flip_mode', 0))
         self.imgset.img.shape[1], self.imgset.img.shape[0]
         self.mask_editor2.set_texture_size(self.imgset.img.shape[1], self.imgset.img.shape[0])
         self.mask_editor2.set_image(self.param['original_img_size'], params.get_disp_info(self.param))
         #self.mask_editor2.update()
 
-        load_json(self.file_path, self.param, self.mask_editor2)
+        params.load_json(self.file_path, self.param, self.mask_editor2)
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
         img = colour.RGB_to_RGB(img, 'ProPhoto RGB', self.color_space, 'CAT16',
                                 apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
@@ -182,6 +178,6 @@ class ExportFile():
         if exifsw:
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
                 safe_metadata = make_safe_metadata(self.exif_data)
-                safe_metadata["Software"] = "Platypus " + VERSION
+                safe_metadata["Software"] = params.APPNAME + " " + params.VERSION
                 result = et.set_tags(self.ex_path, tags=safe_metadata)
                 print(result)

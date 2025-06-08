@@ -459,7 +459,7 @@ class MainApp(MDApp):
     def __init__(self, cache_system, **kwargs):
         super(MainApp, self).__init__(**kwargs)
         
-        self.title = "escargot"
+        self.title = params.APPNAME
         self.theme_cls.theme_style = 'Dark'
         self.theme_cls.primary_palette = 'Blue'
         

@@ -120,7 +120,7 @@ class FileCacheSystem:
         self.p = ThreadPoolExecutor(max_workers=max_concurrent_loads)
      
      
-    def get_file(self, file_path: str, callback=None) -> Tuple[Dict[str, Any], Optional[imageset.ImageSet]]:
+    def get_file(self, file_path: str, callback=None):
         """
         ファイルを取得する関数
         
@@ -203,7 +203,7 @@ class FileCacheSystem:
             # 優先度が低い場合は自動的にキューを処理
             self.process_preload_queue(max_concurrent_loads=self.max_concurrent_loads)
 
-    def _start_loading_thread(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, imgset: imageset.ImageSet = None):
+    def _start_loading_thread(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, imgset=None):
         """読み込みスレッドを開始する内部関数"""
         if param is None:
             param = {}

@@ -896,13 +896,13 @@
                                         text: "AI"
 
                             ParamSlider:
-                                id: slider_nlm_noise_reduction
-                                text: "NLM"
+                                id: slider_bm3d_noise_reduction
+                                text: "BM3D"
                                 min: 0
                                 max: 100
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(1, 'nlm_noise_reduction')
+                                on_slider: root.apply_effects_lv(1, 'bm3d_noise_reduction')
 
                             ParamSlider:
                                 id: slider_light_noise_reduction
@@ -1264,6 +1264,25 @@
                             orientation: "vertical"
                             size_hint_y: None
                             height: self.minimum_height
+
+                            HeadLabel:
+                                text: ' Depth'
+                            ParamSlider:
+                                id: slider_mask2_depth_min
+                                text: "Min"
+                                min: 0
+                                max: 255
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(3, 'mask2')
+                            ParamSlider:
+                                id: slider_mask2_depth_max
+                                text: "Max"
+                                min: 0
+                                max: 255
+                                value: 255
+                                step: 1
+                                on_slider: root.apply_effects_lv(3, 'mask2')
 
                             HeadLabel:
                                 text: ' Hue'

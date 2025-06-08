@@ -5,7 +5,8 @@
 		}
 	],
 	"settings": {
-		"keyboard.touchbar.enabled": false
+		"keyboard.touchbar.enabled": false,
+		"git.ignoreLimitWarning": true
 	},
 	"launch": {
 		"version": "0.7.0",

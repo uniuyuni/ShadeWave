@@ -270,4 +270,5 @@ def get_version():
         print(f"バージョン情報の取得中にエラーが発生しました: {e}")
         return "不明"
 
+APPNAME = "Platypus"
 VERSION = get_version()

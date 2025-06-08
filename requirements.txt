@@ -20,3 +20,4 @@ numba
 thop
 einops
 timm
+matplotlib

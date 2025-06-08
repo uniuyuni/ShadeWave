@@ -401,38 +401,38 @@ class AINoiseReductonEffect(Effect):
         return self.diff
 
 
-# NLMノイズ除去
-class NLMNoiseReductionEffect(Effect):
+# BM3Dノイズ除去
+class BM3DNoiseReductionEffect(Effect):
     __skimage = None
 
     def set2widget(self, widget, param):
-        widget.ids["slider_nlm_noise_reduction"].set_slider_value(param.get('nlm_noise_reduction', 0))
+        widget.ids["slider_bm3d_noise_reduction"].set_slider_value(param.get('bm3d_noise_reduction', 0))
 
     def set2param(self, param, widget):
-        param['nlm_noise_reduction'] = widget.ids["slider_nlm_noise_reduction"].value
+        param['bm3d_noise_reduction'] = widget.ids["slider_bm3d_noise_reduction"].value
 
     def make_diff(self, img, param, efconfig):
-        nlm = int(param.get('nlm_noise_reduction', 0))
-        if nlm == 0 or efconfig.disp_info[4] < config.get_config('scale_threshold'):
+        bm3d = int(param.get('bm3d_noise_reduction', 0))
+        if bm3d == 0 or efconfig.disp_info[4] < config.get_config('scale_threshold'):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((nlm))
+            param_hash = hash((bm3d))
             if self.hash != param_hash:
-                if NLMNoiseReductionEffect.__skimage is None:
-                    NLMNoiseReductionEffect.__skimage = importlib.import_module('bm3d')
+                if BM3DNoiseReductionEffect.__skimage is None:
+                    BM3DNoiseReductionEffect.__skimage = importlib.import_module('bm3d')
 
                 #noisy_img0 = img[..., 0]
-                #basic_img0 = NLMNoiseReductionEffect.__skimage.BM3D(noisy_img0)
+                #basic_img0 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img0)
                 #noisy_img1 = img[..., 1]
-                #basic_img1 = NLMNoiseReductionEffect.__skimage.BM3D(noisy_img1)
+                #basic_img1 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img1)
                 #noisy_img2 = img[..., 2]
-                #basic_img2 = NLMNoiseReductionEffect.__skimage.BM3D(noisy_img2)
+                #basic_img2 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img2)
                 #self.diff = np.stack([basic_img0, basic_img1, basic_img2], axis=-1)
                 
-                self.diff = NLMNoiseReductionEffect.__skimage.bm3d(img, nlm/1000.0 * efconfig.disp_info[4])
-                #sigma_est = np.mean(NLMNoiseReductionEffect.__skimage.restoration.estimate_sigma(img, channel_axis=2))
-                #self.diff = NLMNoiseReductionEffect.__skimage.restoration.denoise_nl_means(img, h=nlm/100.0*sigma_est, sigma=sigma_est, fast_mode=True, channel_axis=2)
+                self.diff = BM3DNoiseReductionEffect.__skimage.bm3d(img, bm3d/1000.0 * efconfig.disp_info[4])
+                #sigma_est = np.mean(BM3DNoiseReductionEffect.__skimage.restoration.estimate_sigma(img, channel_axis=2))
+                #self.diff = BM3DNoiseReductionEffect.__skimage.restoration.denoise_nl_means(img, h=bm3d/100.0*sigma_est, sigma=sigma_est, fast_mode=True, channel_axis=2)
                 self.hash = param_hash
 
         return self.diff
@@ -1578,6 +1578,8 @@ class FilmSimulationEffect(Effect):
 class Mask2Effect(Effect):
 
     def set2widget(self, widget, param):
+        widget.ids["slider_mask2_depth_min"].set_slider_value(param.get('mask2_depth_min', 0))
+        widget.ids["slider_mask2_depth_max"].set_slider_value(param.get('mask2_depth_max', 255))
         widget.ids["slider_mask2_hue_distance"].set_slider_value(param.get('mask2_hue_distance', 359))
         widget.ids["slider_mask2_lum_min"].set_slider_value(param.get('mask2_lum_min', 0))
         widget.ids["slider_mask2_lum_max"].set_slider_value(param.get('mask2_lum_max', 255))
@@ -1586,6 +1588,8 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_blur"].set_slider_value(param.get('mask2_blur', 0))
 
     def set2param(self, param, widget):
+        param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value
+        param['mask2_depth_max'] = widget.ids["slider_mask2_depth_max"].value
         param['mask2_hue_distance'] = widget.ids["slider_mask2_hue_distance"].value
         param['mask2_lum_min'] = widget.ids["slider_mask2_lum_min"].value
         param['mask2_lum_max'] = widget.ids["slider_mask2_lum_max"].value
@@ -1594,17 +1598,19 @@ class Mask2Effect(Effect):
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
 
     def make_diff(self, rgb, param, efconfig):
+        dmin = param.get('mask2_depth_min', 0)
+        dmax = param.get('mask2_depth_max', 255)
         hdis = param.get('mask2_hue_distance', 359)
         lmin = param.get('mask2_lum_min', 0)
         lmax = param.get('mask2_lum_max', 255)
         smin = param.get('mask2_sat_min', 0)
         smax = param.get('mask2_sat_max', 255)
         blur = param.get('mask2_blur', 0)
-        if  hdis == 359 and lmin == 0 and lmax == 255 and smin == 0 and smax == 255 and blur == 0:
+        if  dmin == 0 and dmax == 255 and hdis == 359 and lmin == 0 and lmax == 255 and smin == 0 and smax == 255 and blur == 0:
             self.diff = None
             self.hash = None
         else:        
-            param_hash = hash((hdis, lmin, lmax, smin, smax, blur))
+            param_hash = hash((dmin, dmax, hdis, lmin, lmax, smin, smax, blur))
             if self.hash != param_hash:
                 self.diff = None
                 self.hash = param_hash
@@ -1681,7 +1687,7 @@ def create_effects():
 
     lv1 = effects[1]
     lv1['ai_noise_reduction'] = AINoiseReductonEffect()
-    lv1['nlm_noise_reduction'] = NLMNoiseReductionEffect()
+    lv1['bm3d_noise_reduction'] = BM3DNoiseReductionEffect()
     lv1['light_noise_reduction'] = LightNoiseReductionEffect()
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()

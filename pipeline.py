@@ -76,7 +76,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
 
-    img2 = pipeline2(imgc, 0, imgc.shape[0], None, primary_effects, primary_param, mask_editor2, efconfig)
+    img2 = pipeline2(imgc, 0, imgc.shape[0], primary_effects, primary_param, mask_editor2, efconfig)
 
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
     
@@ -94,7 +94,7 @@ def pipeline2(imgc, slice_y, slice_h, primary_effects, primary_param, mask_edito
         img2 = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig)
         img2 = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig)
 
-        img3 = core.apply_mask(img2, mask.get_mask_image()[slice_y:slice_y+slice_h, :], img3)
+        img3 = core.apply_mask_jax(img3, mask.get_mask_image()[slice_y:slice_y+slice_h, :], img2)
 
     return img3
 

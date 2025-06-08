@@ -190,7 +190,7 @@ def __create_gaussian_kernel(width: int, height: int, sigma: float):
     return g / np.sum(g)
 
 @partial(jit, static_argnums=(1, 2))
-def __gaussian_blur(src, ksize=(3, 3), sigma=0.0):
+def gaussian_blur_jax(src, ksize=(3, 3), sigma=0.0):
     kw, kh = ksize
     kernel = __create_gaussian_kernel(kw, kh, sigma)
 
@@ -205,12 +205,13 @@ def __gaussian_blur(src, ksize=(3, 3), sigma=0.0):
 
     return dest
 
+def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
+    if ksize == (0, 0):
+        return src
+    return  cv2.GaussianBlur(src, ksize, sigma)
+
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
-    array = __gaussian_blur(src, ksize, sigma)
-    array.block_until_ready()
-
-    return np.array(array)
-
+    return gaussian_blur_jax(src, ksize, sigma)
 
 @partial(jit, static_argnums=1)
 def lucy_richardson_gauss(srcf, iteration):
@@ -220,14 +221,14 @@ def lucy_richardson_gauss(srcf, iteration):
 
     for i in range(iteration):
         # ガウスぼかしを適用してぼけをシミュレーション
-        bdest = __gaussian_blur(destf, ksize=(9, 9), sigma=0)
+        bdest = gaussian_blur_jax(destf, ksize=(9, 9), sigma=0)
 
         # 元画像とぼけた画像の比を計算
         bdest = bdest + jnp.finfo(jnp.float32).eps
         ratio = jnp.divide(srcf, bdest)
 
         # 誤差の分配のために再びガウスぼかしを適用
-        ratio_blur = __gaussian_blur(ratio, ksize=(9, 9), sigma=0)
+        ratio_blur = gaussian_blur_jax(ratio, ksize=(9, 9), sigma=0)
 
         # 元の出力画像に誤差を乗算
         destf = jnp.multiply(destf, ratio_blur)
@@ -567,21 +568,33 @@ def apply_lut(img, lut, max_value=1.0):
     
     return result
 
+def apply_mask(img1, msk, img2):
+    return apply_mask_cv(img1, msk, img2)
+
 # マスクイメージの適用
 @jit
-def __apply_mask(img1, msk, img2):
-
-    if msk is not None:
-        _msk = msk[:, :, jnp.newaxis]
-        img = img1 * _msk + img2 * (1.0 - _msk)
+def apply_mask_jax(img1, msk, img2):
+    _msk = msk[:, :, jnp.newaxis]
+    img = img1 * (1.0 - _msk) + img2 * _msk
 
     return img
 
-def apply_mask(img1, msk, img2):
-    array = __apply_mask(img1, msk, img2)
-    array.block_until_ready()
+def apply_mask_np(img1, msk, img2):
+    _msk = msk[:, :, np.newaxis]
+    img = img1 * (1.0 - _msk) + img2 * _msk
 
-    return np.array(array)
+    return img
+
+def apply_mask_cv(img1, msk, img2):
+    _msk = cv2.merge((msk, msk, msk))
+
+    b = cv2.multiply(img1, cv2.subtract(1.0, _msk))
+    f = cv2.multiply(img2, _msk)
+
+    # Add the masked foreground and background.
+    img = cv2.add(f, b)
+
+    return img
 
 @partial(jit, static_argnums=(1,2,5))
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
@@ -637,7 +650,7 @@ def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offse
 
     # マスク作成（0が中心、1が端）
     mask = jnp.clip(dist / radius, 0, 1)
-    #mask = __gaussian_blur(mask, (64, 64), 0)
+    #mask = gaussian_blur(mask, (64, 64), 0)
     #mask = jnp.power(mask, gradient_softness)  # グラデーション調整
     mask = smoothstep(mask)
     
@@ -1456,7 +1469,7 @@ def adjust_hls_colors(hls_img, color_settings):
         final_weight = hue_weight# * ls_weight
 
         # 重みをぼかす
-        #final_weight = __gaussian_blur(final_weight, (127, 127), 0)
+        #final_weight = gaussian_blur(final_weight, (127, 127), 0)
         final_weight = cv2.GaussianBlur(final_weight, (127, 127), 0)
         
         # 重みを使って調整

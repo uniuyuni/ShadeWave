@@ -16,6 +16,7 @@ from multiprocessing import shared_memory
 
 #from dcp_profile import DCPReader, DCPProcessor
 import config
+import file_cache_system
 import params
 import util
 import viewer_widget
@@ -313,3 +314,8 @@ class ImageSet:
             
         logging.warning("file is not supported " + file_path)
         return 0
+
+    def load(self, result, file_path, exif_data, param):
+        if result == 0:
+            return
+        file_cache_system.run_method(self, result[len(result)-1].worker, None, file_path, exif_data, param)
