@@ -9,8 +9,8 @@ from .utils import load_rgb  # noqa
 
 def setup_model(device='cpu'):
 
-    model, transform = create_model_and_transforms()
-    model.eval().to(device)
+    model, transform = create_model_and_transforms(device=device)
+    model.eval()
 
     return (model, transform)
 

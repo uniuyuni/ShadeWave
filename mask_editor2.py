@@ -1658,7 +1658,7 @@ class DepthMapMask(BaseMask):
         if DepthMapMask.__depth_map is None:
             depth_pro = importlib.import_module('depth_pro')
 
-            mt = depth_pro.setup_model()
+            mt = depth_pro.setup_model(device="mps")
             DepthMapMask.__depth_map = depth_pro.predict_model(mt, self.editor.full_image_rgb)
 
             del sys.modules['depth_pro']
