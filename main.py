@@ -45,8 +45,8 @@ class MainWidget(MDBoxLayout):
     def __init__(self, cache_system, **kwargs):
         super(MainWidget, self).__init__(**kwargs)
 
-        self.texture_height = 1024
-        self.texture_width = 1024
+        self.texture_height = config.get_config('preview_size')
+        self.texture_width = config.get_config('preview_size')
         self.texture = None
         self.imgset = None
         self.click_x = 0
@@ -349,7 +349,7 @@ class MainWidget(MDBoxLayout):
 
     def _enable_inpaint_edit(self):
         if self.inpaint_edit is None:
-            self.inpaint_edit = bounding_box_viewer.BoundingBoxViewer(size=(config.get_config('preview_size'), config.get_config('preview_size')),
+            self.inpaint_edit = bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_size'), config.get_config('preview_size')),
                                 initial_view=params.get_disp_info(self.primary_param),
                                 on_delete=self._on_inpaint_edit)
             boxes = []

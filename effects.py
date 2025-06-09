@@ -124,8 +124,6 @@ class SubpixelShiftEffect(Effect):
         
         return self.diff
     
-import io
-import imageio as iio
 
 class InpaintDiff:
     def __init__(self, **kwargs):
@@ -136,17 +134,11 @@ class InpaintDiff:
         if type(self.image) is np.ndarray:
             self.image = utils.convert_image_to_list(self.image)
             #self.image = (self.image.shape, list(bz2.compress(self.image.tobytes(), 1)))
-            #output = io.BytesIO()
-            #iio.imwrite(output, self.image, plugin="pillow", extension=".avif")
-            #self.image = (self.image.shape, list(output.getvalue()))
 
     def list2image(self):
-        if type(self.image) is list:
-            self.image = utils.convert_image_from_list(self.image[0], self.image[1])
+        if type(self.image) is list or type(self.image) is tuple:
+            self.image = utils.convert_image_from_list(self.image)
             #self.image = np.reshape(np.frombuffer(bz2.decompress(bytearray(self.image[1])), dtype=np.float32), self.image[0])
-            #ary = np.frombuffer(bytearray(self.image[1]))
-            #bgr = cv2.imdecode(ary)
-            #self.image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 class InpaintEffect(Effect):
     __iopaint = None
@@ -203,6 +195,8 @@ class InpaintEffect(Effect):
         ip = param.get('inpaint', 0)
         ipp = param.get('inpaint_predict', 0)
         if (ip > 0 and ipp > 0) is True:
+            param['inpaint_predict'] = 0 # なぜか二重起動するときがあるので予防
+
             if InpaintEffect.__iopaint is None:
                 InpaintEffect.__iopaint = importlib.import_module('iopaint.predict')
 
@@ -210,7 +204,10 @@ class InpaintEffect(Effect):
             w, h = param['original_img_size']
             eh, ew = img.shape[:2]
             x, y = (ew-w)//2, (eh-h)//2
-            img2 = InpaintEffect.__iopaint.predict(img[y:y+h, x:x+w], mask, model=config.get_config('iopaint_model'), resize_limit=config.get_config('iopaint_resize_limit'), use_realesrgan=config.get_config('iopaint_use_realesrgan'))
+            img2 = InpaintEffect.__iopaint.predict(img[y:y+h, x:x+w], mask,
+                            model=config.get_config('iopaint_model'),
+                            resize_limit=config.get_config('iopaint_resize_limit'),
+                            use_realesrgan=config.get_config('iopaint_use_realesrgan'))
             img2 = img2 #/ param.get('white_balance', [1, 1, 1])
             bboxes = core.get_multiple_mask_bbox(self.mask_editor.get_mask())
             for bbox in bboxes:
@@ -222,6 +219,7 @@ class InpaintEffect(Effect):
         if len(self.inpaint_diff_list) > 0:
             img2 = img.copy()
             for inpaint_diff in self.inpaint_diff_list:
+                inpaint_diff.list2image()   # データを変換する必要があるときがある
                 cx, cy, cw, ch = inpaint_diff.disp_info
                 img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
             self.diff = img2
@@ -406,7 +404,7 @@ class AINoiseReductonEffect(Effect):
 
 # BM3Dノイズ除去
 class BM3DNoiseReductionEffect(Effect):
-    __skimage = None
+    __bm3d = None
 
     def set2widget(self, widget, param):
         widget.ids["slider_bm3d_noise_reduction"].set_slider_value(param.get('bm3d_noise_reduction', 0))
@@ -422,8 +420,8 @@ class BM3DNoiseReductionEffect(Effect):
         else:
             param_hash = hash((bm3d))
             if self.hash != param_hash:
-                if BM3DNoiseReductionEffect.__skimage is None:
-                    BM3DNoiseReductionEffect.__skimage = importlib.import_module('bm3d')
+                if BM3DNoiseReductionEffect.__bm3d is None:
+                    BM3DNoiseReductionEffect.__bm3d = importlib.import_module('bm3dcl')
 
                 #noisy_img0 = img[..., 0]
                 #basic_img0 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img0)
@@ -433,7 +431,7 @@ class BM3DNoiseReductionEffect(Effect):
                 #basic_img2 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img2)
                 #self.diff = np.stack([basic_img0, basic_img1, basic_img2], axis=-1)
                 
-                self.diff = BM3DNoiseReductionEffect.__skimage.bm3d(img, bm3d/1000.0 * efconfig.disp_info[4])
+                self.diff = BM3DNoiseReductionEffect.__bm3d.bm3d_denoise(img, bm3d/1000.0 * efconfig.disp_info[4])
                 #sigma_est = np.mean(BM3DNoiseReductionEffect.__skimage.restoration.estimate_sigma(img, channel_axis=2))
                 #self.diff = BM3DNoiseReductionEffect.__skimage.restoration.denoise_nl_means(img, h=bm3d/100.0*sigma_est, sigma=sigma_est, fast_mode=True, channel_axis=2)
                 self.hash = param_hash

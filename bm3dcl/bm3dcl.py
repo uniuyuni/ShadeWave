@@ -133,7 +133,7 @@ def bm3d_denoise(image, sigma=1, platform_preference='auto', device_preference=0
         context = cl.Context(devices=[device], properties=None, dev_type=None)
         
         # BM3Dカーネルのロード
-        with open("bm3d.cl", "r") as f:
+        with open("bm3dcl/bm3d.cl", "r") as f:
             kernel_source = f.read()
         
         # キューの作成

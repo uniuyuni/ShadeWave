@@ -1,14 +1,12 @@
 
 import os
-import dis
 import json
 from datetime import datetime as dt
-
-from numpy import diag, disp
 
 import effects
 import crop_editor
 import config
+import utils
 
 SPECIAL_PARAM = [
     # for set_image_param
@@ -197,14 +195,14 @@ def save_json(file_path, param, mask_editor2):
         dict = serialize(param, mask_editor2)
         if dict is not None:
             with open(file_path, 'w') as f:
-                json.dump(dict, f)
+                json.dump(dict, f, cls=utils.CompactNumpyEncoder)
 
 def load_json(file_path, param, mask_editor2):
     if file_path is not None:
         file_path = file_path + '.json'
         try:
             with open(file_path, 'r') as f:
-                dict = json.load(f)
+                dict = json.load(f, object_hook=utils.compact_numpy_decoder)
                 deserialize(dict, param, mask_editor2)
                 return dict
             
@@ -226,6 +224,7 @@ def delete_empty_param_json(file_path, param):
             return True
 
     return False
+
 
 #-------------------------------------------------
 

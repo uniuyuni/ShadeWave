@@ -1,14 +1,17 @@
 
+from importlib.machinery import BYTECODE_SUFFIXES
 import math
+import cv2
 import numpy as np
 from kivy.core.window import Window as KVWindow
-#from kivy.clock import KVClock
 from kivy.uix.widget import Widget as KVWidget
+from pillow_heif.options import QUALITY
 from screeninfo import get_monitors
-import pillow_heif
-from pillow_heif import register_heif_opener
-
-register_heif_opener()
+import json
+import base64
+import zlib
+import numpy as np
+from typing import Any, Dict
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -129,11 +132,6 @@ def print_nan_inf(img):
     count = result.sum()
     print("inf=", count)
 
-def tone_map(x, threshold=1.0):
-    return np.where(x > threshold, np.log1p(x - threshold) + threshold, x)
-
-def soft_clip(x, threshold=1.0):
-    return threshold * np.tanh(x / threshold)
 
 def convert_to_float32(img):
     """
@@ -229,40 +227,145 @@ def dpi_scale_height(ref):
     return ref * (KVWindow.dpi / 96)
     #return ref * (KVWindow.height / 800)
 
-
-def adjust_to_multiple(image, size=8, mode='constant'):
-    # 画像の高さと幅を取得
-    h, w = image.shape[:2]
-    
-    # 8の倍数に切り上げた新しいサイズを計算
-    new_h = (h + size-1) // size * size
-    new_w = (w + size-1) // size * size
-    
-    # パディング量を計算
-    pad_h = new_h - h
-    pad_w = new_w - w
-    
-    # パディング幅を設定（次元ごとに指定）
-    pad_width = [(0, pad_h), (0, pad_w)] + [(0, 0)] * (image.ndim - 2)
-    
-    # 画像の下側と右側をエッジ値でパディング
-    padded_image = np.pad(image, pad_width=pad_width, mode=mode)
-    
-    return padded_image, (h, w)
-
-def restore_original_size(padded_image, original_size):
-    # 元のサイズを取得
-    h_orig, w_orig = original_size
-    
-    # パディングされた部分を切り取って元のサイズに復元
-    return padded_image[:h_orig, :w_orig, ...]
-
 def convert_image_to_list(image):
-    height, width = image.shape[:2]
-    heif_file = pillow_heif.from_bytes("RGB;16", (width, height), (image * 65535).astype(np.uint16).tobytes())
-    print(image.shape[:2])
-    return (list(heif_file.data), (width, height))
+    # 画像を処理できる方に変換
+    img = (image * 65535).astype(np.uint16)
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
-def convert_image_from_list(list, shape):
-    heif_file = pillow_heif.from_bytes("RGB;16", shape, bytes(list))
-    return np.asarray(heif_file).astype(np.float32) / 65535
+    # 圧縮＆パック
+    is_success, buffer = cv2.imencode(".jp2", img, [cv2.IMWRITE_JPEG2000_COMPRESSION_X1000, 1000])
+    if is_success is None:
+        return None
+
+    pack_buffer, original_len = pack_uint8_to_uint32(buffer)
+    list_buffer = pack_buffer #pack_buffer.tolist()
+    save_data = (list_buffer, original_len)
+
+    return save_data
+
+def convert_image_from_list(save_data):
+    # データを復元
+    list_buffer, original_len = save_data
+    array_buffer = list_buffer #np.array(list_buffer, dtype=np.uint32)
+    unpack_buffer = unpack_uint32_to_uint8(array_buffer, original_len)
+    img = cv2.imdecode(unpack_buffer, cv2.IMREAD_UNCHANGED)
+
+    # 画像を処理できる方に変換
+    image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    image = image.astype(np.float32) / 65535
+
+    return image
+
+def pack_uint8_to_uint32(uint8_arr):
+    """
+    uint8配列をuint32配列にパック（4の倍数でない場合も対応）
+    
+    Args:
+        uint8_arr (np.ndarray): uint8型の入力配列
+        
+    Returns:
+        tuple: (packed_uint32, original_length)
+        packed_uint32: パックされたuint32配列
+        original_length: 元の配列の長さ（パディングなし）
+    """
+    # 元の長さを保存
+    original_length = len(uint8_arr)
+    
+    # 4の倍数になるように0でパディング
+    pad_len = (4 - (original_length % 4)) % 4
+    if pad_len > 0:
+        padded = np.pad(uint8_arr, (0, pad_len), mode='constant', constant_values=0)
+    else:
+        padded = uint8_arr
+    
+    # パック
+    packed = np.frombuffer(padded.tobytes(), dtype=np.uint32)
+    
+    return packed, original_length
+
+def unpack_uint32_to_uint8(packed_uint32, original_length):
+    """
+    uint32配列を元のuint8配列に変換
+    
+    Args:
+        packed_uint32 (np.ndarray): pack_uint8_to_uint32で作成した配列
+        original_length (int): 元の配列の長さ
+        
+    Returns:
+        np.ndarray: 復元されたuint8配列
+    """
+    # バイト配列に変換
+    byte_arr = np.frombuffer(packed_uint32.tobytes(), dtype=np.uint8)
+    
+    # 元の長さでトリミング（パディング部分を除去）
+    return byte_arr[:original_length]
+
+
+class CompactNumpyEncoder(json.JSONEncoder):
+    """NumPyデータを最小容量で保存するカスタムエンコーダ"""
+    
+    def default(self, obj: Any) -> Any:
+        # NumPy配列の処理
+        if isinstance(obj, np.ndarray):
+            return self._compress_array(obj)
+        
+        # NumPyスカラーの処理
+        if isinstance(obj, np.generic):
+            return obj.item()
+            
+        return super().default(obj)
+    
+    def _compress_array(self, array: np.ndarray) -> Dict[str, Any]:
+        """配列を圧縮してBase64エンコード"""
+        # データをバイト列に変換
+        data_bytes = array.tobytes()
+        
+        # zlibで圧縮 (レベル9で最大圧縮)
+        compressed = data_bytes #zlib.compress(data_bytes, level=9)
+        
+        # Base64エンコード
+        encoded = base64.b64encode(compressed).decode('ascii')
+        
+        return {
+            '__numpy_array__': True,
+            'dtype': str(array.dtype),
+            'shape': array.shape,
+            'data': encoded
+        }
+
+def compact_numpy_decoder(obj: Dict) -> Any:
+    """圧縮されたNumPyデータを復元"""
+    if '__numpy_array__' in obj:
+        # Base64デコード
+        decoded = base64.b64decode(obj['data'])
+        
+        # zlib解凍
+        decompressed = decoded #zlib.decompress(decoded)
+        
+        # NumPy配列に変換
+        array = np.frombuffer(decompressed, dtype=np.dtype(obj['dtype']))
+        return array.reshape(obj['shape'])
+    
+    return obj
+
+
+if __name__ == '__main__':
+
+    img = cv2.imread("your_image.jpg", cv2.IMREAD_UNCHANGED)
+    img = img.astype(np.uint16) * 255
+    #img = img.astype(np.float32) / 255
+
+    is_success, buffer = cv2.imencode(".jp2", img, [cv2.IMWRITE_JPEG2000_COMPRESSION_X1000, 300])
+    pack_buffer, original_len = pack_uint8_to_uint32(buffer)
+    list_buffer = pack_buffer.tolist()
+    save_data = (list_buffer, original_len)
+
+    with open("your_image.json", 'w') as f:
+        json.dump(save_data, f)
+
+    list_buffer, original_len = save_data
+    array_buffer = np.array(list_buffer, dtype=np.uint32)
+    unpack_buffer = unpack_uint32_to_uint8(array_buffer, original_len)
+    img = cv2.imdecode(unpack_buffer, cv2.IMREAD_UNCHANGED)
+
+    cv2.imwrite("your_image.png", img)

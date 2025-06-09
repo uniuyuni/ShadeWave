@@ -1,9 +1,9 @@
 // vim: ft=c
 
 // Note: changes in included files won't trigger rebuilding
-#include "config.h"
-#include "dct.h"
-#include "haar.h"
+#include "bm3dcl/config.h"
+#include "bm3dcl/dct.h"
+#include "bm3dcl/haar.h"
 
 __constant sampler_t sampler =
       CLK_NORMALIZED_COORDS_FALSE
