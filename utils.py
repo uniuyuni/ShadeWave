@@ -5,6 +5,10 @@ from kivy.core.window import Window as KVWindow
 #from kivy.clock import KVClock
 from kivy.uix.widget import Widget as KVWidget
 from screeninfo import get_monitors
+import pillow_heif
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -143,14 +147,12 @@ def convert_to_float32(img):
     """
     if img.dtype == np.uint8:
         img = img.astype(np.float32)/255
-    elif img.dtype == np.uint16:
+    elif img.dtype == np.uint16 or img.dtype == '>u2' or img.dtype == '<u2':
         img = img.astype(np.float32)/65535
-    elif img.dtype == np.uint32:
+    elif img.dtype == np.uint32 or img.dtype == '>u4' or img.dtype == '<u4':
         img = img.astype(np.float32)/4294967295
     elif img.dtype == np.uint64:
         img = img.astype(np.float32)/18446744073709551615
-    elif img.dtype == np.uint128:
-        img = img.astype(np.float32)/340282366920938463463374607431768211455
     elif img.dtype == np.int8:
         img = img.astype(np.float32)/127
     elif img.dtype == np.int16:
@@ -159,17 +161,11 @@ def convert_to_float32(img):
         img = img.astype(np.float32)/2147483647
     elif img.dtype == np.int64:
         img = img.astype(np.float32)/9223372036854775807
-    elif img.dtype == np.int128:
-        img = img.astype(np.float32)/170141183460469231731687303715884105727
-    elif img.dtype == np.int256:
-        img = img.astype(np.float32)/1152921504606846976
     elif img.dtype == np.float16:
         img = img.astype(np.float32)
     elif img.dtype == np.float32:
         pass
     elif img.dtype == np.float64:
-        img = img.astype(np.float32)
-    elif img.dtype == np.float128:
         img = img.astype(np.float32)
     else:
         raise ValueError(f"サポートされていないデータ型: {img.dtype}")
@@ -260,3 +256,13 @@ def restore_original_size(padded_image, original_size):
     
     # パディングされた部分を切り取って元のサイズに復元
     return padded_image[:h_orig, :w_orig, ...]
+
+def convert_image_to_list(image):
+    height, width = image.shape[:2]
+    heif_file = pillow_heif.from_bytes("RGB;16", (width, height), (image * 65535).astype(np.uint16).tobytes())
+    print(image.shape[:2])
+    return (list(heif_file.data), (width, height))
+
+def convert_image_from_list(list, shape):
+    heif_file = pillow_heif.from_bytes("RGB;16", shape, bytes(list))
+    return np.asarray(heif_file).astype(np.float32) / 65535

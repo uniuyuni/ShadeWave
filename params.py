@@ -239,8 +239,7 @@ def get_version():
     """
     try:
         # ワークスペースファイルのパスを取得
-        workspace_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                     "platypus.code-workspace")
+        workspace_path = os.path.join(os.getcwd(), "platypus.code-workspace")
         
         # ファイルが存在するか確認
         if not os.path.exists(workspace_path):

@@ -18,7 +18,7 @@ from multiprocessing import shared_memory
 import config
 import file_cache_system
 import params
-import util
+import utils
 import viewer_widget
 import color
 import bit_depth_expansion
@@ -123,7 +123,7 @@ class ImageSet:
                 raise ValueError(f"Unsupported thumbnail format: {thumb.format}")
 
             # RGB画像初期設定
-            img_array = util.convert_to_float32(img_array)
+            img_array = utils.convert_to_float32(img_array)
 
             # 色空間変換
             img_array = color.rgb_to_xyz(img_array, "sRGB", True)
@@ -212,7 +212,7 @@ class ImageSet:
                 img_array = bit_depth_expansion.process_rgb_image(img_array)
 
             # float32へ
-            img_array = util.convert_to_float32(img_array)
+            img_array = utils.convert_to_float32(img_array)
 
             # 色空間変更
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
@@ -270,12 +270,17 @@ class ImageSet:
             img_array = np.array(img)
 
             # float32へ
-            img_array = util.convert_to_float32(img_array)
+            img_array = utils.convert_to_float32(img_array)
+
+            # グレイ画像をカラーへ
+            if img_array.ndim == 2 or img_array.shape[2] == 1:
+                img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+                #cv2.imwrite("test.jpg", cv2.cvtColor((img_array * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
 
             # 色空間変更
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
-                                          apply_cctf_encoding=False, apply_gamut_mapping=True).astype(np.float32)
-            
+                                          apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
+                                          
             # 画像からホワイトバランスパラメータ取得
             params.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
             
@@ -290,7 +295,7 @@ class ImageSet:
             
         self.img = np.array(img_array)
         
-        return 0
+        return (file_path, self, exif_data, param, 0)
 
     class Result():
         def __init__(self, worker, source):
@@ -313,7 +318,7 @@ class ImageSet:
             return self._load_rgb(file_path, exif_data, param)
             
         logging.warning("file is not supported " + file_path)
-        return 0
+        return None
 
     def load(self, result, file_path, exif_data, param):
         if result == 0:

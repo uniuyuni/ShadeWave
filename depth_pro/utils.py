@@ -12,7 +12,6 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 LOGGER = logging.getLogger(__name__)
 
-
 def extract_exif(img_pil: Image) -> Dict[str, Any]:
     """Return exif information as a dictionary.
 

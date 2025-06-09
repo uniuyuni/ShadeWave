@@ -1524,6 +1524,8 @@ class SegmentMask(BaseMask):
         return result
 
 class DepthMapMask(BaseMask):
+    __depth_pro = None
+    __depth_pro_mt = None
     __depth_map = None
 
     def __init__(self, editor, **kwargs):
@@ -1532,7 +1534,6 @@ class DepthMapMask(BaseMask):
         self.initializing = True  # 初期配置中かどうか
 
         self.center = (0, 0)
-        self.depth_map = None
 
         with self.canvas:
             PushMatrix()
@@ -1655,14 +1656,12 @@ class DepthMapMask(BaseMask):
         return self.image_mask_cache
 
     def draw_depth_map(self, image_size, center):
+        if DepthMapMask.__depth_pro is None:
+            DepthMapMask.__depth_pro = importlib.import_module('depth_pro')
+            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro .setup_model(device="mps")
+
         if DepthMapMask.__depth_map is None:
-            depth_pro = importlib.import_module('depth_pro')
-
-            mt = depth_pro.setup_model(device="mps")
-            DepthMapMask.__depth_map = depth_pro.predict_model(mt, self.editor.full_image_rgb)
-
-            del sys.modules['depth_pro']
-            del depth_pro
+            DepthMapMask.__depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
@@ -1671,6 +1670,12 @@ class DepthMapMask(BaseMask):
             result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
         return result
+
+    @staticmethod
+    def delete_depth_map():
+        if DepthMapMask.__depth_map is not None:
+            del DepthMapMask.__depth_map
+            DepthMapMask.__depth_map = None
 
 # マスクレイヤーの管理クラス
 class MaskLayer(BoxLayout):
@@ -1993,6 +1998,7 @@ class MaskEditor2(FloatLayout):
         self.mask_container.clear_widgets()
         self.mask_layers.clear()
         self.layer_list.clear_widgets()
+        DepthMapMask.delete_depth_map()
 
     def set_active_mask(self, mask):
         if self.active_mask and self.active_mask != mask:

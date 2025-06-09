@@ -57,19 +57,22 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
         # ファイル読み込み準備？
         result = imgset.preload(file_path, exif_data, param)
         if result is not None:
-            # 続きの読み込みがある
-            with ProcessPoolExecutor(max_workers=len(result)) as executor:
-                futures = []
-                for i, task in enumerate(result):
-                    if i > 0:
-                        future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
-                        future.add_done_callback(lambda f: _task_callback(file_callbacks, f))  # コールバック登録
-                        futures.append(future)
-                result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
-                _task_callback(file_callbacks, result)
+            if isinstance(result, list):
+                # 続きの読み込みがある
+                with ProcessPoolExecutor(max_workers=len(result)) as executor:
+                    futures = []
+                    for i, task in enumerate(result):
+                        if i > 0:
+                            future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
+                            future.add_done_callback(lambda f: _task_callback(file_callbacks, f))  # コールバック登録
+                            futures.append(future)
+                    result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
+                    _task_callback(file_callbacks, result)
+            else:
+                _task_callback(file_callbacks, (file_path, imgset, exif_data, param, 0))
 
-        # キャッシュに登録
-        cache[file_path] = (imgset, exif_data, param)
+            # キャッシュに登録
+            cache[file_path] = (imgset, exif_data, param)
         
         # 先行読み込み登録から削除
         if file_path in preload_registry:
@@ -82,7 +85,6 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
         # 進行中のスレッドから削除
         if file_path in active_processes:
             del active_processes[file_path]
-
 
     except Exception as e:
         logging.error(f"FCS Error preloading {file_path}: {e}")

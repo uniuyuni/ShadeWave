@@ -21,3 +21,10 @@ thop
 einops
 timm
 matplotlib
+typer
+typer_config
+fastapi
+diffusers==0.27.2
+omegaconf
+transformers
+huggingface_hub

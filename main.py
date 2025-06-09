@@ -24,7 +24,7 @@ import param_slider
 import viewer_widget
 import histogram_widget
 import metainfo
-import util
+import utils
 import mask_editor2
 import color_picker
 import macos
@@ -106,7 +106,7 @@ class MainWidget(MDBoxLayout):
     def draw_image(self, offset, dt):
         if (self.imgset is not None) and (self.imgset.img is not None):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
-            #util.print_nan_inf(img)
+            #utils.print_nan_inf(img)
             
             img = np.array(img)
             self.draw_histogram(img)
@@ -177,13 +177,15 @@ class MainWidget(MDBoxLayout):
             param = {}
             #params.set_image_param(param, exif_data)
             #self._set_image_for_mask2(param)
-            params.load_json(imgset.file_path, param, self.ids['mask_editor2'])
+            
+            #params.load_json(imgset.file_path, param, self.ids['mask_editor2'])
+            
             #self.set2widget_all(self.primary_effects, param)
             #self.apply_effects_lv(0, 'crop') # 特別あつかい
             self._set_exif_data(exif_data)
 
             # .jsonファイルから読み込んだものを設定しとく、あとで合成する
-            card.param = param
+            #card.param = param
     
     @mainthread
     def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
@@ -192,7 +194,12 @@ class MainWidget(MDBoxLayout):
             # 最終的なパラメータを合成
             card = self.ids['viewer'].get_card(file_path)
             if card is not None:
-                param.update(card.param)
+                json_param = {}
+                # 一度も描画してないので値が設定されてない。暫定処置
+                self.ids['mask_editor2'].set_image(param['original_img_size'], param['disp_info'])
+                self.ids['mask_editor2'].set_texture_size(config.get_config('preview_size'), config.get_config('preview_size'))
+                params.load_json(file_path, json_param, self.ids['mask_editor2'])
+                param.update(json_param)
 
                 # 最終的なものを設定しとく
                 card.imgset = imgset
@@ -215,7 +222,7 @@ class MainWidget(MDBoxLayout):
                     self.primary_param['disp_info'] = None
                 else:
                     # ウィンドウ座標からローカルイメージ座標に変換
-                    self.click_x, self.click_y = util.to_texture(touch.pos, self.ids['preview'])
+                    self.click_x, self.click_y = utils.to_texture(touch.pos, self.ids['preview'])
 
                 effects.reeffect_all(self.primary_effects, 1)
                 self.start_draw_image_and_crop(self.imgset)
@@ -468,7 +475,7 @@ class MainApp(MDApp):
     def build(self): 
         self.main_widget = MainWidget(self.cache_system)
 
-        display = util.get_current_dispay()
+        display = utils.get_current_dispay()
         KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
         KVWindow.left = (display["width"] - display["width"] * 0.9) // 2
         KVWindow.top = (display["height"] - display["height"] * 0.9) // 2
@@ -495,19 +502,19 @@ class MainApp(MDApp):
     def _traverse_widget(root):
         # すべてのスケールが必要なウィジェットを更新
         if root:
-            for child in util.get_entire_widget_tree(root):
+            for child in utils.get_entire_widget_tree(root):
                 if hasattr(child, 'ref_width'):
-                    child.width = util.dpi_scale_width(child.ref_width)
+                    child.width = utils.dpi_scale_width(child.ref_width)
                 if hasattr(child, 'ref_height'):
-                    child.height = util.dpi_scale_height(child.ref_height)
+                    child.height = utils.dpi_scale_height(child.ref_height)
                 if hasattr(child, 'ref_padding'):
-                    child.padding = util.dpi_scale_width(child.ref_padding)
+                    child.padding = utils.dpi_scale_width(child.ref_padding)
                 if hasattr(child, 'ref_spacing'):
-                    child.spacing = util.dpi_scale_width(child.ref_spacing)
+                    child.spacing = utils.dpi_scale_width(child.ref_spacing)
                 if hasattr(child, 'ref_tab_width'):
-                    child.tab_width = util.dpi_scale_width(child.ref_tab_width)
+                    child.tab_width = utils.dpi_scale_width(child.ref_tab_width)
                 if hasattr(child, 'ref_tab_height'):
-                    child.tab_height = util.dpi_scale_height(child.ref_tab_height)
+                    child.tab_height = utils.dpi_scale_height(child.ref_tab_height)
 
     def on_window_resize(self, window, width, height):
         self._traverse_widget(self.root)

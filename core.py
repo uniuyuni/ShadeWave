@@ -17,7 +17,7 @@ from numba import njit, prange
 
 import sigmoid
 import dng_sdk
-import util
+import utils
 
 jax.config.update("jax_platform_name", "METAL")
 
@@ -960,7 +960,7 @@ def get_exif_image_size_with_orientation(exif_data):
         # クロップとexifデータの回転
         top, left, width, height = get_exif_image_size(exif_data)
         if "Orientation" in exif_data:
-            rad, flip = util.split_orientation(util.str_to_orientation(exif_data.get("Orientation", "")))
+            rad, flip = utils.split_orientation(utils.str_to_orientation(exif_data.get("Orientation", "")))
             if rad < 0.0:
                 top, left = left, top
                 width, height = height, width

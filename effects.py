@@ -28,6 +28,7 @@ import pipeline
 import filter
 import local_contrast
 import params
+import utils
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -133,14 +134,16 @@ class InpaintDiff:
 
     def image2list(self):
         if type(self.image) is np.ndarray:
-            self.image = (self.image.shape, list(bz2.compress(self.image.tobytes(), 1)))
+            self.image = utils.convert_image_to_list(self.image)
+            #self.image = (self.image.shape, list(bz2.compress(self.image.tobytes(), 1)))
             #output = io.BytesIO()
             #iio.imwrite(output, self.image, plugin="pillow", extension=".avif")
             #self.image = (self.image.shape, list(output.getvalue()))
 
     def list2image(self):
         if type(self.image) is list:
-            self.image = np.reshape(np.frombuffer(bz2.decompress(bytearray(self.image[1])), dtype=np.float32), self.image[0])
+            self.image = utils.convert_image_from_list(self.image[0], self.image[1])
+            #self.image = np.reshape(np.frombuffer(bz2.decompress(bytearray(self.image[1])), dtype=np.float32), self.image[0])
             #ary = np.frombuffer(bytearray(self.image[1]))
             #bgr = cv2.imdecode(ary)
             #self.image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
@@ -186,7 +189,7 @@ class InpaintEffect(Effect):
         if param['inpaint'] > 0:
             if self.mask_editor is None:
                 self.mask_editor = mask_editor.MaskEditor(param['img_size'][0], param['img_size'][1])
-                self.mask_editor.zoom = param.get_disp_info(param)[4]
+                self.mask_editor.zoom = params.get_disp_info(param)[4]
                 self.mask_editor.pos = [0, 0]
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
             
