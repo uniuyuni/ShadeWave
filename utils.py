@@ -219,6 +219,23 @@ def get_entire_widget_tree(root, delay=0.1):
 
     return results
 
+def traverse_widget(root):
+    # すべてのスケールが必要なウィジェットを更新
+    if root:
+        for child in get_entire_widget_tree(root):
+            if hasattr(child, 'ref_width'):
+                child.width = dpi_scale_width(child.ref_width)
+            if hasattr(child, 'ref_height'):
+                child.height = dpi_scale_height(child.ref_height)
+            if hasattr(child, 'ref_padding'):
+                child.padding = dpi_scale_width(child.ref_padding)
+            if hasattr(child, 'ref_spacing'):
+                child.spacing = dpi_scale_width(child.ref_spacing)
+            if hasattr(child, 'ref_tab_width'):
+                child.tab_width = dpi_scale_width(child.ref_tab_width)
+            if hasattr(child, 'ref_tab_height'):
+                child.tab_height = dpi_scale_height(child.ref_tab_height)
+
 def dpi_scale_width(ref):
     return ref * (KVWindow.dpi / 96)
     #return ref * (KVWindow.width / 1200)

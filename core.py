@@ -1600,7 +1600,7 @@ def floyd_steinberg_dither_fast(image):
 
     return (img * 255).astype(np.uint8)
 
-@njit(nopython=True, nogil=True, parallel=True, fastmath=True)
+@njit(nogil=True, parallel=True, fastmath=True)
 def fast_median_filter(img, kernel_size=3, num_bins=256):
     """
     量子化とヒストグラムベースの高速メディアンフィルタ

@@ -28,3 +28,4 @@ diffusers==0.27.2
 omegaconf
 transformers
 huggingface_hub
+etils

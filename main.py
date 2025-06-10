@@ -498,29 +498,11 @@ class MainApp(MDApp):
         self.main_widget.save_current_sidecar()
         self.main_widget.shutdown()
 
-    @staticmethod
-    def _traverse_widget(root):
-        # すべてのスケールが必要なウィジェットを更新
-        if root:
-            for child in utils.get_entire_widget_tree(root):
-                if hasattr(child, 'ref_width'):
-                    child.width = utils.dpi_scale_width(child.ref_width)
-                if hasattr(child, 'ref_height'):
-                    child.height = utils.dpi_scale_height(child.ref_height)
-                if hasattr(child, 'ref_padding'):
-                    child.padding = utils.dpi_scale_width(child.ref_padding)
-                if hasattr(child, 'ref_spacing'):
-                    child.spacing = utils.dpi_scale_width(child.ref_spacing)
-                if hasattr(child, 'ref_tab_width'):
-                    child.tab_width = utils.dpi_scale_width(child.ref_tab_width)
-                if hasattr(child, 'ref_tab_height'):
-                    child.tab_height = utils.dpi_scale_height(child.ref_tab_height)
-
     def on_window_resize(self, window, width, height):
-        self._traverse_widget(self.root)
+        utils.traverse_widget(self.root)
 
     def on_widget_pos(self, root, pos):
-        self._traverse_widget(root)
+        utils.traverse_widget(root)
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()

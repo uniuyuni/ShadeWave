@@ -15,7 +15,6 @@ import macos
 import utils
 
 import param_slider
-import spacer
 import switchable_float_input
 
 class PresetNameDialog(Popup):

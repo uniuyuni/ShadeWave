@@ -15,7 +15,6 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivy.uix.image import Image as KVImage
 from kivy.uix.label import Label as KVLabel
 from kivymd.uix.card import MDCard
-from kivymd.uix.gridlayout import MDGridLayout
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
 from kivy.clock import mainthread
@@ -60,7 +59,7 @@ class ThumbnailCard(MDCard):
 
         # ファイル名ラベル
         name = os.path.basename(self.file_path)
-        self.label = KVLabel(text=name, bold=True, size_hint_y=3)
+        self.label = KVLabel(text=name, bold=True, font_size='9pt', size_hint_y=3)
         vbox.add_widget(self.label)
 
     @mainthread
@@ -204,6 +203,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
         card = ThumbnailCard(file_path=file_path, grid_width=self.grid_width)
         card.bind(on_touch_up=self.on_select)
         self.ids['grid_layout'].add_widget(card, index=index)
+        utils.traverse_widget(self)
         return card
 
     def process_exif_data(self, file_path_list, exif_data_list):

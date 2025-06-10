@@ -6,9 +6,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.graphics import Color, Line, Ellipse, Translate, PushMatrix, PopMatrix
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.behaviors import ButtonBehavior
 from kivy.properties import NumericProperty
-from kivy.metrics import dp
 import logging
 
 import utils
@@ -50,6 +48,7 @@ class CurveWidget(Widget):
     def __init__(self, **kwargs):
         super(CurveWidget, self).__init__(**kwargs)
 
+
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)
 
@@ -57,7 +56,7 @@ class CurveWidget(Widget):
         
         self.bind(size=self.update_grid)
         self.bind(pos=self.update_grid)
-        self.update_grid()
+        #self.update_grid()
 
     def __update_points(self, *args):
         pass
@@ -110,7 +109,7 @@ class CurveWidget(Widget):
     def on_touch_up(self, touch):
         self.selected_point = None
 
-    def update_grid(self, *args):
+    def update_grid(self, instance, size):
         self.__update_points()
         self.__update_curve()
 
@@ -121,29 +120,31 @@ class CurveWidget(Widget):
             PushMatrix()
             Translate(self.x, self.y)
             
+            width, height = self.size   # 0になる場合があるのをなんとかしたい
+
             # Draw the grid
             Color(0.5, 0.5, 0.5)
             for i in range(0, 5):
-                Line(points=[self.width / 4 * i, 0, self.width / 4 * i, self.height], width=1)
-                Line(points=[0, self.height / 4 * i, self.width, self.height / 4 * i], width=1)
+                Line(points=[width / 4 * i, 0, width / 4 * i, height], width=1)
+                Line(points=[0, height / 4 * i, width, height / 4 * i], width=1)
 
             pts = sorted([(p.x, p.y) for p in self.points])
 
             Color(1, 1, 1)
             try:
                 x, y = zip(*pts)
-                x = np.array(x)*self.width
-                y = np.array(y)*self.height
+                x = np.array(x, dtype=np.float32)*width
+                y = np.array(y, dtype=np.float32)*height
                 tck, u = splprep([x, y], k=min(3, len(x)-1), s=0)  # Adjust `k` appropriately
-                unew = np.linspace(0, 1.0, 1000)
+                unew = np.linspace(0, 1.0, 100)
                 out = splev(unew, tck)
 
                 # Clipping processing
                 points = []
                 for i in range(len(out[0])):
                     x_coord, y_coord = out[0][i], out[1][i]
-                    x_coord = np.clip(x_coord, 0, self.width)
-                    y_coord = np.clip(y_coord, 0, self.height)
+                    x_coord = np.clip(x_coord, 0, width)
+                    y_coord = np.clip(y_coord, 0, height)
                     points.append((x_coord, y_coord))
 
                 points_flat = [coord for point in points for coord in point]  # Flatten points
@@ -154,7 +155,7 @@ class CurveWidget(Widget):
                 logging.error(f"Error during spline math: {e}")
 
             for point in self.points:
-                Ellipse(pos=(point.x*self.width - point.get_width()/2, point.y*self.height - point.get_height()/2), size=(point.get_width(), point.get_height()))
+                Ellipse(pos=(point.x*width - point.get_width()/2, point.y*height - point.get_height()/2), size=(point.get_width(), point.get_height()))
             
             # 変換行列をポップして元に戻す
             PopMatrix()

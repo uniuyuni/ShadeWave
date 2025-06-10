@@ -216,15 +216,18 @@ class InpaintEffect(Effect):
             self.mask_editor.clear_mask()
             self.mask_editor.update_canvas()
         
-        if len(self.inpaint_diff_list) > 0:
-            img2 = img.copy()
-            for inpaint_diff in self.inpaint_diff_list:
-                inpaint_diff.list2image()   # データを変換する必要があるときがある
-                cx, cy, cw, ch = inpaint_diff.disp_info
-                img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
-            self.diff = img2
-        else:
-            self.diff = None
+        param_hash = hash((len(self.inpaint_diff_list)))
+        if self.hash != param_hash:
+            if len(self.inpaint_diff_list) > 0:
+                img2 = img.copy()
+                for inpaint_diff in self.inpaint_diff_list:
+                    inpaint_diff.list2image()   # データを変換する必要があるときがある
+                    cx, cy, cw, ch = inpaint_diff.disp_info
+                    img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
+                self.diff = img2
+            else:
+                self.diff = None
+            self.hash = param_hash
 
         return self.diff
     
@@ -422,18 +425,8 @@ class BM3DNoiseReductionEffect(Effect):
             if self.hash != param_hash:
                 if BM3DNoiseReductionEffect.__bm3d is None:
                     BM3DNoiseReductionEffect.__bm3d = importlib.import_module('bm3dcl')
-
-                #noisy_img0 = img[..., 0]
-                #basic_img0 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img0)
-                #noisy_img1 = img[..., 1]
-                #basic_img1 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img1)
-                #noisy_img2 = img[..., 2]
-                #basic_img2 = BM3DNoiseReductionEffect.__skimage.BM3D(noisy_img2)
-                #self.diff = np.stack([basic_img0, basic_img1, basic_img2], axis=-1)
                 
-                self.diff = BM3DNoiseReductionEffect.__bm3d.bm3d_denoise(img, bm3d/1000.0 * efconfig.disp_info[4])
-                #sigma_est = np.mean(BM3DNoiseReductionEffect.__skimage.restoration.estimate_sigma(img, channel_axis=2))
-                #self.diff = BM3DNoiseReductionEffect.__skimage.restoration.denoise_nl_means(img, h=bm3d/100.0*sigma_est, sigma=sigma_est, fast_mode=True, channel_axis=2)
+                self.diff = BM3DNoiseReductionEffect.__bm3d.bm3d_denoise(img, bm3d/100.0 * efconfig.disp_info[4])
                 self.hash = param_hash
 
         return self.diff

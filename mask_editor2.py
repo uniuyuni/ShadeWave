@@ -1719,7 +1719,7 @@ class MaskEditor2(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.image_widget = Image(allow_stretch=False, keep_ratio=True)
+        self.image_widget = Image() #Image(allow_stretch=False, keep_ratio=True)
         self.image_widget.pos_hint = {"x":0, "top":1}
         self.add_widget(self.image_widget)
 
