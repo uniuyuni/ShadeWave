@@ -67,6 +67,7 @@ class ImageSet:
 
         self.file_path = None
         self.img = None
+        self.flag = None
 
     def _black(self, in_img, black_level):
         in_img[in_img < black_level] = black_level
@@ -216,7 +217,7 @@ class ImageSet:
 
             # 色空間変更
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
-                                          apply_cctf_encoding=False, apply_gamut_mapping=True).astype(np.float32)
+                                          apply_cctf_decoding=False, apply_gamut_mapping=True).astype(np.float32)
 
             # プロファイルを適用
             #dcp_path = os.getcwd() + "/dcp/Fujifilm X-Pro3 Adobe Standard velvia.dcp"
@@ -254,6 +255,10 @@ class ImageSet:
             
             # 描画用に設定
             self.img = np.array(img_array)
+            self.flag = half
+
+        except Exception as e:
+            logging.error(e)
 
         except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
             logging.warning("file is not supported " + file_path)
@@ -263,7 +268,7 @@ class ImageSet:
 
         return (file_path, self, exif_data, param)
 
-    def _load_rgb(self, file_path, exif_data, param):
+    def _load_rgb(self, raw, file_path, exif_data, param):
         # RGB画像で読み込んでみる
         with PILImage.open(file_path) as img:
             img = PILImageOps.exif_transpose(img)
@@ -315,12 +320,14 @@ class ImageSet:
             return result
             
         elif file_path.lower().endswith(viewer_widget.supported_formats_rgb):
-            return self._load_rgb(file_path, exif_data, param)
+            result = []
+            result.append(ImageSet.Result(worker="_load_rgb", source=None))
+            return result
             
         logging.warning("file is not supported " + file_path)
         return None
 
     def load(self, result, file_path, exif_data, param):
-        if result == 0:
+        if not isinstance(result, list):
             return
         file_cache_system.run_method(self, result[len(result)-1].worker, None, file_path, exif_data, param)

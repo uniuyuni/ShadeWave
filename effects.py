@@ -72,9 +72,26 @@ class Effect():
     def finalize(self, param, widget):
         pass
 
+    def get_param_dict(self, param):
+        return {}
+
+    def delete_default_param(self, param):
+        for p in self.get_param_dict(param).items():
+            try:
+                if param[p[0]] == p[1]:
+                    del param[p[0]]
+            except:
+                pass
 
 # レンズモディファイア
 class LensModifierEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'color_modification': 0,
+            'subpixel_distortion': 0,
+            'geometry_distortion': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["switch_color_modification"].active = False if param.get('color_modification', 0) == 0 else True
@@ -104,6 +121,11 @@ class LensModifierEffect(Effect):
 
 # サブピクセルシフト合成
 class SubpixelShiftEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'subpixel_shift': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["switch_subpixel_shift"].active = False if param.get('subpixel_shift', 0) == 0 else True
@@ -170,6 +192,13 @@ class InpaintEffect(Effect):
                 inpaint_diff_list.append(inpaint_diff)
             param['inpaint_diff_list'] = inpaint_diff_list
 
+    def get_param_dict(self, param):
+        return {
+            'inpaint': 0,
+            'inpaint_predict': 0,
+            'inpaint_diff_list': [],
+        }
+
     def set2widget(self, widget, param):
         widget.ids["switch_inpaint"].active = False if param.get('inpaint', 0) == 0 else True
         widget.ids["button_inpaint_predict"].state = "normal" if param.get('inpaint_predict', 0) == 0 else "down"
@@ -235,6 +264,13 @@ class InpaintEffect(Effect):
 # 画像回転、反転
 class RotationEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'rotation': 0,
+            'rotation2': 0,
+            'flip_mode': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_rotation"].set_slider_value(param.get('rotation', 0))
 
@@ -293,6 +329,15 @@ class CropEffect(Effect):
     def _param_to_aspect_ratio(self, param):
         ar = param.get('aspect_ratio', "None")
         return eval(ar if ar != "None" else "0")
+
+    def get_param_dict(self, param):
+        param2 = param.copy()
+        params.set_crop_rect(param2, crop_editor.CropEditor.get_initial_crop_rect(*param['original_img_size']))
+        return {
+            'crop_enable': False,
+            'crop_rect': param2['crop_rect'],
+            'aspect_ratio': "None",
+        }
 
     def set2widget(self, widget, param):
         widget.ids["spinner_acpect_ratio"].text = param.get('aspect_ratio', "None")
@@ -379,6 +424,11 @@ class AINoiseReductonEffect(Effect):
     __net = None
     __module = None
 
+    def get_param_dict(self, param):
+        return {
+            'ai_noise_reduction': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["switch_ai_noise_reduction"].active = False if param.get('ai_noise_reduction', 0) == 0 else True
 
@@ -409,6 +459,11 @@ class AINoiseReductonEffect(Effect):
 class BM3DNoiseReductionEffect(Effect):
     __bm3d = None
 
+    def get_param_dict(self, param):
+        return {
+            'bm3d_noise_reduction': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_bm3d_noise_reduction"].set_slider_value(param.get('bm3d_noise_reduction', 0))
 
@@ -432,6 +487,12 @@ class BM3DNoiseReductionEffect(Effect):
         return self.diff
 
 class LightNoiseReductionEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'light_noise_reduction': 0,
+            'light_color_noise_reduction': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_light_noise_reduction"].set_slider_value(param.get('light_noise_reduction', 0))
@@ -506,6 +567,11 @@ class LightNoiseReductionEffect(Effect):
 # デブラーフィルタ
 class DeblurFilterEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'deblur_filter': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_deblur_filter"].set_slider_value(param.get('deblur_filter', 0))
 
@@ -533,6 +599,11 @@ class DefocusEffect(Effect):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+    def get_param_dict(self, param):
+        return {
+            'defocus': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["switch_defocus"].active = False if param.get('defocus', 0) == 0 else True
@@ -562,6 +633,11 @@ class DefocusEffect(Effect):
 
 class LensblurFilterEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'lensblur_filter': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_lensblur_filter"].set_slider_value(param.get('lensblur_filter', 0))
 
@@ -583,6 +659,11 @@ class LensblurFilterEffect(Effect):
         return self.diff
 
 class ScratchEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'scratch': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_scratch"].set_slider_value(param.get('scratch', 0))
@@ -606,6 +687,11 @@ class ScratchEffect(Effect):
 
 class FrostedGlassEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'frosted_glass': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_frosted_glass"].set_slider_value(param.get('frosted_glass', 0))
 
@@ -628,6 +714,11 @@ class FrostedGlassEffect(Effect):
 
 class MosaicEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'mosaic': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_mosaic"].set_slider_value(param.get('mosaic', 0))
 
@@ -649,6 +740,13 @@ class MosaicEffect(Effect):
         return self.diff
 
 class GlowEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'glow_black': 0,
+            'glow_gauss': 0,
+            'glow_opacity': 0,
+        }    
 
     def set2widget(self, widget, param):
         widget.ids["slider_glow_black"].set_slider_value(param.get('glow_black', 0))
@@ -684,6 +782,15 @@ class GlowEffect(Effect):
 
 class ColorTemperatureEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'color_temperature_reset': 5000,
+            'color_temperature': param.get('color_temperature_reset', 5000),
+            'color_tint_reset': 0,
+            'color_tint': param.get('color_tint_reset', 0),
+            'color_Y': 1.0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_color_temperature"].set_slider_value(param.get('color_temperature', 5000))
         widget.ids["slider_color_tint"].set_slider_value(param.get('color_tint', 0))
@@ -711,7 +818,7 @@ class ColorTemperatureEffect(Effect):
         else:
             param_hash = hash((temp, tint))
             if self.hash != param_hash:
-                trgb = core.convert_TempTint2RGB(param['color_temperature_reset'], param['color_tint_reset'], param['color_Y'])
+                trgb = core.convert_TempTint2RGB(param['color_temperature_reset'], param['color_tint_reset'], param.get('color_Y', 1.0))
                 self.diff = rgb * (trgb / core.convert_TempTint2RGB(temp, tint, Y))
                 #self.diff = rgb * np.array(core.invert_TempTint2RGB(temp, tint, Y, 5000), dtype=np.float32)
                 self.hash = param_hash
@@ -719,6 +826,12 @@ class ColorTemperatureEffect(Effect):
         return self.diff
 
 class DehazeEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'dehaze': 0,
+        }
+
 
     def set2widget(self, widget, param):
         widget.ids["slider_dehaze"].set_slider_value(param.get('dehaze', 0))
@@ -771,6 +884,10 @@ class HLSEffect(Effect):
         effecs['hls_magenta'] = HLSColorEffect('magenta')
         self.hls_effects = effecs
 
+    def delete_default_param(self, param):
+        for n in self.hls_effects.values():
+            n.delete_default_param(param)
+
     def reeffect(self):
         for n in self.hls_effects.values():
             n.reeffect()
@@ -794,6 +911,13 @@ class HLSColorEffect(Effect):
         super().__init__(**kwargs)
 
         self.color_name = color_name
+    
+    def get_param_dict(self, param):
+        return {
+            "hls_" + self.color_name + "_hue": 0,
+            "hls_" + self.color_name + "_lum": 0,
+            "hls_" + self.color_name + "_sat": 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_hls_" + self.color_name + "_hue"].set_slider_value(param.get("hls_" + self.color_name + "_hue", 0))
@@ -825,6 +949,11 @@ class HLSColorEffect(Effect):
 
 class ExposureEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'exposure': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_exposure"].set_slider_value(param.get('exposure', 0))
 
@@ -845,6 +974,11 @@ class ExposureEffect(Effect):
         return self.diff
     
 class ContrastEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'contrast': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_contrast"].set_slider_value(param.get('contrast', 0))
@@ -867,6 +1001,11 @@ class ContrastEffect(Effect):
 
 class ClarityEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'clarity': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_clarity"].set_slider_value(param.get('clarity', 0))
 
@@ -887,6 +1026,11 @@ class ClarityEffect(Effect):
         return self.diff
 
 class TextureEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'texture': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_texture"].set_slider_value(param.get('texture', 0))
@@ -909,6 +1053,11 @@ class TextureEffect(Effect):
     
 class MicroContrastEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'microcontrast': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["slider_microcontrast"].set_slider_value(param.get('microcontrast', 0))
 
@@ -929,6 +1078,13 @@ class MicroContrastEffect(Effect):
         return self.diff
     
 class ToneEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'shadow': 0,
+            'highlight': 0,
+            'midtone': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_shadow"].set_slider_value(param.get('shadow', 0))
@@ -982,6 +1138,11 @@ class ToneEffect(Effect):
     
 class HighlightCompressEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'highlight_compress': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["switch_highlight_compress"].active = True if param.get('highlight_compress', 0) == 1 else False
 
@@ -1002,6 +1163,13 @@ class HighlightCompressEffect(Effect):
         return self.diff
 
 class LevelEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'black_level': 0,
+            'white_level': 255,
+            'mid_level': 127,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_black_level"].set_slider_value(param.get('black_level', 0))
@@ -1032,6 +1200,11 @@ class LevelEffect(Effect):
         return self.diff
     
 class CLAHEEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'clahe_intensity': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_clahe_intensity"].set_slider_value(param.get('clahe_intensity', 0))
@@ -1073,6 +1246,10 @@ class CurveEffect(Effect):
         effecs['grading2'] = GradingEffect("2")
         self.effects = effecs
 
+    def delete_default_param(self, param):
+        for n in self.effects.values():
+            n.delete_default_param(param)
+
     def reeffect(self):
         for n in self.effects.values():
             n.reeffect()
@@ -1091,6 +1268,11 @@ class CurveEffect(Effect):
         return self.diff
     
 class TonecurveEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'tonecurve': None,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["tonecurve"].set_point_list(param.get('tonecurve', None))
@@ -1116,6 +1298,11 @@ class TonecurveEffect(Effect):
 
 class TonecurveRedEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'tonecurve_red': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["tonecurve_red"].set_point_list(param.get('tonecurve_red', None))
 
@@ -1140,6 +1327,11 @@ class TonecurveRedEffect(Effect):
 
 class TonecurveGreenEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'tonecurve_green': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["tonecurve_green"].set_point_list(param.get('tonecurve_green', None))
 
@@ -1163,6 +1355,11 @@ class TonecurveGreenEffect(Effect):
         return core.apply_lut(rgb_g, self.diff)
 
 class TonecurveBlueEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'tonecurve_blue': None,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["tonecurve_blue"].set_point_list(param.get('tonecurve_blue', None))
@@ -1194,6 +1391,14 @@ class GradingEffect(Effect):
         super().__init__(**kwargs)
 
         self.numstr = numstr
+
+    def get_param_dict(self, param):
+        return {
+            'grading' + self.numstr: None,
+            'grading' + self.numstr + '_hue': 0,
+            'grading' + self.numstr + '_lum': 50,
+            'grading' + self.numstr + '_sat': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["grading" + self.numstr].set_point_list(param.get('grading' + self.numstr, None))
@@ -1250,6 +1455,10 @@ class VSandSaturationEffect(Effect):
         effecs['saturation'] = SaturationEffect()
         self.effects = effecs
 
+    def delete_default_param(self, param):
+        for n in self.effects.values():
+            n.delete_default_param(param)
+
     def reeffect(self):
         for n in self.effects.values():
             n.reeffect()
@@ -1268,6 +1477,11 @@ class VSandSaturationEffect(Effect):
         return self.diff
     
 class HuevsHueEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'HuevsHue': None,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["HuevsHue"].set_point_list(param.get('HuevsHue', None))
@@ -1294,6 +1508,11 @@ class HuevsHueEffect(Effect):
 
 class HuevsLumEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'HuevsLum': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["HuevsLum"].set_point_list(param.get('HuevsLum', None))
 
@@ -1318,6 +1537,11 @@ class HuevsLumEffect(Effect):
         return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class HuevsSatEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'HuevsSat': None,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["HuevsSat"].set_point_list(param.get('HuevsSat', None))
@@ -1344,6 +1568,11 @@ class HuevsSatEffect(Effect):
 
 class LumvsLumEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'LumvsLum': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["LumvsLum"].set_point_list(param.get('LumvsLum', None))
 
@@ -1368,6 +1597,11 @@ class LumvsLumEffect(Effect):
         return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class LumvsSatEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'LumvsSat': None,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["LumvsSat"].set_point_list(param.get('LumvsSat', None))
@@ -1394,6 +1628,11 @@ class LumvsSatEffect(Effect):
 
 class SatvsLumEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'SatvsLum': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["SatvsLum"].set_point_list(param.get('SatvsLum', None))
 
@@ -1419,6 +1658,11 @@ class SatvsLumEffect(Effect):
 
 class SatvsSatEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'SatvsSat': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["SatvsSat"].set_point_list(param.get('SatvsSat', None))
 
@@ -1443,6 +1687,12 @@ class SatvsSatEffect(Effect):
         return core.apply_lut(hls_s, self.diff, 1.0) + hls_s
 
 class SaturationEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'saturation': 0,
+            'vibrance': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_saturation"].set_slider_value(param.get('saturation', 0))
@@ -1478,6 +1728,12 @@ class LUTEffect(Effect):
 
         self.lut = None
 
+    def get_param_dict(self, param):
+        return {
+            'lut_name': 'None',
+            'lut_path': None,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["lut_spinner"].text = param.get('lut_name', 'None')
 
@@ -1509,6 +1765,12 @@ class LUTEffect(Effect):
         return cubelut.process_image(rgb, self.diff)
 
 class LensSimulatorEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'lens_preset': 'None',
+            'lens_intensity': 100,
+        }
  
     def set2widget(self, widget, param):
         widget.ids["spinner_lens_preset"].text = param.get('lens_preset', 'None')
@@ -1540,6 +1802,12 @@ class LensSimulatorEffect(Effect):
         return lens * per + rgb * (1-per)
 
 class FilmSimulationEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'film_preset': 'None',
+            'film_intensity': 100,
+        }
  
     def set2widget(self, widget, param):
         widget.ids["spinner_film_preset"].text = param.get('film_preset', 'None')
@@ -1570,6 +1838,18 @@ class FilmSimulationEffect(Effect):
         return film * per + rgb * (1-per)
 
 class Mask2Effect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'mask2_depth_min': 0,
+            'mask2_depth_max': 255,
+            'mask2_hue_distance': 359,
+            'mask2_lum_min': 0,
+            'mask2_lum_max': 255,
+            'mask2_sat_min': 0,
+            'mask2_sat_max': 255,
+            'mask2_blur': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_mask2_depth_min"].set_slider_value(param.get('mask2_depth_min', 0))
@@ -1613,6 +1893,14 @@ class Mask2Effect(Effect):
 
 class SolidColorEffect(Effect):
 
+    def get_param_dict(self, param):
+        return {
+            'solid_color': 0,
+            'solid_color_red': 0,
+            'solid_color_green': 0,
+            'solid_color_blue': 0,
+        }
+
     def set2widget(self, widget, param):
         widget.ids["switch_solid_color"].active = False if param.get('solid_color', 0) == 0 else True
         widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(param.get('solid_color_red', 0))
@@ -1642,6 +1930,12 @@ class SolidColorEffect(Effect):
         return self.diff
     
 class VignetteEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'vignette_intensity': 0,
+            'vignette_radius_percent': 0,
+        }
 
     def set2widget(self, widget, param):
         widget.ids["slider_vignette_intensity"].set_slider_value(param.get('vignette_intensity', 0))
@@ -1749,3 +2043,21 @@ def finalize_all(effects, param, widget):
     for dict in effects:
         for l in dict.values():
             l.finalize(param, widget)
+
+def delete_default_param_all(effects, param):
+    for dict in effects:
+        for l in dict.values():
+            l.delete_default_param(param)
+
+
+if __name__ == '__main__':
+    param = {'test1': 0, 'test2': 0}
+
+    for p in {'test1': 0, 'test2': 1}.items():
+        try:
+            if param[p[0]] == p[1]:
+                del param[p[0]]
+        except:
+            pass
+
+    print(param)

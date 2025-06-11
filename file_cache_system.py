@@ -57,22 +57,20 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
         # ファイル読み込み準備？
         result = imgset.preload(file_path, exif_data, param)
         if result is not None:
-            if isinstance(result, list):
-                # 続きの読み込みがある
-                with ProcessPoolExecutor(max_workers=len(result)) as executor:
-                    futures = []
-                    for i, task in enumerate(result):
-                        if i > 0:
-                            future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
-                            future.add_done_callback(lambda f: _task_callback(file_callbacks, f))  # コールバック登録
-                            futures.append(future)
-                    result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
-                    _task_callback(file_callbacks, result)
-            else:
-                _task_callback(file_callbacks, (file_path, imgset, exif_data, param, 0))
+            # 続きの読み込みがある
+            with ProcessPoolExecutor(max_workers=len(result)) as executor:
+                futures = []
+                for i, task in enumerate(result):
+                    if i > 0:
+                        future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
+                        future.add_done_callback(lambda f: _task_callback(file_callbacks, f))  # コールバック登録
+                        futures.append(future)
+                result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
+                _task_callback(file_callbacks, result)
 
-            # キャッシュに登録
-            cache[file_path] = (imgset, exif_data, param)
+                # キャッシュに登録（すでにキャンセルされていたらスキップ）
+                if file_path in active_processes:
+                    cache[file_path] = (imgset, exif_data, param.copy())
         
         # 先行読み込み登録から削除
         if file_path in preload_registry:
@@ -136,11 +134,24 @@ class FileCacheSystem:
         Raises:
             FileNotFoundError: キャッシュにも先行読み込み登録もされていない場合
         """
-        # コールバックが指定された場合、登録
-        if callback:
-            self.file_callbacks.clear()     # 登録できるのは一つだけ
-            self.file_callbacks[file_path] = callback
-        
+        result = (None, None)
+
+        # 先行読み込み登録がある場合
+        if file_path in self.preload_registry:
+            # コールバックが指定された場合、登録
+            if callback:
+                self.file_callbacks.clear()     # 登録できるのは一つだけ
+                self.file_callbacks[file_path] = callback
+
+            logging.info(f"FCS Preload registry hit: {file_path}")
+            exif_data, param, imgset = self.preload_registry[file_path]
+            
+            # まだ読み込みスレッドが開始されていなければ開始
+            if file_path not in self.active_processes:
+                self._start_loading_thread(file_path, exif_data, param, imgset)
+
+            result = (exif_data, imgset)  # imgsetはまだ利用不可
+
         # キャッシュにある場合
         if file_path in self.cache:
             logging.info(f"FCS Cache hit: {file_path}")
@@ -148,24 +159,15 @@ class FileCacheSystem:
             
             # コールバックが指定されていればすぐに呼び出す
             if callback:
-                callback(file_path, imgset, exif_data, param, 0)
+                callback(file_path, imgset, exif_data, param.copy(), 0)
                 
-            return exif_data, imgset
-                
-        # 先行読み込み登録がある場合
-        elif file_path in self.preload_registry:
-            logging.info(f"FCS Preload registry hit: {file_path}")
-            exif_data, param, imgset = self.preload_registry[file_path]
-            
-            # まだ読み込みスレッドが開始されていなければ開始
-            if file_path not in self.active_processes:
-                self._start_loading_thread(file_path, exif_data, param, imgset)
-                
-            return exif_data, imgset  # imgsetはまだ利用不可
-        
+            result = (exif_data, imgset)
+                        
         # どちらにもない場合
-        else:
+        if result == (None, None):
             raise FileNotFoundError(f"File {file_path} is not in cache or preload registry")
+
+        return result
     
     def register_for_preload(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, 
                         high_priority: bool = False):
@@ -230,6 +232,33 @@ class FileCacheSystem:
             future = self.p.submit(_load_file_thread, self.shared_resources, file_path, exif_data, param, imgset, self.file_callbacks)
 
         logging.info(f"Started loading process for {file_path}")
+
+    def delete_cache(self, dict, file_path):
+        """
+        キャッシュからファイルを削除する関数
+        """
+        if file_path in self.file_callbacks:
+            del self.file_callbacks[file_path]
+
+        if file_path in self.active_processes:
+            del self.active_processes[file_path]
+
+        if file_path in self.preload_registry:
+            del self.preload_registry[file_path]
+
+        if file_path in self.cache:
+            del self.cache[file_path]
+
+
+    def delete_file(self, file_path):
+        """
+        キャッシュからファイルを削除する関数
+
+        Args:
+            file_path: ファイル名
+        """
+        self.delete_cache(self.cache, file_path)
+        self.delete_cache(self.preload_registry, file_path)
             
     def clear_cache(self, keep_files=None):
         """
@@ -244,7 +273,7 @@ class FileCacheSystem:
         # キャッシュからkeep_files以外の全てのアイテムを削除
         for file_path in list(self.cache.keys()):
             if file_path not in keep_files:
-                delete_cache(self.cache, file_path)
+                self.delete_cache(self.cache, file_path)
     
     def get_cache_status(self):
         """
@@ -287,7 +316,7 @@ class FileCacheSystem:
         # いっぱいなら古いものから削除
         while available_cache_slots <= 0:
             file_to_delete = list(self.cache)[:1]
-            delete_cache(self.cache, file_to_delete)
+            self.delete_cache(self.cache, file_to_delete)
             available_cache_slots += 1
 
         # 実際に開始できるプロセス数（キャッシュ容量と同時実行数の少ない方）

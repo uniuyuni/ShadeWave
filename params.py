@@ -10,7 +10,7 @@ import utils
 
 SPECIAL_PARAM = [
     # for set_image_param
-    #'original_img_size',
+    'original_img_size',
     'img_size',
     #'crop_rect',
     'disp_info',
@@ -23,6 +23,12 @@ SPECIAL_PARAM = [
     # for effecs.Inpaint
     'inpaint',
     'inpaint_predict',
+    # for effects.LUTEffect
+    'lut_path',
+]
+
+REMAIN_PARAM = [
+    'crop_rect',
 ]
 
 # 正規化込みの読み出し、設定
@@ -129,11 +135,12 @@ def delete_special_param(param):
 def delete_not_special_param(param):
     p = param.copy()
 
-    for key in not SPECIAL_PARAM:
-        try:
-            del p[key]
-        except KeyError:
-            pass
+    for key in param.keys():
+        if key not in SPECIAL_PARAM and key not in REMAIN_PARAM:
+            try:
+                del p[key]
+            except KeyError:
+                pass
     
     return p
 
@@ -196,6 +203,8 @@ def save_json(file_path, param, mask_editor2):
         if dict is not None:
             with open(file_path, 'w') as f:
                 json.dump(dict, f, cls=utils.CompactNumpyEncoder)
+            return True
+    return False
 
 def load_json(file_path, param, mask_editor2):
     if file_path is not None:
@@ -203,6 +212,12 @@ def load_json(file_path, param, mask_editor2):
         try:
             with open(file_path, 'r') as f:
                 dict = json.load(f, object_hook=utils.compact_numpy_decoder)
+                # tupleがlistになってしまうのでtupleに戻す
+                try:
+                    dict['primary_param']['crop_rect'] = tuple(dict['primary_param']['crop_rect'])
+                except:
+                    pass
+
                 deserialize(dict, param, mask_editor2)
                 return dict
             
@@ -212,8 +227,8 @@ def load_json(file_path, param, mask_editor2):
     return None
 
 def is_empty_param(param):
-    param = delete_special_param(param)
-    return len(param) == 0
+    param2 = delete_special_param(param)
+    return len(param2) <= 0
 
 def delete_empty_param_json(file_path, param):
     if file_path is not None:

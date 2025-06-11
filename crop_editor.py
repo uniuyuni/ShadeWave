@@ -87,7 +87,7 @@ class CropEditor(KVFloatLayout):
     def _set_to_local_crop_rect(self, crop_rect):
 
         # 矩形のサイズを設定 (初期値は画像のサイズと同じ)
-        if crop_rect == [0, 0, 0, 0]:
+        if crop_rect == (0, 0, 0, 0):
             if int(round(self.input_angle)) // 90 % 2 != 1:
                 w = self.input_width #* self.scale
                 h = self.input_height #* self.scale
@@ -305,7 +305,7 @@ class CropEditor(KVFloatLayout):
         if aflag == True:
             return  # サイズが変わる場合は移動をキャンセル
 
-        self.crop_rect = [new_x1, new_y1, new_x2, new_y2]
+        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
 
     def __resize_by_edge(self, touch):
         x1, y1, x2, y2 = self.crop_rect
@@ -358,7 +358,7 @@ class CropEditor(KVFloatLayout):
             if carf == False:
                 break
 
-        self.crop_rect = [new_x1, new_y1, new_x2, new_y2]
+        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
 
 
     def __resize_by_corner(self, touch):
@@ -480,7 +480,7 @@ class CropEditor(KVFloatLayout):
                 abs(old_y2 - new_y2) < 0.02):
                 break
 
-        self.crop_rect = [new_x1, new_y1, new_x2, new_y2]
+        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
 
 
     def __resize_crop(self, touch):
@@ -551,7 +551,7 @@ class CropEditor(KVFloatLayout):
                 abs(old_y2 - new_y2) < 0.02):
                 break
 
-        self.crop_rect = [new_x1, new_y1, new_x2, new_y2]
+        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
         
     @staticmethod
     def get_initial_crop_rect(input_width, input_height):

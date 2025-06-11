@@ -37,9 +37,7 @@ class ThumbnailCard(MDCard):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.imgset = None
         self.exif_data = None
-        self.param = None
 
         self.orientation = 'vertical'
         self.size_hint = (None, None)
@@ -61,6 +59,9 @@ class ThumbnailCard(MDCard):
         name = os.path.basename(self.file_path)
         self.label = KVLabel(text=name, bold=True, font_size='9pt', size_hint_y=3)
         vbox.add_widget(self.label)
+
+        # 表示サイズ補正
+        utils.traverse_widget(self)
 
     @mainthread
     def set_image(self, exif, thumb):
@@ -113,6 +114,8 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
         if self.is_supported_image(file_path):
             # 挿入インデックスを求める
             file_list = [card.file_path for card in self.cards]
+            if file_path in file_list:
+                return   # 既に存在するファイル
             file_list.append(file_path)
             file_list.sort()
             index = file_list.index(file_path)
@@ -135,7 +138,8 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                 pass
 
     def _modified_file(self, file_path):
-        self._deleted_file(file_path)
+        pass
+        #self._deleted_file(file_path)
         #self._added_file(file_path)
 
     def set_path(self, directory):
@@ -203,7 +207,6 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
         card = ThumbnailCard(file_path=file_path, grid_width=self.grid_width)
         card.bind(on_touch_up=self.on_select)
         self.ids['grid_layout'].add_widget(card, index=index)
-        utils.traverse_widget(self)
         return card
 
     def process_exif_data(self, file_path_list, exif_data_list):

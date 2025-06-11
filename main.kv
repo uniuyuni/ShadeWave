@@ -53,6 +53,25 @@
 
         BoxLayout:
             orientation: 'horizontal'
+            size_hint: (1, None)
+            ref_height: 30
+
+            HSpacer:
+                size_hint_x: 0.9
+            Button:
+                size_hint_x: None
+                ref_width: 80
+                text: "Reset"
+                on_press: root.on_reset_press()
+            ToggleButton:
+                id: preset
+                size_hint_x: None
+                ref_width: 80
+                text: "Preset"
+                #on_state: root.on_preset_press(self.state)
+
+        BoxLayout:
+            orientation: 'horizontal'
             #size_hint_y: 1
 
             BoxLayout:

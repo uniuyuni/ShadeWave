@@ -106,6 +106,8 @@ class MainWidget(MDBoxLayout):
     def draw_image(self, offset, dt):
         if (self.imgset is not None) and (self.imgset.img is not None):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
+            print(self.imgset.img.shape)
+            print(self.imgset.flag) 
             #utils.print_nan_inf(img)
             
             img = np.array(img)
@@ -158,7 +160,12 @@ class MainWidget(MDBoxLayout):
 
     def save_current_sidecar(self):
         if self.imgset is not None:
-            params.save_json(self.imgset.file_path, self.primary_param, self.ids['mask_editor2'])
+            param2 =  self.primary_param.copy()
+            effects.delete_default_param_all(self.primary_effects,param2) # プライマリのデフォルト値は消す
+            result = params.save_json(self.imgset.file_path, param2, self.ids['mask_editor2'])
+            if result == False:
+                # 失敗時はファイルを削除
+                params.delete_empty_param_json(self.imgset.file_path, param2)
     
     @mainthread
     def on_select(self, card):
@@ -171,21 +178,10 @@ class MainWidget(MDBoxLayout):
 
         if card is not None:
             self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
-            exif_data, imgset = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5: file_cache_system.run_method(self, "on_fcs_get_file", f1, f2, f3, f4, f5))
+            exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5: file_cache_system.run_method(self, "on_fcs_get_file", f1, f2, f3, f4, f5))
 
-            # 新しく開く画像のデータを全てセット
-            param = {}
-            #params.set_image_param(param, exif_data)
-            #self._set_image_for_mask2(param)
-            
-            #params.load_json(imgset.file_path, param, self.ids['mask_editor2'])
-            
-            #self.set2widget_all(self.primary_effects, param)
-            #self.apply_effects_lv(0, 'crop') # 特別あつかい
+            # とりあえずEXIF表示
             self._set_exif_data(exif_data)
-
-            # .jsonファイルから読み込んだものを設定しとく、あとで合成する
-            #card.param = param
     
     @mainthread
     def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
@@ -194,20 +190,16 @@ class MainWidget(MDBoxLayout):
             # 最終的なパラメータを合成
             card = self.ids['viewer'].get_card(file_path)
             if card is not None:
-                json_param = {}
                 # 一度も描画してないので値が設定されてない。暫定処置
                 self.ids['mask_editor2'].set_image(param['original_img_size'], param['disp_info'])
                 self.ids['mask_editor2'].set_texture_size(config.get_config('preview_size'), config.get_config('preview_size'))
-                params.load_json(file_path, json_param, self.ids['mask_editor2'])
-                param.update(json_param)
 
-                # 最終的なものを設定しとく
-                card.imgset = imgset
-                card.param = param
+                # パラメータを読み込んで追加設定
+                params.load_json(file_path, param, self.ids['mask_editor2'])
 
-            self.primary_param = param
-            self.set2widget_all(self.primary_effects, param)
-            self.apply_effects_lv(0, 'crop') # 特別あつかい
+        self.primary_param = param
+        self.set2widget_all(self.primary_effects, param)
+        self.apply_effects_lv(0, 'crop') # 特別あつかい
             
         self.imgset = imgset
         self.start_draw_image_and_crop(imgset)
@@ -283,6 +275,10 @@ class MainWidget(MDBoxLayout):
                 ex_path = self._make_export_path(x.file_path, preset)
                 if select == 'Rename':
                     ex_path = self._find_not_duplicate_filename(ex_path)
+                if select == 'Overwrite':
+                    if os.path.isfile(ex_path): # あっても無くても'Overwrite'
+                        self.cache_system.delete_file(ex_path)
+                        os.remove(ex_path) # ほんとは消さなくても良さそうだけど、通知がおかしいので
 
                 resize_str = ""
                 if preset['size_mode'] == "Long Edge":
@@ -318,6 +314,14 @@ class MainWidget(MDBoxLayout):
             addnum -= 1
 
         return path
+
+    #--------------------------------
+
+    def on_reset_press(self):
+        self.primary_param = params.delete_not_special_param(self.primary_param)
+        self._disable_mask2()
+        self.ids['mask_editor2'].clear_mask()
+        self.save_current_sidecar()
 
     #--------------------------------
 
