@@ -47,84 +47,118 @@ def adjust_eyes_scale(image, scale=1.2, radius=50):
     
     return image
 
-def adjust_face_oval(image, scale=0.8, debug=False):
+EXCLUDE_POINT_INDICES_FOR_JAWLINE = [0, 25, 22, 24, 20, 19, 26, 18, 32, 26, 35, 5, 7, 4, 6, 2, 1, 15, 8]
+EXCLUDE_POINT_INDICES_FOR_JAW = [0, 25, 22, 24, 20, 19, 26, 18, 32, 26, 35, 5, 7, 4, 6, 2, 1, 15, 8, 5, 9, 3, 16, 10, 13, 23, 27, 21, 33, 28, 31, 30, 12]
+
+def setup_face_mesh(image):
 
     # ランドマーク取得
     mp_face_mesh = mp.solutions.face_mesh
-    with mp_face_mesh.FaceMesh(
+    face_mesh = mp_face_mesh.FaceMesh(
         min_detection_confidence=0,  # 検出閾値（低くするとFPS↑）
         static_image_mode=True,        # 静止画モードで最適化
         refine_landmarks=True,          # ランドマークの精度を高める
-    ) as face_mesh:
-        # 検出
-        results = face_mesh.process((image * 255).astype(np.uint8))
+    )
+    
+    # 検出
+    results = face_mesh.process((image * 255).astype(np.uint8))
 
-        # 適用度を下げるため、scaleを0.1倍している
-        ratio = scale * 0.1
+    return (mp_face_mesh, face_mesh, results)
 
-        if results.multi_face_landmarks:
-            landmarks = results.multi_face_landmarks[0]
+def clear_face_mesh(fms):
+    mp_face_mesh, face_mesh, results = fms
+    del face_mesh
 
-            h, w = image.shape[:2]
+def adjust_face_jawline(fms, image, scale, debug=False):
+    mp_face_mesh, face_mesh, results = fms
+
+    return adjust_face_mesh(fms, image, scale, mp_face_mesh.FACEMESH_FACE_OVAL, EXCLUDE_POINT_INDICES_FOR_JAWLINE, debug)
+
+def adjust_face_jaw(fms, image, scale, debug=False):
+    mp_face_mesh, face_mesh, results = fms
+
+    return adjust_face_mesh(fms, image, scale, mp_face_mesh.FACEMESH_FACE_OVAL, EXCLUDE_POINT_INDICES_FOR_JAW, debug)
+
+def adjust_face_mesh(fms, image, scale, mesh, exclude_point_indeces, debug=False):
+
+    if scale == 0:
+        return image
+
+    mp_face_mesh, face_mesh, results = fms
+
+    # 適用度を下げるため、scaleを0.1倍している
+    ratio = scale * 0.1
+
+    if results.multi_face_landmarks:
+        landmarks = results.multi_face_landmarks[0]
+
+        h, w = image.shape[:2]
+        
+        # 輪郭インデックスの取得（重複なし）
+        oval_indices = np.unique([idx for pair in mesh for idx in pair])
+        
+        # 浮動小数点数座標で取得
+        oval_points = []
+        for i in oval_indices:
+            landmark = landmarks.landmark[i]
+            oval_points.append([landmark.x * w, landmark.y * h])
             
-            # 輪郭インデックスの取得（重複なし）
-            oval_indices = np.unique([idx for pair in mp_face_mesh.FACEMESH_FACE_OVAL for idx in pair])
-            
-            # 浮動小数点数座標で取得
-            oval_points = []
-            for i in oval_indices:
-                landmark = landmarks.landmark[i]
-                oval_points.append([landmark.x * w, landmark.y * h])
-                
-            _oval_points = np.array(oval_points, dtype=np.float32)
+        _oval_points = np.array(oval_points, dtype=np.float32)
 
-            # 顔の中心計算
-            center = np.mean(_oval_points, axis=0)
+        # 顔の中心計算
+        center = np.mean(_oval_points, axis=0)
 
-            # 固定点追加前の座標数
-            l = len(oval_points)
+        # 固定点追加前の座標数
+        l = len(oval_points)
 
-            # 縮小後の座標計算
-            new_oval_points = []
-            for pt in _oval_points:
-                direction = center - pt
-                new_pt = pt + direction * ratio
-                new_oval_points.append(new_pt)
+        # 縮小後の座標計算
+        new_oval_points = []
+        for pt in _oval_points:
+            direction = center - pt
+            new_pt = pt + direction * ratio
+            new_oval_points.append(new_pt)
 
-                # 固定点追加
-                FIX_POINT_SCALES = [-0.5, 0.2, 0.4, 0.8]
-                for scale in FIX_POINT_SCALES:
-                    oval_points.append(pt - direction * scale)
+            # 固定点追加
+            FIX_POINT_SCALES = [-0.5, 0.2, 0.4, 0.8]
+            for scale in FIX_POINT_SCALES:
+                oval_points.append(pt - direction * scale)
 
-            # 固定点コピー
-            for i in range(l*len(FIX_POINT_SCALES)):
-                new_oval_points.append(oval_points[l+i])
-            
-            oval_points = np.array(oval_points, dtype=np.float32)
-            new_oval_points = np.array(new_oval_points, dtype=np.float32)
+        # 固定点コピー
+        for i in range(l*len(FIX_POINT_SCALES)):
+            new_oval_points.append(oval_points[l+i])
 
-            if debug:        
-                # 変形前の点を描画
-                for pt in oval_points:
-                    cv2.circle(image, (int(pt[0]), int(pt[1])), 2, (0,255,0), -1)
+        # 下輪郭以外を削除
+        if exclude_point_indeces:
+            oval_points = [n for i, n in enumerate(oval_points) if i not in exclude_point_indeces]
+            new_oval_points = [n for i, n in enumerate(new_oval_points) if i not in exclude_point_indeces]
 
-                # 変形後の点を描画
-                for pt in new_oval_points:
-                    cv2.circle(image, (int(pt[0]), int(pt[1])), 2, (0,0,255), -1)
-            
-            # 入力形式を(1, N, 2)に変換
-            source_pts = oval_points.reshape(1, -1, 2)
-            target_pts = new_oval_points.reshape(1, -1, 2)
-            
-            # TPS変形
-            tps = cv2.createThinPlateSplineShapeTransformer()
-            tps.setRegularizationParameter(1e-3)
-            matches = [cv2.DMatch(i, i, 0) for i in range(len(oval_points))]
-            tps.estimateTransformation(target_pts, source_pts, matches)
+        oval_points = np.array(oval_points, dtype=np.float32)
+        new_oval_points = np.array(new_oval_points, dtype=np.float32)
 
-            # 画像変形（背景処理追加）
-            warped_image = tps.warpImage(image, flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
-            
-            return warped_image
+        if debug:        
+            # 変形前の点を描画
+            for pt in oval_points:
+                cv2.circle(image, (int(pt[0]), int(pt[1])), 2, (0,255,0), -1)
+
+            # 変形後の点を描画
+            for pt in new_oval_points:
+                cv2.circle(image, (int(pt[0]), int(pt[1])), 2, (0,0,255), -1)
+
+            for i, pt in enumerate(_oval_points):
+                cv2.putText(image, f"{i}", (int(pt[0]), int(pt[1])), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,0,0))
+        
+        # 入力形式を(1, N, 2)に変換
+        source_pts = oval_points.reshape(1, -1, 2)
+        target_pts = new_oval_points.reshape(1, -1, 2)
+        
+        # TPS変形
+        tps = cv2.createThinPlateSplineShapeTransformer(1e-3)
+        matches = [cv2.DMatch(i, i, 0) for i in range(len(oval_points))]
+        tps.estimateTransformation(target_pts, source_pts, matches)
+
+        # 画像変形（背景処理追加）
+        warped_image = tps.warpImage(image, flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
+        
+        return warped_image
     
     return image

@@ -1287,8 +1287,16 @@
                             HeadLabel:
                                 text: ' Face'
                             ParamSlider:
-                                id: slider_oval_scale
-                                text: "Oval"
+                                id: slider_jawline_scale
+                                text: "Jawline"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'face')
+                            ParamSlider:
+                                id: slider_jaw_scale
+                                text: "Jaw"
                                 min: 0
                                 max: 100
                                 value: 0
@@ -1296,7 +1304,7 @@
                                 on_slider: root.apply_effects_lv(1, 'face')
                             ParamSlider:
                                 id: slider_right_eye_scale
-                                text: "Right Eye"
+                                text: "Right eye"
                                 min: 0
                                 max: 100
                                 value: 0
@@ -1304,7 +1312,7 @@
                                 on_slider: root.apply_effects_lv(1, 'face')
                             ParamSlider:
                                 id: slider_left_eye_scale
-                                text: "Left Eye"
+                                text: "Left eye"
                                 min: 0
                                 max: 100
                                 value: 0

@@ -786,33 +786,40 @@ class FaceEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'oval_scale': 0,
+            'jawline_scale': 0,
+            'jaw_scale': 0,
             'left_eye_scale': 0,
             'right_eye_scale': 0,
         }    
 
     def set2widget(self, widget, param):
-        widget.ids["slider_oval_scale"].set_slider_value(param.get('oval_scale', 0))
+        widget.ids["slider_jawline_scale"].set_slider_value(param.get('jawline_scale', 0))
+        widget.ids["slider_jaw_scale"].set_slider_value(param.get('jaw_scale', 0))
         widget.ids["slider_left_eye_scale"].set_slider_value(param.get('left_eye_scale', 0))
         widget.ids["slider_right_eye_scale"].set_slider_value(param.get('right_eye_scale', 0))
 
     def set2param(self, param, widget):
-        param['oval_scale'] = widget.ids["slider_oval_scale"].value
+        param['jawline_scale'] = widget.ids["slider_jawline_scale"].value
+        param['jaw_scale'] = widget.ids["slider_jaw_scale"].value
         param['left_eye_scale'] = widget.ids["slider_left_eye_scale"].value
         param['right_eye_scale'] = widget.ids["slider_right_eye_scale"].value
 
     def make_diff(self, rgb, param, efconfig):
-        os = param.get('oval_scale', 0)
+        jls = param.get('jawline_scale', 0)
+        js = param.get('jaw_scale', 0)
         ls = param.get('left_eye_scale', 0)
         rs = param.get('right_eye_scale', 0)
-        if ls == 0 and rs == 0 and os == 0:
+        if ls == 0 and rs == 0 and jls == 0 and js == 0:
             self.diff = None
             self.hash = None
 
         else:
-            param_hash = hash((os, ls, rs))
+            param_hash = hash((jls, js, ls, rs))
             if self.hash != param_hash:
-                self.diff = mediapipe_util.adjust_face_oval(rgb, os/200, efconfig.mode == EffectMode.PREVIEW)
+                fms = mediapipe_util.setup_face_mesh(rgb)
+                rgb2 = mediapipe_util.adjust_face_jawline(fms, rgb, jls/100, efconfig.mode == EffectMode.PREVIEW)
+                self.diff = mediapipe_util.adjust_face_jaw(fms, rgb2, js/100, False)
+                mediapipe_util.clear_face_mesh(fms)
                 self.hash = param_hash
 
         return self.diff
