@@ -50,6 +50,9 @@ def adjust_eyes_scale(image, scale=1.2, radius=50):
 EXCLUDE_POINT_INDICES_FOR_JAWLINE = [0, 25, 22, 24, 20, 19, 26, 18, 32, 26, 35, 5, 7, 4, 6, 2, 1, 15, 8]
 EXCLUDE_POINT_INDICES_FOR_JAW = [0, 25, 22, 24, 20, 19, 26, 18, 32, 26, 35, 5, 7, 4, 6, 2, 1, 15, 8, 5, 9, 3, 16, 10, 13, 23, 27, 21, 33, 28, 31, 30, 12]
 
+FIX_POINT_SCALES_FOR_OVAL = [-0.5, 0.2, 0.4, 0.8]
+FIX_POINT_SCALES_FOR_EYES = [-0.8, 0.4, 0.8, 1.6]
+
 def setup_face_mesh(image):
 
     # ランドマーク取得
@@ -67,19 +70,30 @@ def setup_face_mesh(image):
 
 def clear_face_mesh(fms):
     mp_face_mesh, face_mesh, results = fms
+    face_mesh.close()
     del face_mesh
 
 def adjust_face_jawline(fms, image, scale, debug=False):
     mp_face_mesh, face_mesh, results = fms
 
-    return adjust_face_mesh(fms, image, scale, mp_face_mesh.FACEMESH_FACE_OVAL, EXCLUDE_POINT_INDICES_FOR_JAWLINE, debug)
+    return adjust_face_mesh(fms, image, scale, None, mp_face_mesh.FACEMESH_FACE_OVAL, EXCLUDE_POINT_INDICES_FOR_JAWLINE, FIX_POINT_SCALES_FOR_OVAL, debug)
 
 def adjust_face_jaw(fms, image, scale, debug=False):
     mp_face_mesh, face_mesh, results = fms
 
-    return adjust_face_mesh(fms, image, scale, mp_face_mesh.FACEMESH_FACE_OVAL, EXCLUDE_POINT_INDICES_FOR_JAW, debug)
+    return adjust_face_mesh(fms, image, scale, None, mp_face_mesh.FACEMESH_FACE_OVAL, EXCLUDE_POINT_INDICES_FOR_JAW, FIX_POINT_SCALES_FOR_OVAL, debug)
 
-def adjust_face_mesh(fms, image, scale, mesh, exclude_point_indeces, debug=False):
+def adjust_left_eye(fms, image, scale, debug=False):
+    mp_face_mesh, face_mesh, results = fms
+
+    return adjust_face_mesh(fms, image, -scale, (0.4, 0.4), mp_face_mesh.FACEMESH_LEFT_EYE, None, FIX_POINT_SCALES_FOR_EYES, debug)
+
+def adjust_right_eye(fms, image, scale, debug=False):
+    mp_face_mesh, face_mesh, results = fms
+
+    return adjust_face_mesh(fms, image, -scale, (0.4, 0.4), mp_face_mesh.FACEMESH_RIGHT_EYE, None, FIX_POINT_SCALES_FOR_EYES, debug)
+
+def adjust_face_mesh(fms, image, scale, org_scale, mesh, exclude_point_indeces, fix_point_scales, debug=False):
 
     if scale == 0:
         return image
@@ -102,11 +116,25 @@ def adjust_face_mesh(fms, image, scale, mesh, exclude_point_indeces, debug=False
         for i in oval_indices:
             landmark = landmarks.landmark[i]
             oval_points.append([landmark.x * w, landmark.y * h])
-            
+
+        # 一旦ndarrayに変換
         _oval_points = np.array(oval_points, dtype=np.float32)
 
         # 顔の中心計算
         center = np.mean(_oval_points, axis=0)
+
+        # 元座標を拡張
+        if org_scale:
+            org_scale = -np.array(org_scale) # イメージと逆
+            new_oval_points = []
+            for pt in oval_points:
+                direction = center - pt
+                new_pt = pt + direction * org_scale
+                new_oval_points.append(new_pt)
+            oval_points = new_oval_points
+
+        # もう一回
+        _oval_points = np.array(oval_points, dtype=np.float32)
 
         # 固定点追加前の座標数
         l = len(oval_points)
@@ -119,13 +147,14 @@ def adjust_face_mesh(fms, image, scale, mesh, exclude_point_indeces, debug=False
             new_oval_points.append(new_pt)
 
             # 固定点追加
-            FIX_POINT_SCALES = [-0.5, 0.2, 0.4, 0.8]
-            for scale in FIX_POINT_SCALES:
-                oval_points.append(pt - direction * scale)
+            if fix_point_scales:
+                for scale in fix_point_scales:
+                    oval_points.append(pt - direction * scale)
 
         # 固定点コピー
-        for i in range(l*len(FIX_POINT_SCALES)):
-            new_oval_points.append(oval_points[l+i])
+        if fix_point_scales:
+            for i in range(l*len(fix_point_scales)):
+                new_oval_points.append(oval_points[l+i])
 
         # 下輪郭以外を削除
         if exclude_point_indeces:
