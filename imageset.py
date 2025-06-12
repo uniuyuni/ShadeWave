@@ -28,17 +28,15 @@ def imageset_to_shared_memory(imgset):
     """
     ImageSetを共有メモリに変換する
     """
-    # 画像のサイズを取得
-    width, height = imgset.img.shape[:2]
     # 共有メモリを作成
     shm = shared_memory.SharedMemory(create=True, size=imgset.img.nbytes)
     # 共有メモリに画像を書き込む
     shared_array = np.ndarray(imgset.img.shape, dtype=imgset.img.dtype, buffer=shm.buf)
     shared_array[:] = imgset.img[:]
     # 共有メモリのサイズを返す
-    return (imgset.file_path, shm.name, imgset.img.shape, imgset.img.dtype)
+    return (imgset.file_path, shm.name, imgset.img.shape, imgset.img.dtype, imgset.flag)
 
-def shared_memory_to_imageset(file_path, shm_name, shape, dtype):
+def shared_memory_to_imageset(file_path, shm_name, shape, dtype, flag):
     """
     共有メモリからImageSetを作成する
     """
@@ -57,6 +55,7 @@ def shared_memory_to_imageset(file_path, shm_name, shape, dtype):
     imgset = ImageSet()
     imgset.file_path = file_path
     imgset.img = img
+    imgset.flag = flag
 
     return imgset
 
@@ -283,8 +282,9 @@ class ImageSet:
                 #cv2.imwrite("test.jpg", cv2.cvtColor((img_array * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
 
             # 色空間変更
-            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
-                                          apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
+            src_icc_profile_name = core.get_icc_profile_name(img)
+            img_array = colour.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', 'CAT16',
+                                            apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
                                           
             # 画像からホワイトバランスパラメータ取得
             params.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))

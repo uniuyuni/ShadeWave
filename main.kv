@@ -1275,6 +1275,43 @@
                                     on_text: root.apply_effects_lv(0, 'crop')
 
                 TabbedPanelItem:
+                    text: 'Look'
+
+                    MDScrollView:
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            HeadLabel:
+                                text: ' Face'
+                            ParamSlider:
+                                id: slider_oval_scale
+                                text: "Oval"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'face')
+                            ParamSlider:
+                                id: slider_right_eye_scale
+                                text: "Right Eye"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'face')
+                            ParamSlider:
+                                id: slider_left_eye_scale
+                                text: "Left Eye"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'face')
+
+                TabbedPanelItem:
                     text: 'Mask2'
 
                     MDScrollView:
@@ -1362,6 +1399,7 @@
                                 value: 0
                                 step: 2
                                 on_slider: root.apply_effects_lv(3, 'mask2')
+
 
         ViewerWidget:
             id: viewer

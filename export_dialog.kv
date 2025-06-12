@@ -6,8 +6,8 @@
 <ExportDialog>:
     pos_hint: {'center_x': 0.5, 'center_y': 0.5}
     size_hint: None, None
-    ref_width: 600
-    ref_height: 400
+    ref_width: 550
+    ref_height: 350
 
     BoxLayout:
         orientation: 'vertical'
@@ -37,9 +37,7 @@
                     size_hint_x: 0.7
                     on_text: root.load_preset(self.text)
 
-            VSpacer:
             VSeparator:
-            VSpacer:
 
             # 出力形式セクション
             BoxLayout:
@@ -54,6 +52,8 @@
                 Spinner:
                     text: root.format_value
                     values: ['.JPG', '.TIFF', '.HEIC']
+                    size_hint_x: None
+                    ref_width: 80
                     on_text: root.format_value = self.text
 
                 ParamSlider:
@@ -69,6 +69,7 @@
                     on_slider: root.quality_value = int(self.value)
 
             VSpacer:
+                ref_height: 5
 
             # 出力先設定
             BoxLayout:
@@ -96,6 +97,7 @@
                         on_press: root.browse_output()
 
             VSpacer:
+                ref_height: 5
         
             # サイズ設定セクション
             BoxLayout:
@@ -110,6 +112,8 @@
                 Spinner:
                     text: root.size_mode
                     values: ['Original', 'Long Edge', 'Pixels', 'Percentage']
+                    size_hint_x: None
+                    ref_width: 120
                     on_text: root.size_mode = self.text
 
                 TextInput:
@@ -118,9 +122,7 @@
                     disabled: root.size_mode == 'Original'
                     on_text: root.size_value = self.text
 
-            VSpacer:
             VSeparator:
-            VSpacer:
 
             ParamSlider:
                 id: slider_sharpen
@@ -142,13 +144,28 @@
                     text: "Metadata"
 
                 CheckBox:
-                    size_hint_x: 0.7
+                    size_hint_x: None
+                    ref_width: 20
+                    halign: 'left'
                     active: root.include_metadata
                     on_active: root.include_metadata = self.active
 
-            VSpacer:
+            # ICC profile
+            BoxLayout:
+                size_hint_y: None
+                ref_height: 20
+                ref_spacing: 5
+
+                ParamLabel:
+                    text: "ICC Profile"
+                Spinner:
+                    text: root.icc_profile
+                    values: ['sRGB IEC61966-2.1', 'Adobe RGB (1998)', 'ProPhoto RGB']
+                    size_hint_x: None
+                    ref_width: 180
+                    on_text: root.icc_profile = self.text
+
             VSeparator:
-            VSpacer:
 
             # プリセット管理ボタン
             BoxLayout:
@@ -169,7 +186,7 @@
             orientation: 'horizontal'
 
             VSpacer:
-                size_hint_x: 6
+                size_hint_x: 3
 
             # キャンセルボタン
             Button:

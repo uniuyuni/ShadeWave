@@ -1,4 +1,6 @@
+
 import sys
+import io
 import cv2
 import numpy as np
 import jax
@@ -14,6 +16,7 @@ from scipy.ndimage import gaussian_filter
 import logging
 import math
 from numba import njit, prange
+from PIL import ImageCms
 
 import sigmoid
 import dng_sdk
@@ -703,7 +706,7 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
     if not is_zoomed:
         # リサイズ
         dx, dy, dw, dh, _ = disp_info
-        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
 
         # リサイズした画像を中央に配置
         result = np.pad(resized_img, ((offset_y, texture_height-(offset_y+new_height)), (offset_x, texture_width-(offset_x+new_width)), (0, 0)), constant_values=0)
@@ -1668,3 +1671,19 @@ def fast_median_filter(img, kernel_size=3, num_bins=256):
                     hist[int(right_val)] += 1
                     
     return result
+
+ICC_PROFILE_TO_COLOR_SPACE = {
+    'sRGB IEC61966-2.1': 'sRGB',
+    'Adobe RGB (1998)': 'Adobe RGB (1998)',
+    'ProPhoto RGB': 'ProPhoto RGB',
+}
+
+def get_icc_profile_name(pil_image):
+    icc_data = pil_image.info.get("icc_profile")
+    
+    if not icc_data:
+        return 'sRGB IEC61966-2.1'
+
+    profile = ImageCms.getOpenProfile(io.BytesIO(icc_data))
+    
+    return profile.profile.profile_description

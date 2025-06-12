@@ -106,8 +106,6 @@ class MainWidget(MDBoxLayout):
     def draw_image(self, offset, dt):
         if (self.imgset is not None) and (self.imgset.img is not None):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
-            print(self.imgset.img.shape)
-            print(self.imgset.flag) 
             #utils.print_nan_inf(img)
             
             img = np.array(img)
@@ -185,6 +183,7 @@ class MainWidget(MDBoxLayout):
     
     @mainthread
     def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
+        print(f"Load image SHAPE: {imgset.img.shape} FLAG: {imgset.flag}")
 
         if flag == 0:
             # 最終的なパラメータを合成
@@ -197,9 +196,10 @@ class MainWidget(MDBoxLayout):
                 # パラメータを読み込んで追加設定
                 params.load_json(file_path, param, self.ids['mask_editor2'])
 
-        self.primary_param = param
-        self.set2widget_all(self.primary_effects, param)
-        self.apply_effects_lv(0, 'crop') # 特別あつかい
+            # １回目の時だけパラメータを反映して、編集できる様にする
+            self.primary_param = param
+            self.set2widget_all(self.primary_effects, param)
+            self.apply_effects_lv(0, 'crop') # 特別あつかい
             
         self.imgset = imgset
         self.start_draw_image_and_crop(imgset)
@@ -291,7 +291,7 @@ class MainWidget(MDBoxLayout):
                 if preset['size_mode'] == "Percentage": resize_str = preset['size_value'] + "%"
 
                 exfile = export.ExportFile(x.file_path, x.exif_data)
-                exfile.write_to_file(ex_path, preset['quality'], resize_str, preset['sharpen']/100, preset['color_space'], preset['metadata'])
+                exfile.write_to_file(ex_path, preset['quality'], resize_str, preset['sharpen']/100, preset['icc_profile'], preset['metadata'])
 
     def _make_export_path(seslf, path, preset):
         dirname, basename = os.path.split(path)

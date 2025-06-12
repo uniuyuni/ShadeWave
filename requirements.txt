@@ -21,6 +21,7 @@ thop
 einops
 timm
 matplotlib
+mediapipe
 typer
 typer_config
 fastapi

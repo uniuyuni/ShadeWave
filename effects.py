@@ -1,5 +1,6 @@
 
 from re import L
+from token import EXACT_TOKEN_TYPES
 import scipy
 from typing_extensions import ItemsView
 import cv2
@@ -29,6 +30,7 @@ import filter
 import local_contrast
 import params
 import utils
+import mediapipe_util
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -520,9 +522,9 @@ class LightNoiseReductionEffect(Effect):
                 
                 # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
                 if its > 0:
-                    d_l = max(1, min(15, int(1 + its * 0.05)))
+                    d_l = max(1, min(15, int(1 + its * 0.1)))
                     d_l = d_l + 1 if d_l % 2 == 0 else d_l
-                    sigma_l = 10 + its * 0.5
+                    sigma_l = 10 + its * 0.7
 
                     # ノイズ低減処理付きSobel
                     gray = l / 100.0
@@ -707,7 +709,7 @@ class FrostedGlassEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.frosted_glass_effect(img, fr / 10, fr / 1000 * efconfig.disp_info[4])
+                self.diff = filter.frosted_glass_effect(img, fr / 100 * efconfig.disp_info[4], fr / 1000 * efconfig.disp_info[4])
                 self.hash = param_hash
 
         return self.diff
@@ -776,6 +778,41 @@ class GlowEffect(Effect):
                     rgb2 = filter.lensblur_filter(rgb2, gg*2-1)
                 go = go/100.0
                 self.diff = cv2.addWeighted(rgb, 1.0-go, core.blend_screen(rgb, rgb2), go, 0)
+                self.hash = param_hash
+
+        return self.diff
+
+class FaceEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'oval_scale': 0,
+            'left_eye_scale': 0,
+            'right_eye_scale': 0,
+        }    
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_oval_scale"].set_slider_value(param.get('oval_scale', 0))
+        widget.ids["slider_left_eye_scale"].set_slider_value(param.get('left_eye_scale', 0))
+        widget.ids["slider_right_eye_scale"].set_slider_value(param.get('right_eye_scale', 0))
+
+    def set2param(self, param, widget):
+        param['oval_scale'] = widget.ids["slider_oval_scale"].value
+        param['left_eye_scale'] = widget.ids["slider_left_eye_scale"].value
+        param['right_eye_scale'] = widget.ids["slider_right_eye_scale"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        os = param.get('oval_scale', 0)
+        ls = param.get('left_eye_scale', 0)
+        rs = param.get('right_eye_scale', 0)
+        if ls == 0 and rs == 0 and os == 0:
+            self.diff = None
+            self.hash = None
+
+        else:
+            param_hash = hash((os, ls, rs))
+            if self.hash != param_hash:
+                self.diff = mediapipe_util.adjust_face_oval(rgb, os/200, efconfig.mode == EffectMode.PREVIEW)
                 self.hash = param_hash
 
         return self.diff
@@ -1984,6 +2021,7 @@ def create_effects():
     lv1['frosted_glass'] = FrostedGlassEffect()
     lv1['mosaic'] = MosaicEffect()
     lv1['glow'] = GlowEffect()
+    lv1['face'] = FaceEffect()
     
     lv2 = effects[2]
     lv2['color_temperature'] = ColorTemperatureEffect()

@@ -6,6 +6,7 @@ import json
 import exiftool
 import colour
 
+import core
 from imageset import ImageSet
 import effects
 import pipeline
@@ -131,16 +132,16 @@ class ExportFile():
 
         self.ex_path = None
         self.quality = 100
-        self.color_space = "sRGB"
+        self.icc_profile = "sRGB"
         self.imgset = None
         self.effects = effects.create_effects()
         self.param = {}
         self.mask_editor2 = mask_editor2.MaskEditor2()
 
-    def write_to_file(self, ex_path, quality, resize_str, sharpen, color_space, exifsw):
+    def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw):
         self.quality = quality
         self.ex_path = ex_path
-        self.color_space = color_space
+        self.icc_profile = icc_profile
         self.imgset = ImageSet()
         result = self.imgset.preload(self.file_path, self.exif_data, self.param)
         self.imgset.load(result, self.file_path, self.exif_data, self.param)
@@ -153,7 +154,8 @@ class ExportFile():
 
         params.load_json(self.file_path, self.param, self.mask_editor2)
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
-        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', self.color_space, 'CAT16',
+
+        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], 'CAT16',
                                 apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
         img = np.clip(img, 0, 1)
 

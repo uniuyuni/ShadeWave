@@ -83,7 +83,7 @@ class ExportDialog(ModalView):
     output_path = StringProperty('')
 
     # Color Space
-    color_space = StringProperty('sRGB')
+    icc_profile = StringProperty('sRGB IEC61966-2.1')
 
     # Presets
     presets = DictProperty()
@@ -125,7 +125,7 @@ class ExportDialog(ModalView):
             'sharpen': 50,
             'metadata': True,
             'output_path': '',
-            'color_space': 'sRGB',
+            'icc_profile': 'sRGB IEC61966-2.1',
         }
         if self.presets.get('Default', None) is None:
             self.presets['Default'] = default_settings
@@ -152,7 +152,7 @@ class ExportDialog(ModalView):
         print(f"Sharpen: {self.sharpen_value}")
         print(f"Metadata: {self.include_metadata}")
         print(f"Output: {self.output_path}")
-        print(f"Color Space: {self.color_space}")
+        print(f"ICC Profile: {self.icc_profile}")
 
         self.dismiss()
         if self.callback is not None:
@@ -164,7 +164,7 @@ class ExportDialog(ModalView):
                 'sharpen': self.sharpen_value,
                 'metadata': self.include_metadata,
                 'output_path': self.output_path,
-                'color_space': self.color_space,
+                'icc_profile': self.icc_profile,
             }            
             self.callback(preset)
 
