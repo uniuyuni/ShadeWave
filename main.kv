@@ -1302,6 +1302,15 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
+
+                            ParamSlider:
+                                id: slider_left_eye_scale
+                                text: "Left eye"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'face')
                             ParamSlider:
                                 id: slider_right_eye_scale
                                 text: "Right eye"
@@ -1310,10 +1319,11 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
+
                             ParamSlider:
-                                id: slider_left_eye_scale
-                                text: "Left eye"
-                                min: 0
+                                id: slider_lips_scale
+                                text: "Lips"
+                                min: -100
                                 max: 100
                                 value: 0
                                 step: 1

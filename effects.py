@@ -790,6 +790,7 @@ class FaceEffect(Effect):
             'jaw_scale': 0,
             'left_eye_scale': 0,
             'right_eye_scale': 0,
+            'lips_scale': 0,
         }    
 
     def set2widget(self, widget, param):
@@ -797,30 +798,34 @@ class FaceEffect(Effect):
         widget.ids["slider_jaw_scale"].set_slider_value(param.get('jaw_scale', 0))
         widget.ids["slider_left_eye_scale"].set_slider_value(param.get('left_eye_scale', 0))
         widget.ids["slider_right_eye_scale"].set_slider_value(param.get('right_eye_scale', 0))
+        widget.ids["slider_lips_scale"].set_slider_value(param.get('lips_scale', 0))
 
     def set2param(self, param, widget):
         param['jawline_scale'] = widget.ids["slider_jawline_scale"].value
         param['jaw_scale'] = widget.ids["slider_jaw_scale"].value
         param['left_eye_scale'] = widget.ids["slider_left_eye_scale"].value
         param['right_eye_scale'] = widget.ids["slider_right_eye_scale"].value
+        param['lips_scale'] = widget.ids["slider_lips_scale"].value
 
     def make_diff(self, rgb, param, efconfig):
         jls = param.get('jawline_scale', 0)
         js = param.get('jaw_scale', 0)
         ls = param.get('left_eye_scale', 0)
         rs = param.get('right_eye_scale', 0)
-        if ls == 0 and rs == 0 and jls == 0 and js == 0:
+        lipss = param.get('lips_scale', 0)
+        if ls == 0 and rs == 0 and jls == 0 and js == 0 and lipss == 0:
             self.diff = None
             self.hash = None
 
         else:
-            param_hash = hash((jls, js, ls, rs))
+            param_hash = hash((jls, js, ls, rs, lipss))
             if self.hash != param_hash:
                 fms = mediapipe_util.setup_face_mesh(rgb)
                 rgb = mediapipe_util.adjust_face_jawline(fms, rgb, jls/100, efconfig.mode == EffectMode.PREVIEW)
                 rgb = mediapipe_util.adjust_face_jaw(fms, rgb, js/100, False)
                 rgb = mediapipe_util.adjust_left_eye(fms, rgb, ls/100, False)
                 rgb = mediapipe_util.adjust_right_eye(fms, rgb, rs/100, False)
+                rgb = mediapipe_util.adjust_lips(fms, rgb, lipss/100, False)
                 mediapipe_util.clear_face_mesh(fms)
                 self.diff = rgb
                 self.hash = param_hash
