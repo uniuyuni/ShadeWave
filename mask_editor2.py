@@ -31,6 +31,7 @@ import importlib
 import core
 import params
 import effects
+import facer_util
 
 MASKTYPE_CIRCULAR = 'circular'
 MASKTYPE_GRADIENT = 'gradient'
@@ -38,6 +39,7 @@ MASKTYPE_FULL = 'full'
 MASKTYPE_FREEDRAW = 'free_draw'
 MASKTYPE_SEGMENT = 'segment'
 MASKTYPE_DEPTHMAP = 'depth_map'
+MASKTYPE_FACE = 'face'
 
 # コントロールポイントのクラス
 class ControlPoint(Widget):
@@ -1677,6 +1679,159 @@ class DepthMapMask(BaseMask):
             del DepthMapMask.__depth_map
             DepthMapMask.__depth_map = None
 
+class FaceMask(BaseMask):
+    __faces = None
+
+    def __init__(self, editor, **kwargs):
+        super().__init__(editor, **kwargs)
+        self.name = "Face"
+        self.initializing = True  # 初期配置中かどうか
+
+        self.center = (0, 0)
+
+        with self.canvas:
+            PushMatrix()
+            self.translate = Translate(*self.center)
+            PopMatrix()
+
+        #self.update_mask()
+
+    def on_touch_down(self, touch):
+        if self.initializing:
+            cx, cy = self.editor.window_to_tcg(*touch.pos)
+            self.center_x = cx
+            self.center_y = cy
+            return True
+        else: 
+            return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.initializing:
+            self.initializing = False
+            self.create_control_points()
+            self.editor.set_active_mask(self)
+            return True
+        else:
+            return super().on_touch_up(touch)
+
+    def create_control_points(self):
+        self.control_points = []
+
+        # 中心のコントロールポイント
+        cp_center = ControlPoint(self.editor)
+        cp_center.center = (self.center_x, self.center_y)
+        cp_center.ctrl_center = cp_center.center
+        cp_center.is_center = True
+        cp_center.color = [0, 1, 0] if self.active else [1, 0, 0]
+        cp_center.bind(ctrl_center=self.on_center_control_point_move)
+        self.control_points.append(cp_center)
+        self.add_widget(cp_center)
+
+        if not self.active:
+            self.show_center_control_point_only()
+
+    def serialize(self):
+        cx, cy = self.center
+
+        param = params.delete_special_param(self.effects_param)
+        dict = {
+            'type': MASKTYPE_FACE,
+            'name': self.name,
+            'center': [cx, cy],
+            'effects_param': param
+        }
+        return dict
+
+    def deserialize(self, dict):
+        self.initializing = False
+        cx, cy = dict['center']
+        self.name = dict['name']
+        self.effects_param.update(dict['effects_param'])
+
+        self.center = (cx, cy)
+
+        # 描き直し
+        self.create_control_points()
+        #self.update_mask()
+
+    def on_center_control_point_move(self, instance, value):
+        dx = instance.ctrl_center[0] - self.center_x
+        dy = instance.ctrl_center[1] - self.center_y
+        self.center_x += dx
+        self.center_y += dy
+        for cp in self.control_points:
+            if cp != instance:
+                cp.center_x += dx
+                cp.center_y += dy
+        self.update_control_points()
+        self.update_mask()
+        self.editor.start_draw_image()        
+
+    def update_control_points(self):
+        cp_center = self.control_points[0]
+        cp_center.center = self.center
+
+    def update_mask(self):
+        if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
+            # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
+            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            return
+
+        with self.canvas:
+            cx, cy = self.editor.tcg_to_window(*self.center)
+            self.translate.x, self.translate.y = cx, cy
+        
+        if self.is_draw_mask == True:
+            self.draw_mask_to_fbo()
+
+    def get_mask_image(self):
+
+        # パラメータ設定
+        image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        center = self.editor.tcg_to_full_image(*self.center)
+
+        newhash = hash((self.editor.get_hash_items(), image_size, center))
+        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
+            # 描画
+            gradient_image = self.draw_face(image_size, center)
+
+            # ルミナんとマスクを作成
+            gradient_image = self.draw_hls_mask(gradient_image)
+
+            # マスクぼかし
+            gradient_image = self.apply_mask_blur(gradient_image)
+
+            self.image_mask_cache = gradient_image
+            self.image_mask_cache_hash = newhash
+            
+        return self.image_mask_cache
+
+    def draw_face(self, image_size, center):
+        if FaceMask.__faces is None:
+            FaceMask.__faces = facer_util.create_faces(self.editor.full_image_rgb, device='cpu')
+        
+        # マスク画像を作成
+        if FaceMask.__faces == 0:
+            return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+        result = facer_util.draw_face_mask(FaceMask.__faces)
+
+        nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
+        cx, cy ,cw, ch, scale = self.editor.disp_info
+        result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
+        if scale < 1:
+            result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+
+        return result
+
+    @staticmethod
+    def delete_faces():
+        if FaceMask.__faces is not None:
+            FaceMask.__faces = None
+
 # マスクレイヤーの管理クラス
 class MaskLayer(BoxLayout):
     mask = ObjectProperty(None)
@@ -1854,9 +2009,13 @@ class MaskEditor2(FloatLayout):
         btn_segment.bind(on_release=self.select_segment_mask)
         self.ui_layout.add_widget(btn_segment)
 
-        btn_segment = Button(text='Depth Map', size_hint=(1, 0.05))
-        btn_segment.bind(on_release=self.select_depth_map_mask)
-        self.ui_layout.add_widget(btn_segment)
+        btn_depth_map = Button(text='Depth Map', size_hint=(1, 0.05))
+        btn_depth_map.bind(on_release=self.select_depth_map_mask)
+        self.ui_layout.add_widget(btn_depth_map)
+
+        btn_face = Button(text='Face', size_hint=(1, 0.05))
+        btn_face.bind(on_release=self.select_face_mask)
+        self.ui_layout.add_widget(btn_face)
 
         # マスクレイヤー表示
         self.layer_list = BoxLayout(orientation='vertical', size_hint=(2, 0.7))
@@ -1912,6 +2071,9 @@ class MaskEditor2(FloatLayout):
     def select_depth_map_mask(self, instance):
         self._create_start_new_mask(MASKTYPE_DEPTHMAP)
 
+    def select_face_mask(self, instance):
+        self._create_start_new_mask(MASKTYPE_FACE)
+
     def _create_start_new_mask(self, type):
         # 画像サイズがまだ設定されていない場合、マスクの作成をスキップ
         if self.image_size == [0, 0]:
@@ -1965,6 +2127,8 @@ class MaskEditor2(FloatLayout):
             mask = SegmentMask(editor=self)
         elif mask_type == MASKTYPE_DEPTHMAP:
             mask = DepthMapMask(editor=self)
+        elif mask_type == MASKTYPE_FACE:
+            mask = FaceMask(editor=self)
         else:
             Logger.error(f"MaskEditor: 不明なマスクタイプ: {self.current_mask_type}")
             return None
@@ -1999,6 +2163,7 @@ class MaskEditor2(FloatLayout):
         self.mask_layers.clear()
         self.layer_list.clear_widgets()
         DepthMapMask.delete_depth_map()
+        FaceMask.delete_faces()
 
     def set_active_mask(self, mask):
         if self.active_mask and self.active_mask != mask:
