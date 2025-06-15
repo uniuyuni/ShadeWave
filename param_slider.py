@@ -4,7 +4,7 @@ from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
 from kivy.metrics import dp
 
-import switchable_float_input
+import float_input
 
 class ParamSlider(KVBoxLayout):
     text = KVStringProperty()

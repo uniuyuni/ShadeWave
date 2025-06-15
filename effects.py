@@ -821,7 +821,7 @@ class FaceEffect(Effect):
             param_hash = hash((jls, js, ls, rs, lipss))
             if self.hash != param_hash:
                 fms = mediapipe_util.setup_face_mesh(rgb)
-                rgb = mediapipe_util.adjust_face_jawline(fms, rgb, jls/100, efconfig.mode == EffectMode.PREVIEW)
+                rgb = mediapipe_util.adjust_face_jawline(fms, rgb, jls/100, False) #efconfig.mode == EffectMode.PREVIEW)
                 rgb = mediapipe_util.adjust_face_jaw(fms, rgb, js/100, False)
                 rgb = mediapipe_util.adjust_left_eye(fms, rgb, ls/100, False)
                 rgb = mediapipe_util.adjust_right_eye(fms, rgb, rs/100, False)

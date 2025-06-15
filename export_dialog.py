@@ -15,7 +15,7 @@ import macos
 import utils
 
 import param_slider
-import switchable_float_input
+import float_input
 
 class PresetNameDialog(Popup):
     def __init__(self, save_callback, **kwargs):

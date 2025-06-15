@@ -36,7 +36,7 @@ from export_dialog import ExportDialog, ExportConfirmDialog
 import color
 import file_cache_system
 import hover_spinner
-import switchable_float_input
+import float_input
 import bbox_viewer
 import params
 
