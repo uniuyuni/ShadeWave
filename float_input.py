@@ -2,7 +2,7 @@
 from kivy.uix.textinput import TextInput as KVTextInput
 import re
 
-class SwitchableFloatInput(KVTextInput):
+class FloatInput(KVTextInput):
     """
     浮動小数点の値を内部的に保持しながら、
     for_floatフラグによって表示を整数のみにするか小数点も含めるか切り替え可能なTextInputクラス
