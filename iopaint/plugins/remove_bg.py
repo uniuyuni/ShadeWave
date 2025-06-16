@@ -1,7 +1,7 @@
 import os
 import cv2
 import numpy as np
-from loguru import logger
+import logging
 from torch.hub import get_dir
 
 from iopaint.plugins.base_plugin import BasePlugin
@@ -50,7 +50,7 @@ class RemoveBG(BasePlugin):
         if self.model_name == new_model_name:
             return
 
-        logger.info(
+        logging.info(
             f"Switching removebg model from {self.model_name} to {new_model_name}"
         )
         self._init_session(new_model_name)

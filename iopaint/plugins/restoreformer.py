@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from loguru import logger
+import logging
 
 from iopaint.helper import download_model
 from iopaint.plugins.base_plugin import BasePlugin
@@ -18,7 +18,7 @@ class RestoreFormerPlugin(BasePlugin):
         url = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth"
         model_md5 = "eaeeff6c4a1caa1673977cb374e6f699"
         model_path = download_model(url, model_md5)
-        logger.info(f"RestoreFormer model path: {model_path}")
+        logging.info(f"RestoreFormer model path: {model_path}")
 
         self.face_enhancer = MyGFPGANer(
             model_path=model_path,
@@ -32,7 +32,7 @@ class RestoreFormerPlugin(BasePlugin):
     def gen_image(self, rgb_np_img, req: RunPluginRequest) -> np.ndarray:
         weight = 0.5
         bgr_np_img = cv2.cvtColor(rgb_np_img, cv2.COLOR_RGB2BGR)
-        logger.info(f"RestoreFormer input shape: {bgr_np_img.shape}")
+        logging.info(f"RestoreFormer input shape: {bgr_np_img.shape}")
         _, _, bgr_output = self.face_enhancer.enhance(
             bgr_np_img,
             has_aligned=False,
@@ -40,5 +40,5 @@ class RestoreFormerPlugin(BasePlugin):
             paste_back=True,
             weight=weight,
         )
-        logger.info(f"RestoreFormer output shape: {bgr_output.shape}")
+        logging.info(f"RestoreFormer output shape: {bgr_output.shape}")
         return bgr_output

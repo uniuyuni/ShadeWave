@@ -9,21 +9,8 @@ import numpy as np
 import collections
 from itertools import repeat
 
-from diffusers import (
-    DDIMScheduler,
-    PNDMScheduler,
-    LMSDiscreteScheduler,
-    EulerDiscreteScheduler,
-    EulerAncestralDiscreteScheduler,
-    DPMSolverMultistepScheduler,
-    UniPCMultistepScheduler,
-    LCMScheduler,
-    DPMSolverSinglestepScheduler,
-    KDPM2DiscreteScheduler,
-    KDPM2AncestralDiscreteScheduler,
-    HeunDiscreteScheduler,
-)
-from loguru import logger
+
+import logging
 
 from iopaint.schema import SDSampler
 from torch import conv2d, conv_transpose2d
@@ -931,46 +918,6 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_scheduler(sd_sampler, scheduler_config):
-    # https://github.com/huggingface/diffusers/issues/4167
-    keys_to_pop = ["use_karras_sigmas", "algorithm_type"]
-    scheduler_config = dict(scheduler_config)
-    for it in keys_to_pop:
-        scheduler_config.pop(it, None)
-
-    # fmt: off
-    samplers = {
-        SDSampler.dpm_plus_plus_2m: [DPMSolverMultistepScheduler],
-        SDSampler.dpm_plus_plus_2m_karras: [DPMSolverMultistepScheduler, dict(use_karras_sigmas=True)],
-        SDSampler.dpm_plus_plus_2m_sde: [DPMSolverMultistepScheduler, dict(algorithm_type="sde-dpmsolver++")],
-        SDSampler.dpm_plus_plus_2m_sde_karras: [DPMSolverMultistepScheduler, dict(algorithm_type="sde-dpmsolver++", use_karras_sigmas=True)],
-        SDSampler.dpm_plus_plus_sde: [DPMSolverSinglestepScheduler],
-        SDSampler.dpm_plus_plus_sde_karras: [DPMSolverSinglestepScheduler, dict(use_karras_sigmas=True)],
-        SDSampler.dpm2: [KDPM2DiscreteScheduler],
-        SDSampler.dpm2_karras: [KDPM2DiscreteScheduler, dict(use_karras_sigmas=True)],
-        SDSampler.dpm2_a: [KDPM2AncestralDiscreteScheduler],
-        SDSampler.dpm2_a_karras: [KDPM2AncestralDiscreteScheduler, dict(use_karras_sigmas=True)],
-        SDSampler.euler: [EulerDiscreteScheduler],
-        SDSampler.euler_a: [EulerAncestralDiscreteScheduler],
-        SDSampler.heun: [HeunDiscreteScheduler],
-        SDSampler.lms: [LMSDiscreteScheduler],
-        SDSampler.lms_karras: [LMSDiscreteScheduler, dict(use_karras_sigmas=True)],
-        SDSampler.ddim: [DDIMScheduler],
-        SDSampler.pndm: [PNDMScheduler],
-        SDSampler.uni_pc: [UniPCMultistepScheduler],
-        SDSampler.lcm: [LCMScheduler],
-    }
-    # fmt: on
-    if sd_sampler in samplers:
-        if len(samplers[sd_sampler]) == 2:
-            scheduler_cls, kwargs = samplers[sd_sampler]
-        else:
-            scheduler_cls, kwargs = samplers[sd_sampler][0], {}
-        return scheduler_cls.from_config(scheduler_config, **kwargs)
-    else:
-        raise ValueError(sd_sampler)
-
-
 def is_local_files_only(**kwargs) -> bool:
     from huggingface_hub.constants import HF_HUB_OFFLINE
 
@@ -982,20 +929,20 @@ def handle_from_pretrained_exceptions(func, **kwargs):
         return func(**kwargs)
     except ValueError as e:
         if "You are trying to load the model files of the `variant=fp16`" in str(e):
-            logger.info("variant=fp16 not found, try revision=fp16")
+            logging.info("variant=fp16 not found, try revision=fp16")
             try:
                 return func(**{**kwargs, "variant": None, "revision": "fp16"})
             except Exception as e:
-                logger.info("revision=fp16 not found, try revision=main")
+                logging.info("revision=fp16 not found, try revision=main")
                 return func(**{**kwargs, "variant": None, "revision": "main"})
         raise e
     except OSError as e:
         previous_traceback = traceback.format_exc()
         if "RevisionNotFoundError: 404 Client Error." in previous_traceback:
-            logger.info("revision=fp16 not found, try revision=main")
+            logging.info("revision=fp16 not found, try revision=main")
             return func(**{**kwargs, "variant": None, "revision": "main"})
         elif "Max retries exceeded" in previous_traceback:
-            logger.exception(
+            logging.exception(
                 "Fetching model from HuggingFace failed. "
                 "If this is your first time downloading the model, you may need to set up proxy in terminal."
                 "If the model has already been downloaded, you can add --local-files-only when starting."

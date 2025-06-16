@@ -1,4 +1,5 @@
-from loguru import logger
+
+import logging
 import numpy as np
 
 from iopaint.schema import RunPluginRequest
@@ -12,7 +13,7 @@ class BasePlugin:
     def __init__(self):
         err_msg = self.check_dep()
         if err_msg:
-            logger.error(err_msg)
+            logging.error(err_msg)
             exit(-1)
 
     def gen_image(self, rgb_np_img, req: RunPluginRequest) -> np.ndarray:

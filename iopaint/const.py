@@ -1,38 +1,16 @@
 import os
 from typing import List
 
-INSTRUCT_PIX2PIX_NAME = "timbrooks/instruct-pix2pix"
-KANDINSKY22_NAME = "kandinsky-community/kandinsky-2-2-decoder-inpaint"
-POWERPAINT_NAME = "Sanster/PowerPaint-V1-stable-diffusion-inpainting"
-ANYTEXT_NAME = "Sanster/AnyText"
-
-DIFFUSERS_SD_CLASS_NAME = "StableDiffusionPipeline"
-DIFFUSERS_SD_INPAINT_CLASS_NAME = "StableDiffusionInpaintPipeline"
-DIFFUSERS_SDXL_CLASS_NAME = "StableDiffusionXLPipeline"
-DIFFUSERS_SDXL_INPAINT_CLASS_NAME = "StableDiffusionXLInpaintPipeline"
-
 MPS_UNSUPPORT_MODELS = [
     "lama",
     "ldm",
     "zits",
     #"mat",
     "fcf",
-    "cv2",
-    "manga",
 ]
 
 DEFAULT_MODEL = "lama"
-AVAILABLE_MODELS = ["lama", "ldm", "zits", "mat", "fcf", "manga", "cv2", "migan"]
-DIFFUSION_MODELS = [
-    "runwayml/stable-diffusion-inpainting",
-    "Uminosachi/realisticVisionV51_v51VAE-inpainting",
-    "redstonehero/dreamshaper-inpainting",
-    "Sanster/anything-4.0-inpainting",
-    "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
-    "Fantasy-Studio/Paint-by-Example",
-    POWERPAINT_NAME,
-    ANYTEXT_NAME,
-]
+AVAILABLE_MODELS = ["lama", "ldm", "zits", "mat", "fcf", "migan"]
 
 NO_HALF_HELP = """
 Using full precision(fp32) model.
@@ -52,36 +30,6 @@ Disable NSFW checker for diffusion model.
 CPU_TEXTENCODER_HELP = """
 Run diffusion models text encoder on CPU to reduce vRAM usage.
 """
-
-SD_CONTROLNET_CHOICES: List[str] = [
-    "lllyasviel/control_v11p_sd15_canny",
-    # "lllyasviel/control_v11p_sd15_seg",
-    "lllyasviel/control_v11p_sd15_openpose",
-    "lllyasviel/control_v11p_sd15_inpaint",
-    "lllyasviel/control_v11f1p_sd15_depth",
-]
-
-SD_BRUSHNET_CHOICES: List[str] = [
-    "Sanster/brushnet_random_mask",
-    "Sanster/brushnet_segmentation_mask",
-]
-
-SD2_CONTROLNET_CHOICES = [
-    "thibaud/controlnet-sd21-canny-diffusers",
-    "thibaud/controlnet-sd21-depth-diffusers",
-    "thibaud/controlnet-sd21-openpose-diffusers",
-]
-
-SDXL_CONTROLNET_CHOICES = [
-    "thibaud/controlnet-openpose-sdxl-1.0",
-    "destitech/controlnet-inpaint-dreamer-sdxl",
-    "diffusers/controlnet-canny-sdxl-1.0",
-    "diffusers/controlnet-canny-sdxl-1.0-mid",
-    "diffusers/controlnet-canny-sdxl-1.0-small",
-    "diffusers/controlnet-depth-sdxl-1.0",
-    "diffusers/controlnet-depth-sdxl-1.0-mid",
-    "diffusers/controlnet-depth-sdxl-1.0-small",
-]
 
 LOCAL_FILES_ONLY_HELP = """
 When loading diffusion models, using local files only, not connect to HuggingFace server.

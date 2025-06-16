@@ -1,8 +1,8 @@
-import os
 
+import os
 import numpy as np
 import torch
-from loguru import logger
+import logging
 
 from .base import InpaintModel
 from .ddim_sampler import DDIMSampler

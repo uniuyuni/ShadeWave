@@ -4,28 +4,13 @@ from pathlib import Path
 from typing import Optional, Literal, List
 import numpy as np
 
-from loguru import logger
+import logging
 
-from iopaint.const import (
-    INSTRUCT_PIX2PIX_NAME,
-    KANDINSKY22_NAME,
-    POWERPAINT_NAME,
-    ANYTEXT_NAME,
-    SDXL_CONTROLNET_CHOICES,
-    SD2_CONTROLNET_CHOICES,
-    SD_CONTROLNET_CHOICES,
-    SD_BRUSHNET_CHOICES,
-)
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class ModelType(str, Enum):
     INPAINT = "inpaint"  # LaMa, MAT...
-    DIFFUSERS_SD = "diffusers_sd"
-    DIFFUSERS_SD_INPAINT = "diffusers_sd_inpaint"
-    DIFFUSERS_SDXL = "diffusers_sdxl"
-    DIFFUSERS_SDXL_INPAINT = "diffusers_sdxl_inpaint"
-    DIFFUSERS_OTHER = "diffusers_other"
 
 
 class ModelInfo(BaseModel):
@@ -37,100 +22,17 @@ class ModelInfo(BaseModel):
     @computed_field
     @property
     def need_prompt(self) -> bool:
-        return self.model_type in [
-            ModelType.DIFFUSERS_SD,
-            ModelType.DIFFUSERS_SDXL,
-            ModelType.DIFFUSERS_SD_INPAINT,
-            ModelType.DIFFUSERS_SDXL_INPAINT,
-        ] or self.name in [
-            INSTRUCT_PIX2PIX_NAME,
-            KANDINSKY22_NAME,
-            POWERPAINT_NAME,
-            ANYTEXT_NAME,
-        ]
-
-    @computed_field
-    @property
-    def controlnets(self) -> List[str]:
-        if self.model_type in [
-            ModelType.DIFFUSERS_SDXL,
-            ModelType.DIFFUSERS_SDXL_INPAINT,
-        ]:
-            return SDXL_CONTROLNET_CHOICES
-        if self.model_type in [ModelType.DIFFUSERS_SD, ModelType.DIFFUSERS_SD_INPAINT]:
-            if "sd2" in self.name.lower():
-                return SD2_CONTROLNET_CHOICES
-            else:
-                return SD_CONTROLNET_CHOICES
-        if self.name == POWERPAINT_NAME:
-            return SD_CONTROLNET_CHOICES
-        return []
-
-    @computed_field
-    @property
-    def brushnets(self) -> List[str]:
-        if self.model_type in [ModelType.DIFFUSERS_SD]:
-            return SD_BRUSHNET_CHOICES
-        return []
+        return False
 
     @computed_field
     @property
     def support_strength(self) -> bool:
-        return self.model_type in [
-            ModelType.DIFFUSERS_SD,
-            ModelType.DIFFUSERS_SDXL,
-            ModelType.DIFFUSERS_SD_INPAINT,
-            ModelType.DIFFUSERS_SDXL_INPAINT,
-        ] or self.name in [POWERPAINT_NAME, ANYTEXT_NAME]
+        return False
 
     @computed_field
     @property
     def support_outpainting(self) -> bool:
-        return self.model_type in [
-            ModelType.DIFFUSERS_SD,
-            ModelType.DIFFUSERS_SDXL,
-            ModelType.DIFFUSERS_SD_INPAINT,
-            ModelType.DIFFUSERS_SDXL_INPAINT,
-        ] or self.name in [KANDINSKY22_NAME, POWERPAINT_NAME]
-
-    @computed_field
-    @property
-    def support_lcm_lora(self) -> bool:
-        return self.model_type in [
-            ModelType.DIFFUSERS_SD,
-            ModelType.DIFFUSERS_SDXL,
-            ModelType.DIFFUSERS_SD_INPAINT,
-            ModelType.DIFFUSERS_SDXL_INPAINT,
-        ]
-
-    @computed_field
-    @property
-    def support_controlnet(self) -> bool:
-        return self.model_type in [
-            ModelType.DIFFUSERS_SD,
-            ModelType.DIFFUSERS_SDXL,
-            ModelType.DIFFUSERS_SD_INPAINT,
-            ModelType.DIFFUSERS_SDXL_INPAINT,
-        ]
-
-    @computed_field
-    @property
-    def support_brushnet(self) -> bool:
-        return self.model_type in [
-            ModelType.DIFFUSERS_SD,
-        ]
-
-    @computed_field
-    @property
-    def support_powerpaint_v2(self) -> bool:
-        return (
-            self.model_type
-            in [
-                ModelType.DIFFUSERS_SD,
-            ]
-            and self.name != POWERPAINT_NAME
-        )
-
+        return False
 
 class Choices(str, Enum):
     @classmethod
@@ -194,11 +96,6 @@ class PluginInfo(BaseModel):
     support_gen_mask: bool = False
 
 
-class CV2Flag(str, Enum):
-    INPAINT_NS = "INPAINT_NS"
-    INPAINT_TELEA = "INPAINT_TELEA"
-
-
 class HDStrategy(str, Enum):
     # Use original image size
     ORIGINAL = "Original"
@@ -236,15 +133,6 @@ class SDSampler(str, Enum):
     pndm = "PNDM"
     uni_pc = "UniPC"
     lcm = "LCM"
-
-
-class PowerPaintTask(Choices):
-    text_guided = "text-guided"
-    context_aware = "context-aware"
-    shape_guided = "shape-guided"
-    object_remove = "object-remove"
-    outpainting = "outpainting"
-
 
 class ApiConfig(BaseModel):
     host: str
@@ -360,86 +248,24 @@ class InpaintRequest(BaseModel):
     sd_outpainting_softness: float = Field(20.0)
     sd_outpainting_space: float = Field(20.0)
 
-    sd_lcm_lora: bool = Field(
-        False,
-        description="Enable lcm-lora mode. https://huggingface.co/docs/diffusers/main/en/using-diffusers/inference_with_lcm#texttoimage",
-    )
-
     sd_keep_unmasked_area: bool = Field(
         True, description="Keep unmasked area unchanged"
     )
 
-    cv2_flag: CV2Flag = Field(
-        CV2Flag.INPAINT_NS,
-        description="Flag for opencv inpainting: https://docs.opencv.org/4.6.0/d7/d8b/group__photo__inpaint.html#gga8002a65f5a3328fbf15df81b842d3c3ca05e763003a805e6c11c673a9f4ba7d07",
-    )
-    cv2_radius: int = Field(
-        4,
-        description="Radius of a circular neighborhood of each point inpainted that is considered by the algorithm",
-    )
-
-    # Paint by Example
-    paint_by_example_example_image: Optional[str] = Field(
-        None, description="Base64 encoded example image for paint by example model"
-    )
-
-    # InstructPix2Pix
-    p2p_image_guidance_scale: float = Field(1.5, description="Image guidance scale")
-
-    # ControlNet
-    enable_controlnet: bool = Field(False, description="Enable controlnet")
-    controlnet_conditioning_scale: float = Field(
-        0.4, description="Conditioning scale", ge=0.0, le=1.0
-    )
-    controlnet_method: str = Field(
-        "lllyasviel/control_v11p_sd15_canny", description="Controlnet method"
-    )
-
-    # BrushNet
-    enable_brushnet: bool = Field(False, description="Enable brushnet")
-    brushnet_method: str = Field(SD_BRUSHNET_CHOICES[0], description="Brushnet method")
-    brushnet_conditioning_scale: float = Field(
-        1.0, description="brushnet conditioning scale", ge=0.0, le=1.0
-    )
-
-    # PowerPaint
-    enable_powerpaint_v2: bool = Field(False, description="Enable PowerPaint v2")
-    powerpaint_task: PowerPaintTask = Field(
-        PowerPaintTask.text_guided, description="PowerPaint task"
-    )
-    fitting_degree: float = Field(
-        1.0,
-        description="Control the fitting degree of the generated objects to the mask shape.",
-        gt=0.0,
-        le=1.0,
-    )
 
     @model_validator(mode="after")
     def validate_field(cls, values: "InpaintRequest"):
         if values.sd_seed == -1:
             values.sd_seed = random.randint(1, 99999999)
-            logger.info(f"Generate random seed: {values.sd_seed}")
+            logging.info(f"Generate random seed: {values.sd_seed}")
 
         if values.use_extender and values.enable_controlnet:
-            logger.info("Extender is enabled, set controlnet_conditioning_scale=0")
+            logging.info("Extender is enabled, set controlnet_conditioning_scale=0")
             values.controlnet_conditioning_scale = 0
 
         if values.use_extender:
-            logger.info("Extender is enabled, set sd_strength=1")
+            logging.info("Extender is enabled, set sd_strength=1")
             values.sd_strength = 1.0
-
-        if values.enable_brushnet:
-            logger.info("BrushNet is enabled, set enable_controlnet=False")
-            if values.enable_controlnet:
-                values.enable_controlnet = False
-            if values.sd_lcm_lora:
-                logger.info("BrushNet is enabled, set sd_lcm_lora=False")
-                values.sd_lcm_lora = False
-
-        if values.enable_controlnet:
-            logger.info("ControlNet is enabled, set enable_brushnet=False")
-            if values.enable_brushnet:
-                values.enable_brushnet = False
 
         return values
 

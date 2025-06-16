@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 import torch
-from loguru import logger
+import logging
 
 from iopaint.helper import download_model
 from iopaint.plugins.base_plugin import BasePlugin
@@ -93,7 +93,7 @@ class InteractiveSeg(BasePlugin):
             SEGMENT_ANYTHING_MODELS[model_name]["url"],
             SEGMENT_ANYTHING_MODELS[model_name]["md5"],
         )
-        logger.info(f"SegmentAnything model path: {model_path}")
+        logging.info(f"SegmentAnything model path: {model_path}")
         if "sam_hq" in model_name:
             self.predictor = SamHQPredictor(
                 sam_model_registry[model_name](checkpoint=model_path).to(self.device)
@@ -113,7 +113,7 @@ class InteractiveSeg(BasePlugin):
         if self.model_name == new_model_name:
             return
 
-        logger.info(
+        logging.info(
             f"Switching InteractiveSeg model from {self.model_name} to {new_model_name}"
         )
         self._init_session(new_model_name)

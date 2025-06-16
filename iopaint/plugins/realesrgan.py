@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
-from loguru import logger
+import logging
 
 from iopaint.helper import download_model
 from iopaint.plugins.base_plugin import BasePlugin
@@ -445,7 +445,7 @@ class RealESRGANUpscaler(BasePlugin):
         model_info = REAL_ESRGAN_MODELS[name]
 
         model_path = download_model(model_info["url"], model_info["model_md5"])
-        logger.info(f"RealESRGAN model path: {model_path}")
+        logging.info(f"RealESRGAN model path: {model_path}")
 
         self.model = RealESRGANer(
             scale=model_info["scale"],
@@ -465,9 +465,9 @@ class RealESRGANUpscaler(BasePlugin):
         self.model_name = new_model_name
 
     def gen_image(self, rgb_np_img, req: RunPluginRequest) -> np.ndarray:
-        logger.info(f"RealESRGAN input shape: {rgb_np_img.shape}, scale: {req.scale}")
+        logging.info(f"RealESRGAN input shape: {rgb_np_img.shape}, scale: {req.scale}")
         result = self.forward(rgb_np_img, req.scale)
-        logger.info(f"RealESRGAN output shape: {result.shape}")
+        logging.info(f"RealESRGAN output shape: {result.shape}")
         return result
 
     @torch.inference_mode()

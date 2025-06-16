@@ -11,7 +11,7 @@ from PIL import Image, ImageOps, PngImagePlugin
 import numpy as np
 import torch
 from iopaint.const import MPS_UNSUPPORT_MODELS
-from loguru import logger
+import logging
 from torch.hub import download_url_to_file, get_dir
 import hashlib
 
@@ -26,7 +26,7 @@ def md5sum(filename):
 
 def switch_mps_device(model_name, device):
     if model_name in MPS_UNSUPPORT_MODELS and str(device) == "mps":
-        logger.info(f"{model_name} not support mps, switch to cpu")
+        logging.info(f"{model_name} not support mps, switch to cpu")
         return torch.device("cpu")
     return device
 
@@ -54,16 +54,16 @@ def download_model(url, model_md5: str = None):
         if model_md5:
             _md5 = md5sum(cached_file)
             if model_md5 == _md5:
-                logger.info(f"Download model success, md5: {_md5}")
+                logging.info(f"Download model success, md5: {_md5}")
             else:
                 try:
                     os.remove(cached_file)
-                    logger.error(
+                    logging.error(
                         f"Model md5: {_md5}, expected md5: {model_md5}, wrong model deleted. Please restart iopaint."
                         f"If you still have errors, please try download model manually first https://lama-cleaner-docs.vercel.app/install/download_model_manually.\n"
                     )
                 except:
-                    logger.error(
+                    logging.error(
                         f"Model md5: {_md5}, expected md5: {model_md5}, please delete {cached_file} and restart iopaint."
                     )
                 exit(-1)
@@ -82,16 +82,16 @@ def handle_error(model_path, model_md5, e):
     if _md5 != model_md5:
         try:
             os.remove(model_path)
-            logger.error(
+            logging.error(
                 f"Model md5: {_md5}, expected md5: {model_md5}, wrong model deleted. Please restart iopaint."
                 f"If you still have errors, please try download model manually first https://lama-cleaner-docs.vercel.app/install/download_model_manually.\n"
             )
         except:
-            logger.error(
+            logging.error(
                 f"Model md5: {_md5}, expected md5: {model_md5}, please delete {model_path} and restart iopaint."
             )
     else:
-        logger.error(
+        logging.error(
             f"Failed to load model {model_path},"
             f"please submit an issue at https://github.com/Sanster/lama-cleaner/issues and include a screenshot of the error:\n{e}"
         )
@@ -104,7 +104,7 @@ def load_jit_model(url_or_path, device, model_md5: str):
     else:
         model_path = download_model(url_or_path, model_md5)
 
-    logger.info(f"Loading model from: {model_path}")
+    logging.info(f"Loading model from: {model_path}")
     try:
         model = torch.jit.load(model_path, map_location="cpu").to(device)
     except Exception as e:
@@ -120,7 +120,7 @@ def load_model(model: torch.nn.Module, url_or_path, device, model_md5):
         model_path = download_model(url_or_path, model_md5)
 
     try:
-        logger.info(f"Loading model from: {model_path}")
+        logging.info(f"Loading model from: {model_path}")
         state_dict = torch.load(model_path, map_location="cpu")
         model.load_state_dict(state_dict, strict=True)
         model.to(device)

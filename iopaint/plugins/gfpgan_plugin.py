@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from loguru import logger
+import logging
 
 from iopaint.helper import download_model
 from iopaint.plugins.base_plugin import BasePlugin
@@ -18,7 +18,7 @@ class GFPGANPlugin(BasePlugin):
         url = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth"
         model_md5 = "94d735072630ab734561130a47bc44f8"
         model_path = download_model(url, model_md5)
-        logger.info(f"GFPGAN model path: {model_path}")
+        logging.info(f"GFPGAN model path: {model_path}")
 
         # Use GFPGAN for face enhancement
         self.face_enhancer = MyGFPGANer(
@@ -37,7 +37,7 @@ class GFPGANPlugin(BasePlugin):
     def gen_image(self, rgb_np_img, req: RunPluginRequest) -> np.ndarray:
         weight = 0.5
         bgr_np_img = cv2.cvtColor(rgb_np_img, cv2.COLOR_RGB2BGR)
-        logger.info(f"GFPGAN input shape: {bgr_np_img.shape}")
+        logging.info(f"GFPGAN input shape: {bgr_np_img.shape}")
         _, _, bgr_output = self.face_enhancer.enhance(
             bgr_np_img,
             has_aligned=False,
@@ -45,7 +45,7 @@ class GFPGANPlugin(BasePlugin):
             paste_back=True,
             weight=weight,
         )
-        logger.info(f"GFPGAN output shape: {bgr_output.shape}")
+        logging.info(f"GFPGAN output shape: {bgr_output.shape}")
 
         # try:
         #     if scale != 2:

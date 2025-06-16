@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 from .utils import make_ddim_timesteps, make_ddim_sampling_parameters, noise_like
 
-from loguru import logger
+import logging
 
 
 class DDIMSampler(object):
@@ -118,7 +118,7 @@ class DDIMSampler(object):
             else np.flip(timesteps)
         )
         total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
-        logger.info(f"Running DDIM Sampling with {total_steps} timesteps")
+        logging.info(f"Running DDIM Sampling with {total_steps} timesteps")
 
         iterator = tqdm(time_range, desc="DDIM Sampler", total=total_steps)
 

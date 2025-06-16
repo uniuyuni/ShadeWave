@@ -1,11 +1,8 @@
 
-import os
-import cv2
 import json
 import numpy as np
-from loguru import logger
+import logging
 
-import iopaint.cli
 from iopaint.model_manager import ModelManager
 from iopaint.schema import InpaintRequest, Device, HDStrategy, RealESRGANModel, InteractiveSegModel, RunPluginRequest
 from iopaint.plugins import RealESRGANUpscaler
@@ -18,12 +15,12 @@ def predict(image, mask, config=None, model="mat", device=Device.mps, resize_lim
         inpaint_request.hd_strategy = HDStrategy.RESIZE
         inpaint_request.hd_strategy_resize_use_realesrgan = use_realesrgan
         inpaint_request.hd_strategy_resize_limit = resize_limit
-        logger.info(f"Using default config: {inpaint_request}")
+        logging.info(f"Using default config: {inpaint_request}")
     else:
         with open(config, "r", encoding="utf-8") as f:
             inpaint_request = InpaintRequest(**json.load(f))
 
-        logger.info(f"Using config: {inpaint_request}")
+        logging.info(f"Using config: {inpaint_request}")
 
     model_manager = ModelManager(name=model, device=device)
 
