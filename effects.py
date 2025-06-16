@@ -1,12 +1,13 @@
 
-from re import L
-from token import EXACT_TOKEN_TYPES
-import scipy
+#from re import L
+#from token import EXACT_TOKEN_TYPES
+#from kivy import 
+#import scipy
 from typing_extensions import ItemsView
 import cv2
 import numpy as np
 import importlib
-import bz2
+#import bz2
 from enum import Enum
 
 #import colorsys
@@ -1901,6 +1902,12 @@ class Mask2Effect(Effect):
             'mask2_sat_min': 0,
             'mask2_sat_max': 255,
             'mask2_blur': 0,
+            'mask2_face_face': True,
+            'mask2_face_brows': True,
+            'mask2_face_eyes': True,
+            'mask2_face_nose': True,
+            'mask2_face_mouth': True,
+            'mask2_face_ears': True,
         }
 
     def set2widget(self, widget, param):
@@ -1912,6 +1919,12 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_sat_min"].set_slider_value(param.get('mask2_sat_min', 0))
         widget.ids["slider_mask2_sat_max"].set_slider_value(param.get('mask2_sat_max', 255))
         widget.ids["slider_mask2_blur"].set_slider_value(param.get('mask2_blur', 0))
+        widget.ids["checkbox_mask2_face_face"].active = param.get('mask2_face_face', True)
+        widget.ids["checkbox_mask2_face_brows"].active = param.get('mask2_face_brows', True)
+        widget.ids["checkbox_mask2_face_eyes"].active = param.get('mask2_face_eyes', True)
+        widget.ids["checkbox_mask2_face_nose"].active = param.get('mask2_face_nose', True)
+        widget.ids["checkbox_mask2_face_mouth"].active = param.get('mask2_face_mouth', True)
+        widget.ids["checkbox_mask2_face_ears"].active = param.get('mask2_face_ears', True)
 
     def set2param(self, param, widget):
         param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value
@@ -1922,6 +1935,12 @@ class Mask2Effect(Effect):
         param['mask2_sat_min'] = widget.ids["slider_mask2_sat_min"].value
         param['mask2_sat_max'] = widget.ids["slider_mask2_sat_max"].value
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
+        param['mask2_face_face'] = widget.ids["checkbox_mask2_face_face"].active
+        param['mask2_face_brows'] = widget.ids["checkbox_mask2_face_brows"].active
+        param['mask2_face_eyes'] = widget.ids["checkbox_mask2_face_eyes"].active
+        param['mask2_face_nose'] = widget.ids["checkbox_mask2_face_nose"].active
+        param['mask2_face_mouth'] = widget.ids["checkbox_mask2_face_mouth"].active
+        param['mask2_face_ears'] = widget.ids["checkbox_mask2_face_ears"].active
 
     def make_diff(self, rgb, param, efconfig):
         dmin = param.get('mask2_depth_min', 0)
@@ -1932,6 +1951,12 @@ class Mask2Effect(Effect):
         smin = param.get('mask2_sat_min', 0)
         smax = param.get('mask2_sat_max', 255)
         blur = param.get('mask2_blur', 0)
+        face_face = param.get('mask2_face_face', True)
+        face_brows = param.get('mask2_face_brows', True)
+        face_eyes = param.get('mask2_face_eyes', True)
+        face_nose = param.get('mask2_face_nose', True)
+        face_mouth = param.get('mask2_face_mouth', True)
+        face_ears = param.get('mask2_face_ears', True)
         if  dmin == 0 and dmax == 255 and hdis == 359 and lmin == 0 and lmax == 255 and smin == 0 and smax == 255 and blur == 0:
             self.diff = None
             self.hash = None

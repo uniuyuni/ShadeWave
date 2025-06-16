@@ -1817,7 +1817,20 @@ class FaceMask(BaseMask):
         if FaceMask.__faces == 0:
             return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
-        result = facer_util.draw_face_mask(FaceMask.__faces)
+        exclude_names = []
+        if self.effects_param.get('mask2_face_face', True) == False:
+            exclude_names.append('face')
+        if self.effects_param.get('mask2_face_brows', True) == False:
+            exclude_names.extend(['rb', 'lb'])
+        if self.effects_param.get('mask2_face_eyes', True) == False:
+            exclude_names.extend(['re', 'le'])
+        if self.effects_param.get('mask2_face_nose', True) == False:
+            exclude_names.append('nose')
+        if self.effects_param.get('mask2_face_mouth', True) == False:
+            exclude_names.extend(['ulip', 'llip', 'imouth'])
+        if self.effects_param.get('mask2_face_ears', True) == False:
+            exclude_names.extend(['re', 'le'])
+        result = facer_util.draw_face_mask(FaceMask.__faces, exclude_names)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info

@@ -1418,6 +1418,55 @@
                                 step: 2
                                 on_slider: root.apply_effects_lv(3, 'mask2')
 
+                            HeadLabel:
+                                text: ' Face'
+
+                            VSeparator:
+
+                            MDGridLayout:
+                                id: grid_mask2_face
+                                size_hint_y: None
+                                ref_height: 40
+                                ref_width: 120
+                                cols: 6
+
+                                ParamLabel:          
+                                    text: "Face"
+                                CheckBox:
+                                    id: checkbox_mask2_face_face
+                                    active: True
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+                                ParamLabel:          
+                                    text: "Brows"
+                                CheckBox:
+                                    id: checkbox_mask2_face_brows
+                                    active: True
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+                                ParamLabel:          
+                                    text: "Eyes"
+                                CheckBox:
+                                    id: checkbox_mask2_face_eyes
+                                    active: True
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+                                ParamLabel:          
+                                    text: "Nose"
+                                CheckBox:
+                                    id: checkbox_mask2_face_nose
+                                    active: True
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+                                ParamLabel:          
+                                    text: "Mouth"
+                                CheckBox:
+                                    id: checkbox_mask2_face_mouth
+                                    active: True
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+                                ParamLabel:          
+                                    text: "Ears"
+                                CheckBox:
+                                    id: checkbox_mask2_face_ears
+                                    active: True
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+
 
         ViewerWidget:
             id: viewer

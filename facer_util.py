@@ -17,7 +17,7 @@ def create_faces(rgb_float32, device='cpu'):
     if faces['rects'].shape[0] == 0:
         return 0
 
-    face_parser = facer.face_parser('farl/celebm/448', device=device)
+    face_parser = facer.face_parser('farl/lapa/448', device=device)
     with torch.inference_mode():
         faces = face_parser(images, faces)
 
@@ -28,16 +28,18 @@ def create_faces(rgb_float32, device='cpu'):
 
     return faces
 
-def draw_face_mask(faces):
+def draw_face_mask(faces, exclude_names=[]):
 
     seg_results = faces['seg']
     label_names = seg_results['label_names']
     #probs = faces['seg']['probs']
     predictions = faces['seg']['predictions']
 
-    all_classed = ['background', 'neck', 'face', 'cloth', 'rr', 'lr', 'rb', 'lb', 're', 'le', 'nose', 'imouth', 'llip', 'ulip', 'hair', 'eyeg', 'hat', 'earr', 'neck_l']
-
-    face_classes = ['face', 'nose', 'rb', 'lb', 're', 'le', 'eyeg', 'ulip', 'llip', 'imouth']
+    face_classes = ['face', 'nose', 'rb', 'lb', 're', 'le', 'ulip', 'llip', 'imouth']
+    face_classes = [i for i in face_classes if i not in exclude_names]
+    if len(face_classes) == 0:
+        return np.zeros((faces['size'][1], faces['size'][0]), dtype=np.float32)
+    
     face_ids = [label_names.index(name) for name in face_classes]
     face_masks = []
     for mask in predictions:
