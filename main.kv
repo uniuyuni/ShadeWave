@@ -1418,10 +1418,28 @@
                                 step: 2
                                 on_slider: root.apply_effects_lv(3, 'mask2')
 
-                            HeadLabel:
-                                text: ' Face'
+                            ParamSlider:
+                                id: slider_mask2_open_space
+                                text: "Open space"
+                                min: -100
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(3, 'mask2')
+
+                            ParamSlider:
+                                id: slider_mask2_close_space
+                                text: "Close space"
+                                min: -100
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(3, 'mask2')
 
                             VSeparator:
+
+                            HeadLabel:
+                                text: ' Face'
 
                             MDGridLayout:
                                 id: grid_mask2_face
@@ -1461,9 +1479,9 @@
                                     active: True
                                     on_press: root.apply_effects_lv(3, 'mask2')
                                 ParamLabel:          
-                                    text: "Ears"
+                                    text: "Lips"
                                 CheckBox:
-                                    id: checkbox_mask2_face_ears
+                                    id: checkbox_mask2_face_lips
                                     active: True
                                     on_press: root.apply_effects_lv(3, 'mask2')
 

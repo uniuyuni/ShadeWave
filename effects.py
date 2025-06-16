@@ -1907,7 +1907,9 @@ class Mask2Effect(Effect):
             'mask2_face_eyes': True,
             'mask2_face_nose': True,
             'mask2_face_mouth': True,
-            'mask2_face_ears': True,
+            'mask2_face_lips': True,
+            'mask2_open_space': 0,
+            'mask2_close_space': 0,
         }
 
     def set2widget(self, widget, param):
@@ -1924,7 +1926,9 @@ class Mask2Effect(Effect):
         widget.ids["checkbox_mask2_face_eyes"].active = param.get('mask2_face_eyes', True)
         widget.ids["checkbox_mask2_face_nose"].active = param.get('mask2_face_nose', True)
         widget.ids["checkbox_mask2_face_mouth"].active = param.get('mask2_face_mouth', True)
-        widget.ids["checkbox_mask2_face_ears"].active = param.get('mask2_face_ears', True)
+        widget.ids["checkbox_mask2_face_lips"].active = param.get('mask2_face_lips', True)
+        widget.ids["slider_mask2_open_space"].set_slider_value(param.get('mask2_open_space', 0))
+        widget.ids["slider_mask2_close_space"].set_slider_value(param.get('mask2_close_space', 0))
 
     def set2param(self, param, widget):
         param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value
@@ -1940,7 +1944,9 @@ class Mask2Effect(Effect):
         param['mask2_face_eyes'] = widget.ids["checkbox_mask2_face_eyes"].active
         param['mask2_face_nose'] = widget.ids["checkbox_mask2_face_nose"].active
         param['mask2_face_mouth'] = widget.ids["checkbox_mask2_face_mouth"].active
-        param['mask2_face_ears'] = widget.ids["checkbox_mask2_face_ears"].active
+        param['mask2_face_lips'] = widget.ids["checkbox_mask2_face_lips"].active
+        param['mask2_open_space'] = widget.ids["slider_mask2_open_space"].value
+        param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
 
     def make_diff(self, rgb, param, efconfig):
         dmin = param.get('mask2_depth_min', 0)
@@ -1956,7 +1962,9 @@ class Mask2Effect(Effect):
         face_eyes = param.get('mask2_face_eyes', True)
         face_nose = param.get('mask2_face_nose', True)
         face_mouth = param.get('mask2_face_mouth', True)
-        face_ears = param.get('mask2_face_ears', True)
+        face_lips = param.get('mask2_face_lips', True)
+        open_space = param.get('mask2_open_space', 0)
+        close_space = param.get('mask2_close_space', 0)
         if  dmin == 0 and dmax == 255 and hdis == 359 and lmin == 0 and lmax == 255 and smin == 0 and smax == 255 and blur == 0:
             self.diff = None
             self.hash = None

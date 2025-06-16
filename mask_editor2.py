@@ -32,6 +32,7 @@ import core
 import params
 import effects
 import facer_util
+import expand_mask
 
 MASKTYPE_CIRCULAR = 'circular'
 MASKTYPE_GRADIENT = 'gradient'
@@ -204,12 +205,22 @@ class BaseMask(Widget):
             self.editor.draw_mask_image(mask_image)
 
     def draw_hls_mask(self, image):
-        dimg = self.apply_depth_mask(image)
+        simg = self.apply_mask_space(image)
+        dimg = self.apply_depth_mask(simg)
         himg = self.draw_hue_mask(dimg)
         limg = self.draw_lum_mask(himg)
         simg = self.draw_sat_mask(limg)
         
         return simg
+
+    def apply_mask_space(self, image):
+        open_space = self.effects_param.get('mask2_open_space', 0)
+        image = expand_mask.adjust_foreground_only(image, open_space * self.editor.disp_info[4], False)
+
+        close_space = self.effects_param.get('mask2_close_space', 0)
+        image = expand_mask.adjust_holes_only(image, close_space * self.editor.disp_info[4], False)
+        
+        return image
 
     def apply_depth_mask(self, image):
         dmin = self.effects_param.get('mask2_depth_min', 0) / 255
@@ -1827,9 +1838,9 @@ class FaceMask(BaseMask):
         if self.effects_param.get('mask2_face_nose', True) == False:
             exclude_names.append('nose')
         if self.effects_param.get('mask2_face_mouth', True) == False:
-            exclude_names.extend(['ulip', 'llip', 'imouth'])
-        if self.effects_param.get('mask2_face_ears', True) == False:
-            exclude_names.extend(['re', 'le'])
+            exclude_names.append('imouth')
+        if self.effects_param.get('mask2_face_lips', True) == False:
+            exclude_names.extend(['ulip', 'llip'])
         result = facer_util.draw_face_mask(FaceMask.__faces, exclude_names)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)

@@ -50,6 +50,7 @@ def draw_face_mask(faces, exclude_names=[]):
     mask = np.maximum.reduce([face_masks[i].cpu().numpy() for i in range(len(face_masks))])
     #cv2.imwrite(f"face_mask.jpg", (mask * 255).astype(np.uint8))
 
+    #return (mask, faces['size'])
     return cv2.resize(mask, faces['size'], interpolation=cv2.INTER_NEAREST)
 
 def make_bboxs(faces):
