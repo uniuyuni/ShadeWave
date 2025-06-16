@@ -158,12 +158,11 @@ class MainWidget(MDBoxLayout):
 
     def save_current_sidecar(self):
         if self.imgset is not None:
-            param2 =  self.primary_param.copy()
-            effects.delete_default_param_all(self.primary_effects,param2) # プライマリのデフォルト値は消す
+            param2 = effects.delete_default_param_all(self.primary_effects, self.primary_param) # プライマリのデフォルト値は消す
             result = params.save_json(self.imgset.file_path, param2, self.ids['mask_editor2'])
             if result == False:
                 # 失敗時はファイルを削除
-                params.delete_empty_param_json(self.imgset.file_path, param2)
+                params.delete_empty_param_json(self.imgset.file_path)
     
     @mainthread
     def on_select(self, card):

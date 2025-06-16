@@ -107,6 +107,7 @@ class BaseMask(Widget):
         # エフェクトパラメータ保持
         self.effects = effects.create_effects()
         self.effects_param = {}
+        params.set_image_param_for_mask2(self.effects_param, self.editor.image_size)
         params.set_temperature_to_param(self.effects_param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
 
         self.is_draw_mask = True
@@ -406,7 +407,9 @@ class CircularGradientMask(BaseMask):
         ox = self.outer_radius_x
         oy = self.outer_radius_y
 
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+        
         dict = {
             'type': MASKTYPE_CIRCULAR,
             'name': self.name,
@@ -687,7 +690,9 @@ class GradientMask(BaseMask):
         sx, sy = self.start_point[0], self.start_point[1]
         ex, ey = self.end_point[0], self.end_point[1]
 
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+         
         dict = {
             'type': MASKTYPE_GRADIENT,
             'name': self.name,
@@ -954,7 +959,9 @@ class FullMask(BaseMask):
     def serialize(self):
         cx, cy = self.center
 
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+        
         dict = {
             'type': MASKTYPE_FULL,
             'name': self.name,
@@ -1075,7 +1082,9 @@ class FreeDrawMask(BaseMask):
     def serialize(self):
         """マスクの状態をシリアライズ"""
         cx, cy = self.center
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+        
         dict = {
             'type': MASKTYPE_FREEDRAW,
             'name': self.name,
@@ -1445,7 +1454,9 @@ class SegmentMask(BaseMask):
     def serialize(self):
         cx, cy = self.center
 
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+        
         dict = {
             'type': MASKTYPE_SEGMENT,
             'name': self.name,
@@ -1595,7 +1606,9 @@ class DepthMapMask(BaseMask):
     def serialize(self):
         cx, cy = self.center
 
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+
         dict = {
             'type': MASKTYPE_DEPTHMAP,
             'name': self.name,
@@ -1747,7 +1760,9 @@ class FaceMask(BaseMask):
     def serialize(self):
         cx, cy = self.center
 
-        param = params.delete_special_param(self.effects_param)
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+
         dict = {
             'type': MASKTYPE_FACE,
             'name': self.name,

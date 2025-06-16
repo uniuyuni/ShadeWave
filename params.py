@@ -2,6 +2,7 @@
 import os
 import json
 from datetime import datetime as dt
+from turtle import width
 
 import effects
 import crop_editor
@@ -35,19 +36,20 @@ REMAIN_PARAM = [
 def get_crop_rect(param, none_value=None):
     crop_rect = param.get('crop_rect', none_value)
     if crop_rect is not None:
+        maxsize = max(param['original_img_size'])
         if none_value is not None:
             crop_rect = (
-                crop_rect[0] / param['original_img_size'][0],
-                crop_rect[1] / param['original_img_size'][1],
-                crop_rect[2] / param['original_img_size'][0],
-                crop_rect[3] / param['original_img_size'][1],
+                crop_rect[0] / maxsize,
+                crop_rect[1] / maxsize,
+                crop_rect[2] / maxsize,
+                crop_rect[3] / maxsize,
             )
         
         crop_rect2 = (
-            int(round(crop_rect[0] * param['original_img_size'][0])),
-            int(round(crop_rect[1] * param['original_img_size'][1])),
-            int(round(crop_rect[2] * param['original_img_size'][0])),
-            int(round(crop_rect[3] * param['original_img_size'][1])),
+            int(round(crop_rect[0] * maxsize)),
+            int(round(crop_rect[1] * maxsize)),
+            int(round(crop_rect[2] * maxsize)),
+            int(round(crop_rect[3] * maxsize)),
         )
     else:
         crop_rect2 = None
@@ -56,31 +58,33 @@ def get_crop_rect(param, none_value=None):
 
 def set_crop_rect(param, crop_rect):
     if crop_rect is not None:
+        maxsize = max(param['original_img_size'])
         crop_rect2 = (
-            crop_rect[0] / param['original_img_size'][0],
-            crop_rect[1] / param['original_img_size'][1],
-            crop_rect[2] / param['original_img_size'][0],
-            crop_rect[3] / param['original_img_size'][1],
+            crop_rect[0] / maxsize,
+            crop_rect[1] / maxsize,
+            crop_rect[2] / maxsize,
+            crop_rect[3] / maxsize,
         )
         param['crop_rect'] = crop_rect2
 
 def get_disp_info(param, none_value=None):
     disp_info = param.get('disp_info', none_value)
     if disp_info is not None:
+        maxsize = max(param['original_img_size'])
         if none_value is not None:
             disp_info = (
-                disp_info[0] / param['original_img_size'][0],
-                disp_info[1] / param['original_img_size'][1],
-                disp_info[2] / param['original_img_size'][0],
-                disp_info[3] / param['original_img_size'][1],
+                disp_info[0] / maxsize,
+                disp_info[1] / maxsize,
+                disp_info[2] / maxsize,
+                disp_info[3] / maxsize,
                 disp_info[4],
             )
 
         disp_info2 = (
-            int(round(disp_info[0] * param['original_img_size'][0])),
-            int(round(disp_info[1] * param['original_img_size'][1])),
-            int(round(disp_info[2] * param['original_img_size'][0])),
-            int(round(disp_info[3] * param['original_img_size'][1])),
+            int(round(disp_info[0] * maxsize)),
+            int(round(disp_info[1] * maxsize)),
+            int(round(disp_info[2] * maxsize)),
+            int(round(disp_info[3] * maxsize)),
             disp_info[4],
         )
     else:
@@ -90,11 +94,12 @@ def get_disp_info(param, none_value=None):
 
 def set_disp_info(param, disp_info):
     if disp_info is not None:
+        maxsize = max(param['original_img_size'])
         disp_info2 = (
-            disp_info[0] / param['original_img_size'][0],
-            disp_info[1] / param['original_img_size'][1],
-            disp_info[2] / param['original_img_size'][0],
-            disp_info[3] / param['original_img_size'][1],
+            disp_info[0] / maxsize,
+            disp_info[1] / maxsize,
+            disp_info[2] / maxsize,
+            disp_info[3] / maxsize,
             disp_info[4],
         )
         param['disp_info'] = disp_info2
@@ -111,6 +116,10 @@ def set_image_param(param, img):
     set_disp_info(param, crop_editor.CropEditor.convert_rect_to_info(get_crop_rect(param), param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size'])))
 
     return (width, height)
+
+def set_image_param_for_mask2(param, size):
+    width, height = size
+    param['original_img_size'] = (width, height)
 
 def set_temperature_to_param(param, temp, tint, Y):
     param['color_temperature_reset'] = temp
@@ -197,7 +206,7 @@ def deserialize(dict, param, mask_editor2):
         mask_editor2.deserialize(dict)
 
 def save_json(file_path, param, mask_editor2):
-    if file_path is not None and is_empty_param(param) == False:
+    if file_path is not None and is_empty_param(param, mask_editor2) == False:
         file_path = file_path + '.json'
         dict = serialize(param, mask_editor2)
         if dict is not None:
@@ -226,15 +235,20 @@ def load_json(file_path, param, mask_editor2):
     
     return None
 
-def is_empty_param(param):
+def is_empty_param(param, mask_editor2):
     param2 = delete_special_param(param)
-    return len(param2) <= 0
+    mask_dict = mask_editor2.serialize()
+    if len(param2) == 0 and (mask_dict is None or len(mask_dict) == 0):
+        return True
 
-def delete_empty_param_json(file_path, param):
+    return False
+    
+
+def delete_empty_param_json(file_path):
     if file_path is not None:
         file_path = file_path + '.json'
 
-        if is_empty_param(param) and os.path.exists(file_path):
+        if os.path.exists(file_path):
             os.remove(file_path)
             return True
 

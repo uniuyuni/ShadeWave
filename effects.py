@@ -2131,9 +2131,11 @@ def finalize_all(effects, param, widget):
             l.finalize(param, widget)
 
 def delete_default_param_all(effects, param):
+    param2 = param.copy()
     for dict in effects:
         for l in dict.values():
-            l.delete_default_param(param)
+            l.delete_default_param(param2)
+    return param2
 
 
 if __name__ == '__main__':

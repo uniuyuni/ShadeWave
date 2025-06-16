@@ -171,7 +171,7 @@ class ImageSet:
         try:
             raw = rawpy.imread(file_path)
             img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
-                                        demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
+                                        #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
                                         output_bps=16,
                                         no_auto_scale=False,
                                         use_camera_wb=True,
@@ -213,6 +213,9 @@ class ImageSet:
 
             # float32へ
             img_array = utils.convert_to_float32(img_array)
+
+            #img_array = img_array - raw.black_level_per_channel[0] / ((1<<14)-1)
+            #img_array = np.clip(img_array, 0, 1)
 
             # 色空間変更
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
