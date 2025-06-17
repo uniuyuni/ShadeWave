@@ -7,7 +7,7 @@ import facer
 def create_faces(rgb_float32, device='cpu'):
 
     height, width = rgb_float32.shape[:2]
-    small_image = cv2.resize(rgb_float32, (width // 4, height // 4), interpolation=cv2.INTER_AREA)
+    small_image = cv2.resize(rgb_float32, (width // 4, height // 4), interpolation=cv2.INTER_LINEAR_EXACT)
 
     images = facer.hwc2bchw(torch.from_numpy((small_image * 255).astype(np.uint8))).to(device=device)  # image: 1 x 3 x h x w
 
@@ -51,7 +51,7 @@ def draw_face_mask(faces, exclude_names=[]):
     #cv2.imwrite(f"face_mask.jpg", (mask * 255).astype(np.uint8))
 
     #return (mask, faces['size'])
-    return cv2.resize(mask, faces['size'], interpolation=cv2.INTER_NEAREST)
+    return cv2.resize(mask, faces['size'], interpolation=cv2.INTER_CUBIC)
 
 def make_bboxs(faces):
     bboxs = []

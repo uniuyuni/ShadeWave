@@ -187,13 +187,28 @@ class BaseMask(Widget):
     def update(self):
         if len(self.control_points) > 0:
             cp_center = self.control_points[0]
-            #cp_center.property('ctrl_center').dispatch(cp_center)
-            cp_center.ctrl_center[0] += float(np.finfo(np.float32).eps)
-            cp_center.ctrl_center[0] -= float(np.finfo(np.float32).eps)
+            cp_center.property('ctrl_center').dispatch(cp_center)
+            #cp_center.ctrl_center[0] += float(np.finfo(np.float32).eps)
+            #cp_center.ctrl_center[0] -= float(np.finfo(np.float32).eps)
 
     def update_control_points(self):
         pass
 
+    def on_center_control_point_move(self, instance, value):
+        dx = instance.ctrl_center[0] - self.center_x
+        dy = instance.ctrl_center[1] - self.center_y
+        self.center = (self.center_x + dx, self.center_y + dy)
+        for cp in self.control_points:
+            #if cp != instance:
+            center = (cp.center_x + dx, cp.center_y + dy)
+            if cp.center[0] == center[0] and cp.center[1] == center[1]:
+                cp.property('center').dispatch(cp) # 値が同じだとディスパッチされないから
+            else:
+                cp.center = center
+        self.update_control_points()
+        self.update_mask()
+        self.editor.start_draw_image()
+    
     def draw_mask_to_fbo(self):
         if not self.editor.disp_info:
             Logger.warning(f"{self.__class__.__name__}: disp_infoが未設定。")
@@ -213,6 +228,18 @@ class BaseMask(Widget):
         simg = self.draw_sat_mask(limg)
         
         return simg
+
+    def get_hash_items(self):
+        return (self.effects_param.get('mask2_open_space', 0),
+                self.effects_param.get('mask2_close_space', 0),
+                self.effects_param.get('mask2_depth_min', 0),
+                self.effects_param.get('mask2_depth_max', 255),
+                self.effects_param.get('mask2_blur', 0),
+                self.effects_param.get('mask2_hue_distance', 179),
+                self.effects_param.get('mask2_lum_min', 0),
+                self.effects_param.get('mask2_lum_max', 255),
+                self.effects_param.get('mask2_sat_min', 0),
+                self.effects_param.get('mask2_sat_max', 255))
 
     def apply_mask_space(self, image):
         open_space = self.effects_param.get('mask2_open_space', 0)
@@ -465,17 +492,7 @@ class CircularGradientMask(BaseMask):
         new_r_y = dx * math.sin(self.rotate_rad) + dy * math.cos(self.rotate_rad)
         
         return (abs(new_r_x), abs(new_r_y))
-    
-    def on_center_control_point_move(self, instance, value):
-        dx = instance.ctrl_center[0] - self.center_x
-        dy = instance.ctrl_center[1] - self.center_y
-        self.center = (self.center_x + dx, self.center_y + dy)
-        for cp in self.control_points:
-            if cp != instance:
-                cp.center = (cp.center_x + dx, cp.center_y + dy)
-        self.update_control_points()
-        self.update_mask()
-        self.editor.start_draw_image()
+
 
     def on_outer_control_point_move(self, instance, value):
         if self.active:
@@ -557,8 +574,8 @@ class CircularGradientMask(BaseMask):
         outer_axes = self.editor.tcg_to_world_scale(self.outer_radius_x, self.outer_radius_y)
         rotate_rad = self.editor.get_rotate_rad(self.rotate_rad)
 
-        newhash = hash((self.editor.get_hash_items(), image_size, center, inner_axes, outer_axes, rotate_rad, self.invert))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, inner_axes, outer_axes, rotate_rad, self.invert))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
 
             # グラデーションを描画
             gradient_image = self.draw_elliptical_gradient(image_size, center, inner_axes, outer_axes, rotate_rad, self.invert)
@@ -572,7 +589,7 @@ class CircularGradientMask(BaseMask):
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
 
-        return self.image_mask_cache
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_elliptical_gradient(self, image_size, center, inner_axes, outer_axes, angle_rad, invert=0, smoothness=2.0):
     
@@ -764,9 +781,12 @@ class GradientMask(BaseMask):
         self.end_point = [self.end_point[0] + dx, self.end_point[1] + dy]
         self.center = [self.center[0] + dx, self.center[1] + dy]
         for cp in self.control_points:
-            if cp != instance:
-                cp.center_x += dx
-                cp.center_y += dy
+            #if cp != instance:
+            center = (cp.center_x + dx, cp.center_y + dy)
+            if cp.center[0] == center[0] and cp.center[1] == center[1]:
+                cp.property('center').dispatch(cp) # 値が同じだとディスパッチされないから
+            else:
+                cp.center = center
         self.update_control_points()
         self.update_mask()
         self.editor.start_draw_image()        
@@ -851,8 +871,8 @@ class GradientMask(BaseMask):
         start_point = self.editor.tcg_to_texture(*self.start_point)
         end_point = self.editor.tcg_to_texture(*self.end_point)
 
-        newhash = hash((self.editor.get_hash_items(), image_size, center, start_point, end_point))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, start_point, end_point))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             # グラデーションを描画
             gradient_image = self.draw_gradient(image_size, center, start_point, end_point)
             
@@ -865,7 +885,7 @@ class GradientMask(BaseMask):
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
 
-        return self.image_mask_cache
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
     
     def draw_gradient(self, image_size, center, start_point, end_point, smoothness=1):
 
@@ -980,20 +1000,7 @@ class FullMask(BaseMask):
 
         # 描き直し
         self.create_control_points()
-        #self.update_mask()
-
-    def on_center_control_point_move(self, instance, value):
-        dx = instance.ctrl_center[0] - self.center_x
-        dy = instance.ctrl_center[1] - self.center_y
-        self.center_x += dx
-        self.center_y += dy
-        for cp in self.control_points:
-            if cp != instance:
-                cp.center_x += dx
-                cp.center_y += dy
-        self.update_control_points()
-        self.update_mask()
-        self.editor.start_draw_image()        
+        #self.update_mask()    
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -1018,8 +1025,8 @@ class FullMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_texture(*self.center)
 
-        newhash = hash((self.editor.get_hash_items(), image_size, center))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             # 描画
             gradient_image = self.draw_full(image_size, center)
 
@@ -1032,7 +1039,7 @@ class FullMask(BaseMask):
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
         
-        return self.image_mask_cache
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_full(self, image_size, center):
         # 画像の初期化（黒背景、RGBA）
@@ -1171,17 +1178,6 @@ class FreeDrawMask(BaseMask):
         self.control_points.append(cp_center)
         self.add_widget(cp_center)
 
-    def on_center_control_point_move(self, instance, value):
-        dx = instance.ctrl_center[0] - self.center_x
-        dy = instance.ctrl_center[1] - self.center_y
-        self.center = (self.center_x + dx, self.center_y + dy)
-        for cp in self.control_points:
-            if cp != instance:
-                cp.center = (cp.center_x + dx, cp.center_y + dy)
-        self.update_control_points()
-        self.update_mask()
-        self.editor.start_draw_image()
-
     def update_brush_cursor(self, x, y):
         self.translate.x, self.translate.y = x - self.brush_size / 2, y - self.brush_size / 2
         self.brush_cursor.ellipse = (0, 0, self.brush_size, self.brush_size)
@@ -1203,8 +1199,8 @@ class FreeDrawMask(BaseMask):
         for line in self.lines:
             npoint += len(line.points)
 
-        newhash = hash((self.editor.get_hash_items(), image_size, nline, npoint))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, nline, npoint))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
              
             mask = self.draw_line(image_size, self.lines)
 
@@ -1217,7 +1213,7 @@ class FreeDrawMask(BaseMask):
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
 
-        return self.image_mask_cache
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
     
     def create_natural_brush(self, size, softness=1.2):
         """自然なブラシを作成"""
@@ -1475,20 +1471,7 @@ class SegmentMask(BaseMask):
 
         # 描き直し
         self.create_control_points()
-        #self.update_mask()
-
-    def on_center_control_point_move(self, instance, value):
-        dx = instance.ctrl_center[0] - self.center_x
-        dy = instance.ctrl_center[1] - self.center_y
-        self.center_x += dx
-        self.center_y += dy
-        for cp in self.control_points:
-            if cp != instance:
-                cp.center_x += dx
-                cp.center_y += dy
-        self.update_control_points()
-        self.update_mask()
-        self.editor.start_draw_image()        
+        #self.update_mask()     
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -1513,8 +1496,8 @@ class SegmentMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_full_image(*self.center)
 
-        newhash = hash((self.editor.get_hash_items(), image_size, center))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             # 描画
             gradient_image = self.draw_segment(image_size, center)
 
@@ -1527,7 +1510,7 @@ class SegmentMask(BaseMask):
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
             
-        return self.image_mask_cache
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_segment(self, image_size, center):
         if SegmentMask.__iopaint_plugins is None:
@@ -1628,19 +1611,7 @@ class DepthMapMask(BaseMask):
         # 描き直し
         self.create_control_points()
         #self.update_mask()
-
-    def on_center_control_point_move(self, instance, value):
-        dx = instance.ctrl_center[0] - self.center_x
-        dy = instance.ctrl_center[1] - self.center_y
-        self.center_x += dx
-        self.center_y += dy
-        for cp in self.control_points:
-            if cp != instance:
-                cp.center_x += dx
-                cp.center_y += dy
-        self.update_control_points()
-        self.update_mask()
-        self.editor.start_draw_image()        
+     
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -1665,9 +1636,9 @@ class DepthMapMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_full_image(*self.center)
 
-        newhash = hash((self.editor.get_hash_items(), image_size, center))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
-            # 描画
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
+           # 描画
             gradient_image = self.draw_depth_map(image_size, center)
 
             # ルミナんとマスクを作成
@@ -1679,7 +1650,7 @@ class DepthMapMask(BaseMask):
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
             
-        return self.image_mask_cache
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_depth_map(self, image_size, center):
         if DepthMapMask.__depth_pro is None:
@@ -1781,20 +1752,7 @@ class FaceMask(BaseMask):
 
         # 描き直し
         self.create_control_points()
-        #self.update_mask()
-
-    def on_center_control_point_move(self, instance, value):
-        dx = instance.ctrl_center[0] - self.center_x
-        dy = instance.ctrl_center[1] - self.center_y
-        self.center_x += dx
-        self.center_y += dy
-        for cp in self.control_points:
-            if cp != instance:
-                cp.center_x += dx
-                cp.center_y += dy
-        self.update_control_points()
-        self.update_mask()
-        self.editor.start_draw_image()        
+        #self.update_mask()      
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -1818,31 +1776,6 @@ class FaceMask(BaseMask):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_full_image(*self.center)
-
-        newhash = hash((self.editor.get_hash_items(), image_size, center))
-        if self.image_mask_cache is None or self.image_mask_cache_hash != newhash:
-            # 描画
-            gradient_image = self.draw_face(image_size, center)
-
-            # ルミナんとマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
-
-            # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
-
-            self.image_mask_cache = gradient_image
-            self.image_mask_cache_hash = newhash
-            
-        return self.image_mask_cache
-
-    def draw_face(self, image_size, center):
-        if FaceMask.__faces is None:
-            FaceMask.__faces = facer_util.create_faces(self.editor.full_image_rgb, device='cpu')
-        
-        # マスク画像を作成
-        if FaceMask.__faces == 0:
-            return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
-
         exclude_names = []
         if self.effects_param.get('mask2_face_face', True) == False:
             exclude_names.append('face')
@@ -1856,6 +1789,31 @@ class FaceMask(BaseMask):
             exclude_names.append('imouth')
         if self.effects_param.get('mask2_face_lips', True) == False:
             exclude_names.extend(['ulip', 'llip'])
+
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, tuple(exclude_names)))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
+            # 描画
+            gradient_image = self.draw_face(image_size, center, exclude_names)
+
+            # ルミナんとマスクを作成
+            gradient_image = self.draw_hls_mask(gradient_image)
+
+            # マスクぼかし
+            gradient_image = self.apply_mask_blur(gradient_image)
+
+            self.image_mask_cache = gradient_image
+            self.image_mask_cache_hash = newhash
+            
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+    def draw_face(self, image_size, center, exclude_names):
+        if FaceMask.__faces is None:
+            FaceMask.__faces = facer_util.create_faces(self.editor.full_image_rgb, device='cpu')
+        
+        # マスク画像を作成
+        if FaceMask.__faces == 0:
+            return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
         result = facer_util.draw_face_mask(FaceMask.__faces, exclude_names)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)

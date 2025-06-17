@@ -1896,7 +1896,7 @@ class Mask2Effect(Effect):
         return {
             'mask2_depth_min': 0,
             'mask2_depth_max': 255,
-            'mask2_hue_distance': 359,
+            'mask2_hue_distance': 179,
             'mask2_lum_min': 0,
             'mask2_lum_max': 255,
             'mask2_sat_min': 0,
@@ -1915,7 +1915,7 @@ class Mask2Effect(Effect):
     def set2widget(self, widget, param):
         widget.ids["slider_mask2_depth_min"].set_slider_value(param.get('mask2_depth_min', 0))
         widget.ids["slider_mask2_depth_max"].set_slider_value(param.get('mask2_depth_max', 255))
-        widget.ids["slider_mask2_hue_distance"].set_slider_value(param.get('mask2_hue_distance', 359))
+        widget.ids["slider_mask2_hue_distance"].set_slider_value(param.get('mask2_hue_distance', 179))
         widget.ids["slider_mask2_lum_min"].set_slider_value(param.get('mask2_lum_min', 0))
         widget.ids["slider_mask2_lum_max"].set_slider_value(param.get('mask2_lum_max', 255))
         widget.ids["slider_mask2_sat_min"].set_slider_value(param.get('mask2_sat_min', 0))
@@ -1951,7 +1951,7 @@ class Mask2Effect(Effect):
     def make_diff(self, rgb, param, efconfig):
         dmin = param.get('mask2_depth_min', 0)
         dmax = param.get('mask2_depth_max', 255)
-        hdis = param.get('mask2_hue_distance', 359)
+        hdis = param.get('mask2_hue_distance', 179)
         lmin = param.get('mask2_lum_min', 0)
         lmax = param.get('mask2_lum_max', 255)
         smin = param.get('mask2_sat_min', 0)
