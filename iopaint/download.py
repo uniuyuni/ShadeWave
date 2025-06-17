@@ -10,28 +10,6 @@ from iopaint.const import (
     DEFAULT_MODEL_DIR,
 )
 
-
-def cli_download_model(model: str):
-    from iopaint.model import models
-    from iopaint.model.utils import handle_from_pretrained_exceptions
-
-    if model in models and models[model].is_erase_model:
-        logging.info(f"Downloading {model}...")
-        models[model].download()
-        logging.info("Done.")
-    else:
-        logging.info(f"Downloading model from Huggingface: {model}")
-        from diffusers import DiffusionPipeline
-
-        downloaded_path = handle_from_pretrained_exceptions(
-            DiffusionPipeline.download,
-            pretrained_model_name=model,
-            variant="fp16",
-            resume_download=True,
-        )
-        logging.info(f"Done. Downloaded to {downloaded_path}")
-
-
 def folder_name_to_show_name(name: str) -> str:
     return name.replace("models--", "").replace("--", "/")
 

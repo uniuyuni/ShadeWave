@@ -17,7 +17,6 @@ class ModelInfo(BaseModel):
     name: str
     path: str
     model_type: ModelType
-    is_single_file_diffusers: bool = False
 
     @computed_field
     @property

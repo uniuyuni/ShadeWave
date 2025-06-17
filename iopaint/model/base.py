@@ -13,7 +13,6 @@ from iopaint.helper import (
     switch_mps_device,
 )
 from iopaint.schema import InpaintRequest, HDStrategy
-from .helper.g_diffuser_bot import expand_image
 from iopaint.plugins import RealESRGANUpscaler
 import iopaint.predict
 
