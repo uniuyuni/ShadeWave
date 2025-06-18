@@ -20,7 +20,7 @@ from kivy.properties import (
 )
 from kivy.graphics import (
     Color, Ellipse, Line, PushMatrix, PopMatrix, Rotate, Translate,
-    ClearBuffers, ClearColor, Rectangle
+    ClearBuffers, ClearColor, Rectangle, ScissorPush, ScissorPop,
 )
 from kivy.graphics.texture import Texture
 from kivy.clock import Clock
@@ -55,10 +55,12 @@ class ControlPoint(Widget):
         self.editor = editor
         with self.canvas:
             PushMatrix()
+            self.editor.push_scissor()
             self.translate = Translate()
             #self.rotate = Rotate(angle=0, origin=(0, 0))            
             self.color_instruction = Color(*self.color)
             self.circle = Ellipse(pos=(-10, -10), size=(20, 20))
+            self.editor.pop_scissor()
             PopMatrix()
         self.center = (0, 0)
         #self.update_graphics()
@@ -338,11 +340,13 @@ class CircularGradientMask(BaseMask):
 
         with self.canvas:
             PushMatrix()
+            self.editor.push_scissor()
             self.translate = Translate(*self.center)
             self.rotate = Rotate(angle=0, origin=(0, 0))
             Color(*self.color)
             self.outer_line = Line(ellipse=(0, 0, 0, 0), width=2) # 外側の円
             self.inner_line = Line(ellipse=(0, 0, 0, 0), width=2) # 内側の円
+            self.editor.pop_scissor()
             PopMatrix()
 
         #self.update_mask()
@@ -651,12 +655,14 @@ class GradientMask(BaseMask):
 
         with self.canvas:
             PushMatrix()
+            self.editor.push_scissor()
             self.translate = Translate(*self.center)
             self.rotate = Rotate(angle=0, origin=(0, 0))
             Color(*self.color)
             self.start_line = Line(points=(0, 0, 0, 0), width=2)
             self.center_line = Line(points=(0, 0, 0, 0), width=2)
             self.end_line = Line(points=(0, 0, 0, 0), width=2)
+            self.editor.pop_scissor()
             PopMatrix()
 
         self.rotate_rad = 0
@@ -1071,10 +1077,12 @@ class FreeDrawMask(BaseMask):
 
         with self.canvas:
             PushMatrix()
+            self.editor.push_scissor()
             self.translate = Translate(0, 0)
             self.rotate = Rotate(angle=0, origin=(0, 0))
             self.brush_color = Color((0, 1, 1, 1))
             self.brush_cursor = Line(ellipse=(0, 0, self.brush_size, self.brush_size), width=2)
+            self.editor.pop_scissor()
             PopMatrix()
 
     def start(self):
@@ -1896,6 +1904,12 @@ class MaskEditor2(FloatLayout):
     def end(self):
         if self.active_mask is not None:
             self.active_mask.end()
+
+    def push_scissor(self):
+        ScissorPush(x=int(self.pos[0]), y=int(self.pos[1]), width=int(self.size[0]), height=int(self.size[1]))
+
+    def pop_scissor(self):
+        ScissorPop()
 
     def imread(self, image_source, dt):
         # 画像の読み込みとサイズの取得

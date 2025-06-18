@@ -20,7 +20,7 @@ def reconstruct_highlight_details(hdr_img):
 
     # 適応的トーンマッピング
     tonemapped = cv2.createTonemapReinhard(
-        gamma=1.5, 
+        gamma=1.0, 
         intensity=0.5,
         light_adapt=0.8, 
         color_adapt=0.2

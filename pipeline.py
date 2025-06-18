@@ -64,15 +64,12 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
 
     # 背景レイヤー
     img0, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig)
-    x1, y1, x2, y2 = params.get_crop_rect(primary_param)
-    imgc = img0[y1:y2, x1:x2] # ただのクロップ
+    imgc = img0
     #imgc, disp_info2 = core.crop_image(img0, disp_info, *primary_param['original_img_size'], 0, 0, (0, 0), False)
     mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
     imax = max(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_texture_size(imax, imax)
     mask_editor2.set_image(primary_param['original_img_size'], disp_info)
-    #mask_editor2.set_ref_image(effects.ColorTemperatureEffect.apply_color_temperature(imgc, primary_param),
-    #                           effects.ColorTemperatureEffect.apply_color_temperature(img0, primary_param))
     mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
 
@@ -80,6 +77,10 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
 
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
     
+    # ここでクロップ
+    x1, y1, x2, y2 = params.get_crop_rect(primary_param)
+    img2 = img2[y1:y2, x1:x2] # ただのクロップ
+
     return img2
 
 def pipeline2(imgc, slice_y, slice_h, primary_effects, primary_param, mask_editor2, efconfig):

@@ -264,8 +264,12 @@ def tone_mapping_cv(x, exposure=1.0):
     return cv2.divide(x, cv2.add(x, exposure))
 
 def highlight_compress(image):
-
-    return tone_mapping(image)
+    return cv2.createTonemapReinhard(
+        gamma=1.0, 
+        intensity=0.0,
+        light_adapt=0.5, 
+        color_adapt=0.5
+    ).process(image)
 
 def correct_overexposed_areas(image_rgb: np.ndarray,
                             threshold_low=0.94,
