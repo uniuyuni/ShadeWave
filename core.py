@@ -572,7 +572,7 @@ def apply_lut(img, lut, max_value=1.0):
     return result
 
 def apply_mask(img1, msk, img2):
-    return apply_mask_cv(img1, msk, img2)
+    return apply_mask_numba(img1, msk, img2)
 
 # マスクイメージの適用
 @jit
@@ -598,6 +598,22 @@ def apply_mask_cv(img1, msk, img2):
     img = cv2.add(f, b)
 
     return img
+
+@njit(parallel=True)
+def apply_mask_numba(img1, msk, img2):
+    """RGB（3チャンネル）専用の最適化版"""
+    h, w = msk.shape
+    result = np.empty((h, w, 3), dtype=np.float32)
+    
+    for i in prange(h):
+        for j in prange(w):
+            mask_val = msk[i, j]
+            inv_mask = 1.0 - mask_val
+            result[i, j, 0] = img1[i, j, 0] * inv_mask + img2[i, j, 0] * mask_val
+            result[i, j, 1] = img1[i, j, 1] * inv_mask + img2[i, j, 1] * mask_val
+            result[i, j, 2] = img1[i, j, 2] * inv_mask + img2[i, j, 2] * mask_val
+    
+    return result
 
 @partial(jit, static_argnums=(1,2,5))
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):

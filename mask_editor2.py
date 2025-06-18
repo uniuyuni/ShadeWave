@@ -671,9 +671,7 @@ class GradientMask(BaseMask):
         else:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             if touch.is_double_tap and self.control_points[0].collide_point(cx, cy):
-                end = self.end_point
-                self.end_point = self.start_point
-                self.start_point = end
+                self.start_point, self.end_point = self.end_point,self.start_point
                 self.update_control_points()
                 self.update_mask()
                 return True
@@ -893,8 +891,8 @@ class GradientMask(BaseMask):
         img = np.zeros((height, width), dtype=np.float32)  # 開始点前はすべて(0, 0, 0, 0)
 
         # ベクトル計算のための設定
-        start_x, start_y = start_point
-        end_x, end_y = end_point
+        start_x, start_y = end_point # 開始点と入れ替える
+        end_x, end_y = start_point   #
         vec_start_end = np.array([end_x - start_x, end_y - start_y])
         length_start_end = np.linalg.norm(vec_start_end)
         if length_start_end == 0:
