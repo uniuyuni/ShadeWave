@@ -104,6 +104,24 @@ def set_disp_info(param, disp_info):
         )
         param['disp_info'] = disp_info2
 
+def denorm_param(param, val):
+    if val is not None:
+        maxsize = max(param['original_img_size'])
+        if type(val) == tuple:
+            val = (v * maxsize for v in val)
+        else:
+            val = val * maxsize
+    return val
+
+def norm_param(param, val):
+    if val is not None:
+        maxsize = max(param['original_img_size'])
+        if type(val) == tuple:
+            val = (v / maxsize for v in val)
+        else:
+            val = val / maxsize
+    return val
+
 #-------------------------------------------------
 # 画像の初期設定を設定する
 def set_image_param(param, img):
@@ -237,8 +255,8 @@ def load_json(file_path, param, mask_editor2):
 
 def is_empty_param(param, mask_editor2):
     param2 = delete_special_param(param)
-    mask_dict = mask_editor2.serialize()
-    if len(param2) == 0 and (mask_dict is None or len(mask_dict) == 0):
+    mask_list = mask_editor2.get_layers_list()
+    if len(param2) == 0 and (mask_list is None or len(mask_list) == 0):
         return True
 
     return False

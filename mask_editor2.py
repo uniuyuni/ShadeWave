@@ -67,10 +67,11 @@ class ControlPoint(Widget):
         self.bind(center=self.update_graphics, color=self.update_color)
 
     def update_graphics(self, *args):
-        cx, cy = self.editor.tcg_to_window(*self.center)
+        cx, cy = self.editor.tcg_to_window(self.center_x, self.center_y)
         self.translate.x = cx
         self.translate.y = cy
-        self.size = self.editor.world_to_tcg_scale(20, 20)
+        # sizeをセットすると何故かcenterの値がおかしくなるのでコメントアウト
+        #self.size = self.editor.world_to_tcg_scale(20, 20) 
 
     def update_color(self, *args):
         self.color_instruction.rgb = self.color
@@ -238,8 +239,12 @@ class BaseMask(Widget):
                 self.effects_param.get('mask2_depth_max', 255),
                 self.effects_param.get('mask2_blur', 0),
                 self.effects_param.get('mask2_hue_distance', 179),
+                self.effects_param.get('mask2_hue_min', 0),
+                self.effects_param.get('mask2_hue_max', 359),
+                self.effects_param.get('mask2_lum_distance', 127),
                 self.effects_param.get('mask2_lum_min', 0),
                 self.effects_param.get('mask2_lum_max', 255),
+                self.effects_param.get('mask2_sat_distance', 127),
                 self.effects_param.get('mask2_sat_min', 0),
                 self.effects_param.get('mask2_sat_max', 255))
 
@@ -267,62 +272,79 @@ class BaseMask(Widget):
         img2 = core.gaussian_blur_cv(image, (ksize, ksize))
         return img2
 
-    def draw_hue_mask(self, image):
-        if self.editor.crop_image_hls is not None:            
-            himg = self.editor.crop_image_hls[..., 0]
+    def _draw_hls_mask(self, mask, hls_str):
+        HLS_NUM = {
+            'hue': 0,
+            'lum': 1,
+            'sat': 2,
+        }
+        HLS_DIS_MAX = {
+            'hue': 179,
+            'lum': 127,
+            'sat': 127,
+        }
+        HLS_MAX = {
+            'hue': 359,
+            'lum': 255,
+            'sat': 255,
+        }
+
+        if self.editor.full_image_hls is not None:            
+            fimg = self.editor.full_image_hls[..., HLS_NUM[hls_str]]
+            cimg = self.editor.crop_image_hls[..., HLS_NUM[hls_str]]
+            dmax = HLS_DIS_MAX[hls_str]
+            mmax = HLS_MAX[hls_str]
             
-            hdist = self.effects_param.get('mask2_hue_distance', 179)
-            if hdist != 179:
-                cx, cy = self.editor.tcg_to_crop_image(*self.center)
-                print(f"point: {cx}, {cy}, {self.editor.crop_image_hls[int(cy), int(cx)]}")
-                center_hue = self.editor.crop_image_hls[int(cy), int(cx), 0]
+            ndis = self.effects_param.get(f'mask2_{hls_str}_distance', dmax)
+            if ndis != dmax:
+                cx, cy = self.editor.tcg_to_full_image(*self.center)
+                print(f"point: {cx}, {cy}, {fimg[int(cy), int(cx)]}")
+                center_n = fimg[int(cy), int(cx)]
                 
-                # 色相の範囲チェック（0-360の円状ループを考慮）
-                hmin = (center_hue - hdist) % 360
-                hmax = (center_hue + hdist) % 360
+                if hls_str == 'hue':
+                    # 色相の範囲チェック（0-360の円状ループを考慮）
+                    _min = (center_n - ndis) % 360
+                    _max = (center_n + ndis) % 360
+                else:
+                    ndis = ndis / 255
+                    _min = (((center_n - ndis) * 65535) % 65536) / 65535
+                    _max = (((center_n + ndis) * 65535) % 65536) / 65535
                 
-                if hmin <= hmax:
+                if _min <= _max:
                     # 通常の範囲チェック
-                    himg = np.where((himg < hmin) | (hmax < himg), 0, image)
+                    nimg = np.where((cimg < _min) | (_max < cimg), 0, mask)
                 else:
                     # 0をまたぐ場合の範囲チェック
-                    himg = np.where(((himg < hmin) & (hmax < himg)), 0, image)
+                    nimg = np.where(((cimg < _min) & (_max < cimg)), 0, mask)
             else:
-                himg = image
-
-            return himg
-        
-        return None
-
-    def draw_lum_mask(self, image):
-        if self.editor.crop_image_hls is not None:            
-            limg = self.editor.crop_image_hls[..., 1]
+                nimg = mask
             
-            lmin = self.effects_param.get('mask2_lum_min', 0) / 255
-            lmax = self.effects_param.get('mask2_lum_max', 255) / 255
-            if (lmin != 0) or (1 != lmax):
-                limg = np.where((limg < lmin) | (lmax < limg), 0, image)
-            else:
-                limg = image
+            _min = self.effects_param.get(f'mask2_{hls_str}_min', 0)
+            _max = self.effects_param.get(f'mask2_{hls_str}_max', mmax)
+            if _min != 0 or _max != mmax:
+                if hls_str != 'hue':
+                    _min = _min / mmax
+                    _max = _max / mmax
 
-            return limg
+                if _min <= _max:
+                    # 通常の範囲チェック
+                    nimg = np.where((cimg < _min) | (_max < cimg), 0, nimg)
+                else:
+                    # 0をまたぐ場合の範囲チェック
+                    nimg = np.where(((cimg < _min) & (_max < cimg)), 0, nimg)
+
+            return nimg
         
-        return None
+        return mask
 
-    def draw_sat_mask(self, image):
-        if self.editor.crop_image_hls is not None:            
-            simg = self.editor.crop_image_hls[..., 2]
-            
-            smin = self.effects_param.get('mask2_sat_min', 0) / 255
-            smax = self.effects_param.get('mask2_sat_max', 255) / 255
-            if (smin != 0) or (1 != smax):
-                simg = np.where((simg < smin) | (smax < simg), 0, image)
-            else:
-                simg = image
+    def draw_hue_mask(self, mask):
+        return self._draw_hls_mask(mask, 'hue')
 
-            return simg
-        
-        return None
+    def draw_lum_mask(self, mask):
+        return self._draw_hls_mask(mask, 'lum')
+
+    def draw_sat_mask(self, mask):
+        return self._draw_hls_mask(mask, 'sat')
 
 # 円形グラデーションマスクのクラス
 class CircularGradientMask(BaseMask):
@@ -432,11 +454,9 @@ class CircularGradientMask(BaseMask):
             self.show_center_control_point_only()
 
     def serialize(self):
-        cx, cy = self.center
-        ix = self.inner_radius_x
-        iy = self.inner_radius_y
-        ox = self.outer_radius_x
-        oy = self.outer_radius_y
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
+        ix, iy = params.norm_param(self.effects_param, (self.inner_radius_x, self.inner_radius_y))
+        ox, oy = params.norm_param(self.effects_param, (self.outer_radius_x, self.outer_radius_y))
 
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
@@ -463,11 +483,9 @@ class CircularGradientMask(BaseMask):
         self.invert = dict['invert']
         self.effects_param.update(dict['effects_param'])
 
-        self.center = (cx, cy)
-        self.inner_radius_x = ix
-        self.inner_radius_y = iy
-        self.outer_radius_x = ox
-        self.outer_radius_y = oy
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
+        self.inner_radius_x, self.inner_radius_y = params.denorm_param(self.effects_param, (ix, iy))
+        self.outer_radius_x, self.outer_radius_y = params.denorm_param(self.effects_param, (ox, oy))
 
         self.create_control_points()
         #self.update_mask()
@@ -677,7 +695,7 @@ class GradientMask(BaseMask):
         else:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             if touch.is_double_tap and self.control_points[0].collide_point(cx, cy):
-                self.start_point, self.end_point = self.end_point,self.start_point
+                self.start_point, self.end_point = self.end_point, self.start_point
                 self.update_control_points()
                 self.update_mask()
                 return True
@@ -708,8 +726,8 @@ class GradientMask(BaseMask):
             return super().on_touch_up(touch)
     
     def serialize(self):
-        sx, sy = self.start_point[0], self.start_point[1]
-        ex, ey = self.end_point[0], self.end_point[1]
+        sx, sy = params.norm_param(self.effects_param, (self.start_point[0], self.start_point[1]))
+        ex, ey = params.norm_param(self.effects_param, (self.end_point[0], self.end_point[1]))
 
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
@@ -730,8 +748,8 @@ class GradientMask(BaseMask):
         ex, ey = dict['end_point']
         self.effects_param.update(dict['effects_param'])
 
-        self.end_point = [ex, ey]
-        self.start_point = [sx, sy]
+        self.start_point = params.denorm_param(self.effects_param, (sx, sy))
+        self.end_point = params.denorm_param(self.effects_param, (ex, ey))
 
         self.center = [(self.start_point[0] + self.end_point[0]) / 2,
                        (self.start_point[1] + self.end_point[1]) / 2]
@@ -981,7 +999,7 @@ class FullMask(BaseMask):
             self.show_center_control_point_only()
 
     def serialize(self):
-        cx, cy = self.center
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
 
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
@@ -1000,7 +1018,7 @@ class FullMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
 
-        self.center = (cx, cy)
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
 
         # 描き直し
         self.create_control_points()
@@ -1094,7 +1112,8 @@ class FreeDrawMask(BaseMask):
 
     def serialize(self):
         """マスクの状態をシリアライズ"""
-        cx, cy = self.center
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
+        
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
         
@@ -1113,7 +1132,8 @@ class FreeDrawMask(BaseMask):
         cx, cy = dict['center']
         self.lines = dict['lines']
         self.effects_param.update(dict['effects_param'])
-        self.center = (cx, cy)
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
+
         self.create_control_points()
 
     def on_mouse_pos(self, window, pos):
@@ -1454,7 +1474,7 @@ class SegmentMask(BaseMask):
             self.show_center_control_point_only()
 
     def serialize(self):
-        cx, cy = self.center
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
 
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
@@ -1473,7 +1493,7 @@ class SegmentMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
 
-        self.center = (cx, cy)
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
 
         # 描き直し
         self.create_control_points()
@@ -1593,7 +1613,7 @@ class DepthMapMask(BaseMask):
             self.show_center_control_point_only()
 
     def serialize(self):
-        cx, cy = self.center
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
 
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
@@ -1612,7 +1632,7 @@ class DepthMapMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
 
-        self.center = (cx, cy)
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
 
         # 描き直し
         self.create_control_points()
@@ -1735,7 +1755,7 @@ class FaceMask(BaseMask):
             self.show_center_control_point_only()
 
     def serialize(self):
-        cx, cy = self.center
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
 
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
@@ -1754,7 +1774,7 @@ class FaceMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
 
-        self.center = (cx, cy)
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
 
         # 描き直し
         self.create_control_points()
@@ -1895,6 +1915,12 @@ class MaskEditor2(FloatLayout):
         self.orientation = (0, 0)
         self.margin = (0, 0)
         self.texture_size = (0, 0)
+
+        self.full_image_rgb = None
+        self.full_image_hls = None
+        self.crop_image_rgb = None
+        self.crop_image_hls = None
+
         #self._keyboard = Window.request_keyboard(self._keyboard_closed, self)
         #self._keyboard.bind(on_key_down=self._on_keyboard_down)
 
@@ -1932,6 +1958,7 @@ class MaskEditor2(FloatLayout):
     
     def set_ref_image(self, crop_image, full_image):
         self.full_image_rgb = np.clip(full_image, 0, 1)
+        self.full_image_hls = cv2.cvtColor(self.full_image_rgb, cv2.COLOR_RGB2HLS_FULL)
         self.crop_image_rgb = np.clip(crop_image, 0, 1)
         self.crop_image_hls = cv2.cvtColor(self.crop_image_rgb, cv2.COLOR_RGB2HLS_FULL)
 

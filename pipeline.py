@@ -31,13 +31,12 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
         #mask_editor2.set_texture_size(texture_width, texture_height)
         mask_editor2.set_image(primary_param['original_img_size'], disp_info2)
         params.set_disp_info(primary_param, disp_info2)
+        mask_editor2.set_ref_image(imgc, img0)
     else:
         imgc = crop_image
         disp_info2 = disp_info
-    #mask_editor2.set_ref_image(effects.ColorTemperatureEffect.apply_color_temperature(imgc, primary_param),
-    #                           effects.ColorTemperatureEffect.apply_color_temperature(img0, primary_param))
-    mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
+
     efconfig.disp_info = disp_info2
     # 並列処理
     #split_img = []

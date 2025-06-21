@@ -1899,8 +1899,12 @@ class Mask2Effect(Effect):
             'mask2_depth_min': 0,
             'mask2_depth_max': 255,
             'mask2_hue_distance': 179,
+            'mask2_hue_min': 0,
+            'mask2_hue_max': 359,
+            'mask2_lum_distance': 127,
             'mask2_lum_min': 0,
             'mask2_lum_max': 255,
+            'mask2_sat_distance': 127,
             'mask2_sat_min': 0,
             'mask2_sat_max': 255,
             'mask2_blur': 0,
@@ -1918,8 +1922,12 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_depth_min"].set_slider_value(self.get_param(param, 'mask2_depth_min'))
         widget.ids["slider_mask2_depth_max"].set_slider_value(self.get_param(param, 'mask2_depth_max'))
         widget.ids["slider_mask2_hue_distance"].set_slider_value(self.get_param(param, 'mask2_hue_distance'))
+        widget.ids["slider_mask2_hue_min"].set_slider_value(self.get_param(param, 'mask2_hue_min'))
+        widget.ids["slider_mask2_hue_max"].set_slider_value(self.get_param(param, 'mask2_hue_max'))
+        widget.ids["slider_mask2_lum_distance"].set_slider_value(self.get_param(param, 'mask2_lum_distance'))
         widget.ids["slider_mask2_lum_min"].set_slider_value(self.get_param(param, 'mask2_lum_min'))
         widget.ids["slider_mask2_lum_max"].set_slider_value(self.get_param(param, 'mask2_lum_max'))
+        widget.ids["slider_mask2_sat_distance"].set_slider_value(self.get_param(param, 'mask2_sat_distance'))
         widget.ids["slider_mask2_sat_min"].set_slider_value(self.get_param(param, 'mask2_sat_min'))
         widget.ids["slider_mask2_sat_max"].set_slider_value(self.get_param(param, 'mask2_sat_max'))
         widget.ids["slider_mask2_blur"].set_slider_value(self.get_param(param, 'mask2_blur'))
@@ -1936,8 +1944,12 @@ class Mask2Effect(Effect):
         param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value
         param['mask2_depth_max'] = widget.ids["slider_mask2_depth_max"].value
         param['mask2_hue_distance'] = widget.ids["slider_mask2_hue_distance"].value
+        param['mask2_hue_min'] = widget.ids["slider_mask2_hue_min"].value
+        param['mask2_hue_max'] = widget.ids["slider_mask2_hue_max"].value
+        param['mask2_lum_distance'] = widget.ids["slider_mask2_lum_distance"].value
         param['mask2_lum_min'] = widget.ids["slider_mask2_lum_min"].value
         param['mask2_lum_max'] = widget.ids["slider_mask2_lum_max"].value
+        param['mask2_sat_distance'] = widget.ids["slider_mask2_sat_distance"].value
         param['mask2_sat_min'] = widget.ids["slider_mask2_sat_min"].value
         param['mask2_sat_max'] = widget.ids["slider_mask2_sat_max"].value
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
@@ -1954,8 +1966,12 @@ class Mask2Effect(Effect):
         dmin = self.get_param(param, 'mask2_depth_min')
         dmax = self.get_param(param, 'mask2_depth_max')
         hdis = self.get_param(param, 'mask2_hue_distance')
+        hmin = self.get_param(param, 'mask2_hue_min')
+        hmax = self.get_param(param, 'mask2_hue_max')
+        ldis = self.get_param(param, 'mask2_lum_distance')
         lmin = self.get_param(param, 'mask2_lum_min')
         lmax = self.get_param(param, 'mask2_lum_max')
+        sdis = self.get_param(param, 'mask2_sat_distance')
         smin = self.get_param(param, 'mask2_sat_min')
         smax = self.get_param(param, 'mask2_sat_max')
         blur = self.get_param(param, 'mask2_blur')
@@ -1967,11 +1983,15 @@ class Mask2Effect(Effect):
         face_lips = self.get_param(param, 'mask2_face_lips')
         open_space = self.get_param(param, 'mask2_open_space')
         close_space = self.get_param(param, 'mask2_close_space')
-        if  dmin == 0 and dmax == 255 and hdis == 359 and lmin == 0 and lmax == 255 and smin == 0 and smax == 255 and blur == 0:
+        if  (dmin == 0 and dmax == 255 and
+             hdis == 179 and hmin == 0 and hmax == 359 and
+             ldis == 127 and lmin == 0 and lmax == 255 and
+             sdis == 127 and smin == 0 and smax == 255 and
+             blur == 0):
             self.diff = None
             self.hash = None
         else:        
-            param_hash = hash((dmin, dmax, hdis, lmin, lmax, smin, smax, blur))
+            param_hash = hash((dmin, dmax, hdis, hmin, hmax, ldis, lmin, lmax, sdis, smin, smax, blur))
             if self.hash != param_hash:
                 self.diff = None
                 self.hash = param_hash
