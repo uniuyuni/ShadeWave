@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from enum import IntEnum
 import io
 import cv2
+import colour
+
+import config
 
 class TiffTag(IntEnum):
     # DCP関連のTIFFタグ
@@ -376,33 +379,40 @@ class DCPProcessor:
                                       self.profile.camera_calibrations[illuminant])
         
         # 2. カラーマトリクスの適用
-        if illuminant in self.profile.color_matrices:
-            result = self._apply_matrix(result, 
-                                      self.profile.color_matrices[illuminant])
+#        if illuminant in self.profile.color_matrices:
+#            result = self._apply_matrix(result, 
+#                                      self.profile.color_matrices[illuminant])
         
         # 3. フォワードマトリクスの適用
-#        if illuminant in self.profile.forward_matrices:
-#            result = self._apply_matrix(result, self.profile.forward_matrices[illuminant])
-        
+        result = self.apply_forward_matrix(result, illuminant)
+
+#        result = colour.XYZ_to_RGB(result, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+
         # 4. 色相・彩度マップの適用
 #        if illuminant in self.profile.hue_sat_maps:
 #            result = self._apply_hue_sat_map(result, self.profile.hue_sat_maps[illuminant])
         
         # 5. トーンカーブの適用
-#        if self.profile.forward_tone_curve is not None:
-#            result = self._apply_tone_curve(result)
+        result = self.apply_tone_curve(result)
         
         # 6. ルックテーブルの適用
 #        if use_look_table and self.profile.look_table is not None:
 #            result = self._apply_look_table(result)
         
         return result
-    
+
+    def apply_forward_matrix(self, image: np.ndarray, illuminant: str) -> np.ndarray:
+        if illuminant in self.profile.forward_matrices:
+            result = self._apply_matrix(image, self.profile.forward_matrices[illuminant])
+            return result
+
+        return image
+
     def _apply_matrix(self, image: np.ndarray, matrix: np.ndarray) -> np.ndarray:
         """行列変換を適用"""
-        result = np.zeros_like(image)
-        
         if matrix.shape[1] == 4:  # 3x4 行列
+            result = np.empty_like(image)
+
             result[..., 0] = (matrix[0,0] * image[..., 0] + 
                             matrix[0,1] * image[..., 1] + 
                             matrix[0,2] * image[..., 2] + 
@@ -427,12 +437,12 @@ class DCPProcessor:
         # RGB → HSV 変換
         hsv = self._rgb_to_hsv(image)
         
-        h, s, v = self.profile.hue_sat_map_dims
+        h_div, s_div, v_div = self.profile.hue_sat_map_dims
         
-        # インデックス計算をベクトル化
-        h_val = np.clip(hsv[..., 0] * (h - 1), 0, h - 1)
-        s_val = np.clip(hsv[..., 1] * (s - 1), 0, s - 1)
-        v_val = np.clip(hsv[..., 2] * (v - 1), 0, v - 1)
+        # インデックス計算 (境界処理改善)
+        h_val = np.clip(hsv[..., 0] * (h_div - 1), 0, h_div - 1 - 1e-6)
+        s_val = np.clip(hsv[..., 1] * (s_div - 1), 0, s_div - 1 - 1e-6)
+        v_val = np.clip(hsv[..., 2] * (v_div - 1), 0, v_div - 1 - 1e-6)
         
         # インデックスと補間係数を計算
         h_idx = np.floor(h_val).astype(int)
@@ -472,8 +482,21 @@ class DCPProcessor:
             
             return c0 * (1 - v_frac)[..., np.newaxis] + c1 * v_frac[..., np.newaxis]
         
-        return fast_trilinear_interpolate(hue_sat_map)
-    
+        # デルタ値を適用
+        deltas = fast_trilinear_interpolate(hue_sat_map)
+        
+        # 色相: 加算後に0-1範囲に正規化
+        hsv[..., 0] = (hsv[..., 0] + deltas[..., 0]) % 1.0
+        
+        # 彩度: 乗算後に0-1範囲にクリップ
+        hsv[..., 1] = np.clip(hsv[..., 1] * deltas[..., 1], 0, 1)
+        
+        # 明度: 乗算後に0-1範囲にクリップ
+        hsv[..., 2] = np.clip(hsv[..., 2] * deltas[..., 2], 0, 1)
+        
+        # HSVからRGBに戻す
+        return self._hsv_to_rgb(hsv)
+        
     def _trilinear_interpolate(self,
                             table: np.ndarray,
                             h: int, s: int, v: int,
@@ -510,46 +533,68 @@ class DCPProcessor:
         return c0 * (1 - v_frac) + c1 * v_frac
     
     def _rgb_to_hsv(self, rgb: np.ndarray) -> np.ndarray:
-        """RGB → HSV変換（ベクトル化）"""
         r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-        
         maxc = np.maximum(np.maximum(r, g), b)
         minc = np.minimum(np.minimum(r, g), b)
         v = maxc
-        
         deltac = maxc - minc
         s = np.where(maxc != 0, deltac / maxc, 0)
-        
         h = np.zeros_like(deltac)
         h_mask = deltac != 0
         
-        rc = np.where(h_mask, (maxc - r) / deltac, 0)
-        gc = np.where(h_mask, 2.0 + (maxc - g) / deltac, 0)
-        bc = np.where(h_mask, 4.0 + (maxc - b) / deltac, 0)
-        
-        h = np.where(r == maxc, bc, h)
-        h = np.where(g == maxc, gc, h)
-        h = np.where(b == maxc, rc, h)
-        
+        # 標準的な計算式
+        h = np.where((r == maxc) & h_mask, (g - b) / deltac, h)
+        h = np.where((g == maxc) & h_mask, 2.0 + (b - r) / deltac, h)
+        h = np.where((b == maxc) & h_mask, 4.0 + (r - g) / deltac, h)
         h = (h / 6.0) % 1.0
-        
         return np.stack([h, s, v], axis=-1)
 
-    def _apply_tone_curve(self, image: np.ndarray) -> np.ndarray:
+    def _hsv_to_rgb(self, hsv: np.ndarray) -> np.ndarray:
+        h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+        h = (h * 6.0) % 6.0
+        i = np.floor(h).astype(int)
+        f = h - i
+        p = v * (1.0 - s)
+        q = v * (1.0 - s * f)
+        t = v * (1.0 - s * (1.0 - f))
+        rgb = np.zeros_like(hsv)
+        
+        # セクタごとの計算
+        rgb[..., 0] = np.select(
+            [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5],
+            [v, q, p, p, t, v],
+            default=v
+        )
+        rgb[..., 1] = np.select(
+            [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5],
+            [t, v, v, q, p, p],
+            default=v
+        )
+        rgb[..., 2] = np.select(
+            [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5],
+            [p, p, t, v, v, q],
+            default=v
+        )
+        return rgb
+    
+    def apply_tone_curve(self, image: np.ndarray) -> np.ndarray:
         """トーンカーブを適用"""
-        # トーンカーブの制御点をnumpy配列に変換
-        points = np.array(self.profile.forward_tone_curve)
-        x = points[:, 0]
-        y = points[:, 1]
+        if self.profile.forward_tone_curve is not None:
+            # トーンカーブの制御点をnumpy配列に変換
+            points = np.array(self.profile.forward_tone_curve)
+            x = points[:, 0]
+            y = points[:, 1]
+            
+            # チャンネルごとに処理
+            result = np.zeros_like(image)
+            for c in range(3):
+                channel = image[..., c].flatten()
+                # numpy.interp で補間
+                result[..., c] = np.interp(channel, x, y).reshape(image.shape[:2])
+            
+            return result
         
-        # チャンネルごとに処理
-        result = np.zeros_like(image)
-        for c in range(3):
-            channel = image[..., c].flatten()
-            # numpy.interp で補間
-            result[..., c] = np.interp(channel, x, y).reshape(image.shape[:2])
-        
-        return result
+        return image
     
     def _apply_look_table(self, image: np.ndarray) -> np.ndarray:
         """ルックテーブルを適用（ベクトル化）"""

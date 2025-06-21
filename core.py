@@ -1693,6 +1693,7 @@ def fast_median_filter(img, kernel_size=3, num_bins=256):
     return result
 
 ICC_PROFILE_TO_COLOR_SPACE = {
+    'sRGB': 'sRGB', # 何故かこれを返すデータがある
     'sRGB IEC61966-2.1': 'sRGB',
     'Adobe RGB (1998)': 'Adobe RGB (1998)',
     'ProPhoto RGB': 'ProPhoto RGB',

@@ -339,6 +339,8 @@ class CropEffect(Effect):
         param2 = param.copy()
         params.set_crop_rect(param2, crop_editor.CropEditor.get_initial_crop_rect(*param['original_img_size']))
         return {
+            'rotation': 0,
+            'rotation2': 0,
             'crop_enable': False,
             'crop_rect': param2['crop_rect'],
             'aspect_ratio': "None",
@@ -365,7 +367,7 @@ class CropEffect(Effect):
             # クロップ範囲をリセット
             if self.crop_editor is not None:
                 if widget.ids["button_crop_reset"].state == "down":
-                    self.crop_editor._set_to_local_crop_rect([0, 0, 0, 0])
+                    self.crop_editor._set_to_local_crop_rect((0, 0, 0, 0))
                     self.crop_editor.update_crop_size()
 
                 self.crop_editor.input_angle = self.get_param(param, 'rotation') + self.get_param(param, 'rotation2')

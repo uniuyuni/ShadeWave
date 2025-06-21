@@ -12,6 +12,7 @@ _config = {
     'iopaint_use_realesrgan': True,
     'display_color_gamut': "sRGB",
     'gpu_type': "mps",
+    'cat': "cat16",
 }
 _main_widget = None
 

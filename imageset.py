@@ -7,6 +7,7 @@ import math
 import logging
 import io
 import colour
+import os
 from wand.image import Image as WandImage
 from PIL import Image as PILImage, ImageOps as PILImageOps
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ from jax import jit
 from functools import partial
 from multiprocessing import shared_memory
 
-#from dcp_profile import DCPReader, DCPProcessor
+from dcp_profile import DCPReader, DCPProcessor
 import config
 import file_cache_system
 import params
@@ -170,7 +171,7 @@ class ImageSet:
     def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
         try:
             raw = rawpy.imread(file_path)
-            img_array = raw.postprocess(output_color=rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
+            img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw if half == False else rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
                                         output_bps=16,
                                         no_auto_scale=False,
@@ -196,18 +197,11 @@ class ImageSet:
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
             # サイズを整える
-            """
-            left = int(left * (img_array.shape[1] / width))
-            if img_array.shape[1] < left + width:
-                width = img_array.shape[1] - left
-            top = int(top * (img_array.shape[0] / height))
-            if img_array.shape[0] < top + height:
-                height = img_array.shape[0] - top
-            """
-            img_array = img_array[top:top+height, left:left+width]
+            if half == False:
+                img_array = img_array[top:top+height, left:left+width]
 
             # 下位2bit補完
-            if config.get_config('raw_depth_expansion') == True:
+            if half == False and config.get_config('raw_depth_expansion') == True:
                 img_array = img_array >> 2
                 img_array = bit_depth_expansion.process_rgb_image(img_array)
 
@@ -218,16 +212,21 @@ class ImageSet:
             #img_array = np.clip(img_array, 0, 1)
 
             # 色空間変更
-            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'CAT16',
-                                          apply_cctf_decoding=False, apply_gamut_mapping=True).astype(np.float32)
+            if half == True:
+                img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', config.get_config('cat'),
+                                              apply_cctf_decoding=False, apply_gamut_mapping=True).astype(np.float32)
+            else:
+                # プロファイルを適用
+                # RAW色空間からXYZ色空間への変換にしか使ってない
+                dcp_path = os.getcwd() + "/dcp/Fujifilm X-Pro3 Adobe Standard provia.dcp"
+                reader = DCPReader(dcp_path)
+                profile = reader.read()
+                processor = DCPProcessor(profile)
+                #img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
 
-            # プロファイルを適用
-            #dcp_path = os.getcwd() + "/dcp/Fujifilm X-Pro3 Adobe Standard velvia.dcp"
-            #reader = DCPReader(dcp_path)
-            #profile = reader.read()
-            #processor = DCPProcessor(profile)
-            #img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
-            
+                img_array = processor.apply_forward_matrix(img_array, '1')
+                img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+         
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
@@ -244,6 +243,9 @@ class ImageSet:
 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
+
+            # トーンカーブ適用
+            #img_array = processor.apply_tone_curve(img_array)
 
             # サイズを合わせる
             if img_array.shape[1] != width or img_array.shape[0] != height:
@@ -286,9 +288,9 @@ class ImageSet:
 
             # 色空間変更
             src_icc_profile_name = core.get_icc_profile_name(img)
-            img_array = colour.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', 'CAT16',
+            img_array = colour.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', config.get_config('cat'),
                                             apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
-                                          
+
             # 画像からホワイトバランスパラメータ取得
             params.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
             
