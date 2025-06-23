@@ -149,7 +149,8 @@ class ExportFile():
         #self.mask_editor2.set_orientation(self.param.get('rotation', 0), self.param.get('rotation2', 0), self.param.get('flip_mode', 0))
         self.imgset.img.shape[1], self.imgset.img.shape[0]
         self.mask_editor2.set_texture_size(self.imgset.img.shape[1], self.imgset.img.shape[0])
-        self.mask_editor2.set_image(self.param['original_img_size'], params.get_disp_info(self.param))
+        self.mask_editor2.set_primary_param(self.param, params.get_disp_info(self.param))
+        self.mask_editor2.set_ref_image(self.imgset.img, self.imgset.img)
         #self.mask_editor2.update()
 
         params.load_json(self.file_path, self.param, self.mask_editor2)

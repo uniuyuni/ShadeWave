@@ -61,7 +61,41 @@ def shared_memory_to_imageset(file_path, shm_name, shape, dtype, flag):
     return imgset
 
 class ImageSet:
+    FORWARDMATRIX1 = np.array([
+        [0.429000, 0.447800, 0.087600],
+        [0.174400, 0.804300, 0.021300],
+        [0.048700, 0.000600, 0.775700],
+    ])
+    FORWARDMATRIX2 = np.array([
+        [0.397000, 0.418000, 0.149300],
+        [0.219000, 0.743600, 0.044100],
+        [0.102100, 0.001700, 0.721300],
+    ])
 
+    """
+    <ForwardMatrix1 Rows="3" Cols="3">
+        <Element Row="2" Col="2">0.775700</Element>
+        <Element Row="2" Col="1">0.000600</Element>
+        <Element Row="2" Col="0">0.048700</Element>
+        <Element Row="1" Col="2">0.021300</Element>
+        <Element Row="1" Col="1">0.804300</Element>
+        <Element Row="1" Col="0">0.174400</Element>
+        <Element Row="0" Col="2">0.087600</Element>
+        <Element Row="0" Col="1">0.447800</Element>
+        <Element Row="0" Col="0">0.429000</Element>
+    </ForwardMatrix1>
+    <ForwardMatrix2 Rows="3" Cols="3">
+        <Element Row="2" Col="2">0.721300</Element>
+        <Element Row="2" Col="1">0.001700</Element>
+        <Element Row="2" Col="0">0.102100</Element>
+        <Element Row="1" Col="2">0.044100</Element>
+        <Element Row="1" Col="1">0.736900</Element>
+        <Element Row="1" Col="0">0.219000</Element>
+        <Element Row="0" Col="2">0.149300</Element>
+        <Element Row="0" Col="1">0.418000</Element>
+        <Element Row="0" Col="0">0.397000</Element>
+    </ForwardMatrix2>
+    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -76,7 +110,7 @@ class ImageSet:
     
     def _apply_whitebalance(self, img_array, raw, exif_data, param):
         wb = raw.camera_whitebalance
-        wb = np.array([wb[0], wb[1], wb[2]]).astype(np.float32)/1024.0
+        wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
         """
         gl, rl, bl = exif_data.get('WB_GRBLevels', "1024 1024 1024").split(' ')
         gl, rl, bl = int(gl), int(rl), int(bl)
@@ -100,7 +134,6 @@ class ImageSet:
         try:
             # RAWで読み込んでみる
             raw = rawpy.imread(file_path)
-            return raw
 
             # プレビューを読む
             thumb = raw.extract_thumb()
@@ -218,13 +251,14 @@ class ImageSet:
             else:
                 # プロファイルを適用
                 # RAW色空間からXYZ色空間への変換にしか使ってない
+                """
                 dcp_path = os.getcwd() + "/dcp/Fujifilm X-Pro3 Adobe Standard provia.dcp"
                 reader = DCPReader(dcp_path)
                 profile = reader.read()
                 processor = DCPProcessor(profile)
                 #img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
-
-                img_array = processor.apply_forward_matrix(img_array, '1')
+                """
+                img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
                 img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
          
             # ホワイトバランス定義
@@ -315,12 +349,10 @@ class ImageSet:
     def preload(self, file_path, exif_data, param):
         self.file_path = file_path
 
-        if file_path.lower().endswith(viewer_widget.supported_formats_raw):
-            raw = None #self._load_raw_preview(file_path, exif_data, param)
-            
+        if file_path.lower().endswith(viewer_widget.supported_formats_raw):            
             result = []
-            result.append(ImageSet.Result(worker="_load_raw_fast", source=raw))
-            result.append(ImageSet.Result(worker="_load_raw", source=raw))
+            result.append(ImageSet.Result(worker="_load_raw_fast", source=None))
+            result.append(ImageSet.Result(worker="_load_raw", source=None))
 
             return result
             
@@ -332,7 +364,7 @@ class ImageSet:
         logging.warning("file is not supported " + file_path)
         return None
 
-    def load(self, result, file_path, exif_data, param):
-        if not isinstance(result, list):
+    def load(self, preload_result, file_path, exif_data, param):
+        if not isinstance(preload_result, list):
             return
-        file_cache_system.run_method(self, result[len(result)-1].worker, None, file_path, exif_data, param)
+        file_cache_system.run_method(self, preload_result[len(preload_result)-1].worker, None, file_path, exif_data, param)

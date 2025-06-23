@@ -2066,7 +2066,7 @@ class VignetteEffect(Effect):
         else:
             param_hash = hash((vi, vr))
             if self.hash != param_hash:
-                _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_size'), config.get_config('preview_size'), efconfig.disp_info)
+                _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
                 self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y))
                 self.hash = param_hash
         

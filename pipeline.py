@@ -27,11 +27,11 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
 
     if crop_image is None or reset == True:
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, offset, is_zoomed)
-        mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
+        #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
         #mask_editor2.set_texture_size(texture_width, texture_height)
-        mask_editor2.set_image(primary_param['original_img_size'], disp_info2)
-        params.set_disp_info(primary_param, disp_info2)
+        mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, img0)
+        params.set_disp_info(primary_param, disp_info2)
     else:
         imgc = crop_image
         disp_info2 = disp_info
@@ -65,10 +65,10 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     img0, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig)
     imgc = img0
     #imgc, disp_info2 = core.crop_image(img0, disp_info, *primary_param['original_img_size'], 0, 0, (0, 0), False)
-    mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
+    #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
     imax = max(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_texture_size(imax, imax)
-    mask_editor2.set_image(primary_param['original_img_size'], disp_info)
+    mask_editor2.set_primary_param(primary_param['original_img_size'], disp_info)
     mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
 
@@ -95,6 +95,7 @@ def pipeline2(imgc, slice_y, slice_h, primary_effects, primary_param, mask_edito
         img2 = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig)
 
         img3 = core.apply_mask_jax(img3, mask.get_mask_image()[slice_y:slice_y+slice_h, :], img2)
+    mask_editor2.set_rotation_changed_flag(False)
 
     return img3
 

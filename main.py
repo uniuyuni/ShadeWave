@@ -45,8 +45,8 @@ class MainWidget(MDBoxLayout):
     def __init__(self, cache_system, **kwargs):
         super(MainWidget, self).__init__(**kwargs)
 
-        self.texture_height = config.get_config('preview_size')
-        self.texture_width = config.get_config('preview_size')
+        self.texture_height = config.get_config('preview_height')
+        self.texture_width = config.get_config('preview_width')
         self.texture = None
         self.imgset = None
         self.click_x = 0
@@ -189,8 +189,8 @@ class MainWidget(MDBoxLayout):
             card = self.ids['viewer'].get_card(file_path)
             if card is not None:
                 # 一度も描画してないので値が設定されてない。暫定処置
-                self.ids['mask_editor2'].set_image(param['original_img_size'], param['disp_info'])
-                self.ids['mask_editor2'].set_texture_size(config.get_config('preview_size'), config.get_config('preview_size'))
+                self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
+                self.ids['mask_editor2'].set_primary_param(param, param['disp_info'])
 
                 # パラメータを読み込んで追加設定
                 params.load_json(file_path, param, self.ids['mask_editor2'])
@@ -325,9 +325,9 @@ class MainWidget(MDBoxLayout):
     #--------------------------------
 
     def _set_image_for_mask2(self, param):
-        self.ids['mask_editor2'].set_orientation(param.get('rotation', 0), param.get('rotation2', 0), param.get('flip_mode', 0))
+        #self.ids['mask_editor2'].set_orientation(param.get('rotation', 0), param.get('rotation2', 0), param.get('flip_mode', 0))
         self.ids['mask_editor2'].set_texture_size(self.texture_width, self.texture_height)
-        self.ids['mask_editor2'].set_image(param['original_img_size'], params.get_disp_info(param))
+        self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
         self.ids['mask_editor2'].update()
 
     def _enable_mask2(self):
@@ -352,7 +352,7 @@ class MainWidget(MDBoxLayout):
 
     def _enable_inpaint_edit(self):
         if self.inpaint_edit is None:
-            self.inpaint_edit = bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_size'), config.get_config('preview_size')),
+            self.inpaint_edit = bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
                                 initial_view=params.get_disp_info(self.primary_param),
                                 on_delete=self._on_inpaint_edit)
             boxes = []

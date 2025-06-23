@@ -1,4 +1,3 @@
-# mask_editor2.py
 
 import os
 import numpy as np
@@ -1681,9 +1680,9 @@ class DepthMapMask(BaseMask):
     def draw_depth_map(self, image_size, center):
         if DepthMapMask.__depth_pro is None:
             DepthMapMask.__depth_pro = importlib.import_module('depth_pro')
-            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro .setup_model(device="mps")
+            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device="mps")
 
-        if DepthMapMask.__depth_map is None:
+        if DepthMapMask.__depth_map is None or self.editor.rotation_changed_flag:
             DepthMapMask.__depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
@@ -1833,7 +1832,7 @@ class FaceMask(BaseMask):
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_face(self, image_size, center, exclude_names):
-        if FaceMask.__faces is None:
+        if FaceMask.__faces is None or self.editor.rotation_changed_flag:
             FaceMask.__faces = facer_util.create_faces(self.editor.full_image_rgb, device='cpu')
         
         # マスク画像を作成
@@ -1915,6 +1914,7 @@ class MaskEditor2(FloatLayout):
         self.orientation = (0, 0)
         self.margin = (0, 0)
         self.texture_size = (0, 0)
+        self.rotation_changed_flag = False
 
         self.full_image_rgb = None
         self.full_image_hls = None
@@ -1965,18 +1965,30 @@ class MaskEditor2(FloatLayout):
     def set_texture_size(self, tx, ty):
         self.texture_size = (tx, ty)
 
-    def set_image(self, size, disp_info):
+    def set_primary_param(self, primary_param, disp_info):
         self.image_widget.source = None
         self.image_widget.opacity = 0
 
-        self.image_size[0], self.image_size[1] = size
+        self.image_size[0], self.image_size[1] = primary_param['original_img_size']
         self.disp_info = disp_info
 
+        new_center_rotate_rad = math.radians(primary_param.get('rotation', 0))
+        new_orientation = (math.radians(primary_param.get('rotation2', 0)), primary_param.get('flip_mode', 0))
+        if new_center_rotate_rad != self.center_rotate_rad or new_orientation != self.orientation:
+            self.set_rotation_changed_flag(True)
+        self.center_rotate_rad = new_center_rotate_rad
+        self.orientation = new_orientation
+
         self.__set_image_info()
-    
+
+    """ 
     def set_orientation(self, rotation, rotation2, flip):
         self.center_rotate_rad = math.radians(rotation)
         self.orientation = (math.radians(rotation2), flip)
+    """
+
+    def set_rotation_changed_flag(self, flag):
+        self.rotation_changed_flag = flag
 
     def get_hash_items(self):
         return (self.disp_info, self.center_rotate_rad, self.orientation)

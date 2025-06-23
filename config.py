@@ -22,6 +22,11 @@ def set_main_widget(widget):
 
 def get_config(key):
     global _config
+
+    # 暫定処置
+    if key == 'preview_width' or key == 'preview_height':
+        key = 'preview_size'
+
     return _config[key]
 
 def set_config(key, value):
