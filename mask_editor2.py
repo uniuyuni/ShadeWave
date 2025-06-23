@@ -3,7 +3,6 @@ import os
 import numpy as np
 import math
 import cv2
-import sys
 
 from kivy.app import App
 from kivy.core.window import Window
@@ -12,14 +11,13 @@ from kivy.uix.image import Image
 from kivy.uix.button import Button
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.relativelayout import RelativeLayout
 from kivy.properties import (
     NumericProperty, ObjectProperty, ListProperty,
     StringProperty, BooleanProperty, Property
 )
 from kivy.graphics import (
     Color, Ellipse, Line, PushMatrix, PopMatrix, Rotate, Translate,
-    ClearBuffers, ClearColor, Rectangle, ScissorPush, ScissorPop,
+    Rectangle, ScissorPush, ScissorPop,
 )
 from kivy.graphics.texture import Texture
 from kivy.clock import Clock
@@ -69,8 +67,7 @@ class ControlPoint(Widget):
         cx, cy = self.editor.tcg_to_window(self.center_x, self.center_y)
         self.translate.x = cx
         self.translate.y = cy
-        # sizeをセットすると何故かcenterの値がおかしくなるのでコメントアウト
-        #self.size = self.editor.world_to_tcg_scale(20, 20) 
+        #self.size = self.editor.world_to_tcg_scale(20, 20) # sizeをセットすると何故かcenterの値がおかしくなるのでコメントアウト
 
     def update_color(self, *args):
         self.color_instruction.rgb = self.color
@@ -632,21 +629,20 @@ class CircularGradientMask(BaseMask):
         e_outer = (x_rot / outer_axes[0])**2 + (y_rot / outer_axes[1])**2 - 1
 
         # グラデーションの初期化
-        gradient = np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+        gradient = np.ones((image_size[1], image_size[0]), dtype=np.float32)
 
         # 内側の楕円内のピクセルを設定
-        mask_inner = e_inner <= 0
-        gradient[mask_inner] = 0.0
+        gradient[e_inner <= 0] = 0.0
 
         # 外側の楕円の外側のピクセル
-        gradient[e_outer >= 0] = 1.0
+        #gradient[e_outer >= 0] = 1.0
 
         # 内側と外側の楕円の間のピクセルに対してグラデーションを計算
-        mask_between = (~mask_inner) & (e_outer <= 0)
+        mask_between = (e_inner > 0) & (e_outer <= 0)
 
         # グラデーション値の計算（線形補間）
         t = e_inner[mask_between] / (e_inner[mask_between] - e_outer[mask_between])
-        t = np.clip(t, 0.0, 1.0)
+        #t = np.clip(t, 0.0, 1.0)
 
         # スムーズネスを適用
         t = np.power(t, smoothness)
@@ -941,7 +937,7 @@ class GradientMask(BaseMask):
         mask = projection_lengths >= 0
         img[mask] = t[mask]
 
-        return img #np.flipud(img)
+        return img
 
 # 全体マスクのクラス
 class FullMask(BaseMask):
@@ -1063,10 +1059,8 @@ class FullMask(BaseMask):
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_full(self, image_size, center):
-        # 画像の初期化（黒背景、RGBA）
+        # 画像の初期化
         image = np.ones((image_size[1], image_size[0]), dtype=np.float32)
-
-        #image[...] = 1
 
         return image
 
@@ -1550,8 +1544,7 @@ class SegmentMask(BaseMask):
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
         result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
-        if scale < 1:
-            result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
         return result
 
@@ -1680,7 +1673,7 @@ class DepthMapMask(BaseMask):
     def draw_depth_map(self, image_size, center):
         if DepthMapMask.__depth_pro is None:
             DepthMapMask.__depth_pro = importlib.import_module('depth_pro')
-            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device="mps")
+            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device=config.get_config('gpu_type'))
 
         if DepthMapMask.__depth_map is None or self.editor.rotation_changed_flag:
             DepthMapMask.__depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
@@ -1688,8 +1681,7 @@ class DepthMapMask(BaseMask):
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
         result = cv2.resize(DepthMapMask.__depth_map[cy:cy+ch, cx:cx+cw], (nw, nh))
-        if scale < 1:
-            result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
         return result
 
@@ -1844,8 +1836,7 @@ class FaceMask(BaseMask):
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
         result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
-        if scale < 1:
-            result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
         return result
 

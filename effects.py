@@ -1,18 +1,12 @@
-#from re import L
-#from token import EXACT_TOKEN_TYPES
-#from kivy import 
-#import scipy
-from typing_extensions import ItemsView
+
 import cv2
+from cv2.gapi import crop
 import numpy as np
 import importlib
-#import bz2
 from enum import Enum
 
 #import colorsys
 #import skimage
-
-#import noise2void
 #import DRBNet
 #import iopaint.predict
 #import dehazing.dehaze
@@ -274,6 +268,7 @@ class RotationEffect(Effect):
             'rotation': 0,
             'rotation2': 0,
             'flip_mode': 0,
+            'crop_enable': False,
         }
 
     def set2widget(self, widget, param):
@@ -308,14 +303,14 @@ class RotationEffect(Effect):
         ang = self.get_param(param, 'rotation')
         ang2 = self.get_param(param, 'rotation2')
         flp = self.get_param(param, 'flip_mode')
-        if ang == 0 and ang2 == 0 and flp == 0:
-            self.diff = None
-            self.hash = None
-        else:
-            param_hash = hash((ang, ang2, flp))
-            if self.hash != param_hash:
-                self.diff = core.rotation(img, ang + ang2, flp)
-                self.hash = param_hash
+        crop_enable = self.get_param(param, 'crop_enable')
+
+        param_hash = hash((ang, ang2, flp, crop_enable))
+        if self.hash != param_hash:
+            self.diff = core.rotation(img, ang + ang2, flp,
+                                        inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
+                                        border_mode="refrect" if crop_enable == False else "constant")
+            self.hash = param_hash
         
         return self.diff
 
@@ -377,6 +372,7 @@ class CropEffect(Effect):
     def make_diff(self, img, param, efconfig):
         ce = self.get_param(param, 'crop_enable')
         disp_info = params.get_disp_info(param)
+
         if ce == True or disp_info is None:
             self.diff = None
             self.hash = None
@@ -565,7 +561,6 @@ class LightNoiseReductionEffect(Effect):
                 # チャンネルを結合
                 filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
                 self.diff = cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)
-    
 
                 self.hash = param_hash
 
@@ -632,7 +627,7 @@ class DefocusEffect(Effect):
                 if DefocusEffect.__net is None:
                     DefocusEffect.__net = DefocusEffect.__DRBNet.setup_predict()
 
-                self.diff = DefocusEffect.__DRBNet.predict(img, DefocusEffect.__net, 'mps')
+                self.diff = DefocusEffect.__DRBNet.predict(img, DefocusEffect.__net, config.get_config('gpu_type'))
                 self.hash = param_hash
 
         return self.diff

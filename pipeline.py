@@ -68,7 +68,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
     imax = max(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_texture_size(imax, imax)
-    mask_editor2.set_primary_param(primary_param['original_img_size'], disp_info)
+    mask_editor2.set_primary_param(primary_param, disp_info)
     mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
 

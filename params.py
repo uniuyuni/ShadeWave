@@ -46,10 +46,10 @@ def get_crop_rect(param, none_value=None):
             )
         
         crop_rect2 = (
-            int(round(crop_rect[0] * maxsize)),
-            int(round(crop_rect[1] * maxsize)),
-            int(round(crop_rect[2] * maxsize)),
-            int(round(crop_rect[3] * maxsize)),
+            int(crop_rect[0] * maxsize),
+            int(crop_rect[1] * maxsize),
+            int(crop_rect[2] * maxsize),
+            int(crop_rect[3] * maxsize),
         )
     else:
         crop_rect2 = None
@@ -81,10 +81,10 @@ def get_disp_info(param, none_value=None):
             )
 
         disp_info2 = (
-            int(round(disp_info[0] * maxsize)),
-            int(round(disp_info[1] * maxsize)),
-            int(round(disp_info[2] * maxsize)),
-            int(round(disp_info[3] * maxsize)),
+            int(disp_info[0] * maxsize),
+            int(disp_info[1] * maxsize),
+            int(disp_info[2] * maxsize),
+            int(disp_info[3] * maxsize),
             disp_info[4],
         )
     else:

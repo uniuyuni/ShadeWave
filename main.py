@@ -2,6 +2,7 @@
 #from splashscreen import display_splash_screen, close_splash_screen
 #display_splash_screen("platypus.png")
 
+import logging
 import numpy as np
 
 import os
@@ -100,17 +101,19 @@ class MainWidget(MDBoxLayout):
         self.ids["preview"].texture = None # 更新のために必要
         self.ids["preview"].texture = self.texture
 
-    def draw_histogram(self, img):
-        self.ids["histogram"].draw_histogram(img)
+    def draw_histogram(self, img, exclude_zero_count=0):
+        logging.debug(f"draw_histogram exclude_zero_count:{exclude_zero_count}")
+        self.ids["histogram"].draw_histogram(img, exclude_zero_count)
 
     def draw_image(self, offset, dt):
         if (self.imgset is not None) and (self.imgset.img is not None):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
             #utils.print_nan_inf(img)
-            
+
             img = np.array(img)
-            self.draw_histogram(img)
-            img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), 'CAT16',
+            img, exclude_zero_count = core.apply_zero_wrap(img, self.primary_param)
+            self.draw_histogram(img, exclude_zero_count)
+            img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
                                     apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
             img = np.clip(img, 0, 1)
             self.blit_image(img)

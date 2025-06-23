@@ -18,9 +18,12 @@ import math
 from numba import njit, prange
 from PIL import ImageCms
 
+import highlight_recovery
 import sigmoid
 import dng_sdk
 import utils
+import params
+import config
 
 jax.config.update("jax_platform_name", "METAL")
 
@@ -134,10 +137,9 @@ def calc_resize_image(original_size, max_length):
 
     return (new_width, new_height)
 
-def rotation(img, angle, flip_mode=0):
+def rotation(img, angle, flip_mode=0, inter_mode=0, border_mode="reflect"):
     # 元の画像の高さと幅を取得
-    height = img.shape[0]
-    width = img.shape[1]
+    height, width = img.shape[:2]
     
     # 回転の中心点を計算
     center = (int(width/2), int(height/2))
@@ -162,10 +164,9 @@ def rotation(img, angle, flip_mode=0):
         img_affine = cv2.flip(img_affine, 0)
 
     # 回転と中心補正を同時に行う
-    img_affine = cv2.warpAffine(img_affine, trans, (size, size), 
-                                flags=cv2.INTER_CUBIC, 
-                                borderMode=cv2.BORDER_CONSTANT, 
-                                borderValue=(0, 0, 0))
+    img_affine = cv2.warpAffine(img_affine, trans, (size, size),
+                                flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
+                                borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
     return img_affine
 
@@ -264,6 +265,7 @@ def tone_mapping_cv(x, exposure=1.0):
     return cv2.divide(x, cv2.add(x, exposure))
 
 def highlight_compress(image):
+    return highlight_recovery.reconstruct_highlight_details(image, False)
     return cv2.createTonemapReinhard(
         gamma=1.0, 
         intensity=0.0,
@@ -729,7 +731,7 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
 
         # リサイズした画像を中央に配置
-        result = np.pad(resized_img, ((offset_y, texture_height-(offset_y+new_height)), (offset_x, texture_width-(offset_x+new_width)), (0, 0)), constant_values=0)
+        result = np.pad(resized_img, ((offset_y, texture_height-(offset_y+new_height)), (offset_x, texture_width-(offset_x+new_width)), (0, 0)), mode="constant")
 
         # 再設定
         disp_info = (dx, dy, dw, dh, scale)
@@ -821,13 +823,13 @@ def get_multiple_mask_bbox(mask):
 
 
 # 上下または左右の余白を追加
-def adjust_shape(img):
+def adjust_shape(img, mode="constant"):
     imax = max(img.shape[1], img.shape[0])
 
     # イメージを正方形にする
     offset_y = (imax-img.shape[0])//2
     offset_x = (imax-img.shape[1])//2
-    img = np.pad(img, ((offset_y, imax-(offset_y+img.shape[0])), (offset_x, imax-(offset_x+img.shape[1])), (0, 0)), constant_values=0)
+    img = np.pad(img, ((offset_y, imax-(offset_y+img.shape[0])), (offset_x, imax-(offset_x+img.shape[1])), (0, 0)), mode=mode)
 
     return img
 
@@ -1708,3 +1710,23 @@ def get_icc_profile_name(pil_image):
     profile = ImageCms.getOpenProfile(io.BytesIO(icc_data))
     
     return profile.profile.profile_description
+
+def apply_zero_wrap(img, param):
+    """
+    Zero-wrapフィルタを適用する関数
+    """        
+    crop_rect = params.get_crop_rect(param)
+    disp_info = params.get_disp_info(param)
+    width = int((crop_rect[2] - crop_rect[0]) * disp_info[4])
+    height = int((crop_rect[3] - crop_rect[1]) * disp_info[4])
+    wrap = np.ones((height, width), dtype=np.float32)
+    preview_width = config.get_config('preview_width')
+    preview_height = config.get_config('preview_height')
+    offset_x, offset_y = (preview_width - wrap.shape[1]) // 2, (preview_height - wrap.shape[0]) // 2
+    wrap = np.pad(wrap, ((offset_y, preview_height-wrap.shape[0]-offset_y), (offset_x, preview_width-wrap.shape[1]-offset_x)), 'constant', constant_values=0.0)
+
+    # クロップ中は処理しないがクロップしている範囲のzero_countだけ返す
+    if param.get('crop_enable', False) == False:
+        img = img * wrap[..., np.newaxis]
+
+    return (img, wrap.size - np.count_nonzero(wrap))

@@ -18,15 +18,19 @@ class HistogramWidget(KVImage):
         pixels = pixels.astype(np.float32)/256.0
         self.draw_histogram(pixels)
 
-    def draw_histogram(self, pixels):
+    def draw_histogram(self, pixels, exclude_zero_count):
         # RGB各チャンネルのヒストグラムを計算
         #r_hist, g_hist, b_hist = [np.histogram(pixels[..., i], bins=256, range=(0, 1.0))[0] for i in range(3)]
         r_hist, g_hist, b_hist = [cv2.calcHist([pixels], [i], None, [256], [0, 2.0]) for i in range(3)]
+        r_hist[0] = max(0, r_hist[0] - exclude_zero_count)
+        g_hist[0] = max(0, g_hist[0] - exclude_zero_count)
+        b_hist[0] = max(0, b_hist[0] - exclude_zero_count)
         
         # 輝度の計算
         luminance = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
         #l_hist, _ = np.histogram(luminance, bins=256, range=(0, 1.0))
         l_hist = cv2.calcHist([luminance], [0], None, [256], [0, 2.0])
+        l_hist[0] = max(0, l_hist[0] - exclude_zero_count)
 
         # ヒストグラムを描画
         self.canvas.clear()
