@@ -82,13 +82,35 @@
 
                 HistogramWidget:
                     id: histogram
-                    size_hint: 1, 0.2
+                    size_hint: None, None
+                    ref_width: 512
+                    ref_height: 256
+                    ref_margin: 4
                     canvas:
                         Color:
                             rgba: dark_color
                         Rectangle:
                             size: self.size
                             pos: self.pos                    
+
+                BoxLayout:
+                    orientation: 'horizontal'
+                    size_hint_y: None
+                    ref_height: 20
+                    ref_margin: 4
+                    
+                    ToggleButton:
+                        id: toggle_underexposure
+                        size_hint_x: None
+                        ref_width: 50
+                        text: "Under"
+                        on_state: root.start_draw_image()
+                    ToggleButton:
+                        id: toggle_overexposure
+                        size_hint_x: None
+                        ref_width: 50
+                        text: "Over"
+                        on_state: root.start_draw_image()
 
                 MDScrollView:
                     size_hint: 1, 0.8

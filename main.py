@@ -60,9 +60,9 @@ class MainWidget(MDBoxLayout):
         #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
         self.apply_thread = None
         self.is_draw_image = False
+        self.inpaint_edit = None
         self.cache_system = cache_system
         self.ids['viewer'].set_cache_system(self.cache_system)
-        self.inpaint_edit = None
 
         KVWindow.bind(on_key_down=self.on_key_down)
 
@@ -111,12 +111,18 @@ class MainWidget(MDBoxLayout):
             #utils.print_nan_inf(img)
 
             img = np.array(img)
-            img, exclude_zero_count = core.apply_zero_wrap(img, self.primary_param)
-            self.draw_histogram(img, exclude_zero_count)
-            img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+
+            # img1はヒストグラム用            
+            img1, exclude_zero_count = core.apply_zero_wrap(img, self.primary_param)
+            self.draw_histogram(img1, exclude_zero_count)
+
+            # img2は表示用
+            img2 = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
+            img2, _ = core.apply_zero_wrap(img2, self.primary_param)
+            img2 = np.clip(img2, 0, 1)
+            img2 = colour.RGB_to_RGB(img2, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
                                     apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-            img = np.clip(img, 0, 1)
-            self.blit_image(img)
+            self.blit_image(img2)
         self.is_draw_image = False
 
     def start_draw_image(self, offset=(0, 0)):

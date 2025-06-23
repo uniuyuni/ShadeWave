@@ -1730,3 +1730,18 @@ def apply_zero_wrap(img, param):
         img = img * wrap[..., np.newaxis]
 
     return (img, wrap.size - np.count_nonzero(wrap))
+
+def apply_out_of_range_exposure(img, overexposure, underexposure):
+
+    if overexposure == True or underexposure == True:
+        img = img.copy()
+
+        if underexposure == True:
+            mask = (img[..., 0] <= 0.0) & (img[..., 1] <= 0.0) & (img[..., 2] <= 0.0)
+            img[mask] = [0.0, 0.0, 1.0]
+
+        if overexposure == True:
+            mask = (img[..., 0] >= 1.0) & (img[..., 1] >= 1.0) & (img[..., 2] >= 1.0)
+            img[mask] = [0.0, 0.0, 0.0]
+
+    return img
