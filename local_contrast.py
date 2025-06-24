@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 
+import core
+
 def apply_clarity(rgb_image, clarity_amount):
     """
     RGB float32画像に明瞭度（マイクロコントラスト）を適用する関数（OpenCV使用）
@@ -59,7 +61,7 @@ def apply_clarity(rgb_image, clarity_amount):
         amount = strength * 0.8  # 最大-0.8倍
     
     # ガウシアンぼかしを適用
-    blurred = cv2.GaussianBlur(rgb_image, (kernel_size, kernel_size), 0)
+    blurred = core.gaussian_blur(rgb_image, (kernel_size, kernel_size), 0)
     
     # 高周波成分を抽出
     high_freq = rgb_image - blurred
@@ -102,10 +104,7 @@ def apply_clarity_luminance(rgb_image, clarity_amount):
     
     if not isinstance(clarity_amount, (int, float)):
         raise TypeError("clarity_amount must be numeric")
-    
-    if not -100 <= clarity_amount <= 100:
-        raise ValueError("clarity_amount must be between -100 and 100")
-    
+        
     if clarity_amount == 0:
         return rgb_image.copy()
     
@@ -128,7 +127,7 @@ def apply_clarity_luminance(rgb_image, clarity_amount):
         amount = strength * 0.6
     
     # 輝度チャンネルで明瞭度処理
-    blurred_lum = cv2.GaussianBlur(luminance, (kernel_size, kernel_size), 0)
+    blurred_lum = core.gaussian_blur(luminance, (kernel_size, kernel_size), 0)
     high_freq_lum = luminance - blurred_lum
     enhanced_lum = luminance + high_freq_lum * amount
     enhanced_lum = np.clip(enhanced_lum, 0.0, 1.0)
@@ -224,7 +223,7 @@ def apply_clarity_advanced(rgb_image, clarity_amount, preserve_mask=None):
         amount = strength * 0.6
     
     # 明瞭度処理
-    blurred = cv2.GaussianBlur(rgb_image, (kernel_size, kernel_size), 0)
+    blurred = core.gaussian_blur(rgb_image, (kernel_size, kernel_size), 0)
     high_freq = rgb_image - blurred
     
     # マスクを適用して処理
@@ -283,8 +282,8 @@ def apply_texture(rgb_image, texture_amount):
     
     # テクスチャ検出用のマルチスケール処理
     # 2つの異なるスケールでぼかしを作成
-    small_blur = cv2.GaussianBlur(rgb_image, (3, 3), 0)  # 細かいテクスチャ用
-    medium_blur = cv2.GaussianBlur(rgb_image, (5, 5), 0)  # 中程度のテクスチャ用
+    small_blur = core.gaussian_blur_cv(rgb_image, (3, 3), 0)  # 細かいテクスチャ用
+    medium_blur = core.gaussian_blur_cv(rgb_image, (5, 5), 0)  # 中程度のテクスチャ用
     
     # 2段階の高周波成分を抽出
     fine_texture = rgb_image - small_blur      # 非常に細かいテクスチャ
@@ -360,9 +359,6 @@ def apply_texture_advanced(rgb_image, texture_amount):
     if not isinstance(texture_amount, (int, float)):
         raise TypeError("texture_amount must be numeric")
     
-    if not -100 <= texture_amount <= 100:
-        raise ValueError("texture_amount must be between -100 and 100")
-    
     if texture_amount == 0:
         return rgb_image.copy()
     
@@ -377,7 +373,7 @@ def apply_texture_advanced(rgb_image, texture_amount):
     current_image = rgb_image.copy()
     
     for i, (kx, ky) in enumerate(scales):
-        blurred = cv2.GaussianBlur(current_image, (kx, ky), 0)
+        blurred = core.gaussian_blur(current_image, (kx, ky), 0)
         high_freq = current_image - blurred
         frequency_bands.append(high_freq)
         current_image = blurred

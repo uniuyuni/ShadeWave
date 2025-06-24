@@ -13,6 +13,7 @@ _config = {
     'display_color_gamut': "sRGB",
     'gpu_type': "mps",
     'cat': "cat16",
+    'base_resolution_scale': [4096, 4096],
 }
 _main_widget = None
 

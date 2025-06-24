@@ -215,7 +215,7 @@ def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
     return  cv2.GaussianBlur(src, ksize, sigma)
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
-    return gaussian_blur_jax(src, ksize, sigma)
+    return gaussian_blur_jax(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
 
 @partial(jit, static_argnums=1)
 def lucy_richardson_gauss(srcf, iteration):
@@ -386,6 +386,7 @@ def log_transform(x, base=np.e):
 
 
 # 露出補正
+#@partial(jit, static_argnums=(1,))
 def adjust_exposure(rgb, ev):
     # img: 変換元画像
     # ev: 補正値 -4.0〜4.0
@@ -1453,7 +1454,7 @@ def calculate_ls_weight(hls_img, l_range=(0.0, 1.0), s_range=(0.0, 1.0)):
     return l_weight * s_weight
 
 #@partial(jit, static_argnums=(1,))
-def adjust_hls_colors(hls_img, color_settings):
+def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
     """
     複数の色相範囲を一度に調整する
     
@@ -1495,14 +1496,14 @@ def adjust_hls_colors(hls_img, color_settings):
 
         # 重みをぼかす
         #final_weight = gaussian_blur(final_weight, (127, 127), 0)
-        final_weight = cv2.GaussianBlur(final_weight, (127, 127), 0)
+        final_weight = gaussian_blur(final_weight, (127*resolution_scale, 127*resolution_scale), 0)
         
         # 重みを使って調整
         result = adjust_hls_with_weight(result, final_weight, adjust)
     
     return result
 
-def adjust_hls_color_one(hls_img, color_name, h, l, s):
+def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
     # 色相の設定
     COLOR_SETTING = {
         'red': {
@@ -1589,7 +1590,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s):
 
     color_setting_one = [COLOR_SETTING[color_name]]
     color_setting_one[0]['adjust'] = [h, l, s]
-    adjusted_hls = adjust_hls_colors(hls_img, color_setting_one)
+    adjusted_hls = adjust_hls_colors(hls_img, color_setting_one, resolution_scale)
 
     return adjusted_hls
 
@@ -1715,10 +1716,10 @@ def apply_zero_wrap(img, param):
     """
     Zero-wrapフィルタを適用する関数
     """        
-    crop_rect = params.get_crop_rect(param)
+    #crop_rect = params.get_crop_rect(param)
     disp_info = params.get_disp_info(param)
-    width = int((crop_rect[2] - crop_rect[0]) * disp_info[4])
-    height = int((crop_rect[3] - crop_rect[1]) * disp_info[4])
+    width = int((disp_info[2]) * disp_info[4])
+    height = int((disp_info[3]) * disp_info[4])
     wrap = np.ones((height, width), dtype=np.float32)
     preview_width = config.get_config('preview_width')
     preview_height = config.get_config('preview_height')
@@ -1745,3 +1746,13 @@ def apply_out_of_range_exposure(img, overexposure, underexposure):
             img[mask] = [0.0, 0.0, 0.0]
 
     return img
+
+def calc_resolution_scale(current_resolution, scale=1.0):
+        
+    # 解像度比を計算（幅と高さの幾何平均を使用）
+    ratio = np.sqrt(
+        (current_resolution[0] / config.get_config('base_resolution_scale')[0]) *
+        (current_resolution[1] / config.get_config('base_resolution_scale')[1])
+    )
+
+    return scale * ratio

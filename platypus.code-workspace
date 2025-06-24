@@ -9,7 +9,7 @@
 		"git.ignoreLimitWarning": true
 	},
 	"launch": {
-		"version": "0.10.6",
+		"version": "0.10.7",
 		"configurations": []
 	}
 }

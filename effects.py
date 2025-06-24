@@ -440,7 +440,7 @@ class AINoiseReductonEffect(Effect):
 
     def make_diff(self, img, param, efconfig):
         nr = self.get_param(param, 'ai_noise_reduction')
-        if nr <= 0 or efconfig.disp_info[4] < config.get_config('scale_threshold'):
+        if nr <= 0 or efconfig.mode == EffectMode.PREVIEW:
             self.diff = None
             self.hash = None
         else:
@@ -655,7 +655,7 @@ class LensblurFilterEffect(Effect):
         else:
             param_hash = hash((lpfr))
             if self.hash != param_hash:
-                self.diff = filter.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.disp_info[4]))
+                self.diff = filter.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
                 self.hash = param_hash
 
         return self.diff
@@ -682,7 +682,7 @@ class ScratchEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.scratch_effect(img, 1.0, fr / 100 * efconfig.disp_info[4])
+                self.diff = filter.scratch_effect(img, 1.0, fr / 100 * efconfig.resolution_scale)
                 self.hash = param_hash
 
         return self.diff
@@ -709,7 +709,7 @@ class FrostedGlassEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.frosted_glass_effect(img, fr / 100 * efconfig.disp_info[4], fr / 1000 * efconfig.disp_info[4])
+                self.diff = filter.frosted_glass_effect(img, fr / 100 * efconfig.resolution_scale, fr / 1000 * efconfig.resolution_scale)
                 self.hash = param_hash
 
         return self.diff
@@ -736,7 +736,7 @@ class MosaicEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.mosaic_effect(img, int(fr * efconfig.disp_info[4]))
+                self.diff = filter.mosaic_effect(img, int(fr * efconfig.resolution_scale))
                 self.hash = param_hash
 
         return self.diff
@@ -775,7 +775,7 @@ class GlowEffect(Effect):
                 hls[:,:,1] = core.apply_level_adjustment(hls[:,:,1], gb, 127+gg/2, 255)
                 rgb2 = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
                 if gg > 0:
-                    rgb2 = filter.lensblur_filter(rgb2, gg*2-1)
+                    rgb2 = filter.lensblur_filter(rgb2, (gg * 2 * efconfig.resolution_scale) | 1) 
                 go = go/100.0
                 self.diff = cv2.addWeighted(rgb, 1.0-go, core.blend_screen(rgb, rgb2), go, 0)
                 self.hash = param_hash
@@ -991,7 +991,7 @@ class HLSColorEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = core.adjust_hls_color_one(hls, self.color_name, hue, lum/100, sat/100) - hls
+            self.diff = core.adjust_hls_color_one(hls, self.color_name, hue, lum/100, sat/100, efconfig.resolution_scale) - hls
             self.hash = param_hash
 
         return self.diff
@@ -1072,7 +1072,7 @@ class ClarityEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = local_contrast.apply_clarity_luminance(rgb, con * efconfig.disp_info[4])
+            self.diff = local_contrast.apply_clarity_luminance(rgb, con * 2 * efconfig.resolution_scale)
             self.hash = param_hash
 
         return self.diff
@@ -1098,7 +1098,7 @@ class TextureEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = local_contrast.apply_texture_advanced(rgb, con * efconfig.disp_info[4])
+            self.diff = local_contrast.apply_texture_advanced(rgb, con * 0.5 * efconfig.resolution_scale)
             self.hash = param_hash
 
         return self.diff
@@ -1124,7 +1124,7 @@ class MicroContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            self.diff = local_contrast.apply_microcontrast(rgb, con * efconfig.disp_info[4])
+            self.diff = local_contrast.apply_microcontrast(rgb, con * 0.5 * efconfig.resolution_scale)
             self.hash = param_hash
 
         return self.diff
@@ -1181,7 +1181,7 @@ class ToneEffect(Effect):
                 source = np.array(self.diff)
                 #cv2.imwrite("mask.jpg", cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
                 #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
-                target = local_contrast.apply_microcontrast(source, 400)
+                target = local_contrast.apply_microcontrast(source, 400 * efconfig.resolution_scale)
                 mask = mask[..., np.newaxis]
                 self.diff = source * (1-mask) + target * mask
 

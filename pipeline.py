@@ -20,6 +20,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = is_zoomed
     efconfig.mode = effects.EffectMode.PREVIEW
+    efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
 
     # 背景レイヤー
     img0, reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
@@ -37,7 +38,10 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
         disp_info2 = disp_info
     mask_editor2.update()
 
+    # 環境設定更新
     efconfig.disp_info = disp_info2
+    efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info2[4])
+
     # 並列処理
     #split_img = []
     #split_img.extend(np.vsplit(imgc, 4))
@@ -60,6 +64,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True
     efconfig.mode = effects.EffectMode.EXPORT
+    efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
 
     # 背景レイヤー
     img0, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig)
