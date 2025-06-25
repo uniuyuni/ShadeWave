@@ -449,10 +449,10 @@ class AINoiseReductonEffect(Effect):
                 if AINoiseReductonEffect.__module is None:
                     AINoiseReductonEffect.__module = importlib.import_module('SCUNet')
                 if AINoiseReductonEffect.__net is None:
-                    AINoiseReductonEffect.__net = AINoiseReductonEffect.__module.setup_model(device=config.get_config('gpu_type'))
+                    AINoiseReductonEffect.__net = AINoiseReductonEffect.__module.setup_model(device=config.get_config('gpu_device'))
 
                 #img = np.clip(img, 0, 1)
-                self.diff = AINoiseReductonEffect.__module.denoise_image_helper(AINoiseReductonEffect.__net, img, config.get_config('gpu_type'))
+                self.diff = AINoiseReductonEffect.__module.denoise_image_helper(AINoiseReductonEffect.__net, img, config.get_config('gpu_device'))
                 self.hash = param_hash
         
         return self.diff
@@ -627,7 +627,7 @@ class DefocusEffect(Effect):
                 if DefocusEffect.__net is None:
                     DefocusEffect.__net = DefocusEffect.__DRBNet.setup_predict()
 
-                self.diff = DefocusEffect.__DRBNet.predict(img, DefocusEffect.__net, config.get_config('gpu_type'))
+                self.diff = DefocusEffect.__DRBNet.predict(img, DefocusEffect.__net, config.get_config('gpu_device'))
                 self.hash = param_hash
 
         return self.diff

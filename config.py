@@ -11,7 +11,7 @@ _config = {
     'iopaint_resize_limit': 1280,
     'iopaint_use_realesrgan': True,
     'display_color_gamut': "sRGB",
-    'gpu_type': "mps",
+    'gpu_device': "mps",
     'cat': "cat16",
     'base_resolution_scale': [4096, 4096],
 }

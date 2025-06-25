@@ -5,7 +5,7 @@ import numpy as np
 import core
 import local_contrast
 
-def reconstruct_highlight_details(hdr_img, is_adjust_red=True):
+def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
     """
     ハイライトディテールを回復する統合処理
     """
@@ -23,6 +23,7 @@ def reconstruct_highlight_details(hdr_img, is_adjust_red=True):
         return hdr_img
 
     # 線形変換を適用
+    #mask = np.clip((mask - 1.0) / (M - 1.0), 0.0, 1.0)
     mask = np.where(
         mask <= 1.0,
         0.0,  # 1.0以下の値は0.0に
@@ -32,6 +33,7 @@ def reconstruct_highlight_details(hdr_img, is_adjust_red=True):
             (mask - 1.0) / (M - 1.0)  # 1.0〜Mの間を0.0〜1.0に線形補間
         )
     )
+    
     #mask = mask > (1.0 + (np.max(mask) - 1.0) / 2.0)
     #mask = cv2.GaussianBlur(mask.astype(np.float32), (127, 127), sigmaX=0)
     #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
@@ -53,7 +55,7 @@ def reconstruct_highlight_details(hdr_img, is_adjust_red=True):
     
     # 赤のカラーバランスが崩れているので補正、ついでにディティールをはっきりさせる
     rgb = micro_contrast
-    if is_adjust_red:
+    if is_enhance_red:
         hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
         hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
         rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)

@@ -15,6 +15,8 @@ from scipy.ndimage import label
 from scipy.ndimage import gaussian_filter
 import logging
 import math
+import numba
+from numba.experimental import jitclass
 from numba import njit, prange
 from PIL import ImageCms
 
@@ -24,8 +26,7 @@ import dng_sdk
 import utils
 import params
 import config
-
-jax.config.update("jax_platform_name", "METAL")
+import aces_tonemapping
 
 
 def normalize_image(image_data):
@@ -264,7 +265,23 @@ def tone_mapping_cv(x, exposure=1.0):
 
     return cv2.divide(x, cv2.add(x, exposure))
 
+def adjust_highlights(image, strength=0.8):
+    """ ハイライトのみを圧縮する補助関数 """
+    highlights = np.clip(image - 0.75, 0, 1)  # ハイライト領域抽出
+    adjusted = highlights * (1 - strength)
+    return image - highlights + adjusted
+
 def highlight_compress(image):
+
+    return aces_tonemapping.aces_tonemapping(image, 1.0, config.get_config('gpu_device'))
+    adjusted = adjust_highlights(aces, 0.8)
+
+    blurred = gaussian_blur_cv(adjusted, (0,0), 1.2)
+    detail = np.clip(adjusted - blurred + 0.5, 0, 1)
+
+    return adjusted
+
+
     return highlight_recovery.reconstruct_highlight_details(image, False)
     return cv2.createTonemapReinhard(
         gamma=1.0, 
@@ -1353,18 +1370,18 @@ def resize_bicubic_fully_vectorized(image, target_height, target_width):
     
     return output
 
-#@partial(jit, static_argnums=(1,2,))
+@jit
 def smooth_step(x, edge0, edge1):
     """
     エルミート補間を用いた滑らかなステップ関数
     x が edge0 未満なら0、edge1 以上なら1、その間は滑らかな補間を行う
     """
     # クランプ
-    t = np.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    t = jnp.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
     # エルミート補間
     return t * t * (3.0 - 2.0 * t)
 
-#@partial(jit, static_argnums=(1,2,3))
+@jit
 def circular_smooth_step(hue, center, width, fade_width):
     """
     円環上の色相空間で滑らかな重みを計算する
@@ -1379,22 +1396,21 @@ def circular_smooth_step(hue, center, width, fade_width):
         0-1の重み
     """
     # 色相の円環性を考慮して距離を計算
-    dist = np.abs((((hue - center) % 360) + 180) % 360 - 180)
+    dist = jnp.abs((((hue - center) % 360) + 180) % 360 - 180)
     
     # 完全適用領域なら1.0
     full_region = dist <= width
     
     # フェード領域なら徐々に減衰
-    fade_region = np.logical_and(dist > width, dist <= width + fade_width)
+    fade_region = jnp.logical_and(dist > width, dist <= width + fade_width)
     
     # フェード領域では滑らかなステップ関数を適用
     fade_weight = smooth_step(dist, width + fade_width, width)
     
     # 条件に応じた重みを返す
-    return np.where(full_region, 1.0, np.where(fade_region, fade_weight, 0.0))
+    return jnp.where(full_region, 1.0, jnp.where(fade_region, fade_weight, 0.0))
 
-#@partial(jit, static_argnums=(1,2,))
-#@jit
+@jit
 def adjust_hls_with_weight(hls_img, weight, adjust):
     """
     重み付きでHLS値を調整する
@@ -1420,9 +1436,9 @@ def adjust_hls_with_weight(hls_img, weight, adjust):
     s = hls_img[..., 2:3] * s_factor
     
     # 結果を結合
-    return np.concatenate([h, l, s], axis=-1)
+    return jnp.concatenate([h, l, s], axis=-1)
 
-#@partial(jit, static_argnums=(1,2,))
+@partial(jit, static_argnums=(1,2,))
 def calculate_ls_weight(hls_img, l_range=(0.0, 1.0), s_range=(0.0, 1.0)):
     """
     輝度と彩度に基づく重みを計算
@@ -1453,7 +1469,7 @@ def calculate_ls_weight(hls_img, l_range=(0.0, 1.0), s_range=(0.0, 1.0)):
     # 明度と彩度の重みを組み合わせる
     return l_weight * s_weight
 
-#@partial(jit, static_argnums=(1,))
+@partial(jit, static_argnums=(2,))
 def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
     """
     複数の色相範囲を一度に調整する
@@ -1496,10 +1512,227 @@ def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
 
         # 重みをぼかす
         #final_weight = gaussian_blur(final_weight, (127, 127), 0)
-        final_weight = gaussian_blur(final_weight, (127*resolution_scale, 127*resolution_scale), 0)
+        final_weight = gaussian_blur_jax(final_weight, (127*resolution_scale, 127*resolution_scale), 0)
         
         # 重みを使って調整
         result = adjust_hls_with_weight(result, final_weight, adjust)
+    
+    return result
+
+# ガウスカーネル生成関数
+@njit(cache=True)
+def gaussian_kernel(size, sigma):
+    if size % 2 == 0:
+        size += 1  # 奇数に保証
+    kernel = np.zeros(size, dtype=np.float32)
+    center = size // 2
+    sum_val = 0.0
+    
+    for i in range(size):
+        x = i - center
+        kernel[i] = np.exp(-x*x / (2*sigma*sigma))
+        sum_val += kernel[i]
+    
+    return kernel / sum_val
+
+# 分離可能なガウシアンブラー
+@njit(parallel=True, cache=True)
+def separable_gaussian_blur(image, kernel):
+    h, w = image.shape
+    ksize = len(kernel)
+    pad = ksize // 2
+    
+    # 水平方向
+    temp = np.zeros((h, w), dtype=np.float32)
+    for i in prange(h):
+        for j in range(w):
+            sum_val = 0.0
+            for k in range(ksize):
+                col = j + k - pad
+                if col < 0:
+                    col = 0
+                elif col >= w:
+                    col = w - 1
+                sum_val += image[i, col] * kernel[k]
+            temp[i, j] = sum_val
+    
+    # 垂直方向
+    result = np.zeros((h, w), dtype=np.float32)
+    for i in prange(h):
+        for j in range(w):
+            sum_val = 0.0
+            for k in range(ksize):
+                row = i + k - pad
+                if row < 0:
+                    row = 0
+                elif row >= h:
+                    row = h - 1
+                sum_val += temp[row, j] * kernel[k]
+            result[i, j] = sum_val
+    
+    return result
+
+# 手動クリッピング関数
+@njit(cache=True)
+def manual_clip(x, min_val, max_val):
+    if x < min_val:
+        return min_val
+    elif x > max_val:
+        return max_val
+    return x
+
+@njit(cache=True)
+def smooth_step_numba(x, edge0, edge1):
+    """手動クリッピングを使用した滑らかなステップ関数"""
+    t = (x - edge0) / (edge1 - edge0)
+    t = manual_clip(t, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+@njit(cache=True)
+def circular_smooth_step_numba(hue, center, width, fade_width):
+    """円環滑らかステップ関数"""
+    # 円環距離計算
+    diff = hue - center
+    dist = np.abs(((diff + 180) % 360) - 180)
+    
+    if dist <= width:
+        return 1.0
+    elif dist <= width + fade_width:
+        # 逆方向の補間: distが大きいほど値が小さい
+        return 1.0 - smooth_step_numba(dist, width, width + fade_width)
+    else:
+        return 0.0
+
+# ベクトル化された円環ステップ関数
+@njit(parallel=True, cache=True)
+def vectorized_circular_smooth_step_numba(hue_map, center, width, fade_width):
+    h, w = hue_map.shape
+    result = np.empty((h, w), dtype=np.float32)
+    
+    for i in prange(h):
+        for j in range(w):
+            result[i, j] = circular_smooth_step_numba(hue_map[i, j], center, width, fade_width)
+    
+    return result
+
+@njit(parallel=True, cache=True)
+def adjust_hls_with_weight_numba(hls_img, weight, adjust):
+    h, w, c = hls_img.shape
+    output = np.empty_like(hls_img)
+    
+    h_adj = adjust[0]
+    l_factor = 2.0 ** adjust[1]
+    s_factor = 1.0 + adjust[2]
+    
+    for i in prange(h):
+        for j in range(w):
+            w_val = weight[i, j]
+            
+            # 色相調整
+            new_h = (hls_img[i, j, 0] + w_val * h_adj) % 360
+            
+            # 明度調整
+            new_l = hls_img[i, j, 1] * (l_factor ** w_val)
+            
+            # 彩度調整
+            new_s = hls_img[i, j, 2] * (s_factor ** w_val)
+
+            # クリッピング
+            #new_l = manual_clip(new_l, 0.0, 1.0)
+            #new_s = manual_clip(new_s, 0.0, 1.0)
+            
+            output[i, j, 0] = new_h
+            output[i, j, 1] = new_l
+            output[i, j, 2] = new_s
+    
+    return output
+
+@njit(parallel=True, cache=True)
+def calculate_ls_weight_numba(hls_img, l_range, s_range):
+    h, w, _ = hls_img.shape
+    weight_map = np.zeros((h, w), dtype=np.float32)
+    
+    l_min, l_max = l_range
+    s_min, s_max = s_range
+    
+    for i in prange(h):
+        for j in range(w):
+            l = hls_img[i, j, 1]
+            s = hls_img[i, j, 2]
+            
+            # 明度重み
+            l_fade_in = smooth_step_numba(l, l_min, l_min + 0.1)
+            l_fade_out = 1.0 - smooth_step_numba(l, l_max - 0.1, l_max)
+            l_weight = l_fade_in * l_fade_out
+            
+            # 彩度重み
+            s_fade_in = smooth_step_numba(s, s_min, s_min + 0.1)
+            s_fade_out = 1.0 - smooth_step_numba(s, s_max - 0.1, s_max)
+            s_weight = s_fade_in * s_fade_out
+            
+            weight_map[i, j] = l_weight * s_weight
+    
+    return weight_map
+
+# 色設定クラス
+color_setting_spec = [
+    ('center', numba.float32),
+    ('width', numba.float32),
+    ('fade_width', numba.float32),
+    ('adjust', numba.float32[:]),
+    ('l_range', numba.float32[:]),
+    ('s_range', numba.float32[:])
+]
+
+@jitclass(color_setting_spec)
+class ColorSetting:
+    def __init__(self):
+        self.center = 0.0
+        self.width = 0.0
+        self.fade_width = 0.0
+        self.adjust = np.zeros(3, dtype=np.float32)
+        self.l_range = np.zeros(2, dtype=np.float32)
+        self.s_range = np.zeros(2, dtype=np.float32)
+
+# メイン処理関数
+def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
+
+    # Numba設定に変換
+    numba_settings = []
+    for s in color_settings:
+        cs = ColorSetting()
+        cs.center = np.float32(s['center'])
+        cs.width = np.float32(s['width'])
+        cs.fade_width = np.float32(s['fade_width'])
+        cs.adjust = np.array(s['adjust'], dtype=np.float32)
+        cs.l_range = np.array(s['l_range'], dtype=np.float32)
+        cs.s_range = np.array(s['s_range'], dtype=np.float32)
+        numba_settings.append(cs)
+    
+    # カーネルサイズ計算
+    kernel_size = max(3, int(127 * resolution_scale))
+    if kernel_size % 2 == 0: 
+        kernel_size += 1
+    sigma = max(1.0, kernel_size / 6.0)
+    kernel = gaussian_kernel(kernel_size, sigma)
+    
+    for setting in numba_settings:
+        # 色相重み計算
+        hue_map = hls_img[..., 0]
+        hue_weight = vectorized_circular_smooth_step_numba(hue_map, setting.center, setting.width, setting.fade_width)
+        
+        # 輝度/彩度重み計算
+        #ls_weight = calculate_ls_weight_numba(hls_img, setting.l_range, setting.s_range)
+        
+        # 最終重み
+        final_weight = hue_weight #* ls_weight
+        
+        # ガウシアンブラー適用
+        if kernel_size > 1:
+            final_weight = separable_gaussian_blur(final_weight, kernel)
+        
+        # 重みを使って調整
+        result = adjust_hls_with_weight_numba(hls_img, final_weight, setting.adjust)
     
     return result
 
@@ -1590,9 +1823,9 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
 
     color_setting_one = [COLOR_SETTING[color_name]]
     color_setting_one[0]['adjust'] = [h, l, s]
-    adjusted_hls = adjust_hls_colors(hls_img, color_setting_one, resolution_scale)
+    adjusted_hls = adjust_hls_colors_numba(hls_img, color_setting_one, resolution_scale)
 
-    return adjusted_hls
+    return np.array(adjusted_hls)
 
 
 @njit(parallel=True, fastmath=True)

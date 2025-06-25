@@ -15,6 +15,8 @@ from functools import partial
 import re
 import multiprocessing
 import colour
+import jax
+import cv2
 
 import core
 import imageset
@@ -40,6 +42,21 @@ import hover_spinner
 import float_input
 import bbox_viewer
 import params
+
+os.environ['JAX_LOG_VERBOSITY'] = '0'
+jax.config.update("jax_platform_name", "METAL")
+cv2.ocl.setUseOpenCL(True)
+cv2.setUseOptimized(True)
+
+# プリコンパイル
+def precompile():
+    rgb = np.zeros((32, 32, 3), dtype=np.float32)
+
+    hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
+    hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
+    rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
+
+    core.fast_median_filter(rgb[..., 0])
 
 class MainWidget(MDBoxLayout):
 
@@ -518,7 +535,9 @@ class MainApp(MDApp):
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    #cv2.setUseOptimized(True)
+
+    # プリコンパイル
+    precompile()
     
     # メインプロセスでマネージャーを作成
     cache_system = file_cache_system.FileCacheSystem(max_cache_size=100, max_concurrent_loads=2)

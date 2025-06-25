@@ -7,7 +7,7 @@ import math
 import logging
 import io
 import colour
-import os
+import time
 from wand.image import Image as WandImage
 from PIL import Image as PILImage, ImageOps as PILImageOps
 import jax.numpy as jnp
@@ -246,8 +246,10 @@ class ImageSet:
 
             # 色空間変更
             if half == True:
+                t = time.time()
                 img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', config.get_config('cat'),
                                               apply_cctf_decoding=False, apply_gamut_mapping=True).astype(np.float32)
+                logging.debug(f"XYZ_to_RGB: {time.time() - t}")
             else:
                 # プロファイルを適用
                 # RAW色空間からXYZ色空間への変換にしか使ってない
@@ -258,8 +260,12 @@ class ImageSet:
                 processor = DCPProcessor(profile)
                 #img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
                 """
+                t = time.time()
                 img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
+                logging.debug(f"np.dot: {time.time() - t}")
+                t = time.time()
                 img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+                logging.debug(f"XYZ_to_RGB: {time.time() - t}")
          
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -276,7 +282,9 @@ class ImageSet:
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
+                t = time.time()
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
+                logging.debug("highlight_recovery: " + str(time.time() - t))
 
             # トーンカーブ適用
             #img_array = processor.apply_tone_curve(img_array)

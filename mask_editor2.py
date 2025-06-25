@@ -1673,7 +1673,7 @@ class DepthMapMask(BaseMask):
     def draw_depth_map(self, image_size, center):
         if DepthMapMask.__depth_pro is None:
             DepthMapMask.__depth_pro = importlib.import_module('depth_pro')
-            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device=config.get_config('gpu_type'))
+            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device=config.get_config('gpu_device'))
 
         if DepthMapMask.__depth_map is None or self.editor.rotation_changed_flag:
             DepthMapMask.__depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
