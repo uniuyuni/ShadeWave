@@ -246,9 +246,9 @@ class DCPReader:
         
         # 3x3 または 3x4 行列に変換
         if len(matrix) == 9:
-            return np.array(matrix).reshape(3, 3)
+            return np.array(matrix, dtype=np.float32).reshape(3, 3)
         elif len(matrix) == 12:
-            return np.array(matrix).reshape(3, 4)
+            return np.array(matrix, dtype=np.float32).reshape(3, 4)
         else:
             raise ValueError(f"Invalid matrix size: {len(matrix)}")
 
@@ -352,8 +352,7 @@ class DCPProcessor:
     def __init__(self, profile: DCPProfile):
         self.profile = profile
         
-    def process(self, 
-                image: np.ndarray, 
+    def process(self, image: np.ndarray, 
                 illuminant: str = '1',
                 use_look_table: bool = True) -> np.ndarray:
         """
@@ -381,23 +380,22 @@ class DCPProcessor:
         # 2. カラーマトリクスの適用
 #        if illuminant in self.profile.color_matrices:
 #            result = self._apply_matrix(result, 
-#                                      self.profile.color_matrices[illuminant])
-        
-        # 3. フォワードマトリクスの適用
-        result = self.apply_forward_matrix(result, illuminant)
+#                                      self.profile.color_matrices[illuminant]).astype(np.float32)
 
-#        result = colour.XYZ_to_RGB(result, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+        # 3. フォワードマトリクスの適用
+        result = self.apply_forward_matrix(result, illuminant)    
+
+        result = colour.XYZ_to_RGB(result, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
 
         # 4. 色相・彩度マップの適用
-#        if illuminant in self.profile.hue_sat_maps:
-#            result = self._apply_hue_sat_map(result, self.profile.hue_sat_maps[illuminant])
+        result = self.apply_hue_sat_map(result, illuminant)
         
         # 5. トーンカーブの適用
         result = self.apply_tone_curve(result)
         
         # 6. ルックテーブルの適用
-#        if use_look_table and self.profile.look_table is not None:
-#            result = self._apply_look_table(result)
+        if use_look_table:
+            result = self._apply_look_table(result)
         
         return result
 
@@ -411,7 +409,7 @@ class DCPProcessor:
     def _apply_matrix(self, image: np.ndarray, matrix: np.ndarray) -> np.ndarray:
         """行列変換を適用"""
         if matrix.shape[1] == 4:  # 3x4 行列
-            result = np.empty_like(image)
+            result = np.empty_like(image, dtype=np.float32)
 
             result[..., 0] = (matrix[0,0] * image[..., 0] + 
                             matrix[0,1] * image[..., 1] + 
@@ -430,14 +428,17 @@ class DCPProcessor:
             
         return result
     
-    def _apply_hue_sat_map(self, 
-                            image: np.ndarray, 
-                            hue_sat_map: np.ndarray) -> np.ndarray:
+    def apply_hue_sat_map(self, image: np.ndarray, illuminant):
+        if illuminant in self.profile.hue_sat_maps:
+            image = self._apply_hue_sat_map(image, self.profile.hue_sat_map_dims, self.profile.hue_sat_maps[illuminant])        
+        return image
+
+    def _apply_hue_sat_map(self, image: np.ndarray, dims, hue_sat_map: np.ndarray) -> np.ndarray:
         """色相・彩度マップを適用（ベクトル化）"""
         # RGB → HSV 変換
-        hsv = self._rgb_to_hsv(image)
+        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV_FULL)
         
-        h_div, s_div, v_div = self.profile.hue_sat_map_dims
+        h_div, s_div, v_div = dims
         
         # インデックス計算 (境界処理改善)
         h_val = np.clip(hsv[..., 0] * (h_div - 1), 0, h_div - 1 - 1e-6)
@@ -458,8 +459,8 @@ class DCPProcessor:
             # 8つの隣接する点のインデックスを計算
             x0, y0, z0 = h_idx, s_idx, v_idx
             x1, y1, z1 = np.minimum(x0 + 1, table.shape[0] - 1), \
-                        np.minimum(y0 + 1, table.shape[1] - 1), \
-                        np.minimum(z0 + 1, table.shape[2] - 1)
+                         np.minimum(y0 + 1, table.shape[1] - 1), \
+                         np.minimum(z0 + 1, table.shape[2] - 1)
             
             # 8つの頂点の値を取得
             c000 = table[x0, y0, z0]
@@ -485,97 +486,17 @@ class DCPProcessor:
         # デルタ値を適用
         deltas = fast_trilinear_interpolate(hue_sat_map)
         
-        # 色相: 加算後に0-1範囲に正規化
-        hsv[..., 0] = (hsv[..., 0] + deltas[..., 0]) % 1.0
+        # 色相
+        hsv[..., 0] = (hsv[..., 0] + deltas[..., 0]) # % 360
         
-        # 彩度: 乗算後に0-1範囲にクリップ
-        hsv[..., 1] = np.clip(hsv[..., 1] * deltas[..., 1], 0, 1)
+        # 彩度
+        hsv[..., 1] = hsv[..., 1] * deltas[..., 1]
         
-        # 明度: 乗算後に0-1範囲にクリップ
-        hsv[..., 2] = np.clip(hsv[..., 2] * deltas[..., 2], 0, 1)
+        # 明度
+        hsv[..., 2] = hsv[..., 2] * deltas[..., 2]
         
         # HSVからRGBに戻す
-        return self._hsv_to_rgb(hsv)
-        
-    def _trilinear_interpolate(self,
-                            table: np.ndarray,
-                            h: int, s: int, v: int,
-                            h_frac: float, s_frac: float, v_frac: float) -> np.ndarray:
-        """3次元テーブルのトリリニア補間"""
-        # インデックスの境界をチェック
-        h = max(0, min(h, table.shape[0] - 1))
-        s = max(0, min(s, table.shape[1] - 1))
-        v = max(0, min(v, table.shape[2] - 1))
-        
-        h1 = min(h + 1, table.shape[0] - 1)
-        s1 = min(s + 1, table.shape[1] - 1)
-        v1 = min(v + 1, table.shape[2] - 1)
-        
-        # 8つの頂点での値を取得
-        c000 = table[h, s, v]
-        c001 = table[h, s, v1]
-        c010 = table[h, s1, v]
-        c011 = table[h, s1, v1]
-        c100 = table[h1, s, v]
-        c101 = table[h1, s, v1]
-        c110 = table[h1, s1, v]
-        c111 = table[h1, s1, v1]
-        
-        # トリリニア補間を実行
-        c00 = c000 * (1 - h_frac) + c100 * h_frac
-        c01 = c001 * (1 - h_frac) + c101 * h_frac
-        c10 = c010 * (1 - h_frac) + c110 * h_frac
-        c11 = c011 * (1 - h_frac) + c111 * h_frac
-        
-        c0 = c00 * (1 - s_frac) + c10 * s_frac
-        c1 = c01 * (1 - s_frac) + c11 * s_frac
-        
-        return c0 * (1 - v_frac) + c1 * v_frac
-    
-    def _rgb_to_hsv(self, rgb: np.ndarray) -> np.ndarray:
-        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-        maxc = np.maximum(np.maximum(r, g), b)
-        minc = np.minimum(np.minimum(r, g), b)
-        v = maxc
-        deltac = maxc - minc
-        s = np.where(maxc != 0, deltac / maxc, 0)
-        h = np.zeros_like(deltac)
-        h_mask = deltac != 0
-        
-        # 標準的な計算式
-        h = np.where((r == maxc) & h_mask, (g - b) / deltac, h)
-        h = np.where((g == maxc) & h_mask, 2.0 + (b - r) / deltac, h)
-        h = np.where((b == maxc) & h_mask, 4.0 + (r - g) / deltac, h)
-        h = (h / 6.0) % 1.0
-        return np.stack([h, s, v], axis=-1)
-
-    def _hsv_to_rgb(self, hsv: np.ndarray) -> np.ndarray:
-        h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-        h = (h * 6.0) % 6.0
-        i = np.floor(h).astype(int)
-        f = h - i
-        p = v * (1.0 - s)
-        q = v * (1.0 - s * f)
-        t = v * (1.0 - s * (1.0 - f))
-        rgb = np.zeros_like(hsv)
-        
-        # セクタごとの計算
-        rgb[..., 0] = np.select(
-            [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5],
-            [v, q, p, p, t, v],
-            default=v
-        )
-        rgb[..., 1] = np.select(
-            [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5],
-            [t, v, v, q, p, p],
-            default=v
-        )
-        rgb[..., 2] = np.select(
-            [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5],
-            [p, p, t, v, v, q],
-            default=v
-        )
-        return rgb
+        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB_FULL)
     
     def apply_tone_curve(self, image: np.ndarray) -> np.ndarray:
         """トーンカーブを適用"""
@@ -596,51 +517,10 @@ class DCPProcessor:
         
         return image
     
-    def _apply_look_table(self, image: np.ndarray) -> np.ndarray:
-        """ルックテーブルを適用（ベクトル化）"""
-        d1, d2, d3 = self.profile.look_table_dims
-        
-        # インデックス計算をベクトル化
-        r_val = np.clip(image[..., 0] * (d1 - 1), 0, d1 - 1)
-        g_val = np.clip(image[..., 1] * (d2 - 1), 0, d2 - 1)
-        b_val = np.clip(image[..., 2] * (d3 - 1), 0, d3 - 1)
-        
-        # インデックスと補間係数を計算
-        r_idx = np.floor(r_val).astype(int)
-        g_idx = np.floor(g_val).astype(int)
-        b_idx = np.floor(b_val).astype(int)
-        
-        r_frac = r_val - r_idx
-        g_frac = g_val - g_idx
-        b_frac = b_val - b_idx
-        
-        # 高速な3D補間関数（_apply_hue_sat_mapと同様）
-        def fast_trilinear_interpolate(table):
-            x0, y0, z0 = r_idx, g_idx, b_idx
-            x1, y1, z1 = np.minimum(x0 + 1, table.shape[0] - 1), \
-                        np.minimum(y0 + 1, table.shape[1] - 1), \
-                        np.minimum(z0 + 1, table.shape[2] - 1)
-            
-            c000 = table[x0, y0, z0]
-            c001 = table[x0, y0, z1]
-            c010 = table[x0, y1, z0]
-            c011 = table[x0, y1, z1]
-            c100 = table[x1, y0, z0]
-            c101 = table[x1, y0, z1]
-            c110 = table[x1, y1, z0]
-            c111 = table[x1, y1, z1]
-            
-            c00 = c000 * (1 - r_frac)[..., np.newaxis] + c100 * r_frac[..., np.newaxis]
-            c01 = c001 * (1 - r_frac)[..., np.newaxis] + c101 * r_frac[..., np.newaxis]
-            c10 = c010 * (1 - r_frac)[..., np.newaxis] + c110 * r_frac[..., np.newaxis]
-            c11 = c011 * (1 - r_frac)[..., np.newaxis] + c111 * r_frac[..., np.newaxis]
-            
-            c0 = c00 * (1 - g_frac)[..., np.newaxis] + c10 * g_frac[..., np.newaxis]
-            c1 = c01 * (1 - g_frac)[..., np.newaxis] + c11 * g_frac[..., np.newaxis]
-            
-            return c0 * (1 - b_frac)[..., np.newaxis] + c1 * b_frac[..., np.newaxis]
-        
-        return fast_trilinear_interpolate(self.profile.look_table)
+    def apply_look_table(self, image: np.ndarray) -> np.ndarray:
+        if self.profile.look_table is not None:
+            return self._apply_hue_sat_map(image, self.profile.look_table_dims, self.profile.look_table)
+
 
 if __name__ == '__main__':
     # DCPファイルを読み込む

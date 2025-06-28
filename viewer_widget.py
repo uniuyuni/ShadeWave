@@ -52,7 +52,7 @@ class ThumbnailCard(MDCard):
         self.add_widget(vbox)
 
         # サムネイル表示
-        self.image = KVImage(source='spinner.zip', size_hint_y=7, anim_delay=0.01)
+        self.image = KVImage(source='spinner.gif', size_hint_y=7, anim_delay=0.01)
         vbox.add_widget(self.image)
 
         # ファイル名ラベル

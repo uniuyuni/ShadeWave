@@ -1181,7 +1181,7 @@ class ToneEffect(Effect):
                 source = np.array(self.diff)
                 #cv2.imwrite("mask.jpg", cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
                 #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
-                target = local_contrast.apply_microcontrast(source, 400 * efconfig.resolution_scale)
+                target = local_contrast.apply_microcontrast(source, 200 * efconfig.resolution_scale)
                 mask = mask[..., np.newaxis]
                 self.diff = source * (1-mask) + target * mask
 

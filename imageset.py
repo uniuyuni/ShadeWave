@@ -72,30 +72,6 @@ class ImageSet:
         [0.102100, 0.001700, 0.721300],
     ])
 
-    """
-    <ForwardMatrix1 Rows="3" Cols="3">
-        <Element Row="2" Col="2">0.775700</Element>
-        <Element Row="2" Col="1">0.000600</Element>
-        <Element Row="2" Col="0">0.048700</Element>
-        <Element Row="1" Col="2">0.021300</Element>
-        <Element Row="1" Col="1">0.804300</Element>
-        <Element Row="1" Col="0">0.174400</Element>
-        <Element Row="0" Col="2">0.087600</Element>
-        <Element Row="0" Col="1">0.447800</Element>
-        <Element Row="0" Col="0">0.429000</Element>
-    </ForwardMatrix1>
-    <ForwardMatrix2 Rows="3" Cols="3">
-        <Element Row="2" Col="2">0.721300</Element>
-        <Element Row="2" Col="1">0.001700</Element>
-        <Element Row="2" Col="0">0.102100</Element>
-        <Element Row="1" Col="2">0.044100</Element>
-        <Element Row="1" Col="1">0.736900</Element>
-        <Element Row="1" Col="0">0.219000</Element>
-        <Element Row="0" Col="2">0.149300</Element>
-        <Element Row="0" Col="1">0.418000</Element>
-        <Element Row="0" Col="0">0.397000</Element>
-    </ForwardMatrix2>
-    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -254,19 +230,17 @@ class ImageSet:
                 # プロファイルを適用
                 # RAW色空間からXYZ色空間への変換にしか使ってない
                 """
-                dcp_path = os.getcwd() + "/dcp/Fujifilm X-Pro3 Adobe Standard provia.dcp"
+                dcp_path = "dcp/Fujifilm X-Pro3 Adobe Standard classic chrome.dcp"
                 reader = DCPReader(dcp_path)
                 profile = reader.read()
                 processor = DCPProcessor(profile)
-                #img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
+                img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
                 """
-                t = time.time()
                 img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
-                logging.debug(f"np.dot: {time.time() - t}")
                 t = time.time()
                 img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
                 logging.debug(f"XYZ_to_RGB: {time.time() - t}")
-         
+                
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
@@ -286,9 +260,6 @@ class ImageSet:
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
                 logging.debug("highlight_recovery: " + str(time.time() - t))
 
-            # トーンカーブ適用
-            #img_array = processor.apply_tone_curve(img_array)
-
             # サイズを合わせる
             if img_array.shape[1] != width or img_array.shape[0] != height:
                 img_array = cv2.resize(img_array, (width, height))
@@ -303,12 +274,12 @@ class ImageSet:
             self.img = np.array(img_array)
             self.flag = half
 
-        except Exception as e:
-            logging.error(e)
-
         except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
             logging.warning("file is not supported " + file_path)
         
+        except Exception as e:
+            logging.error(e)
+
         finally:
             raw.close()
 

@@ -59,7 +59,7 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
         hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
         hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
         rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-    rgb = local_contrast.apply_microcontrast(rgb, 150)
+    rgb = local_contrast.apply_microcontrast(rgb, 100)
     result = core.apply_mask(micro_contrast, mask, rgb) # ハイライトにのみ適用
 
     return result

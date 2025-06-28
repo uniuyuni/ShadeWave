@@ -417,13 +417,13 @@ def apply_microcontrast(image, strength):
     
     # RGB→LAB変換（明度のみ処理）
     lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
-    L = lab[:, :, 0] / 100.0  # 0-1範囲に正規化
+    L = lab[..., 0] / 100.0  # 0-1範囲に正規化
     
     # 多段階ガイドフィルタによる局所適応処理
     enhanced_L = _multi_scale_local_contrast(L, normalized_strength)
     
     # LAB→RGB変換
-    lab[:, :, 0] = enhanced_L * 100.0
+    lab[..., 0] = enhanced_L * 100.0
     result = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
     
     return result
@@ -434,8 +434,15 @@ def _multi_scale_local_contrast(luminance, strength):
     """
     if abs(strength) < 1e-6:
         return luminance
-        
-    result = luminance.copy()
+    
+    if isinstance(luminance, np.ndarray):
+        luminance_umat = cv2.UMat(luminance)
+        h, w = luminance.shape[:2]
+        input_umat = False
+    else:
+        luminance_umat = luminance
+        h, w = luminance_umat.get().shape[:2]
+        input_umat = True
     
     # 適度な効果のためのスケール設定
     scales = [
@@ -443,31 +450,26 @@ def _multi_scale_local_contrast(luminance, strength):
         {'radius': 20, 'eps': 0.02}
     ]
     
-    total_detail = np.zeros_like(luminance)
+    total_detail = cv2.UMat(h, w, cv2.CV_32F)
     
     for scale in scales:
         # ガイドフィルタで局所平均を計算
-        local_mean = _guided_filter(luminance, luminance, scale['radius'], scale['eps'])
+        local_mean = _guided_filter(luminance_umat, luminance_umat, scale['radius'], scale['eps'])
         
         # 局所的な変動成分を抽出
-        detail = luminance - local_mean
-        total_detail += detail
+        detail = cv2.subtract(luminance_umat, local_mean)
+        total_detail = cv2.add(total_detail, detail)
     
     # 平均化
-    total_detail /= len(scales)
+    total_detail = cv2.divide(total_detail, len(scales))
     
     # 強度に応じた処理（線形スケーリング）
     strength_factor = strength * 1.4  # 適度な強度に調整
     
     # 正負で正しく処理
-    if strength > 0:
-        # 正：ディテールを強調（加算）
-        result = luminance + total_detail * strength_factor
-    else:
-        # 負：ディテールを低下（減算、つまり平滑化方向）
-        result = luminance + total_detail * strength_factor  # strength_factorが負なので減算になる
+    result = cv2.add(luminance_umat, cv2.multiply(total_detail, strength_factor))
     
-    return result
+    return result if input_umat else result.get()
 
 def _guided_filter(I, p, r, eps):
     """
@@ -475,16 +477,16 @@ def _guided_filter(I, p, r, eps):
     """
     mean_I = cv2.boxFilter(I, cv2.CV_32F, (r, r))
     mean_p = cv2.boxFilter(p, cv2.CV_32F, (r, r))
-    mean_Ip = cv2.boxFilter(I * p, cv2.CV_32F, (r, r))
-    cov_Ip = mean_Ip - mean_I * mean_p
+    mean_Ip = cv2.boxFilter(cv2.multiply(I, p), cv2.CV_32F, (r, r))
+    cov_Ip = cv2.subtract(mean_Ip, cv2.multiply(mean_I, mean_p))
     
-    mean_II = cv2.boxFilter(I * I, cv2.CV_32F, (r, r))
-    var_I = mean_II - mean_I * mean_I
+    mean_II = cv2.boxFilter(cv2.multiply(I, I), cv2.CV_32F, (r, r))
+    var_I = cv2.subtract(mean_II, cv2.multiply(mean_I, mean_I))
     
-    a = cov_Ip / (var_I + eps)
-    b = mean_p - a * mean_I
+    a = cv2.divide(cov_Ip, cv2.add(var_I, eps))
+    b = cv2.subtract(mean_p, cv2.multiply(a, mean_I))
     
     mean_a = cv2.boxFilter(a, cv2.CV_32F, (r, r))
     mean_b = cv2.boxFilter(b, cv2.CV_32F, (r, r))
     
-    return mean_a * I + mean_b
+    return cv2.add(cv2.multiply(mean_a, I), mean_b)

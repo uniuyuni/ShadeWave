@@ -48,6 +48,17 @@ jax.config.update("jax_platform_name", "METAL")
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
 
+def pillow_init():
+    import PIL.Image as PILImage
+    import PIL.Jpeg2KImagePlugin
+    import PIL.JpegImagePlugin
+    import PIL.PngImagePlugin
+    import PIL.TiffImagePlugin
+    import PIL.GifImagePlugin
+    import PIL.BmpImagePlugin
+    PILImage._initialized = 2
+    PILImage.init()
+
 # プリコンパイル
 def precompile():
     rgb = np.zeros((32, 32, 3), dtype=np.float32)
@@ -57,6 +68,7 @@ def precompile():
     rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
     core.fast_median_filter(rgb[..., 0])
+    core.apply_mask_numba(rgb, np.ones((32, 32), dtype=np.float32), rgb)
 
 class MainWidget(MDBoxLayout):
 
@@ -535,6 +547,9 @@ class MainApp(MDApp):
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
+
+    # PILイメージプラグイン抑制
+    pillow_init()
 
     # プリコンパイル
     precompile()
