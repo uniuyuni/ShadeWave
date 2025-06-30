@@ -157,7 +157,7 @@ class ImageSet:
             img_array = cv2.resize(img_array, (width, height))
 
             # 正方形にする
-            img_array = core.adjust_shape(img_array)
+            img_array = core.adjust_shape_to_square(img_array)
 
             # 描画用に設定
             self.img = img_array
@@ -180,20 +180,43 @@ class ImageSet:
     def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
         try:
             raw = rawpy.imread(file_path)
+            logging.debug(raw.sizes)
+            """
+            crop_top_margin, crop_left_margin = exif_data.get("RawImageCropTopLeft").split(' ')
+            crop_top_margin, crop_left_margin = int(crop_top_margin), int(crop_left_margin)
+            crop_width, crop_height = exif_data.get("RawImageCroppedSize").split('x')
+            crop_width, crop_height = int(crop_width), int(crop_height)
+            
+            raw.__setattr__('sizes', rawpy.ImageSizes(raw_height=exif_data.get("RawImageFullHeight"),
+                                         raw_width=exif_data.get("RawImageFullWidth"),
+                                         height=crop_height,
+                                         width=crop_width,
+                                         top_margin=crop_top_margin,
+                                         left_margin=crop_left_margin,
+                                         iheight=exif_data.get("RawImageHeight"),
+                                         iwidth=exif_data.get("RawImageWidth"),
+                                         pixel_aspect=raw.sizes.pixel_aspect,
+                                         flip=raw.sizes.flip,
+                                         crop_top_margin=crop_top_margin,
+                                         crop_left_margin=crop_left_margin,
+                                         crop_width=crop_width,
+                                         crop_height=crop_height))
+            """
             img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw if half == False else rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
                                         output_bps=16,
                                         no_auto_scale=False,
                                         use_camera_wb=True,
-                                        user_wb = [1.0, 1.0, 1.0, 0.0],
+                                        #user_wb = [1.0, 1.0, 1.0, 0.0],
                                         gamma=(1.0, 1.0),
-                                        four_color_rgb=True,
+                                        four_color_rgb=True if half == False else False,
                                         half_size=half,
                                         #user_black=0,
                                         no_auto_bright=True,
-                                        highlight_mode=5,
-                                        auto_bright_thr=0.0005)
+                                        highlight_mode=5,)
+                                        #auto_bright_thr=0.0005)
                                         #fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
+            logging.debug(raw.sizes)
             """
             # ブラックレベル補正
             raw_image = self._black(raw.raw_image_visible, raw.black_level_per_channel[0])
@@ -206,8 +229,16 @@ class ImageSet:
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
             # サイズを整える
-            if half == False:
-                img_array = img_array[top:top+height, left:left+width]
+            if half == True:
+                cheight = height // 2
+                cwidth = width // 2
+            else:
+                cheight = height
+                cwidth = width
+            if cwidth > cheight:
+                img_array = img_array[:cheight, :cwidth]
+            else:
+                img_array = img_array[-cheight:, -cwidth:]
 
             # 下位2bit補完
             if half == False and config.get_config('raw_depth_expansion') == True:
@@ -261,14 +292,15 @@ class ImageSet:
                 logging.debug("highlight_recovery: " + str(time.time() - t))
 
             # サイズを合わせる
-            if img_array.shape[1] != width or img_array.shape[0] != height:
+            #if img_array.shape[1] != width or img_array.shape[0] != height:
+            if half == True:
                 img_array = cv2.resize(img_array, (width, height))
 
             # 情報の設定
             params.set_image_param(param, img_array)
 
             # 正方形にする
-            img_array = core.adjust_shape(img_array)
+            img_array = core.adjust_shape_to_square(img_array)
             
             # 描画用に設定
             self.img = np.array(img_array)
@@ -314,7 +346,7 @@ class ImageSet:
             params.set_image_param(param, img_array)
 
             # 正方形へ変換
-            img_array = core.adjust_shape(img_array)
+            img_array = core.adjust_shape_to_square(img_array)
             
         self.img = np.array(img_array)
         

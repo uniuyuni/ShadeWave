@@ -10,6 +10,7 @@ from jax import jit
 from functools import partial
 import colour
 import lensfunpy
+from numpy.core.multiarray import ndarray
 from scipy.interpolate import splprep, splev
 from scipy.ndimage import label
 from scipy.ndimage import gaussian_filter
@@ -36,8 +37,6 @@ def normalize_image(image_data):
     return normalized_image
 
 def calculate_ev_from_image(image_data):
-    #if image_data.size == 0:
-    #    raise ValueError("画像データが空です。")
 
     average_value = np.mean(image_data)
 
@@ -290,55 +289,6 @@ def highlight_compress(image):
         color_adapt=0.5
     ).process(image)
 
-def correct_overexposed_areas(image_rgb: np.ndarray,
-                            threshold_low=0.94,
-                            threshold_high=1.0,
-                            correction_color=(0.94, 0.94, 0.96),
-                            blur_sigma=15.0) -> np.ndarray:
-    """
-    float32形式のRGB画像（0-1）の白飛び部分を自然に補正する関数
-    
-    Parameters:
-    -----------
-    image_rgb : np.ndarray
-        入力画像（float32形式、RGB、値域0-1）
-        shape: (height, width, 3)
-    threshold_low : float
-        補正を開始する明るさの閾値（デフォルト: 0.94）
-    threshold_high : float
-        完全な白とみなす閾値（デフォルト: 1.0）
-    correction_color : tuple
-        補正に使用する色（デフォルト: わずかに青みがかった白）
-    blur_sigma : float
-        ガウシアンブラーのシグマ値（デフォルト: 15.0）
-        大きい値ほど広い範囲でブレンドされる
-    """
-    # 各チャンネルの輝度に基づいてマスクを作成
-    # 各ピクセルの最小値を使用することで、より慎重に白領域を検出
-    pixel_brightness = np.min(image_rgb, axis=2)
-    
-    # グラデーショナルなマスクを作成
-    correction_mask = np.clip((pixel_brightness - threshold_low) / 
-                            (threshold_high - threshold_low), 0, 1)
-    
-    # マスクを大きめのシグマ値でぼかす
-    correction_mask = gaussian_filter(correction_mask, sigma=blur_sigma)
-    
-    # さらになめらかな補正のため、マスクを累乗して非線形に
-    correction_mask = correction_mask ** 1.5  # 補正の急激な変化を抑える
-    
-    # 補正色のマップを作成
-    correction = np.zeros_like(image_rgb, dtype=np.float32)
-    for i in range(3):
-        correction[:,:,i] = correction_color[i]
-    
-    # 補正を適用
-    correction_mask = np.expand_dims(correction_mask, axis=2)
-    
-    # 元の画像と補正色をブレンド
-    result = image_rgb * (1 - correction_mask) + correction * correction_mask
-    
-    return result
 
 def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96)) -> np.ndarray:
     """
@@ -401,14 +351,22 @@ def log_transform(x, base=np.e):
     # max_val = 1.0 (入力の最大値)
     return np.log(1 + x) / np.log(1 + 1.0)
 
-
+#--------------------------------------------------
 # 露出補正
-#@partial(jit, static_argnums=(1,))
 def adjust_exposure(rgb, ev):
     # img: 変換元画像
     # ev: 補正値 -4.0〜4.0
 
     return rgb * (2.0**ev)
+
+@partial(jit, static_argnums=(1,))
+def adjust_exposure_jax(rgb, ev):
+    # img: 変換元画像
+    # ev: 補正値 -4.0〜4.0
+
+    return rgb * (2.0**ev)
+
+#--------------------------------------------------
 
 # コントラスト補正
 #@partial(jit, static_argnums=(1,2,))
@@ -469,44 +427,56 @@ def apply_level_adjustment(image, black_level, midtone_level, white_level):
 
     return adjusted_image
 
+#--------------------------------------------------
 # 彩度補正と自然な彩度補正
-@partial(jit, static_argnums=(1, 2))
-def calc_saturation(s, sat, vib):
+def calc_saturation(hsl_s, sat, vib):
 
     # 彩度変更値と自然な彩度変更値を計算
-    if sat >= 0:
-        sat = 1.0 + sat/100.0
-    else:
-        sat = 1.0 + sat/100.0
-    vib /= 50.0
-
-    # 計算の破綻を防止（元データは壊さない）
-    s = jnp.clip(s, 0.0, 1.0)
+    sat = 1.0 + sat / 100.0
+    vib = (vib / 50.0)
 
     # 自然な彩度調整
     if vib == 0.0:
-        final_s = s
+        final_s = hsl_s
 
     elif vib > 0.0:
         # 通常の計算
-        vib = vib**2
-        final_s = jnp.log(1.0 + vib * s) / jnp.log(1.0 + vib)
+        vib = vib ** 2.0
+        final_s = np.log(1.0 + vib * hsl_s) / np.log(1.0 + vib)
     else:
         # 逆関数を使用
-        vib = vib**2
-        final_s = (jnp.exp(s * jnp.log(1.0 + vib)) - 1.0) / vib
+        vib = vib ** 2.0
+        final_s = (np.exp(hsl_s * np.log(1.0 + vib)) - 1.0) / vib
 
     # 彩度を適用
     final_s = final_s * sat
 
     return final_s
 
-def _calc_saturation(s, sat, vib):
-    array = calc_saturation(s, sat, vib)
-    array.block_until_ready()
+@partial(jit, static_argnums=(1, 2))
+def calc_saturation_jax(hsl_s, sat, vib):
 
-    return np.array(array)
+    # 彩度変更値と自然な彩度変更値を計算
+    sat = 1.0 + sat / 100.0
+    vib = (vib / 50.0) * 2.0
 
+    # 自然な彩度調整
+    if vib == 0.0:
+        final_s = hsl_s
+
+    elif vib > 0.0:
+        # 通常の計算
+        final_s = jnp.log(1.0 + vib * hsl_s) / jnp.log(1.0 + vib)
+    else:
+        # 逆関数を使用
+        final_s = (jnp.exp(hsl_s * jnp.log(1.0 + vib)) - 1.0) / vib
+
+    # 彩度を適用
+    final_s = final_s * sat
+
+    return final_s
+
+#--------------------------------------------------
 
 def calc_point_list_to_lut(point_list, max_value=1.0):
     """
@@ -595,19 +565,20 @@ def apply_lut(img, lut, max_value=1.0):
     
     return result
 
+#--------------------------------------------------
+# マスクイメージの適用
 def apply_mask(img1, msk, img2):
     return apply_mask_numba(img1, msk, img2)
 
-# マスクイメージの適用
-@jit
-def apply_mask_jax(img1, msk, img2):
-    _msk = msk[:, :, jnp.newaxis]
+def apply_mask_np(img1, msk, img2):
+    _msk = msk[:, :, np.newaxis]
     img = img1 * (1.0 - _msk) + img2 * _msk
 
     return img
 
-def apply_mask_np(img1, msk, img2):
-    _msk = msk[:, :, np.newaxis]
+@jit
+def apply_mask_jax(img1, msk, img2):
+    _msk = msk[:, :, jnp.newaxis]
     img = img1 * (1.0 - _msk) + img2 * _msk
 
     return img
@@ -639,6 +610,8 @@ def apply_mask_numba(img1, msk, img2):
     
     return result
 
+#--------------------------------------------------
+# 周辺減光効果
 @partial(jit, static_argnums=(1,2,5))
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
     """
@@ -708,6 +681,7 @@ def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offse
     result = jnp.clip(image * vignette, 0, 1) if intensity < 0 else jnp.clip(image + (1-image)*(1-vignette), 0, 1)
     return result.astype(jnp.float32)
 
+#--------------------------------------------------
 # テクスチャサイズとクロップ情報から、新しい描画サイズと余白の大きさを得る
 def crop_size_and_offset_from_texture(texture_width, texture_height, disp_info):
 
@@ -802,7 +776,7 @@ def crop_image_info(image, disp_info, crop_rect, offset=(0, 0)):
 
     return cropped_img, (x, y, disp_width, disp_height, scale)
 
-
+#--------------------------------------------------
 def get_multiple_mask_bbox(mask):
     """
     マスク画像から複数の独立した領域それぞれのバウンディングボックスを計算する
@@ -839,9 +813,9 @@ def get_multiple_mask_bbox(mask):
     
     return bboxes
 
-
+#--------------------------------------------------
 # 上下または左右の余白を追加
-def adjust_shape(img, mode="constant"):
+def adjust_shape_to_square(img, mode="constant"):
     imax = max(img.shape[1], img.shape[0])
 
     # イメージを正方形にする
@@ -851,7 +825,7 @@ def adjust_shape(img, mode="constant"):
 
     return img
 
-
+#--------------------------------------------------
 @partial(jit, static_argnums=(1,2,3,4,5,))
 def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_level=0):
     """
@@ -972,6 +946,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
     return img, (shadows_mask, highlight_mask)
 
 
+# 画像のサイズを取得する関数
 def get_exif_image_size(exif_data):
     top, left = exif_data.get("RawImageCropTopLeft", "0 0").split()
     top, left = int(top), int(left)
@@ -1010,6 +985,7 @@ def get_exif_image_size_with_orientation(exif_data):
 
         return (top, left, width, height)
 
+
 def _estimate_depth_map(img, params=(0.121779, 0.959710, -0.780245), sigma=0.5):
     """
     色線形変換先行法（Color Attenuation Prior）を使用して深度マップを推定
@@ -1024,9 +1000,6 @@ def _estimate_depth_map(img, params=(0.121779, 0.959710, -0.780245), sigma=0.5):
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     h, s, v = cv2.split(hsv)
     
-    # 彩度と明度の差分を計算
-    diff = s - v
-    
     # 線形モデルを使用して深度を推定: d = β0 + β1 * v + β2 * s
     beta0, beta1, beta2 = params
     depth = beta0 + beta1 * v + beta2 * s
@@ -1035,7 +1008,9 @@ def _estimate_depth_map(img, params=(0.121779, 0.959710, -0.780245), sigma=0.5):
     depth = cv2.GaussianBlur(depth, (0, 0), sigma)
     
     # 正規化（0-1の範囲に変換）
-    depth = (depth - np.min(depth)) / (np.max(depth) - np.min(depth) + 1e-8)
+    mmin = np.min(depth)
+    mmax = np.max(depth)
+    depth = (depth - mmin) / (mmax - mmin + 1e-8)
     
     return depth
 
@@ -1081,7 +1056,6 @@ def _estimate_transmission(depth_map, strength=0.5, lower_bound=0.1):
     transmission = np.maximum(transmission, lower_bound)
     
     return transmission
-
 
 def dehaze_image(img, strength=0.5):
     """
@@ -1143,232 +1117,6 @@ def dehaze_image(img, strength=0.5):
 
     return result
 
-
-def bicubic_kernel_vectorized(x, a=-0.5):
-    """
-    バイキュービック補間カーネル関数（ベクトル化版）
-    
-    Parameters:
-    -----------
-    x : numpy.ndarray
-        距離値
-    a : float
-        バイキュービックパラメータ (デフォルト: -0.5)
-        
-    Returns:
-    --------
-    numpy.ndarray
-        カーネルの重み
-    """
-    x = np.abs(x)
-    result = np.zeros_like(x, dtype=np.float32)
-    
-    # |x| <= 1 の場合
-    mask1 = x <= 1
-    result[mask1] = ((a + 2) * x[mask1]**3 - (a + 3) * x[mask1]**2 + 1)
-    
-    # 1 < |x| < 2 の場合
-    mask2 = np.logical_and(x > 1, x < 2)
-    result[mask2] = (a * x[mask2]**3 - 5 * a * x[mask2]**2 + 8 * a * x[mask2] - 4 * a)
-    
-    return result
-
-def resize_bicubic_vectorized(image, target_height, target_width):
-    """
-    ベクトル化されたバイキュービック補間による画像リサイズ
-    
-    Parameters:
-    -----------
-    image : numpy.ndarray
-        入力画像、float32型のNumPy配列 (height, width) または (height, width, channels)
-    target_height : int
-        目標の高さ
-    target_width : int
-        目標の幅
-        
-    Returns:
-    --------
-    numpy.ndarray
-        リサイズされた画像、float32型のNumPy配列
-    """
-    # float32型に変換
-    image = image.astype(np.float32)
-    
-    # 画像の寸法を取得
-    original_height, original_width = image.shape[:2]
-    
-    # グレースケール画像の処理
-    is_grayscale = len(image.shape) == 2
-    if is_grayscale:
-        # 処理を統一するためチャンネル次元を追加
-        image = image[:, :, np.newaxis]
-    
-    channels = image.shape[2]
-    
-    # スケーリング係数の計算
-    if target_height > 1:
-        scale_y = float(original_height - 1) / (target_height - 1)
-    else:
-        scale_y = 0.0
-        
-    if target_width > 1:
-        scale_x = float(original_width - 1) / (target_width - 1)
-    else:
-        scale_x = 0.0
-    
-    # 出力ピクセル座標のグリッドを作成
-    y_coords = np.arange(target_height, dtype=np.float32)
-    x_coords = np.arange(target_width, dtype=np.float32)
-    
-    # 元画像の対応座標を計算
-    y_coords = y_coords * scale_y
-    x_coords = x_coords * scale_x
-    
-    # 整数部分と小数部分に分解
-    y_floor = np.floor(y_coords).astype(np.int32)
-    x_floor = np.floor(x_coords).astype(np.int32)
-    
-    y_frac = y_coords - y_floor
-    x_frac = x_coords - x_floor
-    
-    # 範囲外アクセスを防ぐためのインデックス調整
-    y_indices = np.zeros((target_height, 4), dtype=np.int32)
-    x_indices = np.zeros((target_width, 4), dtype=np.int32)
-    
-    for i in range(-1, 3):
-        y_idx = np.clip(y_floor + i, 0, original_height - 1)
-        x_idx = np.clip(x_floor + i, 0, original_width - 1)
-        y_indices[:, i+1] = y_idx
-        x_indices[:, i+1] = x_idx
-    
-    # バイキュービックカーネルの重みを計算
-    y_weights = np.zeros((target_height, 4), dtype=np.float32)
-    x_weights = np.zeros((target_width, 4), dtype=np.float32)
-    
-    for i in range(-1, 3):
-        y_dist = y_frac[:, np.newaxis] - i
-        x_dist = x_frac[:, np.newaxis] - i
-        y_weights[:, i+1] = bicubic_kernel_vectorized(y_dist).reshape(-1)
-        x_weights[:, i+1] = bicubic_kernel_vectorized(x_dist).reshape(-1)
-    
-    # 出力画像の初期化
-    output = np.zeros((target_height, target_width, channels), dtype=np.float32)
-    
-    # バイキュービック補間を適用
-    for c in range(channels):
-        for i in range(4):
-            for j in range(4):
-                # 元画像から必要な位置のピクセルを取得
-                pixel_values = image[y_indices[:, i][:, np.newaxis], x_indices[:, j][np.newaxis, :], c]
-                
-                # 重みの行列積を計算
-                weights = y_weights[:, i][:, np.newaxis] * x_weights[:, j][np.newaxis, :]
-                
-                # 重み付きピクセル値を出力に加算
-                output[:, :, c] += pixel_values * weights
-    
-    # 元がグレースケールの場合、チャンネル次元を削除
-    if is_grayscale:
-        output = output[:, :, 0]
-    
-    return output
-
-def resize_bicubic_fully_vectorized(image, target_height, target_width):
-    """
-    完全ベクトル化されたバイキュービック補間による画像リサイズ
-    大きな画像でのメモリ使用量に注意
-    
-    Parameters:
-    -----------
-    image : numpy.ndarray
-        入力画像、float32型のNumPy配列 (height, width) または (height, width, channels)
-    target_height : int
-        目標の高さ
-    target_width : int
-        目標の幅
-        
-    Returns:
-    --------
-    numpy.ndarray
-        リサイズされた画像、float32型のNumPy配列
-    """
-    # float32型に変換
-    image = image.astype(np.float32)
-    
-    # 画像の寸法を取得
-    original_height, original_width = image.shape[:2]
-    
-    # グレースケール画像の処理
-    is_grayscale = len(image.shape) == 2
-    if is_grayscale:
-        # 処理を統一するためチャンネル次元を追加
-        image = image[:, :, np.newaxis]
-    
-    channels = image.shape[2]
-    
-    # スケーリング係数の計算
-    if target_height > 1:
-        scale_y = float(original_height - 1) / (target_height - 1)
-    else:
-        scale_y = 0.0
-        
-    if target_width > 1:
-        scale_x = float(original_width - 1) / (target_width - 1)
-    else:
-        scale_x = 0.0
-    
-    # 出力ピクセル座標のグリッドを作成
-    y_grid, x_grid = np.meshgrid(np.arange(target_height, dtype=np.float32),
-                                 np.arange(target_width, dtype=np.float32),
-                                 indexing='ij')
-    
-    # 元画像の対応座標を計算
-    y_original = y_grid * scale_y
-    x_original = x_grid * scale_x
-    
-    # 整数部分と小数部分に分解
-    y_floor = np.floor(y_original).astype(np.int32)
-    x_floor = np.floor(x_original).astype(np.int32)
-    
-    y_frac = y_original - y_floor
-    x_frac = x_original - x_floor
-    
-    # 出力画像の初期化
-    output = np.zeros((target_height, target_width, channels), dtype=np.float32)
-    
-    # 各チャンネルに対して補間を計算
-    for c in range(channels):
-        channel_sum = np.zeros((target_height, target_width), dtype=np.float32)
-        
-        # 16個の近傍点に対して重みを計算し適用
-        for i in range(-1, 3):
-            # y方向のインデックスとカーネル重み
-            y_idx = np.clip(y_floor + i, 0, original_height - 1)
-            y_dist = np.abs(y_frac - i)
-            y_weight = bicubic_kernel_vectorized(y_dist)
-            
-            for j in range(-1, 3):
-                # x方向のインデックスとカーネル重み
-                x_idx = np.clip(x_floor + j, 0, original_width - 1)
-                x_dist = np.abs(x_frac - j)
-                x_weight = bicubic_kernel_vectorized(x_dist)
-                
-                # 重みの計算（ブロードキャスト）
-                weight = y_weight * x_weight
-                
-                # 対応するピクセル値を取得
-                pixel_value = image[y_idx, x_idx, c]
-                
-                # 重み付きピクセル値を加算
-                channel_sum += pixel_value * weight
-        
-        output[:, :, c] = channel_sum
-    
-    # 元がグレースケールの場合、チャンネル次元を削除
-    if is_grayscale:
-        output = output[:, :, 0]
-    
-    return output
 
 @jit
 def smooth_step(x, edge0, edge1):
@@ -1989,3 +1737,28 @@ def calc_resolution_scale(current_resolution, scale=1.0):
     )
 
     return scale * ratio
+
+def type_convert(img, target_type):
+
+    if isinstance(img, target_type):
+        return img
+    
+    if target_type == np.ndarray:
+        if isinstance(img, jnp.ndarray):
+            return np.array(img)
+        elif isinstance(img, cv2.UMat):
+            return img.get()
+    
+    elif target_type == jnp.ndarray:
+        if isinstance(img, np.ndarray):
+            return img
+        elif isinstance(img, cv2.UMat):
+            return img.get()
+    
+    elif target_type == cv2.UMat:
+        if isinstance(img, np.ndarray):
+            return cv2.UMat(img)
+        elif isinstance(img, jnp.ndarray):
+            return cv2.UMat(np.array(img))
+
+    return img

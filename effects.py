@@ -2,6 +2,7 @@
 import cv2
 from cv2.gapi import crop
 import numpy as np
+import jax.numpy as jnp
 import importlib
 from enum import Enum
 
@@ -884,7 +885,6 @@ class DehazeEffect(Effect):
             'dehaze': 0,
         }
 
-
     def set2widget(self, widget, param):
         widget.ids["slider_dehaze"].set_slider_value(self.get_param(param, 'dehaze'))
 
@@ -908,7 +908,8 @@ class RGB2HLSEffect(Effect):
 
     def make_diff(self, rgb, param, efconfig):
         if self.diff is None:
-            self.diff = cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2HLS_FULL)
+            rgb = core.type_convert(rgb, np.ndarray)
+            self.diff = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
             #self.diff = hlsrgb.rgb_to_hls(np.array(rgb))
         return self.diff
 
@@ -916,7 +917,8 @@ class HLS2RGBEffect(Effect):
 
     def make_diff(self, hls, param, efconfig):
         if self.diff is None:
-            self.diff = cv2.cvtColor(np.array(hls), cv2.COLOR_HLS2RGB_FULL)
+            hls = core.type_convert(hls, np.ndarray)
+            self.diff = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
             #self.diff = hlsrgb.hls_to_rgb(np.array(hls))
         return self.diff
 
@@ -1020,6 +1022,7 @@ class ExposureEffect(Effect):
             self.hash = None
         
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, np.ndarray)
             self.diff = core.adjust_exposure(rgb, ev)
             self.hash = param_hash
 
@@ -1046,6 +1049,7 @@ class ContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, jnp.ndarray)
             self.diff, _ = core.adjust_tone(rgb, con, -con)
             self.hash = param_hash
 
@@ -1072,6 +1076,7 @@ class ClarityEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, np.ndarray)
             self.diff = local_contrast.apply_clarity_luminance(rgb, con * 2 * efconfig.resolution_scale)
             self.hash = param_hash
 
@@ -1098,6 +1103,7 @@ class TextureEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, np.ndarray)
             self.diff = local_contrast.apply_texture_advanced(rgb, con * 0.5 * efconfig.resolution_scale)
             self.hash = param_hash
 
@@ -1124,6 +1130,7 @@ class MicroContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, np.ndarray)
             self.diff = local_contrast.apply_microcontrast(rgb, con * 0.5 * efconfig.resolution_scale)
             self.hash = param_hash
 
@@ -1158,6 +1165,7 @@ class ToneEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, jnp.ndarray)
             self.diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)
             """
             if masks[0] is not None:
@@ -1209,6 +1217,7 @@ class HighlightCompressEffect(Effect):
         else:        
             param_hash = hash((hc))
             if self.hash != param_hash:
+                rgb = core.type_convert(rgb, np.ndarray)
                 self.diff = core.highlight_compress(rgb)
                 self.hash = param_hash
 
@@ -1246,6 +1255,7 @@ class LevelEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            rgb = core.type_convert(rgb, jnp.ndarray)
             self.diff = core.apply_level_adjustment(rgb, bl, ml, wl)
             self.hash = param_hash
 
@@ -1272,6 +1282,7 @@ class CLAHEEffect(Effect):
         else:        
             param_hash = hash((ci))
             if self.hash != param_hash:
+                img = core.type_convert(img, np.ndarray)
                 clahe = cv2.createCLAHE(clipLimit=40.0, tileGridSize=(8,8))
                 target = np.zeros_like(img, dtype=np.uint16)
                 img2 = (np.clip(img, 0, 1) * 65535).astype(np.uint16)
@@ -1346,6 +1357,7 @@ class TonecurveEffect(Effect):
         return self.diff
     
     def apply_diff(self, rgb):
+        rgb =  core.type_convert(rgb, jnp.ndarray)
         return core.apply_lut(rgb, self.diff)
 
 class TonecurveRedEffect(Effect):
@@ -1375,6 +1387,7 @@ class TonecurveRedEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_r):
+        rgb =  core.type_convert(rgb, jnp.ndarray)
         return core.apply_lut(rgb_r, self.diff)
 
 class TonecurveGreenEffect(Effect):
@@ -1404,6 +1417,7 @@ class TonecurveGreenEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_g):
+        rgb =  core.type_convert(rgb, jnp.ndarray)
         return core.apply_lut(rgb_g, self.diff)
 
 class TonecurveBlueEffect(Effect):
@@ -1434,6 +1448,7 @@ class TonecurveBlueEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_g):
+        rgb =  core.type_convert(rgb, jnp.ndarray)
         return core.apply_lut(rgb_g, self.diff)
 
 class GradingEffect(Effect):
@@ -1487,9 +1502,10 @@ class GradingEffect(Effect):
     
     def apply_diff(self, rgb):
         lut, rgbs = self.diff
+        rgb = core.type_convert(rgb, jnp.ndarray)
         blend = core.apply_lut(rgb, lut)
-        blend_inv = 1-blend
-        return (rgb*blend_inv + rgb*rgbs*blend)
+        blend = np.array(blend)
+        return core.apply_mask(rgb, blend, rgb * rgbs)
 
 class VSandSaturationEffect(Effect):
 
@@ -1556,6 +1572,7 @@ class HuevsHueEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_h):
+        hls_h = core.type_convert(hls_h, jnp.ndarray)
         return core.apply_lut(hls_h, self.diff, 359) + hls_h
 
 class HuevsLumEffect(Effect):
@@ -1586,6 +1603,7 @@ class HuevsLumEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_l):
+        hls_l = core.type_convert(hls_l, jnp.ndarray)
         return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class HuevsSatEffect(Effect):
@@ -1616,6 +1634,7 @@ class HuevsSatEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_s):
+        hls_s = core.type_convert(hls_s, jnp.ndarray)
         return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
 
 class LumvsLumEffect(Effect):
@@ -1646,6 +1665,7 @@ class LumvsLumEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_l):
+        hls_l = core.type_convert(hls_l, jnp.ndarray)
         return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class LumvsSatEffect(Effect):
@@ -1676,6 +1696,7 @@ class LumvsSatEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_s):
+        hls_s = core.type_convert(hls_s, jnp.ndarray)
         return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
 
 class SatvsLumEffect(Effect):
@@ -1706,6 +1727,7 @@ class SatvsLumEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_l):
+        hls_l = core.type_convert(hls_l, jnp.ndarray)
         return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class SatvsSatEffect(Effect):
@@ -1736,6 +1758,7 @@ class SatvsSatEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_s):
+        hls_s = core.type_convert(hls_s, jnp.ndarray)
         return core.apply_lut(hls_s, self.diff, 1.0) + hls_s
 
 class SaturationEffect(Effect):
@@ -1763,6 +1786,7 @@ class SaturationEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
+            hls_s = core.type_convert(hls_s, np.ndarray)
             hls2_s = core.calc_saturation(hls_s, sat, vib)
             self.diff = np.divide(hls2_s, hls_s, where=hls_s!=0.0)    # Sのみ保存
             self.hash = param_hash
@@ -1814,6 +1838,7 @@ class LUTEffect(Effect):
         return self.diff
     
     def apply_diff(self, rgb):
+        rgb = core.type_convert(rgb, np.ndarray)
         return cubelut.process_image(rgb, self.diff)
 
 class LensSimulatorEffect(Effect):
@@ -1848,6 +1873,7 @@ class LensSimulatorEffect(Effect):
         return self.diff
     
     def apply_diff(self, rgb):
+        rgb = core.type_convert(rgb, np.ndarray)
         lens = lens_simulator.process_image(rgb, self.diff[0])
         #lens = lens_simulator.apply_old_lens_effect(rgb, self.diff[0])
         per = self.diff[1] / 100.0
@@ -1885,6 +1911,7 @@ class FilmSimulationEffect(Effect):
         return self.diff
     
     def apply_diff(self, rgb):
+        rgb = core.type_convert(rgb, np.ndarray)
         film = film_simulation.simulator.apply_simulation(rgb, self.diff[0])
         per = self.diff[1] / 100.0
         return film * per + rgb * (1-per)
@@ -2028,6 +2055,7 @@ class SolidColorEffect(Effect):
         else:        
             param_hash = hash((coa, coar, coag, coab))
             if self.hash != param_hash:
+                rgb = core.type_convert(rgb, np.ndarray)
                 self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255))
                 self.hash = param_hash
 
@@ -2062,6 +2090,7 @@ class VignetteEffect(Effect):
             param_hash = hash((vi, vr))
             if self.hash != param_hash:
                 _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
+                rgb = core.type_convert(rgb, jnp.ndarray)
                 self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y))
                 self.hash = param_hash
         
