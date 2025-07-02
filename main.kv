@@ -46,6 +46,7 @@
 <CurveWidget>:
 
 <MainWidget>:
+    loading: True
 
     BoxLayout:
         orientation: 'vertical'
@@ -209,6 +210,7 @@
                     Button:
                         size_hint_x: 0.1
                         text: "select"
+                        disabled: root.loading == True
                         on_press: root.on_select_press()
                     HSpacer:
                         size_hint_x: 0.7
@@ -216,11 +218,13 @@
                         id: mask2
                         size_hint_x: 0.1
                         text: "mask2"
+                        disabled: root.loading == True
                         on_state: root.on_mask2_press(self.state)
                         on_state: geometry.disabled = True if mask2.state == 'down' else False
                     Button:
                         size_hint_x: 0.1
                         text: "export"
+                        disabled: root.loading == True
                         on_press: root.on_export_press()
 
 
@@ -230,8 +234,9 @@
                 do_default_tab: False
                 tab_width: self.width * 0.2
                 tab_height: self.height * 0.05
+                disabled: root.loading == True
                 on_current_tab: root.on_current_tab(self.current_tab)
-                on_current_tab: mask2.disabled = self.current_tab.text == "Geometry"
+                on_current_tab: mask2.disabled = self.current_tab.text == "Geometry" or root.loading == True
 
                 TabbedPanelItem:
                     text: 'Basic'

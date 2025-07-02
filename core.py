@@ -10,16 +10,14 @@ from jax import jit
 from functools import partial
 import colour
 import lensfunpy
-from numpy.core.multiarray import ndarray
 from scipy.interpolate import splprep, splev
 from scipy.ndimage import label
-from scipy.ndimage import gaussian_filter
 import logging
-import math
 import numba
 from numba.experimental import jitclass
 from numba import njit, prange
 from PIL import ImageCms
+from multipledispatch import dispatch
 
 import highlight_recovery
 import sigmoid
@@ -29,13 +27,22 @@ import params
 import config
 import aces_tonemapping
 
-
+@dispatch(np.ndarray)
 def normalize_image(image_data):
     min_val = np.min(image_data)
     max_val = np.max(image_data)
     normalized_image = (image_data - min_val) / (max_val - min_val)
     return normalized_image
 
+@dispatch(jnp.ndarray)
+@jit
+def normalize_image(image_data):
+    min_val = jnp.min(image_data)
+    max_val = jnp.max(image_data)
+    normalized_image = (image_data - min_val) / (max_val - min_val)
+    return normalized_image
+
+@dispatch(np.ndarray)
 def calculate_ev_from_image(image_data):
 
     average_value = np.mean(image_data)
@@ -43,6 +50,18 @@ def calculate_ev_from_image(image_data):
     # ここで基準を明確に設定
     # 例えば、EV0が0.5に相当する場合
     ev = np.log2(0.5 / average_value)  # 0.5を基準
+
+    return ev, average_value
+
+@dispatch(jnp.ndarray)
+@jit
+def calculate_ev_from_image(image_data):
+
+    average_value = jnp.mean(image_data)
+
+    # ここで基準を明確に設定
+    # 例えば、EV0が0.5に相当する場合
+    ev = jnp.log2(0.5 / average_value)  # 0.5を基準
 
     return ev, average_value
 
@@ -57,7 +76,16 @@ def calculate_correction_value(ev_histogram, ev_setting, maxvalue=4):
 
     return correction_value
 
-# RGBからグレイスケールへの変換
+#--------------------------------------------------
+
+@dispatch(np.ndarray)
+def cvtColorRGB2Gray(rgb):
+    # RGBからグレイスケールへの変換
+    gry = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+
+    return gry
+
+@dispatch(jnp.ndarray)
 @jit
 def cvtColorRGB2Gray(rgb):
     # 変換元画像 RGB
@@ -66,6 +94,7 @@ def cvtColorRGB2Gray(rgb):
 
     return gry
 
+#--------------------------------------------------
 
 def convert_RGB2TempTint(rgb):
 
@@ -121,6 +150,8 @@ def invert_TempTint2RGB(temp, tint, Y, reference_temp=5000.0):
     r, g, b = convert_TempTint2RGB(inverted_temp, inverted_tint, Y)
 
     return [r, g, b]
+
+#--------------------------------------------------
 
 def calc_resize_image(original_size, max_length):
     width, height = original_size
@@ -239,12 +270,6 @@ def lucy_richardson_gauss(srcf, iteration):
     
     return destf
 
-def _lucy_richardson_gauss(srcf, iteration):
-    array = lucy_richardson_gauss(srcf, iteration)
-    array.block_until_ready()
-
-    return np.array(array)
-
 @partial(jit, static_argnums=(1,))
 def tone_mapping(x, exposure=1.0):
     # Reinhard トーンマッピング
@@ -353,18 +378,48 @@ def log_transform(x, base=np.e):
 
 #--------------------------------------------------
 # 露出補正
+@dispatch(np.ndarray, (float, int))
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def adjust_exposure(rgb, ev):
-    # img: 変換元画像
-    # ev: 補正値 -4.0〜4.0
+    """
+    露光量を調整する関数
+    
+    Parameters:
+    rgb : np.ndarray (dtype=np.float32, shape=(H,W,3))
+    ev : float
+        露光補正値
+    
+    Returns:
+    np.ndarray : 補正後の画像 (同じshape/dtype)
+                 新しい配列は作成しないので、元の配列を直接変更する
+    """
+    # 2.95秒（CPUメモリなら最速）
 
-    return rgb * (2.0**ev)
+    # 定数事前計算
+    factor = 2.0 ** ev
+    h, w, _ = rgb.shape
 
+    result = np.empty_like(rgb)
+        
+    # 並列化処理
+    for i in prange(h):
+        for j in prange(w):
+            result[i, j, 0] = rgb[i, j, 0] * factor
+            result[i, j, 1] = rgb[i, j, 1] * factor
+            result[i, j, 2] = rgb[i, j, 2] * factor
+    
+    return result
+
+@dispatch(jnp.ndarray, (float, int))
 @partial(jit, static_argnums=(1,))
-def adjust_exposure_jax(rgb, ev):
-    # img: 変換元画像
-    # ev: 補正値 -4.0〜4.0
+def adjust_exposure(rgb, ev):
+    # 1.37秒（ただしGPUにのっていることを前提）
+    return rgb * (2.0 ** ev)
 
-    return rgb * (2.0**ev)
+@dispatch(cv2.UMat, (float, int))
+def adjust_exposure(rgb, ev):
+    # 4.62秒（しかもUMatを使用していること）
+    return cv2.multiply(rgb, 2.0 ** ev)
 
 #--------------------------------------------------
 
@@ -567,23 +622,22 @@ def apply_lut(img, lut, max_value=1.0):
 
 #--------------------------------------------------
 # マスクイメージの適用
-def apply_mask(img1, msk, img2):
-    return apply_mask_numba(img1, msk, img2)
-
 def apply_mask_np(img1, msk, img2):
     _msk = msk[:, :, np.newaxis]
     img = img1 * (1.0 - _msk) + img2 * _msk
 
     return img
 
+@dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
 @jit
-def apply_mask_jax(img1, msk, img2):
+def apply_mask(img1, msk, img2):
     _msk = msk[:, :, jnp.newaxis]
     img = img1 * (1.0 - _msk) + img2 * _msk
 
     return img
 
-def apply_mask_cv(img1, msk, img2):
+@dispatch(cv2.UMat, cv2.UMat, cv2.UMat)
+def apply_mask(img1, msk, img2):
     _msk = cv2.merge((msk, msk, msk))
 
     b = cv2.multiply(img1, cv2.subtract(1.0, _msk))
@@ -594,11 +648,12 @@ def apply_mask_cv(img1, msk, img2):
 
     return img
 
-@njit(parallel=True)
-def apply_mask_numba(img1, msk, img2):
+@dispatch(np.ndarray, np.ndarray, np.ndarray)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+def apply_mask(img1, msk, img2):
     """RGB（3チャンネル）専用の最適化版"""
     h, w = msk.shape
-    result = np.empty((h, w, 3), dtype=np.float32)
+    result = np.empty_like(img1)
     
     for i in prange(h):
         for j in prange(w):
@@ -1268,7 +1323,7 @@ def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
     return result
 
 # ガウスカーネル生成関数
-@njit(cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def gaussian_kernel(size, sigma):
     if size % 2 == 0:
         size += 1  # 奇数に保証
@@ -1276,7 +1331,7 @@ def gaussian_kernel(size, sigma):
     center = size // 2
     sum_val = 0.0
     
-    for i in range(size):
+    for i in prange(size):
         x = i - center
         kernel[i] = np.exp(-x*x / (2*sigma*sigma))
         sum_val += kernel[i]
@@ -1284,7 +1339,7 @@ def gaussian_kernel(size, sigma):
     return kernel / sum_val
 
 # 分離可能なガウシアンブラー
-@njit(parallel=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def separable_gaussian_blur(image, kernel):
     h, w = image.shape
     ksize = len(kernel)
@@ -1293,9 +1348,9 @@ def separable_gaussian_blur(image, kernel):
     # 水平方向
     temp = np.zeros((h, w), dtype=np.float32)
     for i in prange(h):
-        for j in range(w):
+        for j in prange(w):
             sum_val = 0.0
-            for k in range(ksize):
+            for k in prange(ksize):
                 col = j + k - pad
                 if col < 0:
                     col = 0
@@ -1307,9 +1362,9 @@ def separable_gaussian_blur(image, kernel):
     # 垂直方向
     result = np.zeros((h, w), dtype=np.float32)
     for i in prange(h):
-        for j in range(w):
+        for j in prange(w):
             sum_val = 0.0
-            for k in range(ksize):
+            for k in prange(ksize):
                 row = i + k - pad
                 if row < 0:
                     row = 0
@@ -1321,7 +1376,7 @@ def separable_gaussian_blur(image, kernel):
     return result
 
 # 手動クリッピング関数
-@njit(cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def manual_clip(x, min_val, max_val):
     if x < min_val:
         return min_val
@@ -1329,14 +1384,14 @@ def manual_clip(x, min_val, max_val):
         return max_val
     return x
 
-@njit(cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def smooth_step_numba(x, edge0, edge1):
     """手動クリッピングを使用した滑らかなステップ関数"""
     t = (x - edge0) / (edge1 - edge0)
     t = manual_clip(t, 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
 
-@njit(cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def circular_smooth_step_numba(hue, center, width, fade_width):
     """円環滑らかステップ関数"""
     # 円環距離計算
@@ -1352,18 +1407,18 @@ def circular_smooth_step_numba(hue, center, width, fade_width):
         return 0.0
 
 # ベクトル化された円環ステップ関数
-@njit(parallel=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def vectorized_circular_smooth_step_numba(hue_map, center, width, fade_width):
     h, w = hue_map.shape
     result = np.empty((h, w), dtype=np.float32)
     
     for i in prange(h):
-        for j in range(w):
+        for j in prange(w):
             result[i, j] = circular_smooth_step_numba(hue_map[i, j], center, width, fade_width)
     
     return result
 
-@njit(parallel=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def adjust_hls_with_weight_numba(hls_img, weight, adjust):
     h, w, c = hls_img.shape
     output = np.empty_like(hls_img)
@@ -1373,7 +1428,7 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
     s_factor = 1.0 + adjust[2]
     
     for i in prange(h):
-        for j in range(w):
+        for j in prange(w):
             w_val = weight[i, j]
             
             # 色相調整
@@ -1395,7 +1450,7 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
     
     return output
 
-@njit(parallel=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def calculate_ls_weight_numba(hls_img, l_range, s_range):
     h, w, _ = hls_img.shape
     weight_map = np.zeros((h, w), dtype=np.float32)
@@ -1404,7 +1459,7 @@ def calculate_ls_weight_numba(hls_img, l_range, s_range):
     s_min, s_max = s_range
     
     for i in prange(h):
-        for j in range(w):
+        for j in prange(w):
             l = hls_img[i, j, 1]
             s = hls_img[i, j, 2]
             
@@ -1607,7 +1662,7 @@ def floyd_steinberg_dither_fast(image):
 
     return (img * 255).astype(np.uint8)
 
-@njit(nogil=True, parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def fast_median_filter(img, kernel_size=3, num_bins=256):
     """
     量子化とヒストグラムベースの高速メディアンフィルタ
@@ -1636,7 +1691,7 @@ def fast_median_filter(img, kernel_size=3, num_bins=256):
     # パディング追加 (reflectモード)
     padded = np.zeros((h + 2*pad, w + 2*pad), dtype=np.float32)
     padded[pad:-pad, pad:-pad] = quantized
-    for i in range(pad):
+    for i in prange(pad):
         padded[i, pad:-pad] = quantized[pad-i-1]  # 上端
         padded[-(i+1), pad:-pad] = quantized[-(pad-i)]  # 下端
         padded[pad:-pad, i] = quantized[:, pad-i-1]  # 左端
@@ -1649,16 +1704,16 @@ def fast_median_filter(img, kernel_size=3, num_bins=256):
     for y in prange(h):
         hist = np.zeros(num_bins, dtype=np.uint16)
         # 初期ヒストグラム構築
-        for ky in range(kernel_size):
-            for kx in range(kernel_size):
+        for ky in prange(kernel_size):
+            for kx in prange(kernel_size):
                 val = padded[y + ky, kx]
                 hist[int(val)] += 1
         
         # 行方向にスライディング
-        for x in range(w):
+        for x in prange(w):
             # 中央値計算
             cumsum = 0
-            for b in range(num_bins):
+            for b in prange(num_bins):
                 cumsum += hist[b]
                 if cumsum > median_index:
                     result[y, x] = min_val + b / scale
@@ -1666,7 +1721,7 @@ def fast_median_filter(img, kernel_size=3, num_bins=256):
             
             # ヒストグラム更新 (左カラム削除/右カラム追加)
             if x < w - 1:
-                for ky in range(kernel_size):
+                for ky in prange(kernel_size):
                     # 左カラム削除
                     left_val = padded[y + ky, x]
                     hist[int(left_val)] -= 1

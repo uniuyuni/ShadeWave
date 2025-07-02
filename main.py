@@ -3,6 +3,7 @@
 #display_splash_screen("platypus.png")
 
 import logging
+from kivymd.uix import BooleanProperty
 import numpy as np
 
 import os
@@ -11,6 +12,7 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivy.core.window import Window as KVWindow
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.clock import Clock, mainthread
+from kivy.properties import BooleanProperty as KVBooleanProperty
 from functools import partial
 import re
 import multiprocessing
@@ -68,9 +70,10 @@ def precompile():
     rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
     core.fast_median_filter(rgb[..., 0])
-    core.apply_mask_numba(rgb, np.ones((32, 32), dtype=np.float32), rgb)
+    core.apply_mask(rgb, np.ones((32, 32), dtype=np.float32), rgb)
 
 class MainWidget(MDBoxLayout):
+    loading: KVBooleanProperty(False)
 
     def __init__(self, cache_system, **kwargs):
         super(MainWidget, self).__init__(**kwargs)
@@ -204,6 +207,8 @@ class MainWidget(MDBoxLayout):
     
     @mainthread
     def on_select(self, card):
+        # ロード開始
+        self.loading = True
         # 前の設定を保存
         self.save_current_sidecar()
         # 前のエフェクトを終了
@@ -237,6 +242,9 @@ class MainWidget(MDBoxLayout):
             self.primary_param = param
             self.set2widget_all(self.primary_effects, param)
             self.apply_effects_lv(0, 'crop') # 特別あつかい
+
+            # ロード終了
+            self.loading = False
             
         self.imgset = imgset
         self.start_draw_image_and_crop(imgset)

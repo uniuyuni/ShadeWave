@@ -277,6 +277,7 @@ class ImageSet:
 
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
+                img_array = jnp.array(img_array)
                 source_ev, _ = core.calculate_ev_from_image(core.normalize_image(img_array))
                 Av = exif_data.get('ApertureValue', 1.0)
                 _, Tv = exif_data.get('ShutterSpeedValue', "1/100").split('/')
@@ -285,6 +286,7 @@ class ImageSet:
                 Sv = math.log2(exif_data.get('ISO', 100)/100.0)
                 Ev = Ev + Sv
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
+                img_array = np.array(img_array)
 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 t = time.time()
@@ -300,7 +302,7 @@ class ImageSet:
             params.set_image_param(param, img_array)
 
             # 正方形にする
-            img_array = core.adjust_shape_to_square(img_array)
+            #img_array = core.adjust_shape_to_square(img_array)
             
             # 描画用に設定
             self.img = np.array(img_array)
@@ -346,7 +348,7 @@ class ImageSet:
             params.set_image_param(param, img_array)
 
             # 正方形へ変換
-            img_array = core.adjust_shape_to_square(img_array)
+            #img_array = core.adjust_shape_to_square(img_array)
             
         self.img = np.array(img_array)
         
