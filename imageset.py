@@ -280,9 +280,10 @@ class ImageSet:
 
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
-                #source_ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
-                #source_ev = float(source_ev)
-                source_ev = exif_data.get('LightValue', 1.0)
+                source_ev = exif_data.get('LightValue', None)
+                if source_ev is None:
+                    source_ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
+                    source_ev = float(source_ev)
                 Ev = core.calc_ev_from_exif(exif_data)
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
 
