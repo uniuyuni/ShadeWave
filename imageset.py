@@ -270,8 +270,8 @@ class ImageSet:
                 processor = DCPProcessor(profile)
                 img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
                 """
-                img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
                 t = time.time()
+                img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
                 img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
                 logging.debug(f"XYZ_to_RGB: {time.time() - t}")
                 
@@ -280,17 +280,22 @@ class ImageSet:
 
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
+                # RAWの明るさをとってくる
                 source_ev = exif_data.get('LightValue', None)
+
+                # とってこれなかったら計算する
                 if source_ev is None:
                     source_ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
                     source_ev = float(source_ev)
+                
+                # 設定値から目標Evを計算
                 Ev = core.calc_ev_from_exif(exif_data)
+
+                # 適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
-                t = time.time()
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
-                logging.debug("highlight_recovery: " + str(time.time() - t))
 
             # サイズを合わせる
             #if img_array.shape[1] != width or img_array.shape[0] != height:
