@@ -511,7 +511,7 @@ class MainWidget(MDBoxLayout):
         self.ids['exif_iso_speed'].value = str(exif_data.get("ISO", "-"))
         self.ids['exif_aperture'].value = str(exif_data.get("ApertureValue", "-"))
         self.ids['exif_shutter_speed'].value = exif_data.get("ShutterSpeedValue", "-")
-        self.ids['exif_brightness'].value = str(exif_data.get("BrightnessValue", "-"))
+        self.ids['exif_exposure_compensation'].value = str(exif_data.get("ExposureCompensation", "-"))
         self.ids['exif_flash'].value = exif_data.get("Flash", "-")
         self.ids['exif_white_balance'].value = exif_data.get("WhiteBalance", "-")
         self.ids['exif_focal_length'].value = exif_data.get("FocalLength", "-")

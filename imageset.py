@@ -25,6 +25,8 @@ import color
 import bit_depth_expansion
 import highlight_recovery
 
+print(f"rawpy version:{rawpy.libraw_version}")
+
 def imageset_to_shared_memory(imgset):
     """
     ImageSetを共有メモリに変換する
@@ -202,7 +204,7 @@ class ImageSet:
                                          crop_width=crop_width,
                                          crop_height=crop_height))
             """
-            img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw if half == False else rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
+            img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw, # if half == False else rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
                                         output_bps=16,
                                         no_auto_scale=False,
@@ -229,6 +231,7 @@ class ImageSet:
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
             # サイズを整える
+            """
             if half == True:
                 cheight = height // 2
                 cwidth = width // 2
@@ -239,7 +242,7 @@ class ImageSet:
                 img_array = img_array[:cheight, :cwidth]
             else:
                 img_array = img_array[-cheight:, -cwidth:]
-
+            """
             # 下位2bit補完
             if half == False and config.get_config('raw_depth_expansion') == True:
                 img_array = img_array >> 2
@@ -252,7 +255,7 @@ class ImageSet:
             #img_array = np.clip(img_array, 0, 1)
 
             # 色空間変更
-            if half == True:
+            if False:
                 t = time.time()
                 img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', config.get_config('cat'),
                                               apply_cctf_decoding=False, apply_gamut_mapping=True).astype(np.float32)
@@ -277,16 +280,11 @@ class ImageSet:
 
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
-                img_array = jnp.array(img_array)
-                source_ev, _ = core.calculate_ev_from_image(core.normalize_image(img_array))
-                Av = exif_data.get('ApertureValue', 1.0)
-                _, Tv = exif_data.get('ShutterSpeedValue', "1/100").split('/')
-                Tv = float(_) / float(Tv)
-                Ev = math.log2((Av**2)/Tv)
-                Sv = math.log2(exif_data.get('ISO', 100)/100.0)
-                Ev = Ev + Sv
+                #source_ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
+                #source_ev = float(source_ev)
+                source_ev = exif_data.get('LightValue', 1.0)
+                Ev = core.calc_ev_from_exif(exif_data)
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
-                img_array = np.array(img_array)
 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 t = time.time()

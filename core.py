@@ -9,6 +9,7 @@ import jax.scipy as jscipy
 from jax import jit
 from functools import partial
 import colour
+import math
 import lensfunpy
 from scipy.interpolate import splprep, splev
 from scipy.ndimage import label
@@ -55,7 +56,7 @@ def calculate_ev_from_image(image_data):
 
 @dispatch(jnp.ndarray)
 @jit
-def calculate_ev_from_image(image_data):
+def calc_ev_from_image(image_data):
 
     average_value = jnp.mean(image_data)
 
@@ -1834,3 +1835,28 @@ def type_convert(img, target_type):
             return cv2.UMat(np.array(img))
 
     return img
+
+def calc_ev_from_exif(exif_data):
+    Av = exif_data.get('ApertureValue', 1.0)
+    _, Tv = exif_data.get('ShutterSpeedValue', "1/100").split('/')
+    Tv = float(_) / float(Tv)
+
+    return calc_ev_from_settings(Av, Tv, exif_data.get('ISO', 100))
+    
+def calc_ev_from_settings(Av: float, Tv: float, Sv: float) -> float:
+    """
+    カメラ設定値から直接露出値(Ev)を計算
+    
+    Args:
+        f_number (float): F値 (例: 2.8)
+        shutter_speed (float): シャッター速度[秒] (例: 1/100秒の場合は0.01)
+        iso (float): ISO感度 (例: 100)
+    
+    Returns:
+        float: 露出値(Ev)
+    """
+    # 各成分の計算
+    Ev = math.log2((Av ** 2) / Tv)
+    Sv = math.log2(Sv / 100.0)
+
+    return Ev + Sv

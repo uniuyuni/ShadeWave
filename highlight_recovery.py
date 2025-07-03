@@ -44,9 +44,9 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
     # 適応的トーンマッピング
     tonemapped = cv2.createTonemapReinhard(
         gamma=1.0, 
-        intensity=0.5,
-        light_adapt=0.8, 
-        color_adapt=0.2
+        intensity=0.2,
+        light_adapt=0.6, #0.8, 
+        color_adapt=0.0
     ).process(contrast)
 
     # 全体にマイクロコントラストをかけてはっきりさせる
