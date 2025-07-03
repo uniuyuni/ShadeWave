@@ -24,13 +24,14 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
 
     # 線形変換を適用
     #mask = np.clip((mask - 1.0) / (M - 1.0), 0.0, 1.0)
+    threshold = 0.7
     mask = np.where(
-        mask <= 1.0,
-        0.0,  # 1.0以下の値は0.0に
+        mask <= threshold,  # しきい値以下の値は0.0に
+        0.0,
         np.where(
             mask >= M,
             1.0,  # M以上の値は1.0に
-            (mask - 1.0) / (M - 1.0)  # 1.0〜Mの間を0.0〜1.0に線形補間
+            (mask - threshold) / (M - threshold)  # しきい値〜Mの間を0.0〜1.0に線形補間
         )
     )
     
