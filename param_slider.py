@@ -2,7 +2,6 @@
 from kivymd.app import MDApp
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
-from kivy.metrics import dp
 
 import float_input
 

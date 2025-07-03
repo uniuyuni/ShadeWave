@@ -334,11 +334,13 @@ class CropEffect(Effect):
     def get_param_dict(self, param):
         param2 = param.copy()
         params.set_crop_rect(param2, crop_editor.CropEditor.get_initial_crop_rect(*param['original_img_size']))
+        #params.set_disp_info(param2, crop_editor.CropEditor.get_initial_disp_info(*param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size'])))
         return {
             'rotation': 0,
             'rotation2': 0,
             'crop_enable': False,
             'crop_rect': param2['crop_rect'],
+            #'disp_info': param2['disp_info'],
             'aspect_ratio': "None",
         }
 
@@ -349,7 +351,7 @@ class CropEffect(Effect):
         param['crop_enable'] = False if widget.ids["effects"].current_tab.text != "Geometry" else True
         param['aspect_ratio'] = widget.ids["spinner_acpect_ratio"].text
 
-        # disp_info がないのはマスク
+        # crop_rect がないのはマスク
         if params.get_crop_rect(param) is not None:
 
             # クロップエディタを開く
@@ -363,11 +365,9 @@ class CropEffect(Effect):
             # クロップ範囲をリセット
             if self.crop_editor is not None:
                 if widget.ids["button_crop_reset"].state == "down":
-                    self.crop_editor._set_to_local_crop_rect((0, 0, 0, 0))
-                    self.crop_editor.update_crop_size()
+                    self.reset_crop_editor()
 
-                self.crop_editor.input_angle = self.get_param(param, 'rotation') + self.get_param(param, 'rotation2')
-                self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
+                self.reset2_crop_editor(param)
 
 
     def make_diff(self, img, param, efconfig):
@@ -418,6 +418,16 @@ class CropEffect(Effect):
         params.set_crop_rect(self.param, self.crop_editor.get_crop_rect())
         if self.crop_editor_callback is not None:
             self.crop_editor_callback()
+
+    def reset_crop_editor(self):
+        if self.crop_editor is not None:
+            self.crop_editor._set_to_local_crop_rect((0, 0, 0, 0))
+            self.crop_editor.update_crop_size()
+
+    def reset2_crop_editor(self, param):
+        if self.crop_editor is not None:
+            self.crop_editor.input_angle = self.get_param(param, 'rotation') + self.get_param(param, 'rotation2')
+            self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
 
     def finalize(self, param, widget):
         self._close_crop_editor(param, widget)

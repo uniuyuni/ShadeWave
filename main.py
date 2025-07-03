@@ -70,7 +70,8 @@ def precompile():
     rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
     core.fast_median_filter(rgb[..., 0])
-    core.apply_mask(rgb, np.ones((32, 32), dtype=np.float32), rgb)
+    msk = np.ones((32, 32), dtype=np.float32)
+    core.apply_mask(rgb, msk, rgb)
 
 class MainWidget(MDBoxLayout):
     loading: KVBooleanProperty(False)
@@ -363,9 +364,28 @@ class MainWidget(MDBoxLayout):
     #--------------------------------
 
     def on_reset_press(self):
-        self.primary_param = params.delete_not_special_param(self.primary_param)
+        # パラメータバックアップ
+        temp = self.primary_param['color_temperature_reset']
+        tint = self.primary_param['color_tint_reset']
+        Y = self.primary_param['color_Y']
+
+        # 全消去
+        self.primary_param = {}
+
+        # 初期化パラメータ設定
+        params.set_image_param(self.primary_param, self.imgset.img)
+        params.set_temperature_to_param(self.primary_param, temp, tint, Y)
+
+        # マスク関連全消去
         self._disable_mask2()
         self.ids['mask_editor2'].clear_mask()
+        
+        # クロップエディタ起動時はそれの初期化も行う
+        self.primary_effects[0]['crop'].reset2_crop_editor(self.primary_param)
+        self.primary_effects[0]['crop'].reset_crop_editor()
+        self.apply_effects_lv(0, 'crop') # 描画を走らせる
+
+        # これでファイルが消えるはず
         self.save_current_sidecar()
 
     #--------------------------------

@@ -556,9 +556,9 @@ class CropEditor(KVFloatLayout):
     @staticmethod
     def get_initial_crop_rect(input_width, input_height):
         maxsize = max(input_width, input_height)
-        padw = (maxsize - input_width) // 2 
-        padh = (maxsize - input_height) // 2
-        return (padw, padh, padw+input_width, padh+input_height)
+        padw = (maxsize - input_width) / 2 
+        padh = (maxsize - input_height) / 2
+        return (int(math.floor(padw)), int(math.floor(padh)), int(math.ceil(padw)+input_width), int(math.ceil(padh)+input_height))
 
     @staticmethod
     def get_initial_disp_info(input_width, input_height, scale):
@@ -572,41 +572,34 @@ class CropEditor(KVFloatLayout):
         return (crop_x, crop_y, crop_width, crop_height, scale)
     
     @staticmethod
-    def convert_rect_to_info(crop_rect, input_size, scale):
-        inw, inh = input_size
-        maxsize = max(inw, inh)
-        padw = 0#(maxsize - inw) // 2
-        padh = 0#(maxsize - inh) // 2
-        
+    def convert_rect_to_info(crop_rect, scale):      
         x1, y1, x2, y2 = crop_rect
         w = x2 - x1
         h = y2 - y1        
-        x1 = x1 + padw
-        y1 = y1 + padh
         return (x1, y1, w, h, scale)
     
     def get_crop_rect(self):
         # 上下反転させて返す、パディング削除
         x1, y1, x2, y2 = self.crop_rect
+        x1, y1 = int(round(x1 / self.scale)), int(round(y1 / self.scale))
+        x2, y2 = int(round(x2 / self.scale)), int(round(y2 / self.scale))
         maxsize = max(self.input_width, self.input_height)
-        padw = 0#(maxsize - self.input_width) // 2 
-        padh = 0#(maxsize - self.input_height) // 2
-        cx1 = int(x1 / self.scale - padw)
-        cy1 = int(maxsize - (y1 + (y2-y1)) / self.scale - padh)
-        cx2 = int(x2 / self.scale - padw)
-        cy2 = cy1 + int((y2 - y1) / self.scale)
+        cx1 = x1
+        cy1 = maxsize - (y1 + (y2-y1))
+        cx2 = x2
+        cy2 = cy1 + (y2 - y1)
         return (cx1, cy1, cx2, cy2)
     
     def get_disp_info(self):
         # 上下反転させて返す。グローバル座標へも変換
         x1, y1, x2, y2 = self.crop_rect
+        x1, y1 = int(round(x1 / self.scale)), int(round(y1 / self.scale))
+        x2, y2 = int(round(x2 / self.scale)), int(round(y2 / self.scale))
         maxsize = max(self.input_width, self.input_height)
-        padw = 0#(maxsize - self.input_width)
-        padh = 0#(maxsize - self.input_height)
-        crop_x = int(x1 / self.scale + padw)
-        crop_y = int(maxsize - (y1 + (y2-y1)) / self.scale + padh)
-        crop_width = int((x2 - x1) / self.scale)
-        crop_height = int((y2 - y1) / self.scale)
+        crop_x = x1
+        crop_y = maxsize - (y1 + (y2-y1))
+        crop_width = x2 - x1
+        crop_height = y2 - y1
         return (crop_x, crop_y, crop_width, crop_height, self.scale)
     
     def set_editing_callback(self, callback):

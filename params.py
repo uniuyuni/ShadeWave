@@ -131,7 +131,7 @@ def set_image_param(param, img):
     param['original_img_size'] = (width, height)
     param['img_size'] = (width, height)
     set_crop_rect(param, get_crop_rect(param, crop_editor.CropEditor.get_initial_crop_rect(width, height)))
-    set_disp_info(param, crop_editor.CropEditor.convert_rect_to_info(get_crop_rect(param), param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size'])))
+    set_disp_info(param, crop_editor.CropEditor.convert_rect_to_info(get_crop_rect(param), config.get_config('preview_size')/max(param['original_img_size'])))
 
     return (width, height)
 
@@ -183,7 +183,7 @@ def _serialize_param(param):
     effects.InpaintEffect.dump(param)
 
 def _deserialize_param(param):
-    param['disp_info'] = crop_editor.CropEditor.convert_rect_to_info(param['crop_rect'], param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size']))
+    param['disp_info'] = crop_editor.CropEditor.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
     effects.InpaintEffect.load(param)
 
 def serialize(param, mask_editor2):

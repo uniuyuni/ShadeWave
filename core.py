@@ -631,7 +631,8 @@ def apply_mask_np(img1, msk, img2):
 @dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
 @jit
 def apply_mask(img1, msk, img2):
-    _msk = msk[:, :, jnp.newaxis]
+
+    _msk = msk[:, :, jnp.newaxis] if msk.ndim == 2 else msk
     img = img1 * (1.0 - _msk) + img2 * _msk
 
     return img
@@ -651,6 +652,22 @@ def apply_mask(img1, msk, img2):
 @dispatch(np.ndarray, np.ndarray, np.ndarray)
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def apply_mask(img1, msk, img2):
+
+    """マスクが（3チャンネル）専用の最適化版"""
+    if msk.ndim == 3:
+        h, w, c = msk.shape
+        result = np.empty_like(img1)
+
+        for i in prange(h):
+            for j in prange(w):
+                mask_val = msk[i, j, 0]
+                inv_mask = 1.0 - mask_val
+                result[i, j, 0] = img1[i, j, 0] * (1.0 - msk[i, j, 0]) + img2[i, j, 0] * msk[i, j, 0]
+                result[i, j, 1] = img1[i, j, 1] * (1.0 - msk[i, j, 1]) + img2[i, j, 1] * msk[i, j, 1]
+                result[i, j, 2] = img1[i, j, 2] * (1.0 - msk[i, j, 2]) + img2[i, j, 2] * msk[i, j, 2]
+
+        return result
+
     """RGB（3チャンネル）専用の最適化版"""
     h, w = msk.shape
     result = np.empty_like(img1)
