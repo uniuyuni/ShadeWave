@@ -1,11 +1,17 @@
 
+# tk.Tk()で落ちるのを回避するためのパッチ
+if __name__ == '__main__':
+    import matplotlib
+    import tkinter as tk
+    
+    matplotlib.use('tkagg')
+    _root = tk.Tk()
+    _root.withdraw()
+
 #from splashscreen import display_splash_screen, close_splash_screen
 #display_splash_screen("platypus.png")
 
-import logging
-from kivymd.uix import BooleanProperty
 import numpy as np
-
 import os
 from kivymd.app import MDApp
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -19,6 +25,7 @@ import multiprocessing
 import colour
 import jax
 import cv2
+import logging
 
 import core
 import imageset
@@ -44,6 +51,7 @@ import hover_spinner
 import float_input
 import bbox_viewer
 import params
+from processing_dialog import create_processing_dialog
 
 os.environ['JAX_LOG_VERBOSITY'] = '0'
 jax.config.update("jax_platform_name", "METAL")
@@ -574,6 +582,10 @@ class MainApp(MDApp):
         utils.traverse_widget(root)
 
 if __name__ == '__main__':
+    # 処理中ダイアログ作成
+    create_processing_dialog()
+
+    # マルチプロセスのサポートを有効にする
     multiprocessing.freeze_support()
 
     # PILイメージプラグイン抑制

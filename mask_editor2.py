@@ -3,6 +3,8 @@ import os
 import numpy as np
 import math
 import cv2
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 from kivy.app import App
 from kivy.core.window import Window
@@ -30,6 +32,8 @@ import params
 import effects
 import facer_util
 import expand_mask
+import config
+from processing_dialog import show_processing_dialog, update_processing_dialog, hide_processing_dialog
 
 MASKTYPE_CIRCULAR = 'circular'
 MASKTYPE_GRADIENT = 'gradient'
@@ -38,6 +42,7 @@ MASKTYPE_FREEDRAW = 'free_draw'
 MASKTYPE_SEGMENT = 'segment'
 MASKTYPE_DEPTHMAP = 'depth_map'
 MASKTYPE_FACE = 'face'
+MASKTYPE_SCENE = 'scene'
 
 # コントロールポイントのクラス
 class ControlPoint(Widget):
@@ -224,9 +229,9 @@ class BaseMask(Widget):
         dimg = self.apply_depth_mask(simg)
         himg = self.draw_hue_mask(dimg)
         limg = self.draw_lum_mask(himg)
-        simg = self.draw_sat_mask(limg)
+        result = self.draw_sat_mask(limg)
         
-        return simg
+        return result
 
     def get_hash_items(self):
         return (self.effects_param.get('mask2_open_space', 0),
@@ -1551,12 +1556,13 @@ class SegmentMask(BaseMask):
 class DepthMapMask(BaseMask):
     __depth_pro = None
     __depth_pro_mt = None
-    __depth_map = None
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
         self.name = "Depth Map"
         self.initializing = True  # 初期配置中かどうか
+
+        self.depth_map = None
 
         self.center = (0, 0)
 
@@ -1675,21 +1681,15 @@ class DepthMapMask(BaseMask):
             DepthMapMask.__depth_pro = importlib.import_module('depth_pro')
             DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device=config.get_config('gpu_device'))
 
-        if DepthMapMask.__depth_map is None or self.editor.rotation_changed_flag:
-            DepthMapMask.__depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
+        if self.depth_map is None or self.editor.rotation_changed_flag:
+            self.depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
-        result = cv2.resize(DepthMapMask.__depth_map[cy:cy+ch, cx:cx+cw], (nw, nh))
+        result = cv2.resize(self.depth_map[cy:cy+ch, cx:cx+cw], (nw, nh))
         result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
         return result
-
-    @staticmethod
-    def delete_depth_map():
-        if DepthMapMask.__depth_map is not None:
-            del DepthMapMask.__depth_map
-            DepthMapMask.__depth_map = None
 
 class FaceMask(BaseMask):
     __faces = None
@@ -1845,6 +1845,166 @@ class FaceMask(BaseMask):
         if FaceMask.__faces is not None:
             FaceMask.__faces = None
 
+# セグメントマスクのクラス
+class SceneMask(BaseMask):
+    __model = None
+
+    def __init__(self, editor, **kwargs):
+        super().__init__(editor, **kwargs)
+        self.name = "Scene"
+        self.initializing = True  # 初期配置中かどうか
+
+        self.center = (0, 0)
+
+        with self.canvas:
+            PushMatrix()
+            self.translate = Translate(*self.center)
+            PopMatrix()
+
+        #self.update_mask()
+
+    def on_touch_down(self, touch):
+        if self.initializing:
+            cx, cy = self.editor.window_to_tcg(*touch.pos)
+            self.center_x = cx
+            self.center_y = cy
+            return True
+        else: 
+            return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.initializing:
+            self.initializing = False
+            self.create_control_points()
+            self.editor.set_active_mask(self)
+            return True
+        else:
+            return super().on_touch_up(touch)
+
+    def create_control_points(self):
+        self.control_points = []
+
+        # 中心のコントロールポイント
+        cp_center = ControlPoint(self.editor)
+        cp_center.center = (self.center_x, self.center_y)
+        cp_center.ctrl_center = cp_center.center
+        cp_center.is_center = True
+        cp_center.color = [0, 1, 0] if self.active else [1, 0, 0]
+        cp_center.bind(ctrl_center=self.on_center_control_point_move)
+        self.control_points.append(cp_center)
+        self.add_widget(cp_center)
+
+        if not self.active:
+            self.show_center_control_point_only()
+
+    def serialize(self):
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
+
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+        
+        dict = {
+            'type': MASKTYPE_SCENE,
+            'name': self.name,
+            'center': [cx, cy],
+            'effects_param': param
+        }
+        return dict
+
+    def deserialize(self, dict):
+        self.initializing = False
+        cx, cy = dict['center']
+        self.name = dict['name']
+        self.effects_param.update(dict['effects_param'])
+
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
+
+        # 描き直し
+        self.create_control_points()
+        #self.update_mask()     
+
+    def update_control_points(self):
+        cp_center = self.control_points[0]
+        cp_center.center = self.center
+
+    def update_mask(self):
+        if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
+            # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
+            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            return
+
+        with self.canvas:
+            cx, cy = self.editor.tcg_to_window(*self.center)
+            self.translate.x, self.translate.y = cx, cy
+        
+        if self.is_draw_mask == True:
+            self.draw_mask_to_fbo()
+
+    def get_mask_image(self):
+
+        # パラメータ設定
+        image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        center = self.editor.tcg_to_full_image(*self.center)
+
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center))
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
+            # 描画
+            gradient_image = self.draw_scene(image_size, center)
+
+            # ルミナんとマスクを作成
+            gradient_image = self.draw_hls_mask(gradient_image)
+
+            # マスクぼかし
+            gradient_image = self.apply_mask_blur(gradient_image)
+
+            self.image_mask_cache = gradient_image
+            self.image_mask_cache_hash = newhash
+            
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+
+    def draw_scene(self, image_size, center):
+
+        def _process(full_image):
+            import detectron2_helper
+
+            if SceneMask.__model is None:
+                config_file = 'detectron2/configs/COCO-PanopticSegmentation/panoptic_fpn_R_50_3x.yaml'
+                checkpoint_file = 'checkpoints/model_final_c10459.pkl'
+                #config_file = 'kmax_deeplab/configs/ade20k/panoptic_segmentation/kmax_convnext_large.yaml'
+                #checkpoint_file = 'checkpoints/kmax_convnext_large_ade20k.pth'
+                #config_file = 'kmax_deeplab/configs/coco/panoptic_segmentation/kmax_r50.yaml'
+                #checkpoint_file = 'checkpoints/kmax_r50.pth'
+                SceneMask.__model = detectron2_helper.setup_model(config_file, checkpoint_file, 'cpu', 0.35)
+            
+            height, width = full_image.shape[:2]
+            img = cv2.resize(full_image, (width//2, height//2))
+            result = detectron2_helper.run_inference(SceneMask.__model, img)
+            result = detectron2_helper.create_mask(result)
+            result = result * 0.5 + 0.5
+            result = cv2.resize(result, (width, height))
+
+            return result
+
+        # 裏でやらせているつもり（ダイアログ表示あり）
+        show_processing_dialog()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_process, self.editor.full_image_rgb)
+            while not future.done():
+                update_processing_dialog(sleep_time=0.05)
+            result = future.result()
+        hide_processing_dialog()
+
+        nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
+        cx, cy ,cw, ch, scale = self.editor.disp_info
+        result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
+        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+
+        return result
+
 # マスクレイヤーの管理クラス
 class MaskLayer(BoxLayout):
     mask = ObjectProperty(None)
@@ -1948,10 +2108,11 @@ class MaskEditor2(FloatLayout):
         return True
     
     def set_ref_image(self, crop_image, full_image):
-        self.full_image_rgb = np.clip(full_image, 0, 1)
-        self.full_image_hls = cv2.cvtColor(self.full_image_rgb, cv2.COLOR_RGB2HLS_FULL)
-        self.crop_image_rgb = np.clip(crop_image, 0, 1)
-        self.crop_image_hls = cv2.cvtColor(self.crop_image_rgb, cv2.COLOR_RGB2HLS_FULL)
+        self.crop_image_rgb = crop_image
+        self.crop_image_hls = cv2.cvtColor(crop_image, cv2.COLOR_RGB2HLS_FULL)
+        if self.full_image_rgb is not full_image:
+            self.full_image_rgb = full_image
+            self.full_image_hls = cv2.cvtColor(full_image, cv2.COLOR_RGB2HLS_FULL)
 
     def set_texture_size(self, tx, ty):
         self.texture_size = (tx, ty)
@@ -2056,6 +2217,10 @@ class MaskEditor2(FloatLayout):
         btn_face.bind(on_release=self.select_face_mask)
         self.ui_layout.add_widget(btn_face)
 
+        btn_scene = Button(text='Scene', size_hint=(1, 0.05))
+        btn_scene.bind(on_release=self.select_scene)
+        self.ui_layout.add_widget(btn_scene)
+
         # マスクレイヤー表示
         self.layer_list = BoxLayout(orientation='vertical', size_hint=(2, 0.7))
         self.ui_layout.add_widget(self.layer_list)
@@ -2113,6 +2278,9 @@ class MaskEditor2(FloatLayout):
     def select_face_mask(self, instance):
         self._create_start_new_mask(MASKTYPE_FACE)
 
+    def select_scene(self, instance):
+        self._create_start_new_mask(MASKTYPE_SCENE)
+
     def _create_start_new_mask(self, type):
         # 画像サイズがまだ設定されていない場合、マスクの作成をスキップ
         if self.image_size == [0, 0]:
@@ -2168,6 +2336,8 @@ class MaskEditor2(FloatLayout):
             mask = DepthMapMask(editor=self)
         elif mask_type == MASKTYPE_FACE:
             mask = FaceMask(editor=self)
+        elif mask_type == MASKTYPE_SCENE:
+            mask = SceneMask(editor=self)
         else:
             Logger.error(f"MaskEditor: 不明なマスクタイプ: {self.current_mask_type}")
             return None
@@ -2201,7 +2371,6 @@ class MaskEditor2(FloatLayout):
         self.mask_container.clear_widgets()
         self.mask_layers.clear()
         self.layer_list.clear_widgets()
-        DepthMapMask.delete_depth_map()
         FaceMask.delete_faces()
 
     def set_active_mask(self, mask):
