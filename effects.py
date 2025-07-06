@@ -17,7 +17,7 @@ import cubelut
 import mask_editor
 import crop_editor
 import subpixel_shift
-import film_simulation
+import film_emulator
 import lens_simulator
 import config
 import pipeline
@@ -1896,34 +1896,38 @@ class FilmSimulationEffect(Effect):
         return {
             'film_preset': 'None',
             'film_intensity': 100,
+            'film_expired': 0,
         }
  
     def set2widget(self, widget, param):
         widget.ids["spinner_film_preset"].text = self.get_param(param, 'film_preset')
         widget.ids["slider_film_intensity"].set_slider_value(self.get_param(param, 'film_intensity'))
+        widget.ids["slider_film_expired"].set_slider_value(self.get_param(param, 'film_expired'))
 
     def set2param(self, param, widget):
         spinner = widget.ids["spinner_film_preset"]
         param['film_preset'] = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
         param['film_intensity'] = widget.ids["slider_film_intensity"].value
+        param['film_expired'] = widget.ids["slider_film_expired"].value
 
     def make_diff(self, rgb, param, efconfig):
         preset = self.get_param(param, 'film_preset')
         intensity = self.get_param(param, 'film_intensity')
+        expired = self.get_param(param, 'film_expired')
         if preset == 'None' or intensity <= 0:
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((preset, intensity))
+            param_hash = hash((preset, intensity, expired))
             if self.hash != param_hash:
-                self.diff = (preset, intensity)
+                self.diff = (preset, intensity, expired)
                 self.hash = param_hash
 
         return self.diff
     
     def apply_diff(self, rgb):
         rgb = core.type_convert(rgb, np.ndarray)
-        film = film_simulation.simulator.apply_simulation(rgb, self.diff[0])
+        film = film_emulator.emulator.apply_film_effect(rgb, self.diff[0], self.diff[2])
         per = self.diff[1] / 100.0
         return film * per + rgb * (1-per)
 
@@ -2161,7 +2165,7 @@ def create_effects():
 
     lv2['lut'] = LUTEffect()
     lv2['lens_simulator'] = LensSimulatorEffect()
-    lv2['film_simulation'] = FilmSimulationEffect()
+    lv2['film_emulation'] = FilmSimulationEffect()
     lv2['solid_color'] = SolidColorEffect()
 
     lv3 = effects[3]

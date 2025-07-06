@@ -1069,8 +1069,8 @@
                                 ParamSpinner:
                                     id: spinner_film_preset
                                     values: [ 'None', ]
-                                    #on_text: root.apply_effects_lv(2, 'film_simulation')
-                                    on_hovered_item: root.apply_effects_lv(2, 'film_simulation')
+                                    #on_text: root.apply_effects_lv(2, 'film_emulation')
+                                    on_hovered_item: root.apply_effects_lv(2, 'film_emulation')
                                     
                             ParamSlider:
                                 id: slider_film_intensity
@@ -1079,7 +1079,16 @@
                                 max: 100
                                 value: 100
                                 step: 1
-                                on_slider: root.apply_effects_lv(2, 'film_simulation')
+                                on_slider: root.apply_effects_lv(2, 'film_emulation')
+
+                            ParamSlider:
+                                id: slider_film_expired
+                                text: "Expired"
+                                min: 0
+                                max: 100
+                                value: 100
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'film_emulation')
 
                             HeadLabel:
                                 text: ' Lens Simulator'

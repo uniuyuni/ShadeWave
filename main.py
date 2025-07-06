@@ -40,7 +40,7 @@ import utils
 import mask_editor2
 import color_picker
 import macos
-import film_simulation
+import film_emulator
 import lens_simulator
 import config
 import export
@@ -496,7 +496,7 @@ class MainWidget(MDBoxLayout):
     def _set_film_presets(self):
         presets = ['None']
 
-        film_presets = film_simulation.simulator.get_presets()
+        film_presets = film_emulator.emulator.get_presets()
         for preset in film_presets:
             presets.append(preset)
 
