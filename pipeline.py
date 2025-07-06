@@ -99,7 +99,7 @@ def pipeline2(imgc, slice_y, slice_h, primary_effects, primary_param, mask_edito
         img2 = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig)
         img2 = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig)
 
-        img3 = core.apply_mask_jax(img3, mask.get_mask_image()[slice_y:slice_y+slice_h, :], img2)
+        img3 = core.apply_mask(img3, mask.get_mask_image()[slice_y:slice_y+slice_h, :], img2)
     mask_editor2.set_rotation_changed_flag(False)
 
     return img3

@@ -1513,7 +1513,8 @@ class GradingEffect(Effect):
     def apply_diff(self, rgb):
         lut, rgbs = self.diff
         rgb = core.type_convert(rgb, jnp.ndarray)
-        blend = core.apply_lut(rgb, lut)
+        gray = core.cvtColorRGB2Gray(rgb)
+        blend = core.apply_lut(gray, lut)
         blend = np.array(blend)
         return core.apply_mask(rgb, blend, rgb * rgbs)
 
