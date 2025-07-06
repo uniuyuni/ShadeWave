@@ -16,7 +16,7 @@ def display_splash_screen(image_path):
     _root.overrideredirect(True)  # フレームを非表示
 
     # 画像をTkinter形式に変換
-    img_tk = tk.PhotoImage(file=image_path).subsample(2)
+    img_tk = tk.PhotoImage(master=_root, file=image_path).subsample(2)
     
     # 画面中央に配置
     width = img_tk.width()
@@ -36,7 +36,7 @@ def display_splash_screen(image_path):
         
     # メインループ
     _root.update()
-    _root.mainloop(1)
+    #_root.mainloop(1)
 
 def close_splash_screen():
     global tk
