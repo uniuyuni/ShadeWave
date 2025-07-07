@@ -38,7 +38,7 @@ class EffectConfig():
         self.disp_info = None
         self.is_zoom = False
         self.mode = EffectMode.PREVIEW
-        self.dpi_scale = 1.0
+        self.resolution_scale = 1.0
 
 # 補正基底クラス
 class Effect():
@@ -2075,6 +2075,55 @@ class SolidColorEffect(Effect):
                 self.hash = param_hash
 
         return self.diff
+
+class GrainEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'grain_intensity': 0,
+            'grain_size': 0,
+            'grain_blue_bias': 0,
+            'grain_shadow_boost': 0,
+            'grain_color_noise_ratio': 0
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_grain_intensity"].set_slider_value(self.get_param(param, 'grain_intensity'))
+        widget.ids["slider_grain_size"].set_slider_value(self.get_param(param, 'grain_size'))
+        widget.ids["slider_grain_blue_bias"].set_slider_value(self.get_param(param, 'grain_blue_bias'))
+        widget.ids["slider_grain_shadow_boost"].set_slider_value(self.get_param(param, 'grain_shadow_boost'))
+        widget.ids["slider_grain_color_noise_ratio"].set_slider_value(self.get_param(param, 'grain_color_noise_ratio'))
+
+    def set2param(self, param, widget):
+        param['grain_intensity'] = widget.ids["slider_grain_intensity"].value
+        param['grain_size'] = widget.ids["slider_grain_size"].value
+        param['grain_blue_bias'] = widget.ids["slider_grain_blue_bias"].value
+        param['grain_shadow_boost'] = widget.ids["slider_grain_shadow_boost"].value        
+        param['grain_color_noise_ratio'] = widget.ids["slider_grain_color_noise_ratio"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        gi = self.get_param(param, 'grain_intensity')
+        gs = self.get_param(param, 'grain_size')
+        gbb = self.get_param(param, 'grain_blue_bias')
+        gsb = self.get_param(param, 'grain_shadow_boost')
+        gcnr = self.get_param(param, 'grain_color_noise_ratio')
+        if gi == 0:
+            self.diff = None
+            self.hash = None
+
+        else:
+            param_hash = hash((gi, gs, gbb, gsb, gcnr))
+            if self.hash != param_hash:
+                rgb = core.type_convert(rgb, np.ndarray)
+                gi = gi / 100.0                 # 0.0-1.0
+                gs = gs / 100.0 * 4.0 + 1.0     # 1.0-5.0
+                gbb = gbb / 100.0 + 1.0         # 1.0-2.0
+                gsb = gsb / 100.0 * 1.5 + 0.5   # 0.5-2.0          
+                gcnr = gcnr / 100.0             # 0.0-1.0
+                self.diff = core.apply_film_grain(rgb, gi * efconfig.disp_info[4], gs * efconfig.resolution_scale , gbb, gsb, gcnr)
+                self.hash = param_hash
+        
+        return self.diff
     
 class VignetteEffect(Effect):
 
@@ -2082,31 +2131,36 @@ class VignetteEffect(Effect):
         return {
             'vignette_intensity': 0,
             'vignette_radius_percent': 0,
+            'vignette_softness': 100,
             'crop_enable': False,
         }
 
     def set2widget(self, widget, param):
         widget.ids["slider_vignette_intensity"].set_slider_value(self.get_param(param, 'vignette_intensity'))
         widget.ids["slider_vignette_radius_percent"].set_slider_value(self.get_param(param, 'vignette_radius_percent'))
+        widget.ids["slider_vignette_softness"].set_slider_value(self.get_param(param, 'vignette_softness'))
 
     def set2param(self, param, widget):
         param['vignette_intensity'] = widget.ids["slider_vignette_intensity"].value
         param['vignette_radius_percent'] = widget.ids["slider_vignette_radius_percent"].value
+        param['vignette_softness'] = widget.ids["slider_vignette_softness"].value
 
     def make_diff(self, rgb, param, efconfig):
         vi = self.get_param(param, 'vignette_intensity')
         vr = self.get_param(param, 'vignette_radius_percent')
+        vs = self.get_param(param, 'vignette_softness')
         pce = self.get_param(param, 'crop_enable')
         if (vi == 0 and vr == 0) or pce == True:
             self.diff = None
             self.hash = None
 
         else:
-            param_hash = hash((vi, vr))
+            param_hash = hash((vi, vr, vs))
             if self.hash != param_hash:
                 _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
                 rgb = core.type_convert(rgb, jnp.ndarray)
-                self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y))
+                vs = (100 - vs) / 100.0 * 3.0 + 1.0  # 1.0-4.0
+                self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y), vs)
                 self.hash = param_hash
         
         return self.diff
@@ -2172,6 +2226,7 @@ def create_effects():
     lv3['mask2'] = Mask2Effect()
 
     lv4 = effects[4]
+    lv4['grain'] = GrainEffect()
     lv4['vignette'] = VignetteEffect()
 
     return effects

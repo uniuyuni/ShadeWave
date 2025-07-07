@@ -16,22 +16,30 @@ class FilmEmulator:
         return self.film_presets
         
     def apply_film_effect(self, img_rgb, film_name, expired=0):
+        import utils
         
         # パラメータ取得
         params = self.film_presets[film_name]
         img = img_rgb.copy()
+        utils.print_nan_inf(img)
         
         # 処理ステップごとにクリッピングを追加
         img = self.apply_tone_curves(img, params['tone_curves'])
-        
+        utils.print_nan_inf(img)
+
         img = self.apply_color_adjustment(img, params['color_adjustment'])
+        utils.print_nan_inf(img)
         
+        img = np.clip(img, 0, 1) # NaNを防ぐためにクリッピング
         img = self.apply_contrast_compression(img, params['contrast'])
+        utils.print_nan_inf(img)
         
         img = self.apply_base_color(img, params['base_color'])
+        utils.print_nan_inf(img)
         
         if expired > 0:
             img = self.apply_expired_effects(img, params.get('expired_effects', {}), expired)
+            utils.print_nan_inf(img)
         
         return img
     

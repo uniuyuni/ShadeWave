@@ -149,7 +149,7 @@ class MainWidget(MDBoxLayout):
     def draw_image(self, offset, dt):
         if (self.imgset is not None) and (self.imgset.img is not None):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
-            #utils.print_nan_inf(img)
+            utils.print_nan_inf(img)
 
             img = np.array(img)
 

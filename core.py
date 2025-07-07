@@ -242,8 +242,8 @@ def gaussian_blur_jax(src, ksize=(3, 3), sigma=0.0):
     return dest
 
 def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
-    if ksize == (0, 0):
-        return src
+    #if ksize == (0, 0):
+    #    return src
     return  cv2.GaussianBlur(src, ksize, sigma)
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
@@ -685,7 +685,7 @@ def apply_mask(img1, msk, img2):
 
 #--------------------------------------------------
 # 周辺減光効果
-@partial(jit, static_argnums=(1,2,5))
+@partial(jit, static_argnums=(1,2,5,6))
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
     """
     修正版 周辺光量落ち効果
@@ -740,7 +740,7 @@ def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offse
     # マスク作成（0が中心、1が端）
     mask = jnp.clip(dist / radius, 0, 1)
     #mask = gaussian_blur(mask, (64, 64), 0)
-    #mask = jnp.power(mask, gradient_softness)  # グラデーション調整
+    mask = jnp.power(mask, gradient_softness)  # グラデーション調整
     mask = smoothstep(mask)
     
     # 効果適用（intensityの符号で方向を制御）
@@ -1860,3 +1860,63 @@ def calc_ev_from_settings(Av: float, Tv: float, Sv: float) -> float:
     Sv = math.log2(Sv / 100.0)
 
     return Ev + Sv
+
+def apply_film_grain(
+    image: np.ndarray,
+    intensity: float = 0.5,
+    grain_size: float = 2.0,
+    blue_sensitivity: float = 1.2,
+    shadow_boost: float = 1.0,
+    color_noise_ratio: float = 0.1
+) -> np.ndarray:
+    """
+    改良版フィルム粒状感適用関数
+    - shadow_boostの効果範囲を明確化
+    - color_noise_ratioの効果を強調
+    - 出力をfloat32で保証
+    """
+    # 入力検証
+    H, W, _ = image.shape
+    
+    # 1. 明度マスク生成（効果を明確化）
+    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+    L = lab[:,:,0] / 100.0
+    
+    # shadow_boostの効果を強化（0.5-2.0の範囲で効果が明確に）
+    shadow_mask = np.exp(-shadow_boost * 10.0 * L)  # 係数を調整
+    
+    # 2. モノクログレイン生成
+    mono_grain = np.random.randn(H, W).astype(np.float32)
+    
+    # 粒子サイズ再現
+    kernel_size = max(3, int(grain_size * 3)) | 1
+    mono_grain = gaussian_blur_cv(
+        mono_grain, 
+        (kernel_size, kernel_size), 
+        grain_size
+    )
+    
+    # 3. 色ノイズ成分（効果を明確化）
+    color_noise = np.random.randn(H, W, 3).astype(np.float32) * 0.2  # ベース強度増加
+    
+    # 色ノイズにブラーを適用（低周波数化）
+    color_noise = gaussian_blur_cv(
+        color_noise, 
+        (kernel_size, kernel_size), 
+        grain_size*1.5
+    )
+    
+    # 4. ノイズ合成（モノクロ + カラー）
+    channel_weights = np.array([blue_sensitivity, 1.0, 0.8], dtype=np.float32)
+    combined_grain = (
+        mono_grain[..., np.newaxis] * channel_weights * (1 - color_noise_ratio) + 
+        color_noise * color_noise_ratio
+    )
+    
+    # 5. 適応的強度調整
+    adaptive_intensity = intensity * 0.2 * shadow_mask[..., np.newaxis]  # 係数調整
+    grain = combined_grain * adaptive_intensity
+    
+    # 6. ノイズ付加とクリッピング（float32保持）
+    noisy_image = image + grain
+    return noisy_image

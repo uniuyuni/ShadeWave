@@ -730,6 +730,15 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'vignette')
+
+                            ParamSlider:
+                                id: slider_vignette_softness
+                                text: "Softness"
+                                min: 0
+                                max: 100
+                                value: 100
+                                step: 1
+                                on_slider: root.apply_effects_lv(4, 'vignette')
                             
                             VSpacer
 
@@ -1185,6 +1194,52 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'glow')
+
+                            VSeparator:
+ 
+                            HeadLabel:
+                                text: ' Grain'
+
+                            ParamSlider:
+                                id: slider_grain_intensity
+                                text: "Intensity"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(4, 'grain')
+                            ParamSlider:
+                                id: slider_grain_size
+                                text: "Size"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(4, 'grain')
+                            ParamSlider:
+                                id: slider_grain_blue_bias
+                                text: "Blue bias"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(4, 'grain')
+                            ParamSlider:
+                                id: slider_grain_shadow_boost
+                                text: "Shadow boost"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(4, 'grain')
+                            ParamSlider:
+                                id: slider_grain_color_noise_ratio
+                                text: "Color noise"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(4, 'grain')
 
                             VSeparator:
  
