@@ -1649,38 +1649,101 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
     return np.array(adjusted_hls)
 
 
-@njit(parallel=True, fastmath=True)
-def floyd_steinberg_dither_fast(image):
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
+def jjn_dither_uint8(img_float):
     """
-    Numbaで高速化したFloyd-Steinbergディザリング
-    - 並列処理とメモリ最適化を適用
-    - 入力: [H, W, 3] float32 (0.0~1.0)
-    - 出力: [H, W, 3] uint8
+    float32画像(0.0-1.0)をJJN法でディザリングしてuint8に変換
     """
-    h, w, c = image.shape
-    img = image.copy()
+    h, w, channels = img_float.shape
     
-    for y in prange(h):
-        for x in range(w):
-            for ch in range(c):
-                old_val = img[y, x, ch]
-                new_val = np.round(old_val * 255) / 255
-                quant_error = old_val - new_val
-                img[y, x, ch] = new_val
+    # 出力バッファの初期化
+    output = np.zeros((h, w, channels), dtype=np.uint8)
+    
+    # JJN法の拡散カーネル (周囲12ピクセルに誤差を拡散)
+    kernel = [
+        (0, 1, 7), (0, 2, 5),
+        (1, -2, 3), (1, -1, 5), (1, 0, 7), (1, 1, 5), (1, 2, 3),
+        (2, -2, 1), (2, -1, 3), (2, 0, 5), (2, 1, 3), (2, 2, 1)
+    ]
+    divisor = 48  # 係数の合計値
+    
+    # 各チャンネルを個別に処理
+    for c in prange(channels):
+        # 現在のチャンネルの画像をコピー
+        error = np.zeros((h+4, w+4), dtype=np.float32)  # 境界処理用の余裕を持たせた誤差バッファ
+        
+        # ラスタ走査（左上→右下）
+        for y in prange(h):
+            for x in prange(w):
+                # 現在のピクセル値 + 累積誤差
+                current_val = img_float[y, x, c] + error[y, x]
+                
+                # 量子化（四捨五入）
+                quantized_val = manual_clip(round(current_val * 255.0), 0.0, 255.0)
+                
+                # 出力値設定
+                output[y, x, c] = int(quantized_val)
+                
+                # 量子化誤差の計算
+                quant_error = current_val - (quantized_val / 255.0)
+                
+                # 誤差を周囲ピクセルに拡散
+                for dy, dx, weight in kernel:
+                    ey = y + dy
+                    ex = x + dx
+                    if 0 <= ey < h and 0 <= ex < w:
+                        error[ey, ex] += quant_error * (weight / divisor)
+        
+    return output
 
-                # 誤差分散
-                if x < w-1:
-                    img[y, x+1, ch] = min(1.0, max(0.0, img[y, x+1, ch] + quant_error * 0.4375))  # 7/16
-                if y < h-1:
-                    if x > 0:
-                        img[y+1, x-1, ch] = min(1.0, max(0.0, img[y+1, x-1, ch] + quant_error * 0.1875))  # 3/16
-                    img[y+1, x, ch] = min(1.0, max(0.0, img[y+1, x, ch] + quant_error * 0.3125))  # 5/16
-                    if x < w-1:
-                        img[y+1, x+1, ch] = min(1.0, max(0.0, img[y+1, x+1, ch] + quant_error * 0.0625))  # 1/16
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+def jjn_dither_uint16(img_float):
+    """
+    float32画像(0.0-1.0)をJJN法でディザリングしてuint16に変換
+    """
+    h, w, channels = img_float.shape
+    
+    # 出力バッファの初期化
+    output = np.zeros((h, w, channels), dtype=np.uint16)
+    
+    # JJN法の拡散カーネル
+    kernel = [
+        (0, 1, 7), (0, 2, 5),
+        (1, -2, 3), (1, -1, 5), (1, 0, 7), (1, 1, 5), (1, 2, 3),
+        (2, -2, 1), (2, -1, 3), (2, 0, 5), (2, 1, 3), (2, 2, 1)
+    ]
+    divisor = 48  # 係数の合計値
+    
+    # 各チャンネルを個別に処理
+    for c in prange(channels):
+        # 現在のチャンネルの画像をコピー
+        error = np.zeros((h+4, w+4), dtype=np.float32)  # 境界処理用の余裕を持たせた誤差バッファ
+        
+        # ラスタ走査（左上→右下）
+        for y in prange(h):
+            for x in prange(w):
+                # 現在のピクセル値 + 累積誤差
+                current_val = img_float[y, x, c] + error[y, x]
+                
+                # 量子化（四捨五入）
+                quantized_val = manual_clip(round(current_val * 65535.0), 0.0, 65535.0)
+                
+                # 出力値設定
+                output[y, x, c] = int(quantized_val)
+                
+                # 量子化誤差の計算
+                quant_error = current_val - (quantized_val / 65535.0)
+                
+                # 誤差を周囲ピクセルに拡散
+                for dy, dx, weight in kernel:
+                    ey = y + dy
+                    ex = x + dx
+                    if 0 <= ey < h and 0 <= ex < w:
+                        error[ey, ex] += quant_error * (weight / divisor)
+        
+    return output
 
-    return (img * 255).astype(np.uint8)
-
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def fast_median_filter(img, kernel_size=3, num_bins=256):
     """
     量子化とヒストグラムベースの高速メディアンフィルタ
@@ -1824,9 +1887,9 @@ def type_convert(img, target_type):
     
     elif target_type == jnp.ndarray:
         if isinstance(img, np.ndarray):
-            return img
+            return jnp.array(img)
         elif isinstance(img, cv2.UMat):
-            return img.get()
+            return jnp.array(img.get())
     
     elif target_type == cv2.UMat:
         if isinstance(img, np.ndarray):

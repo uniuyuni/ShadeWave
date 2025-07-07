@@ -138,7 +138,11 @@ class MainWidget(MDBoxLayout):
 
     # @mainthread
     def blit_image(self, img):
-        self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='float')
+        if config.get_config('display_output_dither'):
+            img = core.jjn_dither_uint8(img)
+            self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
+        else:
+            self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='float')
         self.ids["preview"].texture = None # 更新のために必要
         self.ids["preview"].texture = self.texture
 
@@ -149,7 +153,7 @@ class MainWidget(MDBoxLayout):
     def draw_image(self, offset, dt):
         if (self.imgset is not None) and (self.imgset.img is not None):
             img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
-            utils.print_nan_inf(img)
+            utils.print_nan_inf("output", img)
 
             img = np.array(img)
 

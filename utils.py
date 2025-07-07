@@ -9,7 +9,7 @@ from pillow_heif.options import QUALITY
 from screeninfo import get_monitors
 import json
 import base64
-import zlib
+import logging
 import numpy as np
 from typing import Any, Dict
 
@@ -124,13 +124,13 @@ def make_orientation(rotation, flip):
 
     return orientation
 
-def print_nan_inf(img):
+def print_nan_inf(label, img):
     result = np.isnan(img)
-    count = result.sum()
-    print("NaN=", count)
+    nan_count = result.sum()
     result = np.isinf(img)
-    count = result.sum()
-    print("inf=", count)
+    inf_count = result.sum()
+    if nan_count > 0 or inf_count > 0:
+        logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
 
 
 def convert_to_float32(img):

@@ -1515,7 +1515,7 @@ class GradingEffect(Effect):
         rgb = core.type_convert(rgb, jnp.ndarray)
         gray = core.cvtColorRGB2Gray(rgb)
         blend = core.apply_lut(gray, lut)
-        blend = np.array(blend)
+        blend = jnp.array(blend)
         return core.apply_mask(rgb, blend, rgb * rgbs)
 
 class VSandSaturationEffect(Effect):

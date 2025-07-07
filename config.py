@@ -14,6 +14,7 @@ _config = {
     'gpu_device': "mps",
     'cat': "cat16",
     'base_resolution_scale': [4096, 4096],
+    'display_output_dither': True
 }
 _main_widget = None
 
