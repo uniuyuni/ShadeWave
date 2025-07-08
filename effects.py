@@ -1273,7 +1273,7 @@ class CLAHEEffect(Effect):
             if self.hash != param_hash:
                 img = core.type_convert(img, np.ndarray)
                 clahe = cv2.createCLAHE(clipLimit=40.0, tileGridSize=(8,8))
-                target = np.zeros_like(img, dtype=np.uint16)
+                target = np.empty_like(img, dtype=np.uint16)
                 img2 = (np.clip(img, 0, 1) * 65535).astype(np.uint16)
                 for i in range(3):
                     target[..., i] = clahe.apply(img2[..., i])
@@ -1340,14 +1340,14 @@ class TonecurveEffect(Effect):
         else:
             param_hash = hash(np.sum(pl))
             if self.hash != param_hash:
-                self.diff = core.calc_point_list_to_lut(pl)
+                self.diff = core.make_spline_func(pl)
                 self.hash = param_hash
 
         return self.diff
     
     def apply_diff(self, rgb):
         rgb =  core.type_convert(rgb, jnp.ndarray)
-        return core.apply_lut(rgb, self.diff)
+        return core.apply_spline_func(rgb, *self.diff)
 
 class TonecurveRedEffect(Effect):
 
@@ -1376,7 +1376,7 @@ class TonecurveRedEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_r):
-        rgb =  core.type_convert(rgb, jnp.ndarray)
+        rgb_r =  core.type_convert(rgb_r, jnp.ndarray)
         return core.apply_lut(rgb_r, self.diff)
 
 class TonecurveGreenEffect(Effect):
@@ -1406,7 +1406,7 @@ class TonecurveGreenEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_g):
-        rgb =  core.type_convert(rgb, jnp.ndarray)
+        rgb_g =  core.type_convert(rgb_g, jnp.ndarray)
         return core.apply_lut(rgb_g, self.diff)
 
 class TonecurveBlueEffect(Effect):
@@ -1436,9 +1436,9 @@ class TonecurveBlueEffect(Effect):
 
         return self.diff
 
-    def apply_diff(self, rgb_g):
-        rgb =  core.type_convert(rgb, jnp.ndarray)
-        return core.apply_lut(rgb_g, self.diff)
+    def apply_diff(self, rgb_b):
+        rgb_b =  core.type_convert(rgb_b, jnp.ndarray)
+        return core.apply_lut(rgb_b, self.diff)
 
 class GradingEffect(Effect):
     __colorsys = None

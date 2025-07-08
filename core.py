@@ -623,6 +623,84 @@ def apply_lut(img, lut, max_value=1.0):
     
     return result
 
+from scipy.interpolate import interp1d
+
+def make_spline_func(point_list, max_value=1.0):
+    """
+    画像にカーブを適用（float32のまま処理）
+    
+    Parameters:
+    -----------
+    img : ndarray
+        入力画像 (float32, 任意の形状)
+    point_list : list of tuples
+        (x, y)形式のコントロールポイントのリスト
+    max_value : float
+        最大値（デフォルト1.0）
+    kind : str
+        補間方法（'linear', 'cubic', 'quadratic'など）
+        
+    Returns:
+    --------
+    ndarray
+        変換後の画像（入力と同じ形状）
+    """
+    # ポイントをソート
+    point_list = sorted((pl[0], pl[1]) for pl in point_list)
+    
+    # x値の重複を除去し、対応するy値の平均を計算
+    unique_x = []
+    unique_y = []
+    for x_val in sorted(set(pl[0] for pl in point_list)):
+        # 同じx値を持つ全てのy値を取得
+        y_vals = [pl[1] for pl in point_list if pl[0] == x_val]
+        
+        # y値の平均を計算
+        avg_y = sum(y_vals) / len(y_vals)
+        
+        unique_x.append(x_val)
+        unique_y.append(avg_y)
+    
+    # NumPy配列に変換
+    x = np.array(unique_x, dtype=np.float32)
+    y = np.array(unique_y, dtype=np.float32)
+    
+    # 有効範囲の上限（外挿が必要になる境界）
+    valid_max = min(max(x), max_value)
+    
+    # 補間関数を作成
+    interp_fn = interp1d(
+        x, 
+        y, 
+        kind='quadratic' if len(x) >= 3 else 'linear',  # 3点以上ならスプライン補間
+        bounds_error=False,  # 有効範囲外を外挿
+        fill_value='extrapolate',  # 自動外挿
+        assume_sorted=False  # 入力がソートされていることを仮定
+    )
+
+    return (interp_fn, valid_max)
+
+def apply_spline_func(img, interp_fn, valid_max, max_value=1.0):
+    
+    # 有効範囲内を補間
+    result = interp_fn(img)
+    
+    # 有効範囲外を線形外挿（必要に応じて）
+    if valid_max < max_value:
+        # 最後の2点から傾きを計算
+        if len(x) >= 2:
+            slope = (y[-1] - y[-2]) / (x[-1] - x[-2])
+        else:
+            slope = 1.0  # 点が1つ以下の場合は傾き1
+        
+        # 外挿領域のマスク
+        mask = img > valid_max
+        
+        # 線形外挿
+        result[mask] = interp_fn(valid_max) + slope * (img[mask] - valid_max)
+    
+    return result.astype(np.float32)
+
 #--------------------------------------------------
 # マスクイメージの適用
 def apply_mask_np(img1, msk, img2):
@@ -2091,3 +2169,164 @@ def compact_numpy_decoder(obj: Dict) -> Any:
         return array.reshape(obj['shape'])
     
     return obj
+
+def auto_contrast_correction(image):
+    """
+    RGB float32画像の自動コントラスト補正
+    入力条件:
+        - image: (H, W, 3) shapeのnumpy配列
+        - データ型: np.float32
+        - 値の範囲: 任意（負の値や1.0以上も可）
+    
+    処理内容:
+        1. 各RGBチャンネル独立にヒストグラム伸張
+        2. 最小値・最大値に基づく線形変換
+        3. 値のクリッピングなし（1.0超も許容）
+    """
+    # 入力画像のコピーを作成
+    corrected = np.empty_like(image)
+    
+    # チャンネルごとに処理
+    for c in range(3):
+        channel = image[:, :, c]
+        
+        # チャンネルの最小値・最大値を計算
+        c_min = np.min(channel)
+        c_max = np.max(channel)
+        c_range = c_max - c_min
+        
+        # コントラスト補正
+        if c_range > 0:
+            corrected[:, :, c] = (channel - c_min) / c_range
+        else:
+            # 全画素同じ値の場合は変更しない
+            corrected[:, :, c] = channel
+    
+    return corrected
+
+def apply_quantization_error_reduction(
+    img_float: np.ndarray,  # float32 [0,1] 入力画像
+    target_func: callable,   # 画像処理関数 (uint8/uint16画像を受け取る)
+    bit_depth: int = 16,     # 量子化ビット深度 (8 or 16)
+    gamma: float = None,     # ガンマ補正値 (Noneなら適用しない)
+    use_dithering: bool = False,  # ディザリングを有効化
+    clip_output: bool = False # 出力を[0,1]にクリップ
+) -> np.ndarray:
+    """
+    量子化誤差を軽減しながら任意の画像処理関数を適用する汎用関数
+    
+    特徴:
+    - 8bit/16bit対応
+    - ガンマ補正オプション
+    - ディザリングオプション
+    - 量子化誤差の記録と復元
+    - 暗部領域の特別処理
+    """
+    
+    # 量子化パラメータ設定
+    max_val = (2 ** bit_depth) - 1
+    min_val = 0
+    quant_dtype = np.uint16 if bit_depth > 8 else np.uint8
+    
+    # ガンマ補正の適用 (オプション)
+    if gamma is not None:
+        # ガンマ補正: [0,1] -> [0,1]
+        img_processed = np.power(img_float, 1.0 / gamma)
+    else:
+        img_processed = img_float
+    
+    # 量子化前のfloat値をスケーリング
+    img_scaled = img_processed * max_val
+    
+    # ディザリングの適用 (オプション)
+    if use_dithering:
+        noise = np.random.uniform(low=-0.5, high=0.5, size=img_scaled.shape)
+        img_scaled = np.clip(img_scaled + noise, min_val, max_val)
+    
+    # 量子化誤差比率の記録
+    # 量子化: float -> integer
+    img_quantized = np.clip(img_scaled, min_val, max_val).astype(quant_dtype)
+    
+    # 比率 = 量子化後の値 / 量子化前の値 (0除算回避)
+    float_ratio = np.zeros_like(img_scaled)
+    non_zero_mask = img_scaled > 1e-6
+    float_ratio[non_zero_mask] = img_quantized[non_zero_mask] / img_scaled[non_zero_mask]
+    # ゼロ値の比率は1とする（後で0除算を避けるため）
+    float_ratio[~non_zero_mask] = 1.0
+    
+    # ターゲット関数で処理
+    processed_quantized = target_func(img_quantized)
+    
+    # 出力をfloatに変換
+    processed_float = processed_quantized.astype(np.float32)
+    
+    # 量子化誤差の補正: 処理後の値を記録した比率で割る
+    # 比率が0.5未満になる場合は0.5に制限（過補正防止）
+    restored_float = processed_float / np.maximum(float_ratio, 0.5)
+    
+    # 暗部領域の特別処理: 処理後に0になった画素で、元の値が0でない場合
+    # 元の値の一定比率（ここでは90%）を復元
+    zero_mask = (processed_quantized == 0) & (img_quantized != 0)
+    restored_float[zero_mask] = img_scaled[zero_mask] * 0.9
+    
+    # スケーリングを元に戻す
+    restored = restored_float / max_val
+    
+    # ガンマ逆補正 (オプション)
+    if gamma is not None:
+        restored = np.power(restored, gamma)
+    
+    # クリップ
+    if clip_output:
+        restored = np.clip(restored, 0, 1)
+    
+    return restored
+
+def process_color_image_lab(img_rgb_float, target_func, bit_depth=16, gamma=2.2, restore_color=True):
+    """カラー画像をLAB空間で処理"""
+    lab = cv2.cvtColor(img_rgb_float, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    
+    # 明度チャンネルのみ処理 (正規化: L*は[0,100] -> [0,1])
+    l_processed = apply_quantization_error_reduction(
+        l / 100.0,
+        target_func,
+        bit_depth=bit_depth,
+        gamma=gamma
+    ) * 100.0  # [0,100]に戻す
+    
+    lab_processed = cv2.merge((l_processed, a, b))
+    enhanced_image = cv2.cvtColor(lab_processed, cv2.COLOR_LAB2RGB)
+
+    if restore_color:
+        # 変換前画像と変換後画像をHSVに分解
+        old_hsv = cv2.cvtColor(img_rgb_float, cv2.COLOR_RGB2HSV_FULL)
+        _, old_s, old_v = cv2.split(old_hsv)
+        new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_RGB2HSV_FULL)
+        new_h, new_s, new_v = cv2.split(new_hsv)
+        # 破綻リスクの計算
+        risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
+        # 破綻リスクに応じて彩度の重み付け平均
+        merged_s = old_s * (1 - risk) + new_s * risk
+        # HSVに復元してからさらにRGBに復元
+        final_hsv = cv2.merge((new_h, merged_s, new_v))
+        enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2RGB_FULL)
+    
+    return enhanced_image
+
+def clahe_16bit(img_uint16):
+    """16ビット画像用のCLAHE"""
+    clahe = cv2.createCLAHE(clipLimit=10.0, tileGridSize=(8, 8))
+    return clahe.apply(img_uint16)
+
+def histeq_16bit(img_uint16):
+    """16ビット画像用のヒストグラム均等化"""
+    # ヒストグラム計算
+    hist = np.histogram(img_uint16, bins=65536, range=(0, 65535))[0]
+    
+    # 累積分布関数(CDF)計算
+    cdf = hist.cumsum()
+    cdf_normalized = cdf * 65535 / cdf[-1]
+    
+    # ルックアップテーブルでマッピング
+    return np.interp(img_uint16.flatten(), np.arange(0, 65536), cdf_normalized).reshape(img_uint16.shape).astype(np.uint16)

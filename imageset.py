@@ -80,11 +80,11 @@ class ImageSet:
         return out_img
     
     def _apply_whitebalance(self, img_array, raw, exif_data, param):
-        #wb = raw.camera_whitebalance
-        #wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
-        gl, rl, bl = exif_data.get('WB_GRBLevels', "1024 1024 1024").split(' ')
-        gl, rl, bl = int(gl), int(rl), int(bl)
-        wb = np.array([rl, gl, bl], dtype=np.float32) / 1024.0
+        wb = raw.camera_whitebalance
+        wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
+        #gl, rl, bl = exif_data.get('WB_GRBLevels', "1024 1024 1024").split(' ')
+        #gl, rl, bl = int(gl), int(rl), int(bl)
+        #wb = np.array([rl, gl, bl], dtype=np.float32) / 1024.0
 
         wb[1] = np.sqrt(wb[1])
         #img_array /= wb
@@ -109,7 +109,7 @@ class ImageSet:
             thumb = raw.extract_thumb()
             if thumb.format == rawpy.ThumbFormat.JPEG:
                 # JPEGフォーマットの場合
-                with PILImage.open(io.BytesIO(thumb.data)).convert("RGB") as img:
+                with PILImage.open(io.BytesIO(thumb.data)) as img:
                     img = PILImageOps.exif_transpose(img)
                     img_array = np.array(img)
                 """
@@ -132,6 +132,11 @@ class ImageSet:
             # 色空間変換
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'XYZ Scaling', # 最速？
                                 apply_cctf_decoding=True, apply_gamut_mapping=False).astype(np.float32)
+
+            # 試験的彩度補正
+            hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
+            hls[..., 2] = core.calc_saturation(hls[..., 2], 0, -50)
+            img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -277,6 +282,7 @@ class ImageSet:
 
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
+                """
                 # RAWの明るさをとってくる
                 source_ev = exif_data.get('LightValue', None)
 
@@ -290,6 +296,12 @@ class ImageSet:
 
                 # 適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
+                """
+                
+                img_array = core.process_color_image_lab(img_array, core.clahe_16bit)
+                hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
+                hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 90)
+                img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)

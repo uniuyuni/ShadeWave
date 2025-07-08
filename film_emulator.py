@@ -47,7 +47,7 @@ class FilmEmulator:
             # 外挿を防ぐため範囲制限
             interpolator = interp1d(
                 x, y, 
-                kind='linear',  # 線形補間に変更
+                kind='cubic',
                 bounds_error=False, 
                 fill_value=(y[0], y[-1])
             )
