@@ -1,31 +1,24 @@
 
 import cv2
 import numpy as np
-import core
 import rawpy
-import math
 import logging
 import io
 import colour
 import time
-from wand.image import Image as WandImage
 from PIL import Image as PILImage, ImageOps as PILImageOps
-import jax.numpy as jnp
-from jax import jit
-from functools import partial
 from multiprocessing import shared_memory
 
 from dcp_profile import DCPReader, DCPProcessor
 import config
+import define
 import file_cache_system
 import params
-import utils
-import viewer_widget
-import color
 import bit_depth_expansion
 import highlight_recovery
+import core
 
-print(f"rawpy version:{rawpy.libraw_version}")
+print(f"libraw version:{rawpy.libraw_version}")
 
 def imageset_to_shared_memory(imgset):
     """
@@ -87,13 +80,12 @@ class ImageSet:
         return out_img
     
     def _apply_whitebalance(self, img_array, raw, exif_data, param):
-        wb = raw.camera_whitebalance
-        wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
-        """
+        #wb = raw.camera_whitebalance
+        #wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
         gl, rl, bl = exif_data.get('WB_GRBLevels', "1024 1024 1024").split(' ')
         gl, rl, bl = int(gl), int(rl), int(bl)
-        wb = np.array([rl, gl, bl]).astype(np.float32)/1024.0
-        """
+        wb = np.array([rl, gl, bl], dtype=np.float32) / 1024.0
+
         wb[1] = np.sqrt(wb[1])
         #img_array /= wb
         params.set_temperature_to_param(param, *core.invert_RGB2TempTint(wb))
@@ -108,7 +100,7 @@ class ImageSet:
         return (top, left, width, height)
 
 
-    def _load_raw_preview(self, file_path, exif_data, param):
+    def _load_raw_preview(self, raw, file_path, exif_data, param):
         try:
             # RAWで読み込んでみる
             raw = rawpy.imread(file_path)
@@ -135,49 +127,55 @@ class ImageSet:
                 raise ValueError(f"Unsupported thumbnail format: {thumb.format}")
 
             # RGB画像初期設定
-            img_array = utils.convert_to_float32(img_array)
+            img_array = core.convert_to_float32(img_array)
 
             # 色空間変換
-            img_array = color.rgb_to_xyz(img_array, "sRGB", True)
-
-            # GPU to CPU
-            img_array = np.array(img_array)
+            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'XYZ Scaling', # 最速？
+                                apply_cctf_decoding=True, apply_gamut_mapping=False).astype(np.float32)
 
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
-            # GPU to CPU
-            img_array = np.array(img_array)
-
             # クロップとexifデータの回転
             _, _, width, height = self._delete_exif_orientation(exif_data)
-
-            # 情報の設定
-            width, height = params.set_image_param(param, img_array)
 
             # RAW画像のサイズに合わせてリサイズ
             img_array = cv2.resize(img_array, (width, height))
 
+            # 情報の設定
+            params.set_image_param(param, img_array)
+
             # 正方形にする
-            img_array = core.adjust_shape_to_square(img_array)
+            #img_array = core.adjust_shape_to_square(img_array)
 
             # 描画用に設定
             self.img = img_array
 
         except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
             logging.warning("file is not supported " + file_path)
-            raw.close()
-            return False
+
+        except rawpy.LibRawNoThumbnailError:
+            logging.error('no thumbnail found')
+
+        except rawpy.LibRawUnsupportedThumbnailError:
+            logging.error('unsupported thumbnail')
+
+        except Exception as e:
+            logging.error(f"raw error {file_path} {e}")
         
-        return raw
+        finally:
+            raw.close()
+        
+        return (file_path, self, exif_data, param, 0)
 
     def _load_raw_fast(self, raw, file_path, exif_data, param):
         file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, True)
-        return (file_path, imgset, exif_data, param, 0)
-
-    def _load_raw(self, raw, file_path, exif_data, param):
-        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, False)
+        #return (file_path, imgset, exif_data, param, 0)
         return (file_path, imageset_to_shared_memory(imgset), exif_data, param, 1)
+
+    def _load_raw_full(self, raw, file_path, exif_data, param):
+        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, False)
+        return (file_path, imageset_to_shared_memory(imgset), exif_data, param, -1)
                              
     def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
         try:
@@ -231,7 +229,6 @@ class ImageSet:
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
             # サイズを整える
-            """
             if half == True:
                 cheight = height // 2
                 cwidth = width // 2
@@ -241,15 +238,15 @@ class ImageSet:
             if cwidth > cheight:
                 img_array = img_array[:cheight, :cwidth]
             else:
-                img_array = img_array[-cheight:, -cwidth:]
-            """
+                img_array = img_array[-cheight:, :cwidth]
+            
             # 下位2bit補完
             if half == False and config.get_config('raw_depth_expansion') == True:
                 img_array = img_array >> 2
                 img_array = bit_depth_expansion.process_rgb_image(img_array)
 
             # float32へ
-            img_array = utils.convert_to_float32(img_array)
+            img_array = core.convert_to_float32(img_array)
 
             #img_array = img_array - raw.black_level_per_channel[0] / ((1<<14)-1)
             #img_array = np.clip(img_array, 0, 1)
@@ -330,7 +327,7 @@ class ImageSet:
             img_array = np.array(img)
 
             # float32へ
-            img_array = utils.convert_to_float32(img_array)
+            img_array = core.convert_to_float32(img_array)
 
             # グレイ画像をカラーへ
             if img_array.ndim == 2 or img_array.shape[2] == 1:
@@ -366,14 +363,15 @@ class ImageSet:
     def preload(self, file_path, exif_data, param):
         self.file_path = file_path
 
-        if file_path.lower().endswith(viewer_widget.supported_formats_raw):            
+        if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):            
             result = []
+            result.append(ImageSet.Result(worker="_load_raw_preview", source=None))
             result.append(ImageSet.Result(worker="_load_raw_fast", source=None))
-            result.append(ImageSet.Result(worker="_load_raw", source=None))
+            result.append(ImageSet.Result(worker="_load_raw_full", source=None))
 
             return result
             
-        elif file_path.lower().endswith(viewer_widget.supported_formats_rgb):
+        elif file_path.lower().endswith(define.SUPPORTED_FORMATS_RGB):
             result = []
             result.append(ImageSet.Result(worker="_load_rgb", source=None))
             return result
