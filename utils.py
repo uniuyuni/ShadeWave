@@ -3,15 +3,12 @@ from importlib.machinery import BYTECODE_SUFFIXES
 import math
 import cv2
 import numpy as np
-from kivy.core.window import Window as KVWindow
-from kivy.uix.widget import Widget as KVWidget
 from pillow_heif.options import QUALITY
-from screeninfo import get_monitors
 import json
 import base64
 import logging
 import numpy as np
-from typing import Any, Dict
+
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -133,117 +130,6 @@ def print_nan_inf(label, img):
         logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
 
 
-def convert_to_float32(img):
-    """
-    画像のデータ型をfloat32に変換する関数
-
-    Args:
-        img (numpy.ndarray): 変換する画像データ
-
-    Returns:
-        numpy.ndarray: float32の画像データ
-    """
-    if img.dtype == np.uint8:
-        img = img.astype(np.float32)/255
-    elif img.dtype == np.uint16 or img.dtype == '>u2' or img.dtype == '<u2':
-        img = img.astype(np.float32)/65535
-    elif img.dtype == np.uint32 or img.dtype == '>u4' or img.dtype == '<u4':
-        img = img.astype(np.float32)/4294967295
-    elif img.dtype == np.uint64:
-        img = img.astype(np.float32)/18446744073709551615
-    elif img.dtype == np.int8:
-        img = img.astype(np.float32)/127
-    elif img.dtype == np.int16:
-        img = img.astype(np.float32)/32767
-    elif img.dtype == np.int32:
-        img = img.astype(np.float32)/2147483647
-    elif img.dtype == np.int64:
-        img = img.astype(np.float32)/9223372036854775807
-    elif img.dtype == np.float16:
-        img = img.astype(np.float32)
-    elif img.dtype == np.float32:
-        pass
-    elif img.dtype == np.float64:
-        img = img.astype(np.float32)
-    else:
-        raise ValueError(f"サポートされていないデータ型: {img.dtype}")
-
-    return img
-
-def get_current_dispay():
-    # 現在のウィンドウの左上座標
-    win_x, win_y = KVWindow.left, KVWindow.top
-
-    # モニタ一覧を取得して、ウィンドウが属しているモニタを探す
-    monitors = get_monitors()
-
-    for i, m in enumerate(monitors):
-        if m.is_primary == True:
-            primary = m
-            break
-
-    for i, m in enumerate(monitors):
-        if m.y != 0:
-            m.y = -m.height if m.y > 0 else primary.height
-        if m.x <= win_x < m.x + m.width and m.y <= win_y < m.y + m.height:
-            return {"display": i, "width": m.width, "height": m.height, "is_primary": m.is_primary}
-    
-    return None
-
-def get_entire_widget_tree(root, delay=0.1):
-    """全ウィジェット取得（未表示含む）"""
-    results = []
-    
-    def _collect(w):
-        if not isinstance(w, KVWidget):
-            return
-            
-        results.append(w)
-        
-        # 特殊レイアウト対応
-        if hasattr(w, 'tab_list'):  # TabbedPanel
-            for tab in w.tab_list:
-                _collect(tab.content)
-                
-        if hasattr(w, 'screens'):  # ScreenManager
-            for screen in w.screens:
-                _collect(screen)
-                
-        # 通常の子要素
-        for child in w.children:
-            _collect(child)
-    
-    # 遅延実行で未初期化要素に対応
-    #KVClock.schedule_once(lambda dt: _collect(root), delay)
-    _collect(root)
-
-    return results
-
-def traverse_widget(root):
-    # すべてのスケールが必要なウィジェットを更新
-    if root:
-        for child in get_entire_widget_tree(root):
-            if hasattr(child, 'ref_width'):
-                child.width = dpi_scale_width(child.ref_width)
-            if hasattr(child, 'ref_height'):
-                child.height = dpi_scale_height(child.ref_height)
-            if hasattr(child, 'ref_padding'):
-                child.padding = dpi_scale_width(child.ref_padding)
-            if hasattr(child, 'ref_spacing'):
-                child.spacing = dpi_scale_width(child.ref_spacing)
-            if hasattr(child, 'ref_tab_width'):
-                child.tab_width = dpi_scale_width(child.ref_tab_width)
-            if hasattr(child, 'ref_tab_height'):
-                child.tab_height = dpi_scale_height(child.ref_tab_height)
-
-def dpi_scale_width(ref):
-    return ref * (KVWindow.dpi / 96)
-    #return ref * (KVWindow.width / 1200)
-
-def dpi_scale_height(ref):
-    return ref * (KVWindow.dpi / 96)
-    #return ref * (KVWindow.height / 800)
-
 def convert_image_to_list(image):
     # 画像を処理できる方に変換
     img = (image * 65535).astype(np.uint16)
@@ -316,54 +202,6 @@ def unpack_uint32_to_uint8(packed_uint32, original_length):
     
     # 元の長さでトリミング（パディング部分を除去）
     return byte_arr[:original_length]
-
-
-class CompactNumpyEncoder(json.JSONEncoder):
-    """NumPyデータを最小容量で保存するカスタムエンコーダ"""
-    
-    def default(self, obj: Any) -> Any:
-        # NumPy配列の処理
-        if isinstance(obj, np.ndarray):
-            return self._compress_array(obj)
-        
-        # NumPyスカラーの処理
-        if isinstance(obj, np.generic):
-            return obj.item()
-            
-        return super().default(obj)
-    
-    def _compress_array(self, array: np.ndarray) -> Dict[str, Any]:
-        """配列を圧縮してBase64エンコード"""
-        # データをバイト列に変換
-        data_bytes = array.tobytes()
-        
-        # zlibで圧縮 (レベル9で最大圧縮)
-        compressed = data_bytes #zlib.compress(data_bytes, level=9)
-        
-        # Base64エンコード
-        encoded = base64.b64encode(compressed).decode('ascii')
-        
-        return {
-            '__numpy_array__': True,
-            'dtype': str(array.dtype),
-            'shape': array.shape,
-            'data': encoded
-        }
-
-def compact_numpy_decoder(obj: Dict) -> Any:
-    """圧縮されたNumPyデータを復元"""
-    if '__numpy_array__' in obj:
-        # Base64デコード
-        decoded = base64.b64decode(obj['data'])
-        
-        # zlib解凍
-        decompressed = decoded #zlib.decompress(decoded)
-        
-        # NumPy配列に変換
-        array = np.frombuffer(decompressed, dtype=np.dtype(obj['dtype']))
-        return array.reshape(obj['shape'])
-    
-    return obj
 
 
 if __name__ == '__main__':

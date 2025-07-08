@@ -19,6 +19,8 @@ from numba.experimental import jitclass
 from numba import njit, prange
 from PIL import ImageCms
 from multipledispatch import dispatch
+import json
+from typing import Any, Dict
 
 import highlight_recovery
 import sigmoid
@@ -242,8 +244,8 @@ def gaussian_blur_jax(src, ksize=(3, 3), sigma=0.0):
     return dest
 
 def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
-    #if ksize == (0, 0):
-    #    return src
+    if ksize == (0, 0) and sigma == 0.0:
+        return src
     return  cv2.GaussianBlur(src, ksize, sigma)
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
@@ -1983,3 +1985,109 @@ def apply_film_grain(
     # 6. ノイズ付加とクリッピング（float32保持）
     noisy_image = image + grain
     return noisy_image
+
+def convert_to_float32(img):
+    """
+    画像のデータ型をfloat32に変換する関数
+
+    Args:
+        img (numpy.ndarray): 変換する画像データ
+
+    Returns:
+        numpy.ndarray: float32の画像データ
+    """
+    if img.dtype == np.uint8:
+        img = img.astype(np.float32)/255
+    elif img.dtype == np.uint16 or img.dtype == '>u2' or img.dtype == '<u2':
+        img = img.astype(np.float32)/65535
+    elif img.dtype == np.uint32 or img.dtype == '>u4' or img.dtype == '<u4':
+        img = img.astype(np.float32)/4294967295
+    elif img.dtype == np.uint64:
+        img = img.astype(np.float32)/18446744073709551615
+    elif img.dtype == np.int8:
+        img = img.astype(np.float32)/127
+    elif img.dtype == np.int16:
+        img = img.astype(np.float32)/32767
+    elif img.dtype == np.int32:
+        img = img.astype(np.float32)/2147483647
+    elif img.dtype == np.int64:
+        img = img.astype(np.float32)/9223372036854775807
+    elif img.dtype == np.float16:
+        img = img.astype(np.float32)
+    elif img.dtype == np.float32:
+        pass
+    elif img.dtype == np.float64:
+        img = img.astype(np.float32)
+    else:
+        raise ValueError(f"サポートされていないデータ型: {img.dtype}")
+
+    return img
+
+def get_initial_crop_rect(input_width, input_height):
+    maxsize = max(input_width, input_height)
+    padw = (maxsize - input_width) / 2 
+    padh = (maxsize - input_height) / 2
+    return (int(math.floor(padw)), int(math.floor(padh)), int(math.ceil(padw)+input_width), int(math.ceil(padh)+input_height))
+
+def get_initial_disp_info(input_width, input_height, scale):
+    # パディング付与
+    x1, y1, crop_width, crop_height = 0, 0, input_width, input_height
+    maxsize = max(input_width, input_height)
+    padw = (maxsize - input_width) // 2 
+    padh = (maxsize - input_height) // 2
+    crop_x = int(x1 + padw)
+    crop_y = int(y1 + padh)
+    return (crop_x, crop_y, crop_width, crop_height, scale)
+
+def convert_rect_to_info(crop_rect, scale):      
+    x1, y1, x2, y2 = crop_rect
+    w = x2 - x1
+    h = y2 - y1        
+    return (x1, y1, w, h, scale)
+
+class CompactNumpyEncoder(json.JSONEncoder):
+    """NumPyデータを最小容量で保存するカスタムエンコーダ"""
+    
+    def default(self, obj: Any) -> Any:
+        # NumPy配列の処理
+        if isinstance(obj, np.ndarray):
+            return self._compress_array(obj)
+        
+        # NumPyスカラーの処理
+        if isinstance(obj, np.generic):
+            return obj.item()
+            
+        return super().default(obj)
+    
+    def _compress_array(self, array: np.ndarray) -> Dict[str, Any]:
+        """配列を圧縮してBase64エンコード"""
+        # データをバイト列に変換
+        data_bytes = array.tobytes()
+        
+        # zlibで圧縮 (レベル9で最大圧縮)
+        compressed = data_bytes #zlib.compress(data_bytes, level=9)
+        
+        # Base64エンコード
+        encoded = base64.b64encode(compressed).decode('ascii')
+        
+        return {
+            '__numpy_array__': True,
+            'dtype': str(array.dtype),
+            'shape': array.shape,
+            'data': encoded
+        }
+
+def compact_numpy_decoder(obj: Dict) -> Any:
+    """圧縮されたNumPyデータを復元"""
+    if '__numpy_array__' in obj:
+        # Base64デコード
+        decoded = base64.b64decode(obj['data'])
+        
+        # zlib解凍
+        decompressed = decoded #zlib.decompress(decoded)
+        
+        # NumPy配列に変換
+        array = np.frombuffer(decompressed, dtype=np.dtype(obj['dtype']))
+        return array.reshape(obj['shape'])
+    
+    return obj

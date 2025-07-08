@@ -171,27 +171,6 @@ class InpaintEffect(Effect):
         self.inpaint_diff_list = []
         self.mask_editor = None
 
-    @staticmethod
-    def dump(param):
-        inpaint_diff_list = param.get('inpaint_diff_list', None)
-        if inpaint_diff_list is not None:
-            inpaint_diff_list_dumps = []
-            for inpaint_diff in inpaint_diff_list:
-                inpaint_diff.image2list()
-                inpaint_diff_list_dumps.append((inpaint_diff.disp_info, inpaint_diff.image))
-            param['inpaint_diff_list'] = inpaint_diff_list_dumps
-
-    @staticmethod
-    def load(param):
-        inpaint_diff_list_dumps = param.get('inpaint_diff_list', None)
-        if inpaint_diff_list_dumps is not None:
-            inpaint_diff_list = []
-            for inpaint_diff_dump in inpaint_diff_list_dumps:
-                inpaint_diff = InpaintDiff(disp_info=inpaint_diff_dump[0], image=inpaint_diff_dump[1])
-                inpaint_diff.list2image()
-                inpaint_diff_list.append(inpaint_diff)
-            param['inpaint_diff_list'] = inpaint_diff_list
-
     def get_param_dict(self, param):
         return {
             'inpaint': 0,
@@ -333,8 +312,8 @@ class CropEffect(Effect):
 
     def get_param_dict(self, param):
         param2 = param.copy()
-        params.set_crop_rect(param2, crop_editor.CropEditor.get_initial_crop_rect(*param['original_img_size']))
-        #params.set_disp_info(param2, crop_editor.CropEditor.get_initial_disp_info(*param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size'])))
+        params.set_crop_rect(param2, core.get_initial_crop_rect(*param['original_img_size']))
+        #params.set_disp_info(param2, core.get_initial_disp_info(*param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size'])))
         return {
             'rotation': 0,
             'rotation2': 0,
@@ -401,7 +380,7 @@ class CropEffect(Effect):
             widget.ids["preview_widget"].add_widget(self.crop_editor)
 
             # 編集中は一時的に変更
-            params.set_disp_info(param, crop_editor.CropEditor.get_initial_disp_info(input_width, input_height, scale))
+            params.set_disp_info(param, core.get_initial_disp_info(input_width, input_height, scale))
 
             # 保存しておく
             self.param = param

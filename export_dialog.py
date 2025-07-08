@@ -11,8 +11,8 @@ from kivy.metrics import dp
 from functools import partial
 import json
 
+import kvutils
 import macos
-import utils
 
 import param_slider
 import float_input
@@ -78,6 +78,9 @@ class ExportDialog(ModalView):
     
     # Metadata property
     include_metadata = BooleanProperty(True)
+
+    # Dhithering property
+    dithering = BooleanProperty(True)
     
     # Output path
     output_path = StringProperty('')
@@ -151,6 +154,7 @@ class ExportDialog(ModalView):
         print(f"Size: {self.size_mode} - {self.size_value}")
         print(f"Sharpen: {self.sharpen_value}")
         print(f"Metadata: {self.include_metadata}")
+        print(f"Dithering: {self.dithering}")
         print(f"Output: {self.output_path}")
         print(f"ICC Profile: {self.icc_profile}")
 
@@ -163,6 +167,7 @@ class ExportDialog(ModalView):
                 'size_value': self.size_value,
                 'sharpen': self.sharpen_value,
                 'metadata': self.include_metadata,
+                'dithering': self.dithering,
                 'output_path': self.output_path,
                 'icc_profile': self.icc_profile,
             }            
@@ -187,6 +192,7 @@ class ExportDialog(ModalView):
                 'size_value': self.size_value,
                 'sharpen': self.sharpen_value,
                 'metadata': self.include_metadata,
+                'dithering': self.dithering,
                 'output_path': self.output_path,
                 'color_space': self.color_space,
             }
@@ -214,6 +220,7 @@ class ExportDialog(ModalView):
             self.sharpen_value = settings['sharpen']
             self.ids['slider_sharpen'].set_slider_value(self.sharpen_value)
             self.include_metadata = settings['metadata']
+            self.dithering = settings['dithering']
             self.output_path = settings['output_path']
             self.color_space = settings['color_space']
             self.current_preset = preset_name
@@ -245,19 +252,19 @@ class Export_DialogApp(MDApp):
     def on_window_resize(self, root, pos):
         # すべてのスケールが必要なウィジェットを更新
         if root:
-            for child in utils.get_entire_widget_tree(root):
+            for child in kvutils.get_entire_widget_tree(root):
                 if hasattr(child, 'ref_width'):
-                    child.width = utils.dpi_scale_width(child.ref_width)
+                    child.width = kvutils.dpi_scale_width(child.ref_width)
                 if hasattr(child, 'ref_height'):
-                    child.height = utils.dpi_scale_height(child.ref_height)
+                    child.height = kvutils.dpi_scale_height(child.ref_height)
                 if hasattr(child, 'ref_padding'):
-                    child.padding = utils.dpi_scale_width(child.ref_padding)
+                    child.padding = kvutils.dpi_scale_width(child.ref_padding)
                 if hasattr(child, 'ref_spacing'):
-                    child.spacing = utils.dpi_scale_width(child.ref_spacing)
+                    child.spacing = kvutils.dpi_scale_width(child.ref_spacing)
                 if hasattr(child, 'ref_tab_width'):
-                    child.tab_width = utils.dpi_scale_width(child.ref_tab_width)
+                    child.tab_width = kvutils.dpi_scale_width(child.ref_tab_width)
                 if hasattr(child, 'ref_tab_height'):
-                    child.tab_height = utils.dpi_scale_height(child.ref_tab_height)
+                    child.tab_height = kvutils.dpi_scale_height(child.ref_tab_height)
 
 if __name__ == '__main__':
     Export_DialogApp().run()

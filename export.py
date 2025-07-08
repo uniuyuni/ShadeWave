@@ -7,12 +7,14 @@ import exiftool
 import colour
 
 import core
+import define
 from imageset import ImageSet
 import effects
 import pipeline
 import mask_editor2
 import params
 import effects
+import config
 
 safe_tags = [
     # EXIF（カメラと撮影設定）
@@ -138,7 +140,7 @@ class ExportFile():
         self.param = {}
         self.mask_editor2 = mask_editor2.MaskEditor2()
 
-    def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw):
+    def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw, dithering):
         self.quality = quality
         self.ex_path = ex_path
         self.icc_profile = icc_profile
@@ -156,7 +158,7 @@ class ExportFile():
         params.load_json(self.file_path, self.param, self.mask_editor2)
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
 
-        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], 'CAT16',
+        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], config.get_config('cat'),
                                 apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
         img = np.clip(img, 0, 1)
 
@@ -165,7 +167,15 @@ class ExportFile():
             format = ExportFile.FORMAT[ex_ext]
         except KeyError:
             return
-        
+
+        if dithering:
+            if format == 'JPEG':
+                img = core.jjn_dither_uint8(img)
+            elif format == 'TIFF':
+                img = core.jjn_dither_uint16(img)
+            elif format == 'HEIC':
+                img = core.jjn_dither_uint16(img)
+
         ex_dir = os.path.dirname(self.ex_path)
         os.makedirs(ex_dir, exist_ok=True)
 
@@ -181,6 +191,6 @@ class ExportFile():
         if exifsw:
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
                 safe_metadata = make_safe_metadata(self.exif_data)
-                safe_metadata["Software"] = params.APPNAME + " " + params.VERSION
+                safe_metadata["Software"] = define.APPNAME + " " + params.VERSION
                 result = et.set_tags(self.ex_path, tags=safe_metadata)
                 print(result)

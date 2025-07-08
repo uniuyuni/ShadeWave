@@ -1,24 +1,26 @@
-import concurrent
+
 import threading
 import time
-from typing import Dict, Any, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import ProcessPoolExecutor
+from typing import Dict, Any
+from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 import logging
 
 import imageset
 
 # メインプロセスで実行されるコールバック関数
-def _task_callback(file_callbacks, future):
+def _task_callback(file_callbacks, shared_resources, future):
     try:
         # タスクの結果を取得
-        if isinstance(future, concurrent.futures.Future):
+        if isinstance(future, Future):
             # サブプロセス実行なら共有メモリから取得
             file_path, shm, exif_data, param, flag = future.result()
             imgset = imageset.shared_memory_to_imageset(*shm)
         else:
             # メインプロセス実行ならメモリから取得
             file_path, imgset, exif_data, param, flag = future
+
+        # キャッシュに追加
+        shared_resources['cache'][file_path] = (imgset, exif_data, param.copy())
 
         # コールバックを実行
         callback = file_callbacks.get(file_path, None)
@@ -63,14 +65,14 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
                 for i, task in enumerate(result):
                     if i > 0:
                         future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
-                        future.add_done_callback(lambda f: _task_callback(file_callbacks, f))  # コールバック登録
+                        future.add_done_callback(lambda f: _task_callback(file_callbacks, shared_resources, f))  # コールバック登録
                         futures.append(future)
                 result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
-                _task_callback(file_callbacks, result)
+                _task_callback(file_callbacks, shared_resources, result)
 
                 # キャッシュに登録（すでにキャンセルされていたらスキップ）
-                if file_path in active_processes:
-                    cache[file_path] = (imgset, exif_data, param.copy())
+                #if file_path in active_processes:
+                #    cache[file_path] = (imgset, exif_data, param.copy())
         
         # 先行読み込み登録から削除
         if file_path in preload_registry:
@@ -159,6 +161,9 @@ class FileCacheSystem:
             
             # コールバックが指定されていればすぐに呼び出す
             if callback:
+                if file_path not in self.file_callbacks:
+                    self.file_callbacks.clear() # 他のファイルなら消す
+                
                 callback(file_path, imgset, exif_data, param.copy(), 0)
                 
             result = (exif_data, imgset)

@@ -9,7 +9,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty
 import logging
 
-import utils
+import kvutils
 
 from kivy.config import Config
 Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
@@ -24,10 +24,10 @@ class DraggablePoint():
         self.y = kwargs.get('y', 0.0)
 
     def get_width(self):
-        return utils.dpi_scale_width(10)
+        return kvutils.dpi_scale_width(10)
 
     def get_height(self):
-        return utils.dpi_scale_height(10)
+        return kvutils.dpi_scale_height(10)
 
     def collide_point(self, x, y, w, h):
         collide_width =  self.get_width() / w

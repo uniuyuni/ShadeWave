@@ -3,7 +3,6 @@ import numpy as np
 
 import core
 import config
-import crop_editor
 import params
 import effects
 
@@ -12,7 +11,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
     if disp_info is None:
-        disp_info = crop_editor.CropEditor.convert_rect_to_info(params.get_crop_rect(primary_param), config.get_config('preview_size')/max(primary_param['original_img_size']))
+        disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), config.get_config('preview_size')/max(primary_param['original_img_size']))
         params.set_disp_info(primary_param, disp_info)
 
     # 環境設定
@@ -59,7 +58,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
 def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     
     # 環境設定
-    disp_info = crop_editor.CropEditor.convert_rect_to_info(params.get_crop_rect(primary_param), 1)
+    disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), 1)
     efconfig = effects.EffectConfig()
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True

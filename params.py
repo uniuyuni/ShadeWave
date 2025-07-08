@@ -2,12 +2,10 @@
 import os
 import json
 from datetime import datetime as dt
-from turtle import width
 
-import effects
-import crop_editor
 import config
-import utils
+import define
+import core
 
 SPECIAL_PARAM = [
     # for set_image_param
@@ -37,7 +35,7 @@ def get_crop_rect(param, none_value=None):
     crop_rect = param.get('crop_rect', none_value)
     if crop_rect is not None:
         maxsize = max(param['original_img_size'])
-        if none_value is not None:
+        if crop_rect is none_value:
             crop_rect = (
                 crop_rect[0] / maxsize,
                 crop_rect[1] / maxsize,
@@ -71,7 +69,7 @@ def get_disp_info(param, none_value=None):
     disp_info = param.get('disp_info', none_value)
     if disp_info is not None:
         maxsize = max(param['original_img_size'])
-        if none_value is not None:
+        if disp_info is none_value:
             disp_info = (
                 disp_info[0] / maxsize,
                 disp_info[1] / maxsize,
@@ -130,8 +128,8 @@ def set_image_param(param, img):
     # イメージサイズをパラメータに入れる
     param['original_img_size'] = (width, height)
     param['img_size'] = (width, height)
-    set_crop_rect(param, get_crop_rect(param, crop_editor.CropEditor.get_initial_crop_rect(width, height)))
-    set_disp_info(param, crop_editor.CropEditor.convert_rect_to_info(get_crop_rect(param), config.get_config('preview_size')/max(param['original_img_size'])))
+    set_crop_rect(param, get_crop_rect(param, core.get_initial_crop_rect(width, height)))
+    set_disp_info(param, core.convert_rect_to_info(get_crop_rect(param), config.get_config('preview_size')/max(param['original_img_size'])))
 
     return (width, height)
 
@@ -179,12 +177,31 @@ def copy_special_param(tar, src):
         except KeyError:
             pass
 
+def _inpaint_dump(param):
+    inpaint_diff_list = param.get('inpaint_diff_list', None)
+    if inpaint_diff_list is not None:
+        inpaint_diff_list_dumps = []
+        for inpaint_diff in inpaint_diff_list:
+            inpaint_diff.image2list()
+            inpaint_diff_list_dumps.append((inpaint_diff.disp_info, inpaint_diff.image))
+        param['inpaint_diff_list'] = inpaint_diff_list_dumps
+
+def _inpaint_load(param):
+    inpaint_diff_list_dumps = param.get('inpaint_diff_list', None)
+    if inpaint_diff_list_dumps is not None:
+        inpaint_diff_list = []
+        for inpaint_diff_dump in inpaint_diff_list_dumps:
+            inpaint_diff = InpaintDiff(disp_info=inpaint_diff_dump[0], image=inpaint_diff_dump[1])
+            inpaint_diff.list2image()
+            inpaint_diff_list.append(inpaint_diff)
+        param['inpaint_diff_list'] = inpaint_diff_list
+
 def _serialize_param(param):
-    effects.InpaintEffect.dump(param)
+    _inpaint_dump(param)
 
 def _deserialize_param(param):
-    param['disp_info'] = crop_editor.CropEditor.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
-    effects.InpaintEffect.load(param)
+    param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
+    _inpaint_load(param)
 
 def serialize(param, mask_editor2):
     tdatetime = dt.now()
@@ -204,7 +221,7 @@ def serialize(param, mask_editor2):
     dict = {
         'make': "Platypus",
         'date': tstr,
-        'version': VERSION,
+        'version': define.VERSION,
         'primary_param': param2,
     }
     if mask_dict is not None:
@@ -229,7 +246,7 @@ def save_json(file_path, param, mask_editor2):
         dict = serialize(param, mask_editor2)
         if dict is not None:
             with open(file_path, 'w') as f:
-                json.dump(dict, f, cls=utils.CompactNumpyEncoder)
+                json.dump(dict, f, cls=core.CompactNumpyEncoder)
             return True
     return False
 
@@ -238,7 +255,7 @@ def load_json(file_path, param, mask_editor2):
         file_path = file_path + '.json'
         try:
             with open(file_path, 'r') as f:
-                dict = json.load(f, object_hook=utils.compact_numpy_decoder)
+                dict = json.load(f, object_hook=core.compact_numpy_decoder)
                 # tupleがlistになってしまうのでtupleに戻す
                 try:
                     dict['primary_param']['crop_rect'] = tuple(dict['primary_param']['crop_rect'])
@@ -272,48 +289,3 @@ def delete_empty_param_json(file_path):
 
     return False
 
-
-#-------------------------------------------------
-
-def get_version():
-    """
-    escargot.code-workspaceファイルからバージョン情報を取得します。
-    バージョン情報が見つからない場合は「不明」を返します。
-    
-    Returns:
-        str: バージョン文字列
-    """
-    try:
-        # ワークスペースファイルのパスを取得
-        workspace_path = os.path.join(os.getcwd(), "platypus.code-workspace")
-        
-        # ファイルが存在するか確認
-        if not os.path.exists(workspace_path):
-            return "不明"
-            
-        # JSONファイルを読み込む
-        with open(workspace_path, 'r', encoding='utf-8') as f:
-            workspace_data = json.load(f)
-            
-        # バージョン情報を探す
-        # 通常はsettingsやmetadataなどに格納されている可能性がある
-        version = "不明"
-        
-        # 基本的な場所を確認
-        if "version" in workspace_data:
-            version = workspace_data["version"]
-        elif "settings" in workspace_data and "version" in workspace_data["settings"]:
-            version = workspace_data["settings"]["version"]
-        elif "metadata" in workspace_data and "version" in workspace_data["metadata"]:
-            version = workspace_data["metadata"]["version"]
-        elif "launch" in workspace_data and "version" in workspace_data["launch"]:
-            version = workspace_data["launch"]["version"]
-            
-        return version
-    
-    except Exception as e:
-        print(f"バージョン情報の取得中にエラーが発生しました: {e}")
-        return "不明"
-
-APPNAME = "Platypus"
-VERSION = get_version()

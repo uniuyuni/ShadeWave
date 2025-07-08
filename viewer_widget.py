@@ -23,10 +23,8 @@ from kivy.metrics import dp
 from draggable_widget import DraggableWidget
 
 import core
-import utils
-
-supported_formats_rgb = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
-supported_formats_raw = ('.cr2', '.nef', '.arw', '.dng', '.orf', '.raf', '.rw2', '.sr2', '.pef', '.raw')
+import kvutils
+import define
 
 class ThumbnailCard(MDCard):
     file_path = KVStringProperty()
@@ -61,7 +59,7 @@ class ThumbnailCard(MDCard):
         vbox.add_widget(self.label)
 
         # 表示サイズ補正
-        utils.traverse_widget(self)
+        kvutils.traverse_widget(self)
 
     @mainthread
     def set_image(self, exif, thumb):
@@ -200,7 +198,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
             """
 
     def is_supported_image(self, file_name):
-        return file_name.lower().endswith(supported_formats_rgb) or file_name.lower().endswith(supported_formats_raw)
+        return file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB) or file_name.lower().endswith(define.SUPPORTED_FORMATS_RAW)
 
     # @mainthread
     def add_image_to_grid(self, file_path, index=0):
@@ -222,7 +220,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                     thumb = cv2.imdecode(image, 1)
                     thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
                 else:
-                    if file_path.lower().endswith(supported_formats_raw):
+                    if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
                         with rawpy.imread(file_path) as raw:
                             thumb = raw.postprocess()
                     else:
@@ -370,19 +368,19 @@ class Viewer_WidgetApp(MDApp):
     def on_window_resize(self, window, width, height):
         # すべてのスケールが必要なウィジェットを更新
         if self.root:
-            for child in utils.get_entire_widget_tree(self.root):
+            for child in kvutils.get_entire_widget_tree(self.root):
                 if hasattr(child, 'ref_width'):
-                    child.width = utils.dpi_scale_width(child.ref_width)
+                    child.width = kvutils.dpi_scale_width(child.ref_width)
                 if hasattr(child, 'ref_height'):
-                    child.height = utils.dpi_scale_height(child.ref_height)
+                    child.height = kvutils.dpi_scale_height(child.ref_height)
                 if hasattr(child, 'ref_padding'):
-                    child.padding = utils.dpi_scale_width(child.ref_padding)
+                    child.padding = kvutils.dpi_scale_width(child.ref_padding)
                 if hasattr(child, 'ref_spacing'):
-                    child.spacing = utils.dpi_scale_width(child.ref_spacing)
+                    child.spacing = kvutils.dpi_scale_width(child.ref_spacing)
                 if hasattr(child, 'ref_tab_width'):
-                    child.tab_width = utils.dpi_scale_width(child.ref_tab_width)
+                    child.tab_width = kvutils.dpi_scale_width(child.ref_tab_width)
                 if hasattr(child, 'ref_tab_height'):
-                    child.tab_height = utils.dpi_scale_height(child.ref_tab_height)
+                    child.tab_height = kvutils.dpi_scale_height(child.ref_tab_height)
 
 if __name__ == "__main__":
     Viewer_WidgetApp().run()

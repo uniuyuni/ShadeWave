@@ -11,6 +11,8 @@ from enum import Enum
 from typing import List, Tuple
 import math
 
+import core
+
 class CropEditor(KVFloatLayout):
     input_width = KVNumericProperty(dp(400))
     input_height = KVNumericProperty(dp(300))
@@ -94,7 +96,7 @@ class CropEditor(KVFloatLayout):
             else:
                 h = self.input_width #* self.scale
                 w = self.input_height #* self.scale
-            crop_rect = self.get_initial_crop_rect(w, h)
+            crop_rect = core.get_initial_crop_rect(w, h)
 
         crop_x, crop_y, cx, cy = crop_rect
         crop_width = cx - crop_x
@@ -552,31 +554,6 @@ class CropEditor(KVFloatLayout):
                 break
 
         self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
-        
-    @staticmethod
-    def get_initial_crop_rect(input_width, input_height):
-        maxsize = max(input_width, input_height)
-        padw = (maxsize - input_width) / 2 
-        padh = (maxsize - input_height) / 2
-        return (int(math.floor(padw)), int(math.floor(padh)), int(math.ceil(padw)+input_width), int(math.ceil(padh)+input_height))
-
-    @staticmethod
-    def get_initial_disp_info(input_width, input_height, scale):
-        # パディング付与
-        x1, y1, crop_width, crop_height = 0, 0, input_width, input_height
-        maxsize = max(input_width, input_height)
-        padw = (maxsize - input_width) // 2 
-        padh = (maxsize - input_height) // 2
-        crop_x = int(x1 + padw)
-        crop_y = int(y1 + padh)
-        return (crop_x, crop_y, crop_width, crop_height, scale)
-    
-    @staticmethod
-    def convert_rect_to_info(crop_rect, scale):      
-        x1, y1, x2, y2 = crop_rect
-        w = x2 - x1
-        h = y2 - y1        
-        return (x1, y1, w, h, scale)
     
     def get_crop_rect(self):
         # 上下反転させて返す、パディング削除

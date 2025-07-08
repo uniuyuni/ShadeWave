@@ -150,6 +150,16 @@
                     active: root.include_metadata
                     on_active: root.include_metadata = self.active
 
+                ParamLabel:
+                    text: "Dithering"
+
+                CheckBox:
+                    size_hint_x: None
+                    ref_width: 20
+                    halign: 'left'
+                    active: root.dithering
+                    on_active: root.dithering = self.active
+
             # ICC profile
             BoxLayout:
                 size_hint_y: None
