@@ -186,27 +186,7 @@ class ImageSet:
         try:
             raw = rawpy.imread(file_path)
             logging.debug(raw.sizes)
-            """
-            crop_top_margin, crop_left_margin = exif_data.get("RawImageCropTopLeft").split(' ')
-            crop_top_margin, crop_left_margin = int(crop_top_margin), int(crop_left_margin)
-            crop_width, crop_height = exif_data.get("RawImageCroppedSize").split('x')
-            crop_width, crop_height = int(crop_width), int(crop_height)
-            
-            raw.__setattr__('sizes', rawpy.ImageSizes(raw_height=exif_data.get("RawImageFullHeight"),
-                                         raw_width=exif_data.get("RawImageFullWidth"),
-                                         height=crop_height,
-                                         width=crop_width,
-                                         top_margin=crop_top_margin,
-                                         left_margin=crop_left_margin,
-                                         iheight=exif_data.get("RawImageHeight"),
-                                         iwidth=exif_data.get("RawImageWidth"),
-                                         pixel_aspect=raw.sizes.pixel_aspect,
-                                         flip=raw.sizes.flip,
-                                         crop_top_margin=crop_top_margin,
-                                         crop_left_margin=crop_left_margin,
-                                         crop_width=crop_width,
-                                         crop_height=crop_height))
-            """
+
             img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw, # if half == False else rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
                                         #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
                                         output_bps=16,
@@ -256,6 +236,10 @@ class ImageSet:
             #img_array = img_array - raw.black_level_per_channel[0] / ((1<<14)-1)
             #img_array = np.clip(img_array, 0, 1)
 
+            # 倍率色収差低減
+            if half == False:
+                img_array = core.chromatic_aberration_correction(img_array)
+
             # 色空間変更
             if False:
                 t = time.time()
@@ -282,7 +266,7 @@ class ImageSet:
 
             # 明るさ補正
             if config.get_config('raw_auto_exposure') == True:
-                """
+                
                 # RAWの明るさをとってくる
                 source_ev = exif_data.get('LightValue', None)
 
@@ -296,15 +280,15 @@ class ImageSet:
 
                 # 適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
-                """
                 
-                img_array = core.process_color_image_lab(img_array, core.clahe_16bit)
-                hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
-                hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 90)
-                img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-
+                #img_array = core.process_color_image_lab(img_array, core.histeq_16bit)
+                
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
+
+                hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
+                hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 50)
+                img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
             # サイズを合わせる
             #if img_array.shape[1] != width or img_array.shape[0] != height:

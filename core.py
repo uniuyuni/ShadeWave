@@ -2330,3 +2330,170 @@ def histeq_16bit(img_uint16):
     
     # ルックアップテーブルでマッピング
     return np.interp(img_uint16.flatten(), np.arange(0, 65536), cdf_normalized).reshape(img_uint16.shape).astype(np.uint16)
+
+def auto_contrast_tonemap(image, clip_percent=0.01, gamma=1.0):
+    """
+    トーンカーブベースの自動コントラスト補正
+    入力条件:
+        - image: (H, W, 3) shapeのnumpy配列 (RGB, float32)
+        - clip_percent: 両端のクリップ率（0.01 = 1%）
+        - gamma: ガンマ補正値（1.0で無補正）
+    
+    処理内容:
+        1. RGBから輝度(Y)を計算
+        2. 輝度のヒストグラムからトーンカーブを生成
+        3. トーンカーブをRGB各チャンネルに適用
+    """
+    # 入力画像のコピーを作成
+    corrected = np.empty_like(image)
+    
+    # RGBから輝度Yを計算 (BT.709基準)
+    weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    luminance = np.dot(image, weights)
+    
+    # 両端をクリップするための閾値を計算
+    low_thresh = np.percentile(luminance, clip_percent * 100)
+    high_thresh = np.percentile(luminance, 100 - clip_percent * 100)
+    
+    # クリップされた輝度範囲を正規化
+    clipped_lum = np.clip(luminance, low_thresh, high_thresh)
+    normalized_lum = (clipped_lum - low_thresh) / (high_thresh - low_thresh)
+    
+    # ヒストグラム平坦化によるトーンカーブ生成
+    hist, bins = np.histogram(normalized_lum.flatten(), bins=256, range=(0, 1))
+    cdf = hist.cumsum()
+    cdf_normalized = cdf / cdf.max()
+    
+    def s_curve(x, strength=0.5):
+        """S字カーブ関数"""
+        return x + strength * x * (1 - x) * (2 * x - 1)
+
+    # auto_contrast_tonemap関数内でトーンカーブ生成部分を変更
+
+    # トーンカーブを生成（ガンマ補正含む）
+    tone_curve = np.zeros(256, dtype=np.float32)
+    for i in range(256):
+        value = i / 255.0
+        value = s_curve(value, strength=0.6)  # S字カーブ適用
+        tone_curve[i] = value
+    
+    # 輝度値からトーンカーブを適用するためのインデックスマップを作成
+    indices = np.clip((normalized_lum * 255).astype(np.uint32), 0, 255)
+    mapped_lum = tone_curve[indices]
+    
+    # 元の輝度とマッピング後の比率を計算
+    ratio = np.divide(mapped_lum, luminance, 
+                     where=np.abs(luminance) > 1e-6,
+                     out=np.ones_like(luminance))
+    
+    # RGBチャンネルに比率を適用
+    corrected = image * ratio[..., np.newaxis]
+    
+    return corrected
+
+from skimage.restoration import denoise_bilateral
+
+def chromatic_aberration_correction(
+    image: np.ndarray, 
+    intensity: float = 1.0,
+    edge_threshold: float = 0.05,
+    channel_align_iter: int = 3
+) -> np.ndarray:
+    """
+    製品レベルの倍率色収差補正
+    
+    パラメータ:
+        image: 入力画像 (H×W×3, float32 [0,1]形式)
+        intensity: 補正強度 (0.0 ~ 2.0)
+        edge_threshold: エッジ検出閾値 (0.01 ~ 0.1)
+        channel_align_iter: チャンネルアライメント反復回数
+        
+    戻り値:
+        補正済み画像 (入力と同じ形式)
+    """
+    # 入力検証
+    assert image.dtype == np.float32, "Input must be float32"
+    assert image.ndim == 3 and image.shape[2] == 3, "Input must be RGB"
+    assert np.max(image) <= 1.0 and np.min(image) >= 0.0, "Range must be [0,1]"
+    
+    # 元画像をコピー
+    corrected = image.copy()
+    h, w, _ = image.shape
+    
+    # グレースケール変換 (輝度ベース)
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    
+    # エッジマスク生成 (Canny + 拡張)
+    edges = cv2.Canny((gray * 255).astype(np.uint8), 50, 150) / 255
+    kernel = np.ones((3, 3), np.uint8)
+    edge_mask = cv2.dilate(edges, kernel, iterations=1)
+    
+    # チャンネルアライメント (緑チャンネル基準)
+    aligned_rgb = np.zeros_like(image)
+    aligned_rgb[:, :, 1] = image[:, :, 1]  # 緑チャンネルは基準
+    
+    # マルチスケール位相相関によるアライメント
+    for channel in [0, 2]:  # Red and Blue channels
+        chan_img = image[:, :, channel]
+        ref_img = image[:, :, 1]  # Green channel reference
+        
+        total_dx, total_dy = 0.0, 0.0
+        
+        # マルチスケールアライメント
+        for scale in range(channel_align_iter, 0, -1):
+            scale_factor = 1 / (2 ** (scale - 1))
+            scaled_ref = cv2.resize(ref_img, (0,0), fx=scale_factor, fy=scale_factor)
+            scaled_chan = cv2.resize(chan_img, (0,0), fx=scale_factor, fy=scale_factor)
+            
+            # 位相相関によるシフト検出
+            shift, _ = cv2.phaseCorrelate(
+                scaled_ref.astype(np.float32), 
+                scaled_chan.astype(np.float32)
+            )
+            
+            total_dx += shift[0] * scale_factor
+            total_dy += shift[1] * scale_factor
+        
+        # 平均シフト量計算
+        dx = total_dx / channel_align_iter
+        dy = total_dy / channel_align_iter
+        
+        # シフト適用
+        M = np.float32([[1, 0, dx * intensity], [0, 1, dy * intensity]])
+        aligned_rgb[:, :, channel] = cv2.warpAffine(
+            chan_img, M, (w, h), flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP
+        )
+    
+    # 色収差マスク生成 (色差ベース)
+    r_diff = np.abs(aligned_rgb[:, :, 0] - image[:, :, 1])
+    b_diff = np.abs(aligned_rgb[:, :, 2] - image[:, :, 1])
+    chroma_mask = np.clip((r_diff + b_diff) * 5.0, 0, 1)
+    chroma_mask = np.where(edge_mask > 0, chroma_mask, 0)
+    
+    # 適応型バイラテラルフィルタリング
+    for c in range(3):
+        # エッジ領域のみを選択的に補正
+        corrected_channel = corrected[:, :, c]
+        aligned_channel = aligned_rgb[:, :, c]
+        
+        # バイラテラルフィルタパラメータ調整
+        sigma_color = 0.05 + (0.1 * intensity)
+        sigma_spatial = max(1.0, 3.0 * intensity)
+        
+        # マスク領域のみフィルタ適用
+        filtered = denoise_bilateral(
+            aligned_channel,
+            win_size=5,
+            sigma_color=sigma_color,
+            sigma_spatial=sigma_spatial,
+            channel_axis=None
+        )
+        
+        # マスクに基づいてブレンド
+        corrected[:, :, c] = np.where(
+            chroma_mask > edge_threshold,
+            filtered,
+            corrected_channel
+        )
+    
+    return corrected

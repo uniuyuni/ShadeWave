@@ -154,28 +154,30 @@ if __name__ == '__main__':
             self.ids["preview"].texture = None # 更新のために必要
             self.ids["preview"].texture = self.texture
 
-        def draw_histogram(self, img, exclude_zero_count=0):
-            logging.debug(f"draw_histogram exclude_zero_count:{exclude_zero_count}")
-            self.ids["histogram"].draw_histogram(img, exclude_zero_count)
+        def draw_histogram(self, img, blue_count=0, black_count=0):
+            logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
+            self.ids["histogram"].draw_histogram(img, blue_count, black_count)
 
         def draw_image(self, offset, dt):
             if (self.imgset is not None) and (self.imgset.img is not None):
                 img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
+                img = np.array(img)
                 utils.print_nan_inf("output", img)
 
-                img = np.array(img)
+                # ヒストグラム表示
+                img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
+                img_hist = colour.RGB_to_RGB(img_hist, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                                        apply_cctf_encoding=True, apply_gamut_mapping=False).astype(np.float32)
+                self.draw_histogram(img_hist, 0, exclude_count)
 
-                # img1はヒストグラム用            
-                img1, exclude_zero_count = core.apply_zero_wrap(img, self.primary_param)
-                self.draw_histogram(img1, exclude_zero_count)
-
-                # img2は表示用
-                img2 = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
-                img2, _ = core.apply_zero_wrap(img2, self.primary_param)
-                img2 = np.clip(img2, 0, 1)
-                img2 = colour.RGB_to_RGB(img2, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                # プレビュー表示
+                img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
+                img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
+                img_draw = np.clip(img_draw, 0, 1)
+                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
                                         apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-                self.blit_image(img2)
+                self.blit_image(img_draw)
+
             self.is_draw_image = False
 
         def start_draw_image(self, offset=(0, 0)):
