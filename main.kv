@@ -743,6 +743,36 @@
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'vignette')
                             
+                            VSeparator:
+
+                            HeadLabel:
+                                text: ' Lens Modifier'
+
+                            MDGridLayout:
+                                size_hint_y: None
+                                ref_height: 40
+                                ref_width: 120
+                                cols: 6
+
+                                ParamLabel:          
+                                    text: "Color"
+                                CheckBox:
+                                    id: checkbox_color_modification
+                                    active: True
+                                    on_press: root.apply_effects_lv(0, 'lens_modifier')
+                                ParamLabel:          
+                                    text: "Subpixel"
+                                CheckBox:
+                                    id: checkbox_subpixel_distortion
+                                    active: True
+                                    on_press: root.apply_effects_lv(0, 'lens_modifier')
+                                ParamLabel:          
+                                    text: "Geometry"
+                                CheckBox:
+                                    id: checkbox_geometry_distortion
+                                    active: True
+                                    on_press: root.apply_effects_lv(0, 'lens_modifier')
+
                             VSpacer
 
                 TabbedPanelItem:

@@ -10,9 +10,9 @@ from jax import jit
 from functools import partial
 import colour
 import math
-import lensfunpy
 from scipy.interpolate import splprep, splev
 from scipy.ndimage import label
+import lensfunpy
 import logging
 import numba
 from numba.experimental import jitclass
@@ -2170,39 +2170,6 @@ def compact_numpy_decoder(obj: Dict) -> Any:
     
     return obj
 
-def auto_contrast_correction(image):
-    """
-    RGB float32画像の自動コントラスト補正
-    入力条件:
-        - image: (H, W, 3) shapeのnumpy配列
-        - データ型: np.float32
-        - 値の範囲: 任意（負の値や1.0以上も可）
-    
-    処理内容:
-        1. 各RGBチャンネル独立にヒストグラム伸張
-        2. 最小値・最大値に基づく線形変換
-        3. 値のクリッピングなし（1.0超も許容）
-    """
-    # 入力画像のコピーを作成
-    corrected = np.empty_like(image)
-    
-    # チャンネルごとに処理
-    for c in range(3):
-        channel = image[:, :, c]
-        
-        # チャンネルの最小値・最大値を計算
-        c_min = np.min(channel)
-        c_max = np.max(channel)
-        c_range = c_max - c_min
-        
-        # コントラスト補正
-        if c_range > 0:
-            corrected[:, :, c] = (channel - c_min) / c_range
-        else:
-            # 全画素同じ値の場合は変更しない
-            corrected[:, :, c] = channel
-    
-    return corrected
 
 def apply_quantization_error_reduction(
     img_float: np.ndarray,  # float32 [0,1] 入力画像
@@ -2491,3 +2458,67 @@ def chromatic_aberration_correction(
         )
     
     return corrected
+
+
+def setup_lensfun(img, exif_data):
+    global __lensfun_mod
+
+    make =  exif_data.get('Make', None)
+    model = exif_data.get('Model', None)
+    lensmake = exif_data.get('LensMake', None)
+    lensmodel = exif_data.get('LensModel', None)
+    focal_length = exif_data.get('FocalLength', None)
+    aperture = exif_data.get('ApertureValue',  exif_data.get('Aperture', None))
+    distance = exif_data.get('SubjectDistanceRange', 100)
+
+    logging.info(f"{make}, {model}")
+    logging.info(f"{lensmake}, {lensmodel}")
+    logging.info(f"{focal_length}, {aperture}, {distance}")
+
+    if distance == 'Unknown':
+        distance = 100
+
+    db = lensfunpy.Database()
+    cams = db.find_cameras(make, model, loose_search=True)
+    if len(cams) > 0:
+        lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=True)
+
+        if len(lens) > 0:
+            height, width = img.shape[:2]
+            __lensfun_mod = lensfunpy.Modifier(lens[0], cams[0].crop_factor, width, height)
+            __lensfun_mod.initialize(float(focal_length[0:-3]), aperture, distance, pixel_format=np.float32)
+            return
+
+    __lensfun_mod = None
+
+def clean_lensfun():
+    global __lensfun_mod
+    __lensfun_mod = None
+
+__lensfun_mod = None
+
+def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
+
+    if __lensfun_mod is None:
+        logging.warning("Lensfun is not initialized")
+        return img
+
+    mod = __lensfun_mod
+    modimg = img
+    if is_cm == True:
+        modimg = img.copy()
+        did_apply = mod.apply_color_modification(modimg)
+        if did_apply == False:
+            logging.warning("Apply Color Modification is Failed")
+
+    if is_sd == True:
+        undist_coords = mod.apply_subpixel_distortion()
+        modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
+        modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
+        modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
+
+    if is_gd == True:
+        undist_coords = mod.apply_geometry_distortion()
+        modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
+
+    return modimg

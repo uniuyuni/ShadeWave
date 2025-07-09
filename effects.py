@@ -88,32 +88,34 @@ class LensModifierEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'color_modification': 0,
-            'subpixel_distortion': 0,
-            'geometry_distortion': 0,
+            'lens_modifier': True,
+            'color_modification': True,
+            'subpixel_distortion': True,
+            'geometry_distortion': True,
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_color_modification"].active = False if self.get_param(param, 'color_modification') == 0 else True
-        widget.ids["switch_subpixel_distortion"].active = False if self.get_param(param, 'subpixel_distortion') == 0 else True
-        widget.ids["switch_geometry_distortion"].active = False if self.get_param(param, 'geometry_distortion') == 0 else True
+        widget.ids["checkbox_color_modification"].active = self.get_param(param, 'color_modification')
+        widget.ids["checkbox_subpixel_distortion"].active = self.get_param(param, 'subpixel_distortion')
+        widget.ids["checkbox_geometry_distortion"].active = self.get_param(param, 'geometry_distortion')
 
     def set2param(self, param, widget):
-        param['color_modification'] = 0 if widget.ids["switch_color_modification"].active == False else 1
-        param['subpixel_distortion'] = 0 if widget.ids["switch_subpixel_distortion"].active == False else 1
-        param['geometry_distortion'] = 0 if widget.ids["switch_geometry_distortion"].active == False else 1
+        param['color_modification'] = widget.ids["checkbox_color_modification"].active
+        param['subpixel_distortion'] = widget.ids["checkbox_subpixel_distortion"].active
+        param['geometry_distortion'] = widget.ids["checkbox_geometry_distortion"].active
 
     def make_diff(self, img, param, efconfig):
+        lm = self.get_param(param, 'lens_modifier')
         cd = self.get_param(param, 'color_modification')
         sd = self.get_param(param, 'subpixel_distortion')
         gd = self.get_param(param, 'geometry_distortion')
-        if cd <= 0 and sd <= 0 and gd <= 0:
+        if lm == False or (cd == False and sd == False and gd == False):
             self.diff = None
             self.hash = None
         else:
             param_hash = hash((cd, sd, gd))
             if self.hash != param_hash:
-                self.diff = core.modify_lensimage(img, None, cd > 0, sd > 0, gd > 0)
+                self.diff = core.modify_lensfun(img, cd, sd, gd)
                 self.hash = param_hash
         
         return self.diff
@@ -2149,7 +2151,7 @@ def create_effects():
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
-    #lv0['lens_modifier'] = LensModifierEffect()
+    lv0['lens_modifier'] = LensModifierEffect()
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
     lv0['rotation'] = RotationEffect()

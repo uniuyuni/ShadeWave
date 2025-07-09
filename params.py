@@ -13,6 +13,8 @@ SPECIAL_PARAM = [
     'img_size',
     #'crop_rect',
     'disp_info',
+    # for effects.LensModifierEffect
+    'lens_modifier',
     # for imageset._set_temperature
     'color_temperature_reset',
     'color_tint_reset',

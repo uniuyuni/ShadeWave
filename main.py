@@ -134,6 +134,8 @@ if __name__ == '__main__':
             self.is_zoomed = False
             self.crop_image = None
 
+            core.clean_lensfun()
+
             self.reset_param(self.primary_param)
             self.ids['mask_editor2'].clear_mask()
         
@@ -266,9 +268,13 @@ if __name__ == '__main__':
                 self.set2widget_all(self.primary_effects, param)
                 self.apply_effects_lv(0, 'crop') # 特別あつかい
 
+                # lensfun セットアップ
+                core.setup_lensfun(imgset.img, exif_data)
+
                 # ロード終了
                 self.loading = False
-                
+
+
             self.imgset = imgset
             effects.reeffect_all(self.primary_effects)
             self.start_draw_image_and_crop(imgset)
@@ -532,7 +538,7 @@ if __name__ == '__main__':
             _, _, width, height = core.get_exif_image_size_with_orientation(exif_data)
             self.ids['exif_image_size'].value = str(width) + "x" + str(height)
             self.ids['exif_iso_speed'].value = str(exif_data.get("ISO", "-"))
-            self.ids['exif_aperture'].value = str(exif_data.get("ApertureValue", "-"))
+            self.ids['exif_aperture'].value = str(exif_data.get("ApertureValue", exif_data.get("Aperture", "-")))
             self.ids['exif_shutter_speed'].value = exif_data.get("ShutterSpeedValue", "-")
             self.ids['exif_exposure_compensation'].value = str(exif_data.get("ExposureCompensation", "-"))
             self.ids['exif_flash'].value = exif_data.get("Flash", "-")

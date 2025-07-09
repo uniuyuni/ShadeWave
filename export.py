@@ -24,6 +24,7 @@ safe_tags = [
     "EXIF:ExposureTime",
     "EXIF:FNumber",
     "EXIF:ApertureValue",
+    "EXIF:Aperture",
     "EXIF:ISO",
     "EXIF:ISOSpeedRatings",
     "EXIF:ShutterSpeedValue",
@@ -50,6 +51,7 @@ safe_tags = [
     "EXIF:BrightnessValue",
     "EXIF:WhiteBalance",
     "EXIF:PictureMode",
+    "EXIF:SubjectDistanceRange",
     
     # EXIF（基本情報）
     "EXIF:Artist",
