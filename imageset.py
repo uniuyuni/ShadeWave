@@ -281,7 +281,9 @@ class ImageSet:
                 # 適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
                 
+                # 自動コントラスト補正
                 img_array = core.auto_contrast_tonemap(img_array, 0.01)
+                # ヒストグラム均等化
                 #img_array = core.process_color_image_lab(img_array, core.histeq_16bit)
                 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
