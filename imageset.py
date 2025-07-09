@@ -281,13 +281,14 @@ class ImageSet:
                 # 適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
                 
+                img_array = core.auto_contrast_tonemap(img_array, 0.01)
                 #img_array = core.process_color_image_lab(img_array, core.histeq_16bit)
                 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array)
 
                 hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
-                hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 50)
+                hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
                 img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
             # サイズを合わせる

@@ -2331,13 +2331,12 @@ def histeq_16bit(img_uint16):
     # ルックアップテーブルでマッピング
     return np.interp(img_uint16.flatten(), np.arange(0, 65536), cdf_normalized).reshape(img_uint16.shape).astype(np.uint16)
 
-def auto_contrast_tonemap(image, clip_percent=0.01, gamma=1.0):
+def auto_contrast_tonemap(image, clip_percent=0.001):
     """
     トーンカーブベースの自動コントラスト補正
     入力条件:
         - image: (H, W, 3) shapeのnumpy配列 (RGB, float32)
         - clip_percent: 両端のクリップ率（0.01 = 1%）
-        - gamma: ガンマ補正値（1.0で無補正）
     
     処理内容:
         1. RGBから輝度(Y)を計算
@@ -2359,11 +2358,6 @@ def auto_contrast_tonemap(image, clip_percent=0.01, gamma=1.0):
     clipped_lum = np.clip(luminance, low_thresh, high_thresh)
     normalized_lum = (clipped_lum - low_thresh) / (high_thresh - low_thresh)
     
-    # ヒストグラム平坦化によるトーンカーブ生成
-    hist, bins = np.histogram(normalized_lum.flatten(), bins=256, range=(0, 1))
-    cdf = hist.cumsum()
-    cdf_normalized = cdf / cdf.max()
-    
     def s_curve(x, strength=0.5):
         """S字カーブ関数"""
         return x + strength * x * (1 - x) * (2 * x - 1)
@@ -2374,7 +2368,7 @@ def auto_contrast_tonemap(image, clip_percent=0.01, gamma=1.0):
     tone_curve = np.zeros(256, dtype=np.float32)
     for i in range(256):
         value = i / 255.0
-        value = s_curve(value, strength=0.6)  # S字カーブ適用
+        value = s_curve(value, strength=0.7)  # S字カーブ適用
         tone_curve[i] = value
     
     # 輝度値からトーンカーブを適用するためのインデックスマップを作成
