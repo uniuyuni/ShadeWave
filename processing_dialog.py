@@ -2,6 +2,7 @@
 import tkinter as tk
 from PIL import Image, ImageTk
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 class _ProcessingDialog():
@@ -117,3 +118,14 @@ def update_processing_dialog(sleep_time=0.05):
 def hide_processing_dialog():
     global __dialog
     __dialog.hide()
+
+def wait_prosessing(process, arg):
+    show_processing_dialog()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(process, arg)
+        while not future.done():
+            update_processing_dialog(sleep_time=0.05)
+        result = future.result()
+    hide_processing_dialog()
+
+    return result

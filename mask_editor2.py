@@ -3,7 +3,6 @@ import os
 import numpy as np
 import math
 import cv2
-from concurrent.futures import ThreadPoolExecutor
 import time
 
 from kivy.app import App
@@ -33,7 +32,7 @@ import effects
 import facer_util
 import expand_mask
 import config
-from processing_dialog import show_processing_dialog, update_processing_dialog, hide_processing_dialog
+from processing_dialog import wait_prosessing
 
 MASKTYPE_CIRCULAR = 'circular'
 MASKTYPE_GRADIENT = 'gradient'
@@ -1990,13 +1989,7 @@ class SceneMask(BaseMask):
             return result
 
         # 裏でやらせているつもり（ダイアログ表示あり）
-        show_processing_dialog()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_process, self.editor.full_image_rgb)
-            while not future.done():
-                update_processing_dialog(sleep_time=0.05)
-            result = future.result()
-        hide_processing_dialog()
+        result = wait_prosessing(_process, self.editor.full_image_rgb)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
@@ -2201,7 +2194,7 @@ class MaskEditor2(FloatLayout):
         btn_full.bind(on_release=self.select_full_mask)
         self.ui_layout.add_widget(btn_full)
 
-        btn_free_draw = Button(text='Free Draw', size_hint=(1, 0.05))
+        btn_free_draw = Button(text='Draw', size_hint=(1, 0.05))
         btn_free_draw.bind(on_release=self.select_free_draw_mask)
         self.ui_layout.add_widget(btn_free_draw)
 
@@ -2209,7 +2202,7 @@ class MaskEditor2(FloatLayout):
         btn_segment.bind(on_release=self.select_segment_mask)
         self.ui_layout.add_widget(btn_segment)
 
-        btn_depth_map = Button(text='Depth Map', size_hint=(1, 0.05))
+        btn_depth_map = Button(text='Depth', size_hint=(1, 0.05))
         btn_depth_map.bind(on_release=self.select_depth_map_mask)
         self.ui_layout.add_widget(btn_depth_map)
 
