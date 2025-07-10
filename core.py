@@ -2377,6 +2377,7 @@ def chromatic_aberration_correction(
     
     return corrected
 
+#-------------------------------------------------
 
 def setup_lensfun(img, exif_data):
     global __lensfun_mod
@@ -2451,51 +2452,26 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
 
     return modimg
 
+#-------------------------------------------------
+
 def light_denoise(img, its, col):
 
     # Lab色空間に変換（L: 輝度, a,b: 色度）
     lab = cv2.cvtColor(img, cv2.COLOR_RGB2Lab)
     l, a, b = cv2.split(lab)
     
-    # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
+    # 輝度チャンネル(L)のノイズ除去
     if its > 0:
-        """
-        d_l = max(1, min(15, int(1 + its * 0.05)))
-        d_l = d_l + 1 if d_l % 2 == 0 else d_l
-        sigma_l = 10 + its * 0.7
-
-        # ノイズ低減処理付きSobel
-        gray = l / 100.0
-        denoised = cv2.bilateralFilter(gray, 5, 0.1, 5)
-        sobel_x = cv2.Sobel(denoised, cv2.CV_32F, 1, 0)
-        sobel_y = cv2.Sobel(denoised, cv2.CV_32F, 0, 1)
-        mag = np.sqrt(sobel_x**2 + sobel_y**2)
-        
-        # ノイズ閾値処理
-        noise_threshold = 0.05
-        mag[mag < noise_threshold] = 0
-        #cv2.imwrite("mag.jpg", (mag * 255).astype(np.uint8))
-        l_filtered = cv2.ximgproc.jointBilateralFilter(
-            mag, gray, 
-            d_l, sigma_l / 10, sigma_l
-        ) * 100.0
-        print(f"jbf: {d_l}, {sigma_l/10}, {sigma_l}")
-        """
-        #l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
-    
         l = fast_tv_denoise(l, weight=its / 100.0)
-        l_filtered = l
-    else:
-        l_filtered = l
+    l_filtered = l
     
     if col > 0:
-        # 色度チャンネル(a,b)のノイズ除去 - 強力な平滑化
+        # 色度チャンネル(a,b)のノイズ除去
         D = [3, 3, 3, 3, 3, 4, 4, 4, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         n = max(1, int(col * 0.20))
         for i in range(5):
             a = cv2.bilateralFilter(a, d=D[n], sigmaColor=50, sigmaSpace=30)
             b = cv2.bilateralFilter(b, d=D[n], sigmaColor=50, sigmaSpace=30)
-
     a_filtered = a
     b_filtered = b
  
@@ -2503,6 +2479,7 @@ def light_denoise(img, its, col):
     filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
     return cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)
 
+#-------------------------------------------------
 
 def fast_tv_denoise(img, weight=0.1, max_iter=100, tol=1e-4):
     """
@@ -2517,7 +2494,7 @@ def fast_tv_denoise(img, weight=0.1, max_iter=100, tol=1e-4):
     戻り値:
         ノイズ除去後の画像 (入力と同じshape)
     """
-    weight *= 3.0
+    weight *= 1.5
     
     # 次元数による分岐 (Numba外で処理)
     if img.ndim == 2:
@@ -2533,7 +2510,7 @@ def fast_tv_denoise(img, weight=0.1, max_iter=100, tol=1e-4):
 def _process_rgb(rgb_img, weight, max_iter, tol):
     """ RGB画像のTVノイズ除去 """
     denoised = np.empty_like(rgb_img)
-    for c in nb.range(3):
+    for c in range(3):
         denoised[..., c] = _tv_chambolle_single(rgb_img[..., c], weight, max_iter, tol)
 
     return denoised
@@ -2554,13 +2531,13 @@ def _tv_chambolle_single(img, weight, max_iter, tol):
     tol_val = tol * np.max(img)
     
     # 反復処理
-    for it in range(max_iter):
+    for it in prange(max_iter):
         # 各ピクセルの差分を配列に格納
         delta_arr = np.zeros((H, W), dtype=np.float32)
         
         # 勾配計算と更新 (境界を除く内部ピクセルのみ処理)
-        for i in nb.prange(1, H-1):
-            for j in nb.prange(1, W-1):
+        for i in prange(1, H-1):
+            for j in prange(1, W-1):
                 # 勾配計算
                 g[i, j, 0] = p[i, j, 0] + tau * (u[i+1, j] - u[i, j])
                 g[i, j, 1] = p[i, j, 1] + tau * (u[i, j+1] - u[i, j])
@@ -2586,8 +2563,8 @@ def _tv_chambolle_single(img, weight, max_iter, tol):
     
     # 発散計算
     div_p = np.zeros_like(u)
-    for i in nb.prange(1, H-1):
-        for j in nb.prange(1, W-1):
+    for i in prange(1, H-1):
+        for j in prange(1, W-1):
             div_p[i, j] = p[i-1, j, 0] - p[i, j, 0] + p[i, j-1, 1] - p[i, j, 1]
     
     # 境界処理 (境界ピクセルは元の値を保持)
@@ -2598,3 +2575,5 @@ def _tv_chambolle_single(img, weight, max_iter, tol):
     result[:, -1] = img[:, -1]  # 右境界
     
     return result.astype(np.float32)
+
+#-------------------------------------------------

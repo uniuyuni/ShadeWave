@@ -134,10 +134,12 @@ class ImageSet:
                                 apply_cctf_decoding=True, apply_gamut_mapping=False).astype(np.float32)
 
             # 試験的彩度補正
+            """
             hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
             hls[..., 2] = core.calc_saturation(hls[..., 2], 0, -50)
             img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-
+            """
+            
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
