@@ -623,84 +623,6 @@ def apply_lut(img, lut, max_value=1.0):
     
     return result
 
-from scipy.interpolate import interp1d
-
-def make_spline_func(point_list, max_value=1.0):
-    """
-    画像にカーブを適用（float32のまま処理）
-    
-    Parameters:
-    -----------
-    img : ndarray
-        入力画像 (float32, 任意の形状)
-    point_list : list of tuples
-        (x, y)形式のコントロールポイントのリスト
-    max_value : float
-        最大値（デフォルト1.0）
-    kind : str
-        補間方法（'linear', 'cubic', 'quadratic'など）
-        
-    Returns:
-    --------
-    ndarray
-        変換後の画像（入力と同じ形状）
-    """
-    # ポイントをソート
-    point_list = sorted((pl[0], pl[1]) for pl in point_list)
-    
-    # x値の重複を除去し、対応するy値の平均を計算
-    unique_x = []
-    unique_y = []
-    for x_val in sorted(set(pl[0] for pl in point_list)):
-        # 同じx値を持つ全てのy値を取得
-        y_vals = [pl[1] for pl in point_list if pl[0] == x_val]
-        
-        # y値の平均を計算
-        avg_y = sum(y_vals) / len(y_vals)
-        
-        unique_x.append(x_val)
-        unique_y.append(avg_y)
-    
-    # NumPy配列に変換
-    x = np.array(unique_x, dtype=np.float32)
-    y = np.array(unique_y, dtype=np.float32)
-    
-    # 有効範囲の上限（外挿が必要になる境界）
-    valid_max = min(max(x), max_value)
-    
-    # 補間関数を作成
-    interp_fn = interp1d(
-        x, 
-        y, 
-        kind='quadratic' if len(x) >= 3 else 'linear',  # 3点以上ならスプライン補間
-        bounds_error=False,  # 有効範囲外を外挿
-        fill_value='extrapolate',  # 自動外挿
-        assume_sorted=False  # 入力がソートされていることを仮定
-    )
-
-    return (interp_fn, valid_max)
-
-def apply_spline_func(img, interp_fn, valid_max, max_value=1.0):
-    
-    # 有効範囲内を補間
-    result = interp_fn(img)
-    
-    # 有効範囲外を線形外挿（必要に応じて）
-    if valid_max < max_value:
-        # 最後の2点から傾きを計算
-        if len(x) >= 2:
-            slope = (y[-1] - y[-2]) / (x[-1] - x[-2])
-        else:
-            slope = 1.0  # 点が1つ以下の場合は傾き1
-        
-        # 外挿領域のマスク
-        mask = img > valid_max
-        
-        # 線形外挿
-        result[mask] = interp_fn(valid_max) + slope * (img[mask] - valid_max)
-    
-    return result.astype(np.float32)
-
 #--------------------------------------------------
 # マスクイメージの適用
 def apply_mask_np(img1, msk, img2):
@@ -1412,7 +1334,6 @@ def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
         final_weight = hue_weight# * ls_weight
 
         # 重みをぼかす
-        #final_weight = gaussian_blur(final_weight, (127, 127), 0)
         final_weight = gaussian_blur_jax(final_weight, (127*resolution_scale, 127*resolution_scale), 0)
         
         # 重みを使って調整
@@ -1611,7 +1532,7 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
         numba_settings.append(cs)
     
     # カーネルサイズ計算
-    kernel_size = max(3, int(127 * resolution_scale))
+    kernel_size = max(3, int(32 * resolution_scale))
     if kernel_size % 2 == 0: 
         kernel_size += 1
     sigma = max(1.0, kernel_size / 6.0)
@@ -1630,7 +1551,8 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
         
         # ガウシアンブラー適用
         if kernel_size > 1:
-            final_weight = separable_gaussian_blur(final_weight, kernel)
+            final_weight = gaussian_blur_cv(final_weight, (kernel_size, kernel_size), 0)
+            #final_weight = separable_gaussian_blur(final_weight, kernel)
         
         # 重みを使って調整
         result = adjust_hls_with_weight_numba(hls_img, final_weight, setting.adjust)
@@ -2298,12 +2220,11 @@ def histeq_16bit(img_uint16):
     # ルックアップテーブルでマッピング
     return np.interp(img_uint16.flatten(), np.arange(0, 65536), cdf_normalized).reshape(img_uint16.shape).astype(np.uint16)
 
-def auto_contrast_tonemap(image, clip_percent=0.001):
+def auto_contrast_tonemap(image):
     """
     トーンカーブベースの自動コントラスト補正
     入力条件:
         - image: (H, W, 3) shapeのnumpy配列 (RGB, float32)
-        - clip_percent: 両端のクリップ率（0.01 = 1%）
     
     処理内容:
         1. RGBから輝度(Y)を計算
@@ -2314,32 +2235,22 @@ def auto_contrast_tonemap(image, clip_percent=0.001):
     corrected = np.empty_like(image)
     
     # RGBから輝度Yを計算 (BT.709基準)
-    weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    luminance = np.dot(image, weights)
-    
-    # 両端をクリップするための閾値を計算
-    low_thresh = np.percentile(luminance, clip_percent * 100)
-    high_thresh = np.percentile(luminance, 100 - clip_percent * 100)
-    
-    # クリップされた輝度範囲を正規化
-    clipped_lum = np.clip(luminance, low_thresh, high_thresh)
-    normalized_lum = (clipped_lum - low_thresh) / (high_thresh - low_thresh)
-    
+    luminance = cvtColorRGB2Gray(image)
+    normaliced_lum = luminance / np.max(luminance)
+        
     def s_curve(x, strength=0.5):
         """S字カーブ関数"""
         return x + strength * x * (1 - x) * (2 * x - 1)
 
-    # auto_contrast_tonemap関数内でトーンカーブ生成部分を変更
-
     # トーンカーブを生成（ガンマ補正含む）
-    tone_curve = np.zeros(256, dtype=np.float32)
-    for i in range(256):
-        value = i / 255.0
+    tone_curve = np.zeros(65536, dtype=np.float32)
+    for i in range(65536):
+        value = i / 65535.0
         value = s_curve(value, strength=0.7)  # S字カーブ適用
         tone_curve[i] = value
     
     # 輝度値からトーンカーブを適用するためのインデックスマップを作成
-    indices = np.clip((normalized_lum * 255).astype(np.uint32), 0, 255)
+    indices = np.clip((normaliced_lum * 65535).astype(np.uint32), 0, 65535)
     mapped_lum = tone_curve[indices]
     
     # 元の輝度とマッピング後の比率を計算
@@ -2475,6 +2386,10 @@ def setup_lensfun(img, exif_data):
     logging.info(f"{lensmake}, {lensmodel}")
     logging.info(f"{focal_length}, {aperture}, {distance}")
 
+    if focal_length is None or aperture is None:
+        logging.info("focal_length or aperture is None")
+        return
+
     if distance == 'Unknown':
         distance = 100
 
@@ -2522,3 +2437,55 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
         modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
 
     return modimg
+
+def light_denoise(img, its, col):
+
+    # Lab色空間に変換（L: 輝度, a,b: 色度）
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2Lab)
+    l, a, b = cv2.split(lab)
+    
+    # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
+    if its > 0:
+        d_l = max(1, min(15, int(1 + its * 0.05)))
+        d_l = d_l + 1 if d_l % 2 == 0 else d_l
+        sigma_l = 10 + its * 0.7
+
+        # ノイズ低減処理付きSobel
+        gray = l / 100.0
+        denoised = cv2.bilateralFilter(gray, 5, 0.1, 5)
+        sobel_x = cv2.Sobel(denoised, cv2.CV_32F, 1, 0)
+        sobel_y = cv2.Sobel(denoised, cv2.CV_32F, 0, 1)
+        mag = np.sqrt(sobel_x**2 + sobel_y**2)
+        
+        # ノイズ閾値処理
+        noise_threshold = 0.05
+        mag[mag < noise_threshold] = 0
+        #cv2.imwrite("mag.jpg", (mag * 255).astype(np.uint8))
+        l_filtered = cv2.ximgproc.jointBilateralFilter(
+            mag, gray, 
+            d_l, sigma_l / 10, sigma_l
+        ) * 100.0
+        print(f"jbf: {d_l}, {sigma_l/10}, {sigma_l}")
+
+        #l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
+    else:
+        l_filtered = l
+    
+    if col > 0:
+        # 色度チャンネル(a,b)のノイズ除去 - 強力な平滑化
+        """
+        ksize = max(3, min(51, int(3 + col * 0.5)))
+        ksize = ksize + 1 if ksize % 2 == 0 else ksize
+        a_filtered = core.fast_median_filter(a, ksize)
+        b_filtered = core.fast_median_filter(b, ksize)
+        """
+        for i in range(int(col)):
+            a = cv2.bilateralFilter(a, d=3, sigmaColor=10, sigmaSpace=1)
+            b = cv2.bilateralFilter(b, d=3, sigmaColor=10, sigmaSpace=1)
+
+    a_filtered = a
+    b_filtered = b
+    
+    # チャンネルを結合
+    filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
+    return cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)

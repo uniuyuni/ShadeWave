@@ -79,8 +79,8 @@ if __name__ == '__main__':
 
     # プリコンパイル
     def precompile():
-        rgb = np.zeros((32, 32, 3), dtype=np.float32)
-        msk = np.ones((32, 32), dtype=np.float32)
+        rgb = np.zeros((64, 64, 3), dtype=np.float32)
+        msk = np.ones((64, 64), dtype=np.float32)
 
         hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
         hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)

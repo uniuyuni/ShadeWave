@@ -279,16 +279,17 @@ class ImageSet:
                 # 設定値から目標Evを計算
                 Ev = core.calc_ev_from_exif(exif_data)
 
-                # 適用
-                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
-                
                 # 自動コントラスト補正
-                img_array = core.auto_contrast_tonemap(img_array, 0.01)
+                img_array = core.auto_contrast_tonemap(img_array)
+
+                # 明るさ補正適用
+                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
+
                 # ヒストグラム均等化
                 #img_array = core.process_color_image_lab(img_array, core.histeq_16bit)
                 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
-                img_array = highlight_recovery.reconstruct_highlight_details(img_array)
+                img_array = highlight_recovery.reconstruct_highlight_details(img_array, True)
 
                 hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
                 hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
@@ -301,7 +302,7 @@ class ImageSet:
 
             # 情報の設定
             params.set_image_param(param, img_array)
-            param['lens_modifier'] = True
+            param['lens_modifier'] = False
 
             # 正方形にする
             #img_array = core.adjust_shape_to_square(img_array)

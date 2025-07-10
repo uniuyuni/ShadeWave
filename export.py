@@ -193,6 +193,6 @@ class ExportFile():
         if exifsw:
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
                 safe_metadata = make_safe_metadata(self.exif_data)
-                safe_metadata["Software"] = define.APPNAME + " " + params.VERSION
+                safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
                 result = et.set_tags(self.ex_path, tags=safe_metadata)
                 print(result)

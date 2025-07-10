@@ -508,52 +508,7 @@ class LightNoiseReductionEffect(Effect):
             if self.hash != param_hash:  
                 its = its * efconfig.disp_info[4]
                 col = col * efconfig.disp_info[4]
-
-                # Lab色空間に変換（L: 輝度, a,b: 色度）
-                lab = cv2.cvtColor(img, cv2.COLOR_RGB2Lab)
-                l, a, b = cv2.split(lab)
-                
-                # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
-                if its > 0:
-                    d_l = max(1, min(15, int(1 + its * 0.05)))
-                    d_l = d_l + 1 if d_l % 2 == 0 else d_l
-                    sigma_l = 10 + its * 0.7
-
-                    # ノイズ低減処理付きSobel
-                    gray = l / 100.0
-                    denoised = cv2.bilateralFilter(gray, 5, 0.1, 5)
-                    sobel_x = cv2.Sobel(denoised, cv2.CV_32F, 1, 0)
-                    sobel_y = cv2.Sobel(denoised, cv2.CV_32F, 0, 1)
-                    mag = np.sqrt(sobel_x**2 + sobel_y**2)
-                    
-                    # ノイズ閾値処理
-                    noise_threshold = 0.05
-                    mag[mag < noise_threshold] = 0
-                    #cv2.imwrite("mag.jpg", (mag * 255).astype(np.uint8))
-                    l_filtered = cv2.ximgproc.jointBilateralFilter(
-                        mag, gray, 
-                        d_l, sigma_l / 10, sigma_l
-                    ) * 100.0
-                    print(f"jbf: {d_l}, {sigma_l/10}, {sigma_l}")
-
-                    #l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
-                else:
-                    l_filtered = l
-                
-                if col > 0:
-                    # 色度チャンネル(a,b)のノイズ除去 - 強力な平滑化
-                    ksize = max(3, min(51, int(3 + col * 0.5)))
-                    ksize = ksize + 1 if ksize % 2 == 0 else ksize
-                    a_filtered = core.fast_median_filter(a, ksize)
-                    b_filtered = core.fast_median_filter(b, ksize)
-                else:
-                    a_filtered = a
-                    b_filtered = b
-                
-                # チャンネルを結合
-                filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
-                self.diff = cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)
-
+                self.diff = core.light_denoise(img, its, col)
                 self.hash = param_hash
 
         return self.diff
@@ -1342,14 +1297,14 @@ class TonecurveEffect(Effect):
         else:
             param_hash = hash(np.sum(pl))
             if self.hash != param_hash:
-                self.diff = core.make_spline_func(pl)
+                self.diff = core.calc_point_list_to_lut(pl)
                 self.hash = param_hash
 
         return self.diff
     
     def apply_diff(self, rgb):
         rgb =  core.type_convert(rgb, jnp.ndarray)
-        return core.apply_spline_func(rgb, *self.diff)
+        return core.apply_lut(rgb, self.diff)
 
 class TonecurveRedEffect(Effect):
 
