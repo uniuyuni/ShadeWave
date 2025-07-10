@@ -539,7 +539,7 @@ if __name__ == '__main__':
             self.ids['exif_image_size'].value = str(width) + "x" + str(height)
             self.ids['exif_iso_speed'].value = str(exif_data.get("ISO", "-"))
             self.ids['exif_aperture'].value = str(exif_data.get("ApertureValue", exif_data.get("Aperture", "-")))
-            self.ids['exif_shutter_speed'].value = exif_data.get("ShutterSpeedValue", "-")
+            self.ids['exif_shutter_speed'].value = str(exif_data.get("ShutterSpeedValue", "-"))
             self.ids['exif_exposure_compensation'].value = str(exif_data.get("ExposureCompensation", "-"))
             self.ids['exif_flash'].value = exif_data.get("Flash", "-")
             self.ids['exif_white_balance'].value = exif_data.get("WhiteBalance", "-")

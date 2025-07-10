@@ -749,7 +749,7 @@ def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offse
     vignette = jnp.where(intensity < 0, 1.0 + intensity * mask, 1.0 - intensity * mask)
     
     # カラー画像対応
-    if len(image.shape) == 3:
+    if image.ndim == 3:
         vignette = vignette[..., jnp.newaxis]
     
     # 効果適用
@@ -1065,7 +1065,7 @@ def _estimate_depth_map(img, params=(0.121779, 0.959710, -0.780245), sigma=0.5):
     """
     色線形変換先行法（Color Attenuation Prior）を使用して深度マップを推定
     
-    img: 入力画像（0-1の範囲のfloat32、BGR形式）
+    img: 入力画像（0-1の範囲のfloat32、RGB形式）
     params: 線形モデルの係数 (β0, β1, β2)
     sigma: ガウシアンフィルタのシグマ値
     
@@ -1093,7 +1093,7 @@ def _estimate_atmospheric_light(img, depth_map, top_percent=0.001):
     """
     大気光を推定（最も深い点の上位N%を使用）
     
-    img: 入力画像（BGR形式）
+    img: 入力画像（RGB形式）
     depth_map: 深度マップ（値が大きいほど霧が濃い）
     top_percent: 使用する上位のピクセルの割合
     """
@@ -1136,7 +1136,7 @@ def dehaze_image(img, strength=0.5):
     """
     色線形変換先行法を使用した霞除去・霧追加
     
-    img: 入力画像（0-1の範囲のfloat32、BGR形式）
+    img: 入力画像（0-1の範囲のfloat32、RGB形式）
     strength: 霞除去（正の値）または霧追加（負の値）の強さ、-1から1の範囲
     """
     
@@ -1903,8 +1903,15 @@ def type_convert(img, target_type):
 
 def calc_ev_from_exif(exif_data):
     Av = exif_data.get('ApertureValue', 1.0)
-    _, Tv = exif_data.get('ShutterSpeedValue', "1/100").split('/')
-    Tv = float(_) / float(Tv)
+    ssv = exif_data.get('ShutterSpeedValue', "1/100")
+    if type(ssv) == str:
+        if '/' in ssv:
+            _, Tv = ssv.split('/')
+            Tv = float(_) / float(Tv)
+        else:
+            Tv = float(ssv)
+    else:
+        Tv = ssv
 
     return calc_ev_from_settings(Av, Tv, exif_data.get('ISO', 100))
     
@@ -2428,13 +2435,19 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
 
     if is_sd == True:
         undist_coords = mod.apply_subpixel_distortion()
-        modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
-        modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
-        modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
+        if undist_coords is None:
+            logging.warning("Apply Subpixel Distortion is Failed")
+        else:
+            modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
+            modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
+            modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
 
     if is_gd == True:
         undist_coords = mod.apply_geometry_distortion()
-        modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
+        if undist_coords is None:
+            logging.warning("Apply Geometry Distortion is Failed")
+        else:
+            modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
 
     return modimg
 
@@ -2446,6 +2459,7 @@ def light_denoise(img, its, col):
     
     # 輝度チャンネル(L)のノイズ除去 - エッジ保持フィルタ
     if its > 0:
+        """
         d_l = max(1, min(15, int(1 + its * 0.05)))
         d_l = d_l + 1 if d_l % 2 == 0 else d_l
         sigma_l = 10 + its * 0.7
@@ -2466,26 +2480,121 @@ def light_denoise(img, its, col):
             d_l, sigma_l / 10, sigma_l
         ) * 100.0
         print(f"jbf: {d_l}, {sigma_l/10}, {sigma_l}")
-
+        """
         #l_filtered = cv2.bilateralFilter(l, d_l, sigma_l, sigma_l / 2)
+    
+        l = fast_tv_denoise(l, weight=its / 100.0)
+        l_filtered = l
     else:
         l_filtered = l
     
     if col > 0:
         # 色度チャンネル(a,b)のノイズ除去 - 強力な平滑化
-        """
-        ksize = max(3, min(51, int(3 + col * 0.5)))
-        ksize = ksize + 1 if ksize % 2 == 0 else ksize
-        a_filtered = core.fast_median_filter(a, ksize)
-        b_filtered = core.fast_median_filter(b, ksize)
-        """
-        for i in range(int(col)):
-            a = cv2.bilateralFilter(a, d=3, sigmaColor=10, sigmaSpace=1)
-            b = cv2.bilateralFilter(b, d=3, sigmaColor=10, sigmaSpace=1)
+        D = [3, 3, 3, 3, 3, 4, 4, 4, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        n = max(1, int(col * 0.20))
+        for i in range(5):
+            a = cv2.bilateralFilter(a, d=D[n], sigmaColor=50, sigmaSpace=30)
+            b = cv2.bilateralFilter(b, d=D[n], sigmaColor=50, sigmaSpace=30)
 
     a_filtered = a
     b_filtered = b
-    
+ 
     # チャンネルを結合
     filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
     return cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)
+
+
+def fast_tv_denoise(img, weight=0.1, max_iter=100, tol=1e-4):
+    """
+    Total Variationノイズ除去の超高速実装 (Chambolleアルゴリズム)
+    
+    パラメータ:
+        image: 入力画像 (2D: グレースケール, 3D: RGB)
+        weight: ノイズ除去強度 (0.0-1.0)
+        max_iter: 最大反復回数
+        tol: 収束許容誤差
+        
+    戻り値:
+        ノイズ除去後の画像 (入力と同じshape)
+    """
+    weight *= 3.0
+    
+    # 次元数による分岐 (Numba外で処理)
+    if img.ndim == 2:
+        return _tv_chambolle_single(img, weight, max_iter, tol)
+
+    elif img.ndim == 3 and img.shape[2] == 3:
+        return _process_rgb(img, weight, max_iter, tol)
+
+    else:
+        raise ValueError("サポートされる形式: 2D(グレースケール) or 3D(RGB)")
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _process_rgb(rgb_img, weight, max_iter, tol):
+    """ RGB画像のTVノイズ除去 """
+    denoised = np.empty_like(rgb_img)
+    for c in nb.range(3):
+        denoised[..., c] = _tv_chambolle_single(rgb_img[..., c], weight, max_iter, tol)
+
+    return denoised
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _tv_chambolle_single(img, weight, max_iter, tol):
+    """ 単一チャンネル用TVノイズ除去コア """
+    # 画像サイズを取得 (境界処理用)
+    H, W = img.shape
+    
+    # 初期設定
+    u = img
+    p = np.zeros((H, W, 2), dtype=np.float32)
+    g = np.zeros((H, W, 2), dtype=np.float32)
+    
+    # ステップサイズ計算
+    tau = 0.25 / weight
+    tol_val = tol * np.max(img)
+    
+    # 反復処理
+    for it in range(max_iter):
+        # 各ピクセルの差分を配列に格納
+        delta_arr = np.zeros((H, W), dtype=np.float32)
+        
+        # 勾配計算と更新 (境界を除く内部ピクセルのみ処理)
+        for i in nb.prange(1, H-1):
+            for j in nb.prange(1, W-1):
+                # 勾配計算
+                g[i, j, 0] = p[i, j, 0] + tau * (u[i+1, j] - u[i, j])
+                g[i, j, 1] = p[i, j, 1] + tau * (u[i, j+1] - u[i, j])
+                
+                # ノルム計算
+                norm = np.sqrt(g[i, j, 0]**2 + g[i, j, 1]**2) + 1e-8
+                factor = 1.0 / (1.0 + tau * norm)
+                
+                # 差分計算
+                delta_arr[i, j] = np.abs(p[i, j, 0] - g[i, j, 0] * factor) + \
+                                  np.abs(p[i, j, 1] - g[i, j, 1] * factor)
+                
+                # 更新
+                p[i, j, 0] = g[i, j, 0] * factor
+                p[i, j, 1] = g[i, j, 1] * factor
+        
+        # 全ピクセルの差分を合計
+        delta = np.sum(delta_arr)
+        
+        # 収束チェック
+        if delta < tol_val:
+            break
+    
+    # 発散計算
+    div_p = np.zeros_like(u)
+    for i in nb.prange(1, H-1):
+        for j in nb.prange(1, W-1):
+            div_p[i, j] = p[i-1, j, 0] - p[i, j, 0] + p[i, j-1, 1] - p[i, j, 1]
+    
+    # 境界処理 (境界ピクセルは元の値を保持)
+    result = u - weight * div_p
+    result[0, :] = img[0, :]  # 上境界
+    result[-1, :] = img[-1, :]  # 下境界
+    result[:, 0] = img[:, 0]  # 左境界
+    result[:, -1] = img[:, -1]  # 右境界
+    
+    return result.astype(np.float32)

@@ -509,6 +509,9 @@ class LightNoiseReductionEffect(Effect):
                 its = its * efconfig.disp_info[4]
                 col = col * efconfig.disp_info[4]
                 self.diff = core.light_denoise(img, its, col)
+                #color_denise = core.denoise_like_lightroom(img, its, col)
+                #denoise_img = core.lab_multiscale_denoise(color_denise, "bilateral")
+                #self.diff = img * (1.0 - its) + denoise_img * its
                 self.hash = param_hash
 
         return self.diff

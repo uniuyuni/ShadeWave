@@ -46,4 +46,4 @@ APPNAME = "Platypus"
 VERSION = get_version()
 
 SUPPORTED_FORMATS_RGB = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
-SUPPORTED_FORMATS_RAW = ('.cr2', '.nef', '.arw', '.dng', '.orf', '.raf', '.rw2', '.sr2', '.pef', '.raw')
+SUPPORTED_FORMATS_RAW = ('.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', '.raf', '.rw2', '.sr2', '.pef', '.raw')
