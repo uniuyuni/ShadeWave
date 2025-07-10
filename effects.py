@@ -1870,6 +1870,80 @@ class FilmSimulationEffect(Effect):
         per = self.diff[1] / 100.0
         return film * per + rgb * (1-per)
 
+
+class SolidColorEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'solid_color': 0,
+            'solid_color_red': 0,
+            'solid_color_green': 0,
+            'solid_color_blue': 0,
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["switch_solid_color"].active = False if self.get_param(param, 'solid_color') == 0 else True
+        widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(self.get_param(param, 'solid_color_red'))
+        widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(self.get_param(param, 'solid_color_green'))
+        widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(self.get_param(param, 'solid_color_blue'))
+
+    def set2param(self, param, widget):
+        param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
+        param["solid_color_red"] = widget.ids["cp_solid_color"].ids['slider_red'].value
+        param["solid_color_green"] = widget.ids["cp_solid_color"].ids['slider_green'].value
+        param["solid_color_blue"] = widget.ids["cp_solid_color"].ids['slider_blue'].value
+
+    def make_diff(self, rgb, param, efconfig):
+        coa = self.get_param(param, 'solid_color')
+        coar = self.get_param(param, "solid_color_red")
+        coag = self.get_param(param, "solid_color_green")
+        coab = self.get_param(param, "solid_color_blue")
+        if coa <= 0:
+            self.diff = None
+            self.hash = None
+        else:        
+            param_hash = hash((coa, coar, coag, coab))
+            if self.hash != param_hash:
+                rgb = core.type_convert(rgb, np.ndarray)
+                self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255))
+                self.hash = param_hash
+
+        return self.diff
+
+class UnsharpMaskEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'unsharp_mask_amount': 0,
+            'unsharp_mask_sigma': 50,
+        }
+ 
+    def set2widget(self, widget, param):
+        widget.ids["slider_unsharp_mask_amount"].set_slider_value(self.get_param(param, 'unsharp_mask_amount'))
+        widget.ids["slider_unsharp_mask_sigma"].set_slider_value(self.get_param(param, 'unsharp_mask_sigma'))
+
+    def set2param(self, param, widget):
+        param['unsharp_mask_amount'] = widget.ids["slider_unsharp_mask_amount"].value
+        param['unsharp_mask_sigma'] = widget.ids["slider_unsharp_mask_sigma"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        amount = self.get_param(param, 'unsharp_mask_amount')
+        sigma = self.get_param(param, 'unsharp_mask_sigma')
+        if amount <= 0:
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((amount, sigma))
+            if self.hash != param_hash:
+                rgb = core.type_convert(rgb, np.ndarray)
+                amount = amount / 100.0 * 1.5
+                sigma = sigma / 100.0 * 3.0
+                self.diff = core.unsharp_mask(rgb, amount, sigma)
+                self.hash = param_hash
+
+        return self.diff
+
+
 class Mask2Effect(Effect):
 
     def get_param_dict(self, param):
@@ -1972,45 +2046,6 @@ class Mask2Effect(Effect):
             param_hash = hash((dmin, dmax, hdis, hmin, hmax, ldis, lmin, lmax, sdis, smin, smax, blur))
             if self.hash != param_hash:
                 self.diff = None
-                self.hash = param_hash
-
-        return self.diff
-
-class SolidColorEffect(Effect):
-
-    def get_param_dict(self, param):
-        return {
-            'solid_color': 0,
-            'solid_color_red': 0,
-            'solid_color_green': 0,
-            'solid_color_blue': 0,
-        }
-
-    def set2widget(self, widget, param):
-        widget.ids["switch_solid_color"].active = False if self.get_param(param, 'solid_color') == 0 else True
-        widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(self.get_param(param, 'solid_color_red'))
-        widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(self.get_param(param, 'solid_color_green'))
-        widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(self.get_param(param, 'solid_color_blue'))
-
-    def set2param(self, param, widget):
-        param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
-        param["solid_color_red"] = widget.ids["cp_solid_color"].ids['slider_red'].value
-        param["solid_color_green"] = widget.ids["cp_solid_color"].ids['slider_green'].value
-        param["solid_color_blue"] = widget.ids["cp_solid_color"].ids['slider_blue'].value
-
-    def make_diff(self, rgb, param, efconfig):
-        coa = self.get_param(param, 'solid_color')
-        coar = self.get_param(param, "solid_color_red")
-        coag = self.get_param(param, "solid_color_green")
-        coab = self.get_param(param, "solid_color_blue")
-        if coa <= 0:
-            self.diff = None
-            self.hash = None
-        else:        
-            param_hash = hash((coa, coar, coag, coab))
-            if self.hash != param_hash:
-                rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255))
                 self.hash = param_hash
 
         return self.diff
@@ -2160,6 +2195,7 @@ def create_effects():
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()
     lv2['solid_color'] = SolidColorEffect()
+    lv2['unsharp_mask'] = UnsharpMaskEffect()
 
     lv3 = effects[3]
     lv3['mask2'] = Mask2Effect()

@@ -2577,3 +2577,26 @@ def _tv_chambolle_single(img, weight, max_iter, tol):
     return result.astype(np.float32)
 
 #-------------------------------------------------
+
+def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
+    """
+    RGB画像にアンシャープマスク処理を適用
+    
+    引数:
+        rgb_image (numpy.ndarray): RGB形式の入力画像 (float32, 0.0-1.0)
+        amount (float): マスクの適用強度（デフォルト: 1.0）
+        sigma (float): ガウシアンブラーの標準偏差（デフォルト: 1.0）
+        
+    戻り値:
+        numpy.ndarray: シャープニングされたRGB画像 (float32)
+    """
+    # ガウシアンフィルタでぼかした画像を生成
+    blurred = gaussian_blur_cv(rgb_image, (0, 0), sigma)
+    
+    # アンシャープマスクの計算: (元画像 - ぼかし画像)
+    mask = rgb_image - blurred
+    
+    # マスクを適用してシャープニング
+    sharpened = rgb_image + amount * mask
+    
+    return sharpened
