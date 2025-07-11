@@ -2181,7 +2181,6 @@ def create_effects():
     #lv2['rgb2hls1'] = RGB2HLSEffect()
     #lv2['hls2rgb1'] = HLS2RGBEffect()
 
-    lv2['level'] = LevelEffect()
     lv2['clahe'] = CLAHEEffect()
 
     lv2['rgb2hls2'] = RGB2HLSEffect()
@@ -2194,6 +2193,7 @@ def create_effects():
     lv2['lut'] = LUTEffect()
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()
+    lv2['level'] = LevelEffect()
     lv2['solid_color'] = SolidColorEffect()
     lv2['unsharp_mask'] = UnsharpMaskEffect()
 

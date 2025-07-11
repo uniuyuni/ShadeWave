@@ -27,7 +27,6 @@ class FilmEmulator:
 
         img = self.apply_color_adjustment(img, params['color_adjustment'])
         
-        img = np.clip(img, 0, 1) # NaNを防ぐためにクリッピング
         img = self.apply_contrast_compression(img, params['contrast'])
         
         img = self.apply_base_color(img, params['base_color'])
@@ -96,23 +95,34 @@ class FilmEmulator:
         sd_thresh = np.clip(params['shadow_threshold'], 0.05, 0.3)
         sd_power = np.clip(params['shadow_power'], 1.0, 3.0)
         
+        # 入力画像をコピーして、元の画像を変更しないようにする
+        img_processed = img.copy()
+        
+        # 1.0を超える値を事前にクリップ（オプション）
+        # img_processed = np.clip(img_processed, 0, 1)
+        
         # ハイライト圧縮の修正
-        hl_mask = img > hl_thresh
+        hl_mask = img_processed > hl_thresh
         if np.any(hl_mask):
-            # 正規化して圧縮
-            normalized = (img[hl_mask] - hl_thresh) / (1 - hl_thresh)
-            compressed = 1 - (1 - normalized) ** hl_power
-            img[hl_mask] = hl_thresh + compressed * (1 - hl_thresh)
+            # 1.0を超える値も考慮した正規化
+            max_val = np.max(img_processed[hl_mask])
+            if max_val > hl_thresh:  # 分母が0でないことを確認
+                normalized = (img_processed[hl_mask] - hl_thresh) / (max_val - hl_thresh)
+                # normalizedが0-1の範囲に収まることを保証
+                normalized = np.clip(normalized, 0, 1)
+                compressed = 1 - (1 - normalized) ** hl_power
+                # 圧縮された値を元の範囲にマッピング
+                img_processed[hl_mask] = hl_thresh + compressed * (max_val - hl_thresh)
         
-        # シャドウ圧縮の修正
-        sd_mask = img < sd_thresh
+        # シャドウ圧縮（元のままで問題なし）
+        sd_mask = img_processed < sd_thresh
         if np.any(sd_mask):
-            normalized = img[sd_mask] / sd_thresh
+            normalized = img_processed[sd_mask] / sd_thresh
             compressed = normalized ** (1 / sd_power)
-            img[sd_mask] = compressed * sd_thresh
+            img_processed[sd_mask] = compressed * sd_thresh
         
-        return img
-    
+        return img_processed
+
     def apply_base_color(self, img, base_color):
         if len(base_color) != 4:
             raise ValueError("base_color must have 4 values [R, G, B, alpha]")

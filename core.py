@@ -451,39 +451,69 @@ def adjust_contrast(img, cf, c=0.5):
     return adjust
     """
 
-# レベル補正
 @partial(jit, static_argnums=(1,2,3,))
 def apply_level_adjustment(image, black_level, midtone_level, white_level):
-    # image: 変換元イメージ
-    # black_level: 黒レベル 0〜255
-    # white_level: 白レベル 0〜255
-    # midtone_level: 中間色レベル 0〜255
-
+    """
+    Photoshop風のレベル補正を適用する関数
+    
+    Args:
+        image: 入力画像 (0.0-1.0の範囲)
+        black_level: 黒レベル (0-255)
+        midtone_level: 中間調レベル (0-255, 128が中性)
+        white_level: 白レベル (0-255)
+    
+    Returns:
+        調整された画像 (0.0-1.0の範囲)
+    """
+    
     # 16ビット画像の最大値
     max_val = 65535
-    black_level *= 256
-    white_level *= 256
-    midtone_level *= 256
-
-    # midtone_level を 1.0 を基準としてスケーリング (128が基準のため)
-    midtone_factor = midtone_level / 32768.0
-
-    # ルックアップテーブル (LUT) の作成 (0〜65535)
-    lut = jnp.linspace(0, max_val, max_val + 1, dtype=np.float32)  # Liner space creation
-
-    # Pre-calculate constants
-    range_inv = 1.0 / (white_level - black_level)
     
-    # LUT のスケーリングとクリッピング
-    lut = jnp.clip((lut - black_level) * range_inv, 0, 1)  # Scale and clip
-    lut = jnp.power(lut, midtone_factor) * max_val  # Apply midtone factor and scale
-    lut = jnp.clip(lut, 0, max_val).astype(jnp.uint16)  # Final clip and type conversion
+    # 入力レベルを16ビット範囲に変換
+    black_16bit = black_level * 256
+    white_16bit = white_level * 256
     
-    # 画像全体にルックアップテーブルを適用
-    adjusted_image = lut[jnp.clip(image*max_val, 0, max_val).astype(jnp.uint16)]
-    adjusted_image = adjusted_image/max_val
+    # midtone_levelを黒レベルと白レベルの範囲でクリップして再マッピング
+    # Photoshopでは、midtone_levelは黒レベルと白レベルの間の相対位置を表す
+    clipped_midtone = max(min(midtone_level, white_level), black_level)
 
-    return adjusted_image
+    # 黒レベルと白レベルの範囲で正規化（0-1）
+    if white_level > black_level:
+        midtone_normalized = (clipped_midtone - black_level) / (white_level - black_level)
+    else:
+        midtone_normalized = 0.5  # 範囲が無効な場合は中性値
+    
+    # 正規化された値（0-1）をガンマ値に変換
+    # 0.5が中性（ガンマ1.0）、0に近いほど明るく、1に近いほど暗く
+    if midtone_normalized < 0.5:
+        # 0-0.5の範囲を0.1-1.0のガンマ値にマッピング（明るく）
+        gamma = 0.1 + (midtone_normalized / 0.5) * 0.9
+    else:
+        # 0.5-1.0の範囲を1.0-9.99のガンマ値にマッピング（暗く）
+        gamma = 1.0 + ((midtone_normalized - 0.5) / 0.5) * 8.99
+    
+    # 入力画像を16ビット範囲に変換
+    image_16bit = image * max_val
+    
+    # レベル調整の計算（Photoshop準拠）
+    # 1. 黒レベル以下を0にクリップ
+    adjusted = jnp.maximum(image_16bit - black_16bit, 0)
+    
+    # 2. 入力範囲を0-1に正規化
+    input_range = white_16bit - black_16bit
+    input_range = jnp.maximum(input_range, 1.0)  # 0除算を防ぐ
+    normalized = adjusted / input_range
+    
+    # 3. 1.0以上をクリップ
+    #normalized = jnp.minimum(normalized, 1.0)
+    
+    # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
+    gamma_corrected = jnp.power(normalized, gamma)
+    
+    # 5. 出力範囲（0-1）にスケーリング
+    result = gamma_corrected
+    
+    return result
 
 #--------------------------------------------------
 # 彩度補正と自然な彩度補正
