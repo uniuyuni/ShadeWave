@@ -163,7 +163,7 @@ if __name__ == '__main__':
             if (self.imgset is not None) and (self.imgset.img is not None):
                 img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
                 img = np.array(img)
-                utils.print_nan_inf("output", img)
+                utils.print_nan_inf(img, "output")
 
                 # ヒストグラム表示
                 img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)

@@ -24,15 +24,20 @@ class FilmEmulator:
         
         # 処理ステップごとにクリッピングを追加
         img = self.apply_tone_curves(img, params['tone_curves'])
+        utils.print_nan_inf(img, "tone")
 
         img = self.apply_color_adjustment(img, params['color_adjustment'])
+        utils.print_nan_inf(img, "color")
         
         img = self.apply_contrast_compression(img, params['contrast'])
+        utils.print_nan_inf(img, "contrast")
         
         img = self.apply_base_color(img, params['base_color'])
+        utils.print_nan_inf(img, "base")
         
         if expired > 0:
             img = self.apply_expired_effects(img, params.get('expired_effects', {}), expired)
+            utils.print_nan_inf(img, "expired")
         
         return img
     
@@ -95,31 +100,36 @@ class FilmEmulator:
         sd_thresh = np.clip(params['shadow_threshold'], 0.05, 0.3)
         sd_power = np.clip(params['shadow_power'], 1.0, 3.0)
         
-        # 入力画像をコピーして、元の画像を変更しないようにする
-        img_processed = img.copy()
+        # 入力画像をコピーして、安全な範囲に制限
+        img_processed = np.clip(img, 0, 10)  # 10は適当な上限値
         
-        # 1.0を超える値を事前にクリップ（オプション）
-        # img_processed = np.clip(img_processed, 0, 1)
-        
-        # ハイライト圧縮の修正
+        # ハイライト圧縮
         hl_mask = img_processed > hl_thresh
         if np.any(hl_mask):
-            # 1.0を超える値も考慮した正規化
-            max_val = np.max(img_processed[hl_mask])
-            if max_val > hl_thresh:  # 分母が0でないことを確認
-                normalized = (img_processed[hl_mask] - hl_thresh) / (max_val - hl_thresh)
-                # normalizedが0-1の範囲に収まることを保証
-                normalized = np.clip(normalized, 0, 1)
-                compressed = 1 - (1 - normalized) ** hl_power
-                # 圧縮された値を元の範囲にマッピング
-                img_processed[hl_mask] = hl_thresh + compressed * (max_val - hl_thresh)
+            # 1.0を超える値も含めて処理
+            hl_values = img_processed[hl_mask]
+            
+            # 安全な正規化（0除算を避ける）
+            max_hl = np.maximum(np.max(hl_values), hl_thresh + 1e-6)
+            normalized = (hl_values - hl_thresh) / (max_hl - hl_thresh)
+            normalized = np.clip(normalized, 0, 1)
+            
+            # 圧縮適用
+            compressed = 1 - np.power(1 - normalized, hl_power)
+            
+            # 結果をマッピング
+            img_processed[hl_mask] = hl_thresh + compressed * (max_hl - hl_thresh)
         
-        # シャドウ圧縮（元のままで問題なし）
+        # シャドウ圧縮
         sd_mask = img_processed < sd_thresh
         if np.any(sd_mask):
-            normalized = img_processed[sd_mask] / sd_thresh
-            compressed = normalized ** (1 / sd_power)
+            sd_values = img_processed[sd_mask]
+            normalized = np.clip(sd_values / sd_thresh, 0, 1)
+            compressed = np.power(normalized, 1 / sd_power)
             img_processed[sd_mask] = compressed * sd_thresh
+        
+        # 最終的な安全チェック
+        #img_processed = np.nan_to_num(img_processed, nan=0.0, posinf=1.0, neginf=0.0)
         
         return img_processed
 
