@@ -112,16 +112,11 @@ class ImageSet:
                 with PILImage.open(io.BytesIO(thumb.data)) as img:
                     img = PILImageOps.exif_transpose(img)
                     img_array = np.array(img)
-                """
-                # バイナリデータをNumPy配列に変換
-                img_array = np.frombuffer(thumb.data, dtype=np.uint8)
-                # OpenCVで画像としてデコード
-                img_array = cv2.imdecode(img_array, cv2.IMREAD_COLOR cv2.IM)
-                img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-                """
+
                 """
             elif thumb.format == rawpy.ThumbFormat.BITMAP:
                 # BITMAPフォーマットの場合
+                img_array = np.frombuffer(thumb.data, dtype=np.uint8).reshape(thumb.size[::-1])
                 """
             else:
                 raise ValueError(f"Unsupported thumbnail format: {thumb.format}")
@@ -132,13 +127,6 @@ class ImageSet:
             # 色空間変換
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'XYZ Scaling', # 最速？
                                 apply_cctf_decoding=True, apply_gamut_mapping=False).astype(np.float32)
-
-            # 試験的彩度補正
-            """
-            hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
-            hls[..., 2] = core.calc_saturation(hls[..., 2], 0, -50)
-            img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-            """
             
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -188,9 +176,8 @@ class ImageSet:
     def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
         try:
             raw = rawpy.imread(file_path)
-            logging.debug(raw.sizes)
 
-            img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw, # if half == False else rawpy.ColorSpace.sRGB, # どのRGBカラースペースを指定してもsRGBになっちゃう
+            img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw,
                                         #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
                                         output_bps=16,
                                         no_auto_scale=False,
@@ -204,7 +191,7 @@ class ImageSet:
                                         highlight_mode=5,)
                                         #auto_bright_thr=0.0005)
                                         #fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
-            logging.debug(raw.sizes)
+
             """
             # ブラックレベル補正
             raw_image = self._black(raw.raw_image_visible, raw.black_level_per_channel[0])
@@ -240,29 +227,19 @@ class ImageSet:
             #img_array = np.clip(img_array, 0, 1)
 
             # 倍率色収差低減
-            if half == False:
-                img_array = core.chromatic_aberration_correction(img_array)
+            #if half == False:
+            #    img_array = core.chromatic_aberration_correction(img_array)
 
-            # 色空間変更
-            if False:
-                t = time.time()
-                img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', config.get_config('cat'),
-                                              apply_cctf_decoding=False, apply_gamut_mapping=True).astype(np.float32)
-                logging.debug(f"XYZ_to_RGB: {time.time() - t}")
-            else:
+            if True:
                 # プロファイルを適用
-                # RAW色空間からXYZ色空間への変換にしか使ってない
-                """
-                dcp_path = "dcp/Fujifilm X-Pro3 Adobe Standard classic chrome.dcp"
-                reader = DCPReader(dcp_path)
+                reader = DCPReader("dcp/Fujifilm X-T5 Adobe Standard.dcp")
                 profile = reader.read()
                 processor = DCPProcessor(profile)
-                img_array = processor.process(img_array, illuminant='1', use_look_table=True).astype(np.float32)
-                """
-                t = time.time()
+                img_array = processor.process(img_array, illuminant='1', use_look_table=True)
+            else:            
+                # プロファイルを使わない時用
                 img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
                 img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
-                logging.debug(f"XYZ_to_RGB: {time.time() - t}")
                 
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -293,9 +270,9 @@ class ImageSet:
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
                 img_array = highlight_recovery.reconstruct_highlight_details(img_array, True)
 
-                hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
-                hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
-                img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
+                #hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
+                #hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
+                #img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
 
             # サイズを合わせる
             #if img_array.shape[1] != width or img_array.shape[0] != height:
@@ -304,7 +281,7 @@ class ImageSet:
 
             # 情報の設定
             params.set_image_param(param, img_array)
-            param['lens_modifier'] = False
+            param['lens_modifier'] = not half
 
             # 正方形にする
             #img_array = core.adjust_shape_to_square(img_array)

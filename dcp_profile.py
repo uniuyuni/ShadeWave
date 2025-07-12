@@ -1,10 +1,10 @@
+
 import numpy as np
-from typing import List, Tuple, Optional, Dict, Any, BinaryIO
+from typing import List, Tuple, Optional, Dict, BinaryIO
 import struct
 import os
 from dataclasses import dataclass
 from enum import IntEnum
-import io
 import cv2
 import colour
 
@@ -194,7 +194,7 @@ class DCPReader:
             self.profile.illuminants['1'] = self._read_illuminant(entry)
         elif entry.tag == TiffTag.CALIBRATION_ILLUMINANT2:
             self.profile.illuminants['2'] = self._read_illuminant(entry)
-        elif entry.tag == TiffTag.PROFILE_TONE_CURVE:
+        elif entry.tag == TiffTag.PROFILE_TONE_CURVE: # 50936:
             self.profile.forward_tone_curve = self._read_tone_curve(entry)
         elif entry.tag == TiffTag.PROFILE_HUE_SAT_MAP_DIMS:
             self.profile.hue_sat_map_dims = self._read_hue_sat_map_dims(entry)
@@ -206,6 +206,8 @@ class DCPReader:
             self.profile.look_table = self._read_look_table(entry)
         elif entry.tag == TiffTag.PROFILE_LOOK_TABLE_DIMS:
             self.profile.look_table_dims = self._read_look_table_dims(entry)
+        else:
+            print(f"Unknown tag: {entry.tag}")
 
     def _read_illuminant(self, entry: TiffIFDEntry) -> DCPIlluminant:
         """照明光源情報を読み込む"""
@@ -369,37 +371,41 @@ class DCPProcessor:
         if image.dtype != np.float32 or not (0 <= image.min() and image.max() <= 1):
             raise ValueError("Image must be float32 in 0-1 range")
         
-        result = image.copy()
+        result = image
         
-        
-        # 1. カメラキャリブレーション行列の適用
+        # カメラキャリブレーション行列の適用
         if illuminant in self.profile.camera_calibrations:
-            result = self._apply_matrix(result, 
-                                      self.profile.camera_calibrations[illuminant])
+            result = self._apply_matrix(result, self.profile.camera_calibrations[illuminant])
         
-        # 2. カラーマトリクスの適用
-#        if illuminant in self.profile.color_matrices:
-#            result = self._apply_matrix(result, 
-#                                      self.profile.color_matrices[illuminant]).astype(np.float32)
+        # カラーマトリクスの適用
+        #if illuminant in self.profile.color_matrices:
+        #    result = self._apply_matrix(result, self.profile.color_matrices[illuminant])
 
-        # 3. フォワードマトリクスの適用
-        result = self.apply_forward_matrix(result, illuminant)    
+        # XYZ空間への変換
+        result = self._apply_forward_matrix(result, illuminant)    
 
+        # RGB空間への変換
         result = colour.XYZ_to_RGB(result, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+        
+        # RGB → HSV 変換
+        result = cv2.cvtColor(result, cv2.COLOR_RGB2HSV_FULL)
 
-        # 4. 色相・彩度マップの適用
-        result = self.apply_hue_sat_map(result, illuminant)
-        
-        # 5. トーンカーブの適用
-        result = self.apply_tone_curve(result)
-        
-        # 6. ルックテーブルの適用
+        # ルックテーブルの適用
         if use_look_table:
             result = self._apply_look_table(result)
-        
+
+        # 色相・彩度マップの適用
+        result = self._apply_hue_sat_map(result, illuminant)
+
+        # RGB → HSV 変換
+        result = cv2.cvtColor(result, cv2.COLOR_HSV2RGB_FULL)
+
+        # トーンカーブの適用
+        result = self._apply_tone_curve(result)
+
         return result
 
-    def apply_forward_matrix(self, image: np.ndarray, illuminant: str) -> np.ndarray:
+    def _apply_forward_matrix(self, image: np.ndarray, illuminant: str) -> np.ndarray:
         if illuminant in self.profile.forward_matrices:
             result = self._apply_matrix(image, self.profile.forward_matrices[illuminant])
             return result
@@ -428,22 +434,32 @@ class DCPProcessor:
             
         return result
     
-    def apply_hue_sat_map(self, image: np.ndarray, illuminant):
-        if illuminant in self.profile.hue_sat_maps:
-            image = self._apply_hue_sat_map(image, self.profile.hue_sat_map_dims, self.profile.hue_sat_maps[illuminant])        
+    def _apply_look_table(self, image: np.ndarray) -> np.ndarray:
+        if self.profile.look_table is not None:
+            image = self._apply_hsv_map(image, self.profile.look_table_dims, self.profile.look_table)
         return image
 
-    def _apply_hue_sat_map(self, image: np.ndarray, dims, hue_sat_map: np.ndarray) -> np.ndarray:
+    def _apply_hue_sat_map(self, image: np.ndarray, illuminant):
+        if illuminant in self.profile.hue_sat_maps:
+            image = self._apply_hsv_map(image, self.profile.hue_sat_map_dims, self.profile.hue_sat_maps[illuminant])        
+        return image
+
+    def _apply_hsv_map(self, hsv: np.ndarray, dims, hue_sat_map: np.ndarray) -> np.ndarray:
         """色相・彩度マップを適用（ベクトル化）"""
-        # RGB → HSV 変換
-        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV_FULL)
         
         h_div, s_div, v_div = dims
+
+        print(f"Hue min:{np.min(hsv[..., 0])}, max:{np.max(hsv[..., 0])}")
+        print(f"Sat min:{np.min(hsv[..., 1])}, max:{np.max(hsv[..., 1])}")
+        print(f"Val min:{np.min(hsv[..., 2])}, max:{np.max(hsv[..., 2])}")
+        print(f"Hue min:{np.min(hue_sat_map[..., 0])}, max:{np.max(hue_sat_map[..., 0])}")
+        print(f"Sat min:{np.min(hue_sat_map[..., 1])}, max:{np.max(hue_sat_map[..., 1])}")
+        print(f"Val min:{np.min(hue_sat_map[..., 2])}, max:{np.max(hue_sat_map[..., 2])}")
         
         # インデックス計算 (境界処理改善)
-        h_val = np.clip(hsv[..., 0] * (h_div - 1), 0, h_div - 1 - 1e-6)
-        s_val = np.clip(hsv[..., 1] * (s_div - 1), 0, s_div - 1 - 1e-6)
-        v_val = np.clip(hsv[..., 2] * (v_div - 1), 0, v_div - 1 - 1e-6)
+        h_val = np.clip(hsv[..., 0] / 360 * (h_div - 1), 0, h_div - 1)
+        s_val = np.clip(hsv[..., 1] * (s_div - 1), 0, s_div - 1)
+        v_val = np.clip(hsv[..., 2] * (v_div - 1), 0, v_div - 1)
         
         # インデックスと補間係数を計算
         h_idx = np.floor(h_val).astype(int)
@@ -487,18 +503,19 @@ class DCPProcessor:
         deltas = fast_trilinear_interpolate(hue_sat_map)
         
         # 色相
-        hsv[..., 0] = (hsv[..., 0] + deltas[..., 0]) # % 360
+        hsv[..., 0] = hsv[..., 0] + deltas[..., 0]
+
+        # 色相丸め
+        mask = hsv[..., 0] < 0
+        hsv[..., 0][mask] = hsv[..., 0][mask] + 360
+        hsv[..., 0] = hsv[..., 0] % 360
+
+        # 彩度、輝度
+        hsv[..., 1:2] = np.clip(hsv[..., 1:2] * deltas[..., 1:2], 0, 1.0)
         
-        # 彩度
-        hsv[..., 1] = hsv[..., 1] * deltas[..., 1]
-        
-        # 明度
-        hsv[..., 2] = hsv[..., 2] * deltas[..., 2]
-        
-        # HSVからRGBに戻す
-        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB_FULL)
+        return hsv
     
-    def apply_tone_curve(self, image: np.ndarray) -> np.ndarray:
+    def _apply_tone_curve(self, image: np.ndarray) -> np.ndarray:
         """トーンカーブを適用"""
         if self.profile.forward_tone_curve is not None:
             # トーンカーブの制御点をnumpy配列に変換
@@ -517,10 +534,6 @@ class DCPProcessor:
         
         return image
     
-    def apply_look_table(self, image: np.ndarray) -> np.ndarray:
-        if self.profile.look_table is not None:
-            return self._apply_hue_sat_map(image, self.profile.look_table_dims, self.profile.look_table)
-
 
 if __name__ == '__main__':
     # DCPファイルを読み込む

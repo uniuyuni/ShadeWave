@@ -273,6 +273,9 @@ if __name__ == '__main__':
                 # ロード終了
                 self.loading = False
 
+            # 暫定処置
+            if imgset.flag == False:
+                self.primary_param['lens_modifier'] = True
 
             self.imgset = imgset
             effects.reeffect_all(self.primary_effects)
