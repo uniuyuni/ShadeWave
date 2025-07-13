@@ -1533,7 +1533,8 @@ color_setting_spec = [
     ('fade_width', numba.float32),
     ('adjust', numba.float32[:]),
     ('l_range', numba.float32[:]),
-    ('s_range', numba.float32[:])
+    ('s_range', numba.float32[:]),
+    ('kernel_size', numba.int32),
 ]
 
 @jitclass(color_setting_spec)
@@ -1545,6 +1546,7 @@ class ColorSetting:
         self.adjust = np.zeros(3, dtype=np.float32)
         self.l_range = np.zeros(2, dtype=np.float32)
         self.s_range = np.zeros(2, dtype=np.float32)
+        self.kernel_size = 3
 
 # メイン処理関数
 def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
@@ -1559,10 +1561,11 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
         cs.adjust = np.array(s['adjust'], dtype=np.float32)
         cs.l_range = np.array(s['l_range'], dtype=np.float32)
         cs.s_range = np.array(s['s_range'], dtype=np.float32)
+        cs.kernel_size = np.float32(s['kernel_size'])
         numba_settings.append(cs)
     
     # カーネルサイズ計算
-    kernel_size = max(3, int(32 * resolution_scale))
+    kernel_size = max(3, int(cs.kernel_size * resolution_scale))
     if kernel_size % 2 == 0: 
         kernel_size += 1
     sigma = max(1.0, kernel_size / 6.0)
@@ -1599,6 +1602,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0.1, 0.05, 0.1],  # [色相, 明度, 彩度] の調整値
+            'kernel_size': 32,
         },
         'orange': {
             'center': 33.75,
@@ -1607,6 +1611,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.1, 0.9),  # 彩度の有効範囲
             'adjust': [0.05, 0.1, 0.1],
+            'kernel_size': 32,
         },
         'yellow': {
             'center': 60,
@@ -1615,6 +1620,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0, 0.1, 0.05],
+            'kernel_size': 32,
         },
         'green': {
             'center': 112.5,
@@ -1623,6 +1629,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [-0.05, 0, 0.1],
+            'kernel_size': 32,
         },
         'cyan': {
             'center': 180,
@@ -1631,6 +1638,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0, -0.05, 0],
+            'kernel_size': 32,
         },
         'blue': {
             'center': 240,
@@ -1639,6 +1647,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0.05, 0, 0.15],
+            'kernel_size': 32,
         },
         'purple': {
             'center': 285,
@@ -1647,6 +1656,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0.1, 0.05, 0],
+            'kernel_size': 32,
         },
         'magenta': {
             'center': 318.75,
@@ -1655,6 +1665,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0.05, 0.1, 0.05],
+            'kernel_size': 32,
         },
         'sky': {
             'center': 210,
@@ -1663,6 +1674,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.3, 0.9),
             's_range': (0.4, 1.0),
             'adjust': [5, 0.2, 0.1],  # [色相, 輝度, 彩度]
+            'kernel_size': 32,
         },
         'skin': {
             'center': 30,
@@ -1671,7 +1683,17 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
             'l_range': (0.2, 0.8),
             's_range': (0.3, 0.7),
             'adjust': [-2, 0.1, -0.05],
-        }
+            'kernel_size': 32,
+        },
+        'enhance_red': {
+            'center': 22.65,  # 赤の中心値
+            'width': 22.5,  # 完全適用幅 (±10度)
+            'fade_width': 22.5,  # フェード幅 (10-22.5度でフェード)
+            'l_range': (0.1, 0.9),  # 明度の有効範囲
+            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'adjust': [0.1, 0.05, 0.1],  # [色相, 明度, 彩度] の調整値
+            'kernel_size': 128,
+        },
     }
 
     color_setting_one = [COLOR_SETTING[color_name]]

@@ -28,7 +28,7 @@ class HistogramWidget(KVImage):
             return np.sqrt(data)
         
         # RGB各チャンネルのヒストグラムを計算
-        r_hist, g_hist, b_hist = [cv2.calcHist([pixels], [i], None, [256], [0, 2.0]) for i in range(3)]
+        r_hist, g_hist, b_hist = [cv2.calcHist([pixels], [i], None, [256], [0, 1.5]) for i in range(3)]
         r_hist = r_hist.squeeze(axis=-1)
         r_hist[0] = max(0, r_hist[0] - black_count)
         r_hist = manual_scale(r_hist)
@@ -42,7 +42,7 @@ class HistogramWidget(KVImage):
         
         # 輝度の計算
         luminance = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-        l_hist = cv2.calcHist([luminance], [0], None, [256], [0, 2.0])
+        l_hist = cv2.calcHist([luminance], [0], None, [256], [0, 1.5])
         l_hist = l_hist.squeeze(axis=-1)
         l_hist[0] = max(0, l_hist[0] - black_count)
         l_hist = manual_scale(l_hist)
@@ -55,8 +55,8 @@ class HistogramWidget(KVImage):
         self.canvas.clear()
         with self.canvas:
             KVColor((0.8, 0.8, 0.8, 1))
-            KVLine(rectangle=(self.pos[0], self.pos[1], 256, 128+64), width=1)
-            KVLine(rectangle=(self.pos[0]+256, self.pos[1], 256, 128+64), width=1)
+            KVLine(rectangle=(self.pos[0], self.pos[1], 256+128, 128+64), width=1)
+            KVLine(rectangle=(self.pos[0]+256+128, self.pos[1], 128, 128+64), width=1)
         self.__draw_histogram_bars(r_hist, max_value, (1, 0, 0, 0.8))
         self.__draw_histogram_bars(g_hist, max_value, (0, 1, 0, 0.8))
         self.__draw_histogram_bars(b_hist, max_value, (0, 0, 1, 0.8))

@@ -5,7 +5,7 @@ import rawpy
 import logging
 import io
 import colour
-import time
+from functools import partial
 from PIL import Image as PILImage, ImageOps as PILImageOps
 from multiprocessing import shared_memory
 
@@ -232,10 +232,12 @@ class ImageSet:
 
             if True:
                 # プロファイルを適用
-                reader = DCPReader("dcp/Fujifilm X-T5 Adobe Standard.dcp")
+                reader = DCPReader("dcp/Fujifilm X-E3 Adobe Standard.dcp")
                 profile = reader.read()
                 processor = DCPProcessor(profile)
-                img_array = processor.process(img_array, illuminant='1', use_look_table=True)
+                img_array = processor.process(img_array,
+                        partial(colour.XYZ_to_RGB, colourspace='ProPhoto RGB', chromatic_adaptation_transform=config.get_config('cat')),
+                        illuminant='1', use_look_table=True)
             else:            
                 # プロファイルを使わない時用
                 img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
@@ -259,7 +261,7 @@ class ImageSet:
                 Ev = core.calc_ev_from_exif(exif_data)
 
                 # 自動コントラスト補正
-                img_array = core.auto_contrast_tonemap(img_array)
+                #img_array = core.auto_contrast_tonemap(img_array)
 
                 # 明るさ補正適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))

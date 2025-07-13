@@ -6,9 +6,6 @@ import os
 from dataclasses import dataclass
 from enum import IntEnum
 import cv2
-import colour
-
-import config
 
 class TiffTag(IntEnum):
     # DCP関連のTIFFタグ
@@ -354,7 +351,7 @@ class DCPProcessor:
     def __init__(self, profile: DCPProfile):
         self.profile = profile
         
-    def process(self, image: np.ndarray, 
+    def process(self, image: np.ndarray, xyz_to_rgb_func,
                 illuminant: str = '1',
                 use_look_table: bool = True) -> np.ndarray:
         """
@@ -362,6 +359,7 @@ class DCPProcessor:
         
         Parameters:
             image: 入力画像 (float32, 0-1範囲, shape=(H,W,3))
+            xyz_to_rgb_func: XYZ空間からRGB空間への変換関数
             illuminant: 使用する光源プロファイル ('1' or '2')
             use_look_table: ルックテーブルを適用するかどうか
             
@@ -385,7 +383,7 @@ class DCPProcessor:
         result = self._apply_forward_matrix(result, illuminant)    
 
         # RGB空間への変換
-        result = colour.XYZ_to_RGB(result, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+        result = xyz_to_rgb_func(result).astype(np.float32)
         
         # RGB → HSV 変換
         result = cv2.cvtColor(result, cv2.COLOR_RGB2HSV_FULL)
