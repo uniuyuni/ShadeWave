@@ -1,0 +1,128 @@
+
+<EffectButton@ToggleButton>:
+    group: 'effect'
+    size_hint_x: None
+    width: 120
+    font_size: 14
+
+<DistortionCanvas>:
+    BoxLayout:
+        orientation: 'vertical'
+        pos_hist: {"x":0, "top":1}
+        padding: 10
+        spacing: 10
+        
+        BoxLayout:
+            size_hint_y: None
+            height: 50
+            spacing: 10
+            
+            Button:
+                text: "Load Image"
+                on_press: root.load_image("your_image.jpg")
+                size_hint_x: None
+                width: 120
+                
+            Button:
+                text: "Reset"
+                on_press: root.reset_image()
+                size_hint_x: None
+                width: 100
+            
+            BoxLayout:
+                orientation: 'horizontal'
+                size_hint_x: None
+                width: 500
+                spacing: 5
+                
+                EffectButton:
+                    text: "Forward Warp"
+                    state: 'down'
+                    on_press: root.set_effect('forward_warp')
+                
+                EffectButton:
+                    text: "Bulge"
+                    on_press: root.set_effect('bulge')
+                
+                EffectButton:
+                    text: "Pinch"
+                    on_press: root.set_effect('pinch')
+                
+                EffectButton:
+                    text: "Swirl"
+                    on_press: root.set_effect('swirl')
+        
+        BoxLayout:
+            size_hint_y: None
+            height: 50
+            spacing: 10
+            
+            Label:
+                text: "Brush Size:"
+                size_hint_x: None
+                width: 100
+            
+            Slider:
+                min: 10
+                max: 300
+                value: root.brush_size
+                on_value: root.brush_size = self.value
+                size_hint_x: 0.3
+            
+            Label:
+                text: f"{int(root.brush_size)}"
+                size_hint_x: None
+                width: 50
+            
+            Label:
+                text: "Strength:"
+                size_hint_x: None
+                width: 100
+            
+            Slider:
+                min: 1
+                max: 10
+                step: 0.1
+                value: root.strength
+                on_value: root.strength = self.value
+                size_hint_x: 0.3
+            
+            Label:
+                text: f"{root.strength:.1f}"
+                size_hint_x: None
+                width: 50
+        
+        BoxLayout:
+            size_hint_y: None
+            height: 50
+            spacing: 10
+            
+            ToggleButton:
+                text: "Record" if self.state == 'normal' else "Recording"
+                on_state: root.is_recording = self.state == 'down'
+                size_hint_x: None
+                width: 120
+            
+            Button:
+                text: "Save Recording"
+                on_press: root.save_recording()
+                size_hint_x: None
+                width: 150
+            
+            Button:
+                text: "Load Recording"
+                on_press: root.load_recording()
+                size_hint_x: None
+                width: 150
+            
+            Button:
+                text: "Replay"
+                on_press: root.replay_recording()
+                size_hint_x: None
+                width: 100
+        
+        Image:
+            id: image_widget
+            size_hint: 1, 1
+            allow_stretch: True
+            keep_ratio: True
