@@ -357,7 +357,7 @@ class Viewer_WidgetApp(MDApp):
     def build(self):
         viewer = ViewerWidget(grid_width=dp(120), thumb_width=dp(160))
 
-        viewer.set_path("/Users/uniuyuni/PythonProjects/escargot/picture")  # 画像フォルダーのパスを指定
+        viewer.set_path("/Users/uniuyuni/PythonProjects/platypus/picture")  # 画像フォルダーのパスを指定
 
         return viewer
 

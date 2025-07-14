@@ -8,6 +8,7 @@ import colour
 from functools import partial
 from PIL import Image as PILImage, ImageOps as PILImageOps
 from multiprocessing import shared_memory
+import base64
 
 from dcp_profile import DCPReader, DCPProcessor
 import config
@@ -80,11 +81,10 @@ class ImageSet:
         return out_img
     
     def _apply_whitebalance(self, img_array, raw, exif_data, param):
-        wb = raw.camera_whitebalance
-        wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
-        #gl, rl, bl = exif_data.get('WB_GRBLevels', "1024 1024 1024").split(' ')
-        #gl, rl, bl = int(gl), int(rl), int(bl)
-        #wb = np.array([rl, gl, bl], dtype=np.float32) / 1024.0
+        #wb = raw.camera_whitebalance
+        #wb = np.array([wb[0], wb[1], wb[2]], dtype=np.float32)/1024.0
+        gl, rl, bl = exif_data.get('WB_GRBLevels', "1024 1024 1024").split(' ')
+        wb = np.array([int(rl), int(gl), int(bl)], dtype=np.float32) / 1024.0
 
         wb[1] = np.sqrt(wb[1])
         #img_array /= wb
@@ -102,26 +102,16 @@ class ImageSet:
 
     def _load_raw_preview(self, raw, file_path, exif_data, param):
         try:
-            # RAWで読み込んでみる
-            raw = rawpy.imread(file_path)
-
-            # プレビューを読む
-            thumb = raw.extract_thumb()
-            if thumb.format == rawpy.ThumbFormat.JPEG:
-                # JPEGフォーマットの場合
-                with PILImage.open(io.BytesIO(thumb.data)) as img:
+            preview_base64 = exif_data.get('PreviewImage')
+            if preview_base64 is not None:
+                decode = base64.b64decode(preview_base64[7:])
+                with PILImage.open(io.BytesIO(decode)) as img:
                     img = PILImageOps.exif_transpose(img)
                     img_array = np.array(img)
-
-                """
-            elif thumb.format == rawpy.ThumbFormat.BITMAP:
-                # BITMAPフォーマットの場合
-                img_array = np.frombuffer(thumb.data, dtype=np.uint8).reshape(thumb.size[::-1])
-                """
             else:
-                raise ValueError(f"Unsupported thumbnail format: {thumb.format}")
+                raise ValueError(f"Unsupported thumbnail format.")
 
-            # RGB画像初期設定
+            # float32へ
             img_array = core.convert_to_float32(img_array)
 
             # 色空間変換
@@ -147,20 +137,8 @@ class ImageSet:
             # 描画用に設定
             self.img = img_array
 
-        except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
-            logging.warning("file is not supported " + file_path)
-
-        except rawpy.LibRawNoThumbnailError:
-            logging.error('no thumbnail found')
-
-        except rawpy.LibRawUnsupportedThumbnailError:
-            logging.error('unsupported thumbnail')
-
         except Exception as e:
             logging.error(f"raw error {file_path} {e}")
-        
-        finally:
-            raw.close()
         
         return (file_path, self, exif_data, param, 0)
 
@@ -261,7 +239,7 @@ class ImageSet:
                 Ev = core.calc_ev_from_exif(exif_data)
 
                 # 自動コントラスト補正
-                #img_array = core.auto_contrast_tonemap(img_array)
+                img_array = core.auto_contrast_tonemap(img_array)
 
                 # 明るさ補正適用
                 img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
