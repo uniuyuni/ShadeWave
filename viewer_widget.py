@@ -214,7 +214,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                 exif_data = exif_data_list[i]
                 file_path = file_path_list[i]
 
-                thumb_base64 = exif_data.get('ThumbnailImage')
+                thumb_base64 = exif_data.get('ThumbnailImage', None)
                 if thumb_base64 is not None:
                     image = np.frombuffer(base64.b64decode(thumb_base64[7:]), dtype=np.uint8)
                     thumb = cv2.imdecode(image, 1)

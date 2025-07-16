@@ -26,6 +26,7 @@ import local_contrast
 import params
 import utils
 import mediapipe_util
+import distortion_painter
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -241,6 +242,100 @@ class InpaintEffect(Effect):
 
         return self.diff
     
+# 画像回転、反転
+class DistortionEffect(Effect):
+
+    def __init__(self, distortion_callback=None, **kwargs):
+        super().__init__(**kwargs)
+        
+        self.distortion_painter = None
+        self.is_initial_open = False
+        self.is_finalize_close = False
+        self.effect_type = 'forward_warp'
+        self.set_distortion_callback(distortion_callback)
+
+    def set_distortion_callback(self, callback):
+        self.distortion_callback = callback
+
+    def set2widget(self, widget, param):
+        pass
+
+    def set2param(self, param, widget):
+        distortion_enable = False if widget.ids["effects"].current_tab.text != "Painter" else True
+
+        # クロップエディタを開く
+        if distortion_enable == True:
+            self._open_distortion_painter(param, widget)
+
+        # クロップエディタを閉じる
+        elif distortion_enable == False:
+            self._close_distortion_painter(param, widget)
+
+        if self.distortion_painter is not None:
+            self.distortion_painter.set_brush_size(widget.ids["slider_distortion_brush_size"].value)
+            self.distortion_painter.set_strength(widget.ids["slider_distortion_strength"].value)
+
+            # クロップ範囲をリセット
+            if widget.ids["button_distortion_reset"].state == "down":
+                widget.ids["button_distortion_reset"].state = "normal" # 無限ルーぷ防止
+                self.distortion_painter.reset_image()
+
+
+    def set2param2(self, param, arg):
+        if self.distortion_painter is not None:
+            if arg == 'forward_warp' or arg == 'bulge' or arg == 'pinch' or arg == 'swirl':
+                self.distortion_painter.set_effect(arg)
+                self.effect_type = arg
+            else:
+                pass
+
+    def make_diff(self, img, param, efconfig):
+        if self.is_initial_open == True:
+            self.distortion_painter.set_ref_image(img)
+            self.distortion_painter.set_primary_param(param)
+            self.diff = None
+            self.hash = None
+            self.is_initial_open = False
+
+        if self.is_finalize_close == True:
+            self.diff = None
+            self.hash = None
+            self.is_finalize_close = False
+
+        if self.distortion_painter is not None:
+            if self.hash is not img:
+                self.distortion_painter.set_ref_image(img)
+                self.distortion_painter.replay_recording()
+                self.hash = img
+            self.diff = 0 if self.diff is None else self.diff + 1
+
+        return self.diff
+
+    def apply_diff(self, img):
+        if self.diff is not None:
+            return self.distortion_painter.get_current_image()
+        return img
+
+
+    def _open_distortion_painter(self, param, widget):
+        if self.distortion_painter is None:
+            self.distortion_painter = distortion_painter.DistortionCanvas(image_widget=widget.ids["preview"],
+                    callback=self._painter_callback,
+                    effect_type=self.effect_type,
+                    brush_size=widget.ids["slider_distortion_brush_size"].value,
+                    strength=widget.ids["slider_distortion_strength"].value)
+            widget.ids["preview_widget"].add_widget(self.distortion_painter)
+            self.is_initial_open = True
+
+    def _close_distortion_painter(self, param, widget):
+        if self.distortion_painter is not None:
+            widget.ids["preview_widget"].remove_widget(self.distortion_painter)
+            self.distortion_painter = None
+            self.is_finalize_close = True
+
+    def _painter_callback(self):
+        if self.distortion_callback is not None:
+            self.distortion_callback()
 
 # 画像回転、反転
 class RotationEffect(Effect):
@@ -2140,13 +2235,14 @@ class VignetteEffect(Effect):
         return self.diff
     
 
-def create_effects():
+def create_effects(distortion_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
     lv0['lens_modifier'] = LensModifierEffect()
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
+    lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
     lv0['rotation'] = RotationEffect()
     lv0['crop'] = CropEffect()
 

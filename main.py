@@ -104,7 +104,7 @@ if __name__ == '__main__':
             self.is_zoomed = False
             self.drag_start_point = None
             self.primary_param = {}
-            self.primary_effects = effects.create_effects()
+            self.primary_effects = effects.create_effects(distortion_callback=self.distortion_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.apply_thread = None
             self.is_draw_image = False
@@ -190,6 +190,9 @@ if __name__ == '__main__':
         
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
+
+        def distortion_callback(self):
+            self.apply_effects_lv(0, 'distortion')
 
         def apply_effects_lv(self, lv, effect):
             mask = self.ids['mask_editor2'].get_active_mask()
@@ -500,6 +503,7 @@ if __name__ == '__main__':
                 self.is_zoomed = False
 
             if self.imgset is not None:
+                self.apply_effects_lv(0, "distortion")
                 self.apply_effects_lv(0, "crop")
 
 

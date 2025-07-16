@@ -11,6 +11,12 @@
 #:set clear_color 0, 0, 0, 0
 #:set dark_color 0.08, 0.08, 0.08, 1
 
+<DistortionEffectButton@ToggleButton>:
+    group: 'effect'
+    font_size: '9pt'
+    pos_hint: {'center_x': .5, 'center_y': .5}
+    ref_height: 20
+
 <ParamChip@MDChip>:
     type: 'filter'
     pos_hint: {"center_x": .5, "center_y": .5}
@@ -1666,6 +1672,73 @@
                                     active: True
                                     on_press: root.apply_effects_lv(3, 'mask2')
 
+                TabbedPanelItem:
+                    text: 'Painter'
+
+                    MDScrollView:
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            HeadLabel:
+                                text: ' Distortion'
+
+                            VSpacer:
+
+                            ParamBoxLayout:
+
+                                HSpacer:
+                                    ref_width: 100
+
+                                DistortionEffectButton:
+                                    text: "For. Warp"
+                                    state: 'down'
+                                    on_press: root.set_effect_param(0, 'distortion', 'forward_warp')
+                                
+                                DistortionEffectButton:
+                                    text: "Bulge"
+                                    on_press: root.set_effect_param(0, 'distortion', 'bulge')
+                                
+                                DistortionEffectButton:
+                                    text: "Pinch"
+                                    on_press: root.set_effect_param(0, 'distortion', 'pinch')
+                                
+                                DistortionEffectButton:
+                                    text: "Swirl"
+                                    on_press: root.set_effect_param(0, 'distortion', 'swirl')
+
+                            VSpacer:
+
+                            ParamSlider:
+                                id: slider_distortion_brush_size
+                                text: "Brush Size"
+                                min: 10
+                                max: 300
+                                value: 100
+                                step: 1
+                                on_slider: root.apply_effects_lv(0, 'distortion')
+                            ParamSlider:
+                                id: slider_distortion_strength
+                                text: "Strength"
+                                min: 1
+                                max: 100
+                                value: 50
+                                step: 1
+                                on_slider: root.apply_effects_lv(0, 'distortion')
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "Paint"
+                                HSpacer:
+                                    size_hint_x: 0.5
+                                ParamChip:
+                                    type: 'assist'
+                                    id: button_distortion_reset
+                                    on_press: root.apply_effects_lv(0, 'distortion')
+                                    ParamChipText:
+                                        text: "Reset"
 
         ViewerWidget:
             id: viewer

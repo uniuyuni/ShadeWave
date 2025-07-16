@@ -102,7 +102,8 @@ class ImageSet:
 
     def _load_raw_preview(self, raw, file_path, exif_data, param):
         try:
-            preview_base64 = exif_data.get('PreviewImage')
+            # exifのプレビューを展開
+            preview_base64 = exif_data.get('PreviewImage', None)
             if preview_base64 is not None:
                 decode = base64.b64decode(preview_base64[7:])
                 with PILImage.open(io.BytesIO(decode)) as img:
@@ -115,7 +116,7 @@ class ImageSet:
             img_array = core.convert_to_float32(img_array)
 
             # 色空間変換
-            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'XYZ Scaling', # 最速？
+            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
                                 apply_cctf_decoding=True, apply_gamut_mapping=False).astype(np.float32)
             
             # ホワイトバランス定義

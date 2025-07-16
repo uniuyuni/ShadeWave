@@ -2652,3 +2652,123 @@ def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
     sharpened = rgb_image + amount * mask
     
     return sharpened
+
+#--------------------------------------------------
+
+def param_to_tcg_info(param):
+    """
+    パラメータをTCGパラメータに変換
+
+    param: パラメータ辞書(Noneなら全て0に設定)
+    戻り値: 情報辞書
+    """
+    tcg_info = {}
+    tcg_info['original_img_size'] = param['original_img_size']
+    tcg_info['disp_info'] = param['disp_info']
+    tcg_info['rotation'] = math.radians(param.get('rotation', 0.0))
+    tcg_info['rotation2'] = math.radians(param.get('rotation2', 0.0))
+    tcg_info['flip'] = param.get('flip', 0)
+
+    return tcg_info
+
+def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
+    """
+    ウインドウ座標からTCG座標に変換
+    cx, cy: TCG座標
+    widget: 表示するウィジェット
+    texture_size: テクスチャサイズ
+    ref_image: 参照イメージ
+    disp_info:
+    tcg_info: 回転情報
+    戻り値: TCG座標
+    """
+    disp_info = params.get_disp_info(tcg_info)
+    wx, wy = widget.to_window(*widget.pos)
+    cx, cy = cx - wx, cy - wy
+    margin_x, margin_y = (widget.size[0]-texture_size[1])/2, (widget.size[1]-texture_size[0])/2
+    cx, cy = cx - margin_x, cy - margin_y
+    cx, cy = cx, texture_size[1] - cy
+    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
+    cx, cy = cx - offset_x, cy - offset_y
+    cx, cy = cx / disp_info[4], cy / disp_info[4]
+    #imax = max(ref_image.shape[1] / 2, ref_image.shape[0] / 2)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = cx + disp_info[0], cy + disp_info[1]
+    #cx, cy = cx + self.disp_info[0] - (imax - self.current_image.shape[1] / 2), cy + self.disp_info[1] - (imax - self.current_image.shape[0] / 2)   
+    #cx, cy = cx - self.current_image.shape[1] / 2, cy - self.current_image.shape[0] / 2
+    cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
+    cx, cy = center_rotate_invert(cx, cy, tcg_info)
+    #logging.debug(f"Window to TCG: {cx}, {cy}")
+    return (cx, cy)
+
+def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
+    """
+    TCG座標をウインドウ座標に変換
+    cx, cy: TCG座標
+    widget: 表示するウィジェット
+    texture_size: テクスチャサイズ
+    ref_image: 参照イメージ
+    disp_info:
+    tcg_info: 回転情報
+    戻り値: ウインドウ座標
+    """
+    disp_info = params.get_disp_info(tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = center_rotate(cx, cy, tcg_info)
+    cx, cy = cx + imax, cy + imax
+    cx, cy = cx - disp_info[0], cy - disp_info[1]
+    cx, cy = cx * disp_info[4], cy * disp_info[4]        
+    _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
+    cx, cy = cx + offset_x, cy + offset_y
+    cx, cy = cx, rexture_size[1] - cy
+    margin_x, margin_y = (widget.size[0]-texture_size[1])/2, (widget.size[1]-texture_size[0])/2
+    cx, cy = cx + margin_x, cy + margin_y
+    wx, wy = widget.to_window(*widget.pos)
+    cx, cy = cx + wx, cy + wy
+    return (cx, cy)
+
+def tcg_to_ref_image(cx, cy, ref_img, tcg_info):
+    """
+    TCGから参照イメージの座標を得る
+
+    cx, cy: TCG座標
+    ref_img: 参照イメージ
+    tcg_info: 回転情報
+    戻り値: 参照イメージ座標
+    """
+    #cx, cy = center_rotate(cx, cy, tcg_info)
+    imax = max(ref_img.shape[1] / 2, ref_img.shape[0] / 2)
+    #cx, cy = cx + imax, cy + imax
+    cx, cy = cx + ref_img.shape[1] / 2, cy + ref_img.shape[0] / 2
+    return (cx, cy)
+
+def apply_orientation(cx, cy, tcg_info):
+    rad, flip = tcg_info['rotation2'], tcg_info['flip']
+
+    if (flip & 1) == 1:
+        cx = -cx
+    if (flip & 2) == 2:
+        cy = -cy
+
+    return cx, cy, rad
+
+def center_rotate(cx, cy, tcg_info):
+    cx, cy, rad = apply_orientation(cx, cy, tcg_info)
+    rad = tcg_info['rotation'] + rad
+    rad = -rad
+
+    new_cx = cx * math.cos(rad) - cy * math.sin(rad)
+    new_cy = cx * math.sin(rad) + cy * math.cos(rad)
+
+    return (new_cx, new_cy)
+
+def center_rotate_invert(cx, cy, tcg_info):
+    rad = tcg_info['rotation'] + tcg_info['rotation2']
+    rad = -rad
+
+    new_cx = cx * math.cos(rad) + cy * math.sin(rad)
+    new_cy = -cx * math.sin(rad) + cy * math.cos(rad)
+
+    new_cx, new_cy, _ = apply_orientation(new_cx, new_cy, tcg_info)
+
+    return (new_cx, new_cy)
