@@ -268,7 +268,10 @@ if __name__ == '__main__':
                 # １回目の時だけパラメータを反映して、編集できる様にする
                 self.primary_param = param
                 self.set2widget_all(self.primary_effects, param)
-                self.apply_effects_lv(0, 'crop') # 特別あつかい
+                
+                # 特別あつかいでエディタを起動できるなら起動する
+                self.apply_effects_lv(0, 'distortion')
+                self.apply_effects_lv(0, 'crop')
 
                 # lensfun セットアップ
                 core.setup_lensfun(imgset.img, exif_data)

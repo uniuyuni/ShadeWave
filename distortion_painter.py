@@ -20,9 +20,10 @@ import math
 import params
 import core
 
+
 class DistortionEngine:
     @staticmethod
-    def apply_warp(image, center, radius, strength, effect_type, direction=(1,0)):
+    def apply_warp(image, center, radius, strength, effect_type, direction=(1,0), original_image=None):
         """ 選択された効果タイプに基づいて歪みを適用 """
         if effect_type == 'forward_warp':
             return DistortionEngine.forward_warp(image, center, radius, strength, direction)
@@ -69,8 +70,8 @@ class DistortionEngine:
             direction = (direction[0]/dir_norm, direction[1]/dir_norm)
         
         # 移動ベクトル (方向に沿って)
-        move_x = strength * radius * weight * -direction[0]
-        move_y = strength * radius * weight * -direction[1]
+        move_x = strength * radius * weight * direction[0]
+        move_y = strength * radius * weight * direction[1]
         
         # 変形後の座標
         new_x = x + move_x
@@ -103,6 +104,10 @@ class DistortionEngine:
     def _radial_effect(image, center, radius, strength, outward=True):
         """ 放射状効果の共通処理 """
         h, w = image.shape[:2]
+
+        if strength < 0:
+            outward = not outward
+            strength = -strength
         
         # ROI(関心領域)を設定して処理範囲を限定
         x1 = max(0, int(center[0] - radius * 1.5))
@@ -157,7 +162,11 @@ class DistortionEngine:
 
     @staticmethod
     def swirl(image, center, radius, strength):
-        """ 渦巻き効果 (回転変形) """
+        """ 渦巻き効果 (回転変形) 
+        strengthの符号で回転方向を制御:
+         正の値: 時計回り
+         負の値: 反時計回り
+        """
         h, w = image.shape[:2]
         
         # ROI(関心領域)を設定して処理範囲を限定
@@ -183,7 +192,7 @@ class DistortionEngine:
         
         # 距離に基づく重み計算
         weight = np.exp(-(dist**2) / (2 * (radius/3)**2))
-        angle = weight * strength * 5  # 回転角度
+        angle = weight * strength * 5  # 回転角度（strengthの符号で方向が変わる）
         
         # 変形後の座標計算
         new_x = center_roi[0] + dx * np.cos(angle) - dy * np.sin(angle)
@@ -201,7 +210,7 @@ class DistortionEngine:
         # ROIを元の画像に戻す
         image[y1:y2, x1:x2] = distorted_roi
         return image
-
+    
 class DistortionCanvas(FloatLayout):
     STRENGTH_SCALE = 0.0005
 
@@ -210,12 +219,12 @@ class DistortionCanvas(FloatLayout):
     effect_type = StringProperty('forward_warp')
     last_touch_pos = ListProperty([0, 0])
     
-    def __init__(self, image_widget=None, callback=None, **kwargs):
+    def __init__(self, image_widget=None, recorded=[], callback=None, **kwargs):
         super().__init__(**kwargs)
 
         self.original_image = None
         self.current_image = None
-        self.recording = []
+        self.recorded = recorded
         self.is_recording = False
         self.last_touch_time = 0
         self.points_buffer = []  # 補間用ポイントバッファ
@@ -325,13 +334,15 @@ class DistortionCanvas(FloatLayout):
             self.last_touch_pos = [tcg_x, tcg_y]
             self.last_touch_time = time.time()  # 現在のシステム時間を使用
             self.points_buffer = []
-            
+           
+            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
+
             # 記録開始
             if self.is_recording:
-                self.recording.append({
+                self.recorded.append({
                     "x": tcg_x, "y": tcg_y,
                     "size": self.brush_size,
-                    "strength": self.strength,
+                    "strength": strength,
                     "effect": self.effect_type,
                     "time": self.last_touch_time  # タイムスタンプ記録
                 })
@@ -357,13 +368,15 @@ class DistortionCanvas(FloatLayout):
             if current_time - self.last_touch_time > 0.05:  # 20fps (0.05秒間隔)
                 self.process_buffer()
                 self.last_touch_time = current_time
-            
+
+            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
+
             # 記録
             if self.is_recording:
-                self.recording.append({
+                self.recorded.append({
                     "x": tcg_x, "y": tcg_y,
                     "size": self.brush_size,
-                    "strength": self.strength,
+                    "strength": strength,
                     "effect": self.effect_type,
                     "time": current_time
                 })
@@ -396,14 +409,17 @@ class DistortionCanvas(FloatLayout):
         for tcg_x, tcg_y, direction, _ in self.points_buffer:
             img_x, img_y = core.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info)
             try:
+                strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
+
                 # 変形適用
                 self.current_image = DistortionEngine.apply_warp(
                     self.current_image,
                     center=(img_x, img_y),
                     radius=self.brush_size / self.tcg_info['disp_info'][4],
-                    strength=self.strength * DistortionCanvas.STRENGTH_SCALE,
+                    strength=strength * (DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
                     effect_type=self.effect_type,
-                    direction=direction
+                    direction=direction,
+                    original_image=self.original_image  # 元の画像を渡す
                 )
             except Exception as e:
                 print(f"Error applying distortion: {e}")
@@ -428,58 +444,58 @@ class DistortionCanvas(FloatLayout):
 
     def serialize(self):
 
-        if len(self.recording) <= 0:
+        if len(self.recorded) <= 0:
             return None
 
         dict = {
-            'distortion_points': self.recording,
+            'distortion_points': self.recorded,
         }
         return dict
 
     def deserialize(self, dict):
-        self.recording = dict['distortion_points']
-        #self.replay_recording()
+        self.recorded = dict['distortion_points']
+        #self.replay_recorded()
         
-    def save_recording(self, path="distortion_record.json"):
+    def save_recorded(self, path="distortion_record.json"):
         try:
             with open(path, 'w') as f:
-                json.dump(self.recording, f, indent=2)
+                json.dump(self.recorded, f, indent=2)
             print(f"Recording saved to {path}")
         except Exception as e:
-            print(f"Error saving recording: {e}")
+            print(f"Error saving recorded: {e}")
 
-    def load_recording(self, path="distortion_record.json"):
+    def load_recorded(self, path="distortion_record.json"):
         try:
             with open(path, 'r') as f:
-                self.recording = json.load(f)
-            #self.replay_recording()
+                self.recorded = json.load(f)
+            #self.replay_recorded()
             print(f"Recording loaded from {path}")
         except Exception as e:
-            print(f"Error loading recording: {e}")
+            print(f"Error loading recorded: {e}")
 
-    def replay_recording(self):
-        self.current_image = DistortionCanvas.replay_recording_with(self.current_image, self.recording, self.tcg_info)
+    def replay_recorded(self):
+        self.current_image = DistortionCanvas.replay_recorded_with(self.current_image, self.recorded, self.tcg_info)
 
     @staticmethod
-    def replay_recording_with(img, recording, tcg_info):
-        if img is None:
+    def replay_recorded_with(original_image, recorded, tcg_info):
+        if original_image is None:
             print("No image loaded for replay")
-            return img
+            return original_image
 
-        if recording is None or len(recording) == 0:
-            print("No recording to replay")
-            return img
+        if recorded is None or len(recorded) == 0:
+            print("No recorded to replay")
+            return original_image
             
-        img = img.copy()
+        img = original_image.copy()
         
         # 記録再生
-        for index in range(len(recording)):
-            action = recording[index]
+        for index in range(len(recorded)):
+            action = recorded[index]
             try:
                 # 方向ベクトルを計算（次の点がある場合）
                 direction = (0, 0)
-                if index < len(recording) - 1:
-                    next_action = recording[index + 1]
+                if index < len(recorded) - 1:
+                    next_action = recorded[index + 1]
                     dx = next_action['x'] - action['x']
                     dy = next_action['y'] - action['y']
                     direction = (dx, dy)
@@ -488,9 +504,10 @@ class DistortionCanvas(FloatLayout):
                     img,
                     center=core.tcg_to_ref_image(action['x'], action['y'], img, tcg_info),
                     radius=action['size'] / tcg_info['disp_info'][4],
-                    strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
+                    strength=action['strength'] * (DistortionCanvas.STRENGTH_SCALE if action.get('effect', 'forward_warp') != 'restore' else 0.01),
                     effect_type=action.get('effect', 'forward_warp'),
-                    direction=direction
+                    direction=direction,
+                    original_image=original_image
                 )
                                 
             except Exception as e:
@@ -502,6 +519,7 @@ class DistortionCanvas(FloatLayout):
         if self.original_image is not None:
             self.current_image = self.original_image.copy()
             self.needs_full_update = True
+            self.recorded = []
             self.update_texture()
             print("Image reset")
 
@@ -519,6 +537,9 @@ class DistortionCanvas(FloatLayout):
 
     def get_current_image(self):
         return self.current_image
+
+    def get_recorded(self):
+        return self.recorded
 
     # ワールド座標からテクスチャのグローバル座標に
     def _window_to_tcg(self, cx, cy):

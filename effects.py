@@ -249,13 +249,18 @@ class DistortionEffect(Effect):
         super().__init__(**kwargs)
         
         self.distortion_painter = None
-        self.is_initial_open = False
-        self.is_finalize_close = False
+        self.is_initial_open = 0
+        self.is_initial_close = 0
         self.effect_type = 'forward_warp'
         self.set_distortion_callback(distortion_callback)
 
     def set_distortion_callback(self, callback):
         self.distortion_callback = callback
+
+    def get_param_dict(self, param):
+        return {
+            'distortion_recorded': [],
+        }    
 
     def set2widget(self, widget, param):
         pass
@@ -290,48 +295,65 @@ class DistortionEffect(Effect):
                 pass
 
     def make_diff(self, img, param, efconfig):
-        if self.is_initial_open == True:
-            self.distortion_painter.set_ref_image(img)
+        if self.is_initial_open > 0:
+            if self.is_initial_open > 1:
+                self.distortion_painter.set_effect(self.effect_type)
             self.distortion_painter.set_primary_param(param)
-            self.diff = None
-            self.hash = None
-            self.is_initial_open = False
+            self.is_initial_open -= 1
 
-        if self.is_finalize_close == True:
+        if self.is_initial_close > 0:
             self.diff = None
             self.hash = None
-            self.is_finalize_close = False
+            self.is_initial_close -= 1
 
         if self.distortion_painter is not None:
             if self.hash is not img:
                 self.distortion_painter.set_ref_image(img)
-                self.distortion_painter.replay_recording()
+                self.distortion_painter.replay_recorded()
                 self.hash = img
             self.diff = 0 if self.diff is None else self.diff + 1
+        
+        else:
+            dr = self.get_param(param, 'distortion_recorded')
+            if len(dr) > 0:
+                param_hash = hash((len(dr)))
+                if self.hash != param_hash:
+                    tcg_info = core.param_to_tcg_info(param)
+                    self.diff = distortion_painter.DistortionCanvas.replay_recorded_with(img, param['distortion_recorded'], tcg_info)
+                    self.hash = param_hash
 
         return self.diff
 
     def apply_diff(self, img):
         if self.diff is not None:
-            return self.distortion_painter.get_current_image()
+            if self.distortion_painter is not None:
+                return self.distortion_painter.get_current_image()
+            else:
+                return self.diff
         return img
 
+    def finalize(self, param, widget):
+        self._close_distortion_painter(param, widget)
 
     def _open_distortion_painter(self, param, widget):
         if self.distortion_painter is None:
             self.distortion_painter = distortion_painter.DistortionCanvas(image_widget=widget.ids["preview"],
+                    recorded=self.get_param(param, 'distortion_recorded'),
                     callback=self._painter_callback,
                     effect_type=self.effect_type,
                     brush_size=widget.ids["slider_distortion_brush_size"].value,
                     strength=widget.ids["slider_distortion_strength"].value)
             widget.ids["preview_widget"].add_widget(self.distortion_painter)
-            self.is_initial_open = True
+            self.is_initial_open = 2
+            self.is_initial_close = 0
 
     def _close_distortion_painter(self, param, widget):
         if self.distortion_painter is not None:
             widget.ids["preview_widget"].remove_widget(self.distortion_painter)
+            param['distortion_recorded'] = self.distortion_painter.get_recorded()
             self.distortion_painter = None
-            self.is_finalize_close = True
+            self.is_initial_open = 0
+            self.is_initial_close = 1
 
     def _painter_callback(self):
         if self.distortion_callback is not None:
