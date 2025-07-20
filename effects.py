@@ -288,16 +288,14 @@ class DistortionEffect(Effect):
 
     def set2param2(self, param, arg):
         if self.distortion_painter is not None:
-            if arg == 'forward_warp' or arg == 'bulge' or arg == 'pinch' or arg == 'swirl':
-                self.distortion_painter.set_effect(arg)
-                self.effect_type = arg
-            else:
-                pass
+            self.distortion_painter.set_effect(arg)
+            self.effect_type = arg
 
     def make_diff(self, img, param, efconfig):
         if self.is_initial_open > 0:
             if self.is_initial_open > 1:
                 self.distortion_painter.set_effect(self.effect_type)
+                self.distortion_painter.set_ref_image(img, True)
             self.distortion_painter.set_primary_param(param)
             self.is_initial_open -= 1
 
@@ -308,8 +306,8 @@ class DistortionEffect(Effect):
 
         if self.distortion_painter is not None:
             if self.hash is not img:
-                self.distortion_painter.set_ref_image(img)
-                self.distortion_painter.replay_recorded()
+                self.distortion_painter.set_ref_image(img, False)
+                self.distortion_painter.remap_image()
                 self.hash = img
             self.diff = 0 if self.diff is None else self.diff + 1
         
@@ -319,7 +317,7 @@ class DistortionEffect(Effect):
                 param_hash = hash((len(dr)))
                 if self.hash != param_hash:
                     tcg_info = core.param_to_tcg_info(param)
-                    self.diff = distortion_painter.DistortionCanvas.replay_recorded_with(img, param['distortion_recorded'], tcg_info)
+                    self.diff = distortion_painter.DistortionCanvas.replay_recorded(img, param['distortion_recorded'], tcg_info)
                     self.hash = param_hash
 
         return self.diff

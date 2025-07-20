@@ -15,204 +15,353 @@ import numpy as np
 import json
 import os
 import time
-import math
+import numba as nb
 
-import params
 import core
 
-
 class DistortionEngine:
-    @staticmethod
-    def apply_warp(image, center, radius, strength, effect_type, direction=(1,0), original_image=None):
-        """ 選択された効果タイプに基づいて歪みを適用 """
-        if effect_type == 'forward_warp':
-            return DistortionEngine.forward_warp(image, center, radius, strength, direction)
-        elif effect_type == 'bulge':
-            return DistortionEngine.bulge(image, center, radius, strength)
-        elif effect_type == 'pinch':
-            return DistortionEngine.pinch(image, center, radius, strength)
-        elif effect_type == 'swirl':
-            return DistortionEngine.swirl(image, center, radius, strength)
-        return image
-
-    @staticmethod
-    def forward_warp(image, center, radius, strength, direction):
-        """ 前方ワープ効果 (ブラシの移動方向に沿って変形) """
-        h, w = image.shape[:2]
+    def __init__(self, image_size, grid_size=30):
+        self.width, self.height = image_size
+        self.grid_size = grid_size
         
-        # ROI(関心領域)を設定して処理範囲を限定
-        x1 = max(0, int(center[0] - radius * 1.5))
-        y1 = max(0, int(center[1] - radius * 1.5))
-        x2 = min(w, int(center[0] + radius * 1.5))
-        y2 = min(h, int(center[1] + radius * 1.5))
+        # メッシュグリッドの生成
+        self.original_grid = self._create_initial_grid()
+        self.current_grid = self.original_grid.copy()
         
-        if x1 >= x2 or y1 >= y2:
-            return image
-            
-        roi = image[y1:y2, x1:x2]
-        roi_h, roi_w = roi.shape[:2]
+        # 変形マップ
+        self.map_x = None
+        self.map_y = None
+        self.dirty = True
         
-        # ROI内の中心座標
-        center_roi = (center[0] - x1, center[1] - y1)
-        
-        # 座標グリッド生成
-        y, x = np.indices((roi_h, roi_w))
-        dx = x - center_roi[0]
-        dy = y - center_roi[1]
-        dist = np.sqrt(dx**2 + dy**2)
-        
-        # 中心からの距離に基づく重み (ガウス分布)
-        weight = np.exp(-(dist**2) / (2 * (radius/3)**2))
-        
-        # 方向ベクトルの正規化
-        dir_norm = np.linalg.norm(direction)
-        if dir_norm > 0:
-            direction = (direction[0]/dir_norm, direction[1]/dir_norm)
-        
-        # 移動ベクトル (方向に沿って)
-        move_x = strength * radius * weight * direction[0]
-        move_y = strength * radius * weight * direction[1]
-        
-        # 変形後の座標
-        new_x = x + move_x
-        new_y = y + move_y
-        
-        # 境界内に制限
-        new_x = np.clip(new_x, 0, roi_w - 1)
-        new_y = np.clip(new_y, 0, roi_h - 1)
-        
-        # 画像リマップ
-        map_x = new_x.astype(np.float32)
-        map_y = new_y.astype(np.float32)
-        distorted_roi = cv2.remap(roi, map_x, map_y, cv2.INTER_LINEAR)
-        
-        # ROIを元の画像に戻す
-        image[y1:y2, x1:x2] = distorted_roi
-        return image
-
-    @staticmethod
-    def bulge(image, center, radius, strength):
-        """ 膨張効果 (中心から外側に押し出す) """
-        return DistortionEngine._radial_effect(image, center, radius, strength, outward=False)
-
-    @staticmethod
-    def pinch(image, center, radius, strength):
-        """ 縮小効果 (中心に向かって引き込む) """
-        return DistortionEngine._radial_effect(image, center, radius, strength, outward=True)
-
-    @staticmethod
-    def _radial_effect(image, center, radius, strength, outward=True):
-        """ 放射状効果の共通処理 """
-        h, w = image.shape[:2]
-
-        if strength < 0:
-            outward = not outward
-            strength = -strength
-        
-        # ROI(関心領域)を設定して処理範囲を限定
-        x1 = max(0, int(center[0] - radius * 1.5))
-        y1 = max(0, int(center[1] - radius * 1.5))
-        x2 = min(w, int(center[0] + radius * 1.5))
-        y2 = min(h, int(center[1] + radius * 1.5))
-        
-        if x1 >= x2 or y1 >= y2:
-            return image
-            
-        roi = image[y1:y2, x1:x2]
-        roi_h, roi_w = roi.shape[:2]
-        
-        # ROI内の中心座標
-        center_roi = (center[0] - x1, center[1] - y1)
-        
-        # 座標グリッド生成
-        y, x = np.indices((roi_h, roi_w))
-        dx = x - center_roi[0]
-        dy = y - center_roi[1]
-        dist = np.sqrt(dx**2 + dy**2)
-        
-        # 中心からの距離に基づく重み (ガウス分布)
-        weight = np.exp(-(dist**2) / (2 * (radius/3)**2))
-        
-        # 変形計算
-        sign = 1 if outward else -1
-        new_dist = dist + sign * strength * radius * weight
-        new_dist = np.maximum(new_dist, 0)
-        
-        # 中心点以外の処理
-        mask = (dist > 0)
-        new_x = center_roi[0] + dx * (new_dist / dist) * mask
-        new_y = center_roi[1] + dy * (new_dist / dist) * mask
-        
-        # 中心点処理
-        new_x[~mask] = center_roi[0]
-        new_y[~mask] = center_roi[1]
-        
-        # 境界内に制限
-        new_x = np.clip(new_x, 0, roi_w - 1)
-        new_y = np.clip(new_y, 0, roi_h - 1)
-        
-        # 画像リマップ
-        map_x = new_x.astype(np.float32)
-        map_y = new_y.astype(np.float32)
-        distorted_roi = cv2.remap(roi, map_x, map_y, cv2.INTER_LINEAR)
-        
-        # ROIを元の画像に戻す
-        image[y1:y2, x1:x2] = distorted_roi
-        return image
-
-    @staticmethod
-    def swirl(image, center, radius, strength):
-        """ 渦巻き効果 (回転変形) 
-        strengthの符号で回転方向を制御:
-         正の値: 時計回り
-         負の値: 反時計回り
-        """
-        h, w = image.shape[:2]
-        
-        # ROI(関心領域)を設定して処理範囲を限定
-        x1 = max(0, int(center[0] - radius * 1.5))
-        y1 = max(0, int(center[1] - radius * 1.5))
-        x2 = min(w, int(center[0] + radius * 1.5))
-        y2 = min(h, int(center[1] + radius * 1.5))
-        
-        if x1 >= x2 or y1 >= y2:
-            return image
-            
-        roi = image[y1:y2, x1:x2]
-        roi_h, roi_w = roi.shape[:2]
-        
-        # ROI内の中心座標
-        center_roi = (center[0] - x1, center[1] - y1)
-        
-        # 座標グリッド生成
-        y, x = np.indices((roi_h, roi_w))
-        dx = x - center_roi[0]
-        dy = y - center_roi[1]
-        dist = np.sqrt(dx**2 + dy**2)
-        
-        # 距離に基づく重み計算
-        weight = np.exp(-(dist**2) / (2 * (radius/3)**2))
-        angle = weight * strength * 5  # 回転角度（strengthの符号で方向が変わる）
-        
-        # 変形後の座標計算
-        new_x = center_roi[0] + dx * np.cos(angle) - dy * np.sin(angle)
-        new_y = center_roi[1] + dx * np.sin(angle) + dy * np.cos(angle)
-        
-        # 境界内に制限
-        new_x = np.clip(new_x, 0, roi_w - 1)
-        new_y = np.clip(new_y, 0, roi_h - 1)
-        
-        # 画像リマップ
-        map_x = new_x.astype(np.float32)
-        map_y = new_y.astype(np.float32)
-        distorted_roi = cv2.remap(roi, map_x, map_y, cv2.INTER_LINEAR)
-        
-        # ROIを元の画像に戻す
-        image[y1:y2, x1:x2] = distorted_roi
-        return image
+        # 前回の変形状態を保持
+        self.last_warped_image = None
     
+    def _create_initial_grid(self):
+        """ 初期メッシュグリッドを生成 """
+        cols = int(np.ceil(self.width / self.grid_size)) + 1
+        rows = int(np.ceil(self.height / self.grid_size)) + 1
+        
+        grid = np.zeros((rows, cols, 2), dtype=np.float32)
+        
+        for i in range(rows):
+            y = min(i * self.grid_size, self.height - 1)
+            for j in range(cols):
+                x = min(j * self.grid_size, self.width - 1)
+                grid[i, j] = [x, y]
+                
+        return grid
+    
+    def apply_effect(self, center, radius, strength, effect_type, direction=(0,0), original_image=None):
+        """ ブラシ効果を適用し、ROI領域を更新して返す """
+        # 効果半径を計算 (安全マージン追加)
+        effect_radius = radius * 1.5 + 10
+        
+        # ROI領域を正確に計算
+        x_min = max(0, int(center[0] - effect_radius))
+        y_min = max(0, int(center[1] - effect_radius))
+        x_max = min(self.width, int(center[0] + effect_radius))
+        y_max = min(self.height, int(center[1] + effect_radius))
+        
+        # 領域サイズが0の場合は処理しない
+        if x_min >= x_max or y_min >= y_max:
+            return image
+        
+        # Numbaで高速化された処理を実行
+        if effect_type == 'forward_warp':
+            self.current_grid = DistortionEngine._apply_forward_warp_numba(
+                self.current_grid, center, radius, strength, direction,
+                x_min, x_max, y_min, y_max, effect_radius
+            )
+        elif effect_type == 'bulge':
+            self.current_grid = DistortionEngine._apply_bulge_numba(
+                self.current_grid, center, radius, -strength,
+                x_min, x_max, y_min, y_max, effect_radius
+            )
+        elif effect_type == 'pinch':
+            self.current_grid = DistortionEngine._apply_bulge_numba(
+                self.current_grid, center, radius, strength,
+                x_min, x_max, y_min, y_max, effect_radius
+            )
+        elif effect_type == 'swirl':
+            self.current_grid = DistortionEngine._apply_swirl_numba(
+                self.current_grid, center, radius, strength,
+                x_min, x_max, y_min, y_max, effect_radius
+            )
+        elif effect_type == 'restore':
+            self.current_grid = DistortionEngine._apply_restore_numba(
+                self.current_grid, self.original_grid, center, radius, strength,
+                x_min, x_max, y_min, y_max, effect_radius
+            )
+        
+        self.dirty = True
+        
+        # 画像が提供されている場合、ROI領域のみを更新して返す
+        if original_image is not None:
+
+            # 前回の変形結果をベースに使用
+            base_image = self.last_warped_image if self.last_warped_image is not None else original_image.copy()
+
+            # 変形マップを高速更新
+            self._update_deformation_map_fast()
+            
+            # ROI領域のみを変形
+            roi = original_image[y_min:y_max, x_min:x_max].copy()
+            
+            # マップのROI部分を切り出し
+            map_x_roi = self.map_x[y_min:y_max, x_min:x_max].copy()
+            map_y_roi = self.map_y[y_min:y_max, x_min:x_max].copy()
+            
+            # オフセット調整
+            map_x_roi -= x_min
+            map_y_roi -= y_min
+            
+            warped_roi = cv2.remap(
+                roi, 
+                map_x_roi, 
+                map_y_roi, 
+                cv2.INTER_LINEAR, 
+                borderMode=cv2.BORDER_REFLECT
+            )
+            
+            # 結果をコピー
+            base_image[y_min:y_max, x_min:x_max] = warped_roi
+            
+            # 更新結果を保持
+            self.last_warped_image = base_image
+            return base_image
+        
+        return None
+    
+    def _update_deformation_map_fast(self):
+        """ 高速な変形マップ更新 """
+        if not self.dirty:
+            return
+        
+        # Numbaで高速に変形マップを生成
+        self.map_x, self.map_y = DistortionEngine._generate_deformation_map_numba(
+            self.original_grid, 
+            self.current_grid,
+            self.width,
+            self.height,
+            self.grid_size
+        )
+        
+        self.dirty = False
+    
+    def warp_image(self, image):
+        """ 画像全体を変形 """
+        self._update_deformation_map_fast()
+        
+        # 全体を変形
+        result = cv2.remap(
+            image, 
+            self.map_x, 
+            self.map_y, 
+            cv2.INTER_LINEAR, 
+            borderMode=cv2.BORDER_REFLECT
+        )
+        
+        # 結果を保持
+        self.last_warped_image = result
+        return result
+    
+    def reset(self):
+        """ 変形をリセット """
+        self.current_grid = self.original_grid.copy()
+        self.dirty = True
+        self.last_warped_image = None
+
+    @staticmethod
+    @nb.njit(parallel=True, fastmath=True)
+    def _generate_deformation_map_numba(original_grid, current_grid, width, height, grid_size):
+        """ Numbaで高速化された変形マップ生成 """
+        map_x = np.zeros((height, width), dtype=np.float32)
+        map_y = np.zeros((height, width), dtype=np.float32)
+        
+        rows, cols, _ = original_grid.shape
+        displacement_x = current_grid[:, :, 0] - original_grid[:, :, 0]
+        displacement_y = current_grid[:, :, 1] - original_grid[:, :, 1]
+        
+        grid_step_x = grid_size
+        grid_step_y = grid_size
+        
+        for y in nb.prange(height):
+            for x in nb.prange(width):
+                # グリッドインデックス計算
+                grid_i = y // grid_step_y
+                grid_j = x // grid_step_x
+                
+                # グリッドセル内の位置
+                dy = y % grid_step_y
+                dx = x % grid_step_x
+                
+                # グリッドセルの4点を取得
+                i0 = min(grid_i, rows-1)
+                j0 = min(grid_j, cols-1)
+                i1 = min(grid_i+1, rows-1)
+                j1 = min(grid_j+1, cols-1)
+                
+                # バイリニア補間の重み
+                wx = dx / grid_step_x
+                wy = dy / grid_step_y
+                
+                # 4点の変位
+                d00_x = displacement_x[i0, j0]
+                d00_y = displacement_y[i0, j0]
+                d01_x = displacement_x[i0, j1]
+                d01_y = displacement_y[i0, j1]
+                d10_x = displacement_x[i1, j0]
+                d10_y = displacement_y[i1, j0]
+                d11_x = displacement_x[i1, j1]
+                d11_y = displacement_y[i1, j1]
+                
+                # X方向の補間
+                top_x = (1 - wx) * d00_x + wx * d01_x
+                bottom_x = (1 - wx) * d10_x + wx * d11_x
+                dx_interp = (1 - wy) * top_x + wy * bottom_x
+                
+                # Y方向の補間
+                top_y = (1 - wx) * d00_y + wx * d01_y
+                bottom_y = (1 - wx) * d10_y + wx * d11_y
+                dy_interp = (1 - wy) * top_y + wy * bottom_y
+                
+                # 変形マップに設定
+                map_x[y, x] = x + dx_interp
+                map_y[y, x] = y + dy_interp
+        
+        return map_x, map_y
+
+    @staticmethod
+    @nb.njit(parallel=True, fastmath=True)
+    def _apply_forward_warp_numba(grid, center, radius, strength, direction, 
+                                x_min, x_max, y_min, y_max, effect_radius):
+        new_grid = grid.copy()
+        center_x, center_y = center
+        dir_x, dir_y = direction
+        dir_norm = max(1e-5, np.sqrt(dir_x*dir_x + dir_y*dir_y))
+        dir_x /= -dir_norm
+        dir_y /= -dir_norm
+        
+        for i in nb.prange(grid.shape[0]):
+            for j in nb.prange(grid.shape[1]):
+                px, py = grid[i, j]
+                if not (x_min <= px <= x_max and y_min <= py <= y_max):
+                    continue
+                    
+                dx = px - center_x
+                dy = py - center_y
+                dist = np.sqrt(dx*dx + dy*dy)
+                if dist >= effect_radius:
+                    continue
+                    
+                weight = np.exp(-(dist*dist) / (2 * (radius/3)**2))
+                move = strength * radius * weight * 0.5
+                new_grid[i, j, 0] = px + dir_x * move
+                new_grid[i, j, 1] = py + dir_y * move
+                
+        return new_grid
+
+    @staticmethod
+    @nb.njit(parallel=True, fastmath=True)
+    def _apply_bulge_numba(grid, center, radius, strength, 
+                        x_min, x_max, y_min, y_max, effect_radius):
+        new_grid = grid.copy()
+        center_x, center_y = center
+        
+        for i in nb.prange(grid.shape[0]):
+            for j in nb.prange(grid.shape[1]):
+                px, py = grid[i, j]
+                if not (x_min <= px <= x_max and y_min <= py <= y_max):
+                    continue
+                    
+                dx = px - center_x
+                dy = py - center_y
+                dist = np.sqrt(dx*dx + dy*dy)
+                if dist >= effect_radius or dist < 1e-5:
+                    continue
+                    
+                weight = np.exp(-(dist*dist) / (2 * (radius/3)**2))
+                move = strength * radius * weight * 0.5
+                dir_x = dx / dist
+                dir_y = dy / dist
+                new_grid[i, j, 0] = px + dir_x * move
+                new_grid[i, j, 1] = py + dir_y * move
+                
+        return new_grid
+
+    @staticmethod
+    @nb.njit(parallel=True, fastmath=True)
+    def _apply_swirl_numba(grid, center, radius, strength, 
+                        x_min, x_max, y_min, y_max, effect_radius):
+        new_grid = grid.copy()
+        center_x, center_y = center
+        
+        for i in nb.prange(grid.shape[0]):
+            for j in nb.prange(grid.shape[1]):
+                px, py = grid[i, j]
+                if not (x_min <= px <= x_max and y_min <= py <= y_max):
+                    continue
+                    
+                dx = px - center_x
+                dy = py - center_y
+                dist = np.sqrt(dx*dx + dy*dy)
+                if dist >= effect_radius or dist < 1e-5:
+                    continue
+                    
+                weight = np.exp(-(dist*dist) / (2 * (radius/3)**2))
+                angle = weight * strength * 0.5
+                cos_a = np.cos(angle)
+                sin_a = np.sin(angle)
+                x_rot = dx * cos_a - dy * sin_a
+                y_rot = dx * sin_a + dy * cos_a
+                new_grid[i, j, 0] = center_x + x_rot
+                new_grid[i, j, 1] = center_y + y_rot
+                
+        return new_grid
+
+    @staticmethod
+    #@nb.njit(parallel=True, fastmath=True, cache=True)
+    def _apply_restore_numba(grid, original_grid, center, radius, strength, 
+                        x_min, x_max, y_min, y_max, effect_radius):
+        new_grid = grid.copy()
+        center_x, center_y = center
+
+        # 事前計算
+        radius_sq = (radius / 3) ** 2
+        effect_radius_sq = effect_radius ** 2
+                
+        for i in nb.prange(grid.shape[0]):
+            for j in nb.prange(grid.shape[1]):
+                px, py = grid[i, j]
+                
+                # ROIチェック
+                if px < x_min or px > x_max or py < y_min or py > y_max:
+                    continue
+
+                # 元の位置
+                orig_px, orig_py = original_grid[i, j]
+
+                # 距離の二乗を計算
+                dx = px - center_x
+                dy = py - center_y
+                dist_sq = dx*dx + dy*dy
+                
+                # 効果半径チェック
+                if dist_sq > effect_radius_sq:
+                    continue
+                    
+                # 重み計算 (指数関数の引数を制限)
+                weight = strength * np.exp(-dist_sq / (2 * radius_sq))
+                weight = min(max(weight, 0.0), 1.0)
+                                
+                # 復元処理
+                new_grid[i, j, 0] = (1 - weight) * px + weight * orig_px
+                new_grid[i, j, 1] = (1 - weight) * py + weight * orig_py
+                
+        return new_grid
+
 class DistortionCanvas(FloatLayout):
-    STRENGTH_SCALE = 0.0005
+    STRENGTH_SCALE = 0.0025
 
     brush_size = NumericProperty(100)
     strength = NumericProperty(50)
@@ -275,11 +424,15 @@ class DistortionCanvas(FloatLayout):
         self.margin = ((iw.width-iw.texture_size[0]*self.disp_info[4])/2, (iw.height-iw.texture_size[1]*self.disp_info[4])/2)
         self.tcg_info = core.param_to_tcg_info(None)
 
-    def set_ref_image(self, ref_image):
+    def set_ref_image(self, ref_image, engine_recreate=True):
         self.original_image = ref_image
         self.current_image = ref_image.copy()
         self.is_update_texture = False
         self.is_recording = True
+
+        if engine_recreate:
+            h, w = ref_image.shape[:2]
+            self.engine = DistortionEngine((w, h))
 
     def set_primary_param(self, primary_param):
         self.tcg_info = core.param_to_tcg_info(primary_param)
@@ -412,14 +565,13 @@ class DistortionCanvas(FloatLayout):
                 strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
 
                 # 変形適用
-                self.current_image = DistortionEngine.apply_warp(
-                    self.current_image,
+                self.current_image = self.engine.apply_effect(
                     center=(img_x, img_y),
                     radius=self.brush_size / self.tcg_info['disp_info'][4],
                     strength=strength * (DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
                     effect_type=self.effect_type,
                     direction=direction,
-                    original_image=self.original_image  # 元の画像を渡す
+                    original_image=self.original_image
                 )
             except Exception as e:
                 print(f"Error applying distortion: {e}")
@@ -473,11 +625,12 @@ class DistortionCanvas(FloatLayout):
         except Exception as e:
             print(f"Error loading recorded: {e}")
 
-    def replay_recorded(self):
-        self.current_image = DistortionCanvas.replay_recorded_with(self.current_image, self.recorded, self.tcg_info)
+    def remap_image(self):
+        self.current_image = self.engine.warp_image(self.original_image)
+        #DistortionCanvas.replay_recorded_with(self.current_image, self.recorded, self.tcg_info, self.engine)
 
     @staticmethod
-    def replay_recorded_with(original_image, recorded, tcg_info):
+    def replay_recorded(original_image, recorded, tcg_info, engine=None):
         if original_image is None:
             print("No image loaded for replay")
             return original_image
@@ -485,8 +638,10 @@ class DistortionCanvas(FloatLayout):
         if recorded is None or len(recorded) == 0:
             print("No recorded to replay")
             return original_image
-            
-        img = original_image.copy()
+
+        h, w = original_image.shape[:2]
+        if engine is None:
+            engine = DistortionEngine((w, h))
         
         # 記録再生
         for index in range(len(recorded)):
@@ -500,18 +655,19 @@ class DistortionCanvas(FloatLayout):
                     dy = next_action['y'] - action['y']
                     direction = (dx, dy)
                 
-                img = DistortionEngine.apply_warp(
-                    img,
-                    center=core.tcg_to_ref_image(action['x'], action['y'], img, tcg_info),
+                engine.apply_effect(
+                    center=core.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info),
                     radius=action['size'] / tcg_info['disp_info'][4],
                     strength=action['strength'] * (DistortionCanvas.STRENGTH_SCALE if action.get('effect', 'forward_warp') != 'restore' else 0.01),
                     effect_type=action.get('effect', 'forward_warp'),
                     direction=direction,
-                    original_image=original_image
+                    original_image=None,
                 )
                                 
             except Exception as e:
                 print(f"Error replaying action {index}: {e}")
+
+        img = engine.warp_image(original_image)
 
         return img
 
