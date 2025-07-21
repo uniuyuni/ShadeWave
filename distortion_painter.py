@@ -12,10 +12,10 @@ from kivy.properties import StringProperty, NumericProperty, ListProperty
 from kivy.clock import Clock
 import cv2
 import numpy as np
-import json
 import os
 import time
 import numba as nb
+import logging
 
 import core
 
@@ -98,12 +98,12 @@ class DistortionEngine:
         # 画像が提供されている場合、ROI領域のみを更新して返す
         if original_image is not None:
 
+            # 変形マップを高速更新
+            self._update_deformation_map_fast()
+            """
             # 前回の変形結果をベースに使用
             base_image = self.last_warped_image if self.last_warped_image is not None else original_image.copy()
 
-            # 変形マップを高速更新
-            self._update_deformation_map_fast()
-            
             # ROI領域のみを変形
             roi = original_image[y_min:y_max, x_min:x_max].copy()
             
@@ -125,6 +125,15 @@ class DistortionEngine:
             
             # 結果をコピー
             base_image[y_min:y_max, x_min:x_max] = warped_roi
+            """
+            
+            base_image = cv2.remap(
+                original_image, 
+                self.map_x,
+                self.map_y, 
+                cv2.INTER_LINEAR, 
+                borderMode=cv2.BORDER_REFLECT
+            )
             
             # 更新結果を保持
             self.last_warped_image = base_image
@@ -172,7 +181,7 @@ class DistortionEngine:
         self.last_warped_image = None
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True)
+    @nb.njit(parallel=True, fastmath=True, cache=True)
     def _generate_deformation_map_numba(original_grid, current_grid, width, height, grid_size):
         """ Numbaで高速化された変形マップ生成 """
         map_x = np.zeros((height, width), dtype=np.float32)
@@ -232,7 +241,7 @@ class DistortionEngine:
         return map_x, map_y
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True)
+    @nb.njit(parallel=True, fastmath=True, cache=True)
     def _apply_forward_warp_numba(grid, center, radius, strength, direction, 
                                 x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
@@ -262,7 +271,7 @@ class DistortionEngine:
         return new_grid
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True)
+    @nb.njit(parallel=True, fastmath=True, cache=True)
     def _apply_bulge_numba(grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
@@ -290,7 +299,7 @@ class DistortionEngine:
         return new_grid
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True)
+    @nb.njit(parallel=True, fastmath=True, cache=True)
     def _apply_swirl_numba(grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
@@ -320,7 +329,7 @@ class DistortionEngine:
         return new_grid
 
     @staticmethod
-    #@nb.njit(parallel=True, fastmath=True, cache=True)
+    @nb.njit(parallel=True, fastmath=True, cache=True)
     def _apply_restore_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
@@ -361,7 +370,7 @@ class DistortionEngine:
         return new_grid
 
 class DistortionCanvas(FloatLayout):
-    STRENGTH_SCALE = 0.0025
+    STRENGTH_SCALE = 0.002
 
     brush_size = NumericProperty(100)
     strength = NumericProperty(50)
@@ -398,31 +407,34 @@ class DistortionCanvas(FloatLayout):
 
     def load_image(self, path):
         if not os.path.exists(path):
-            print(f"Error: File not found - {path}")
+            logging.error(f"File not found - {path}")
             return
             
         img = cv2.imread(path)
         if img is None:
-            print(f"Error: Failed to load image - {path}")
+            logging.error(f"Failed to load image - {path}")
             return
 
         # イメージを正方形にする
         imax = max(img.shape[1], img.shape[0])
-        offset_y = (imax-img.shape[0])//2
         offset_x = (imax-img.shape[1])//2
+        offset_y = (imax-img.shape[0])//2
         img = np.pad(img, ((offset_y, imax-(offset_y+img.shape[0])), (offset_x, imax-(offset_x+img.shape[1])), (0, 0)))
         
         self.original_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         self.current_image = self.original_image.copy()
-        self.is_update_texture = True        
-        self.update_texture(full_quality=True)
-        print(f"Loaded image: {path}")
+        self.is_update_texture = True
+        self.update_texture()
 
         # サンプル
         iw = self.image_widget
         self.disp_info = (0, 0, iw.texture_size[0], iw.texture_size[1], min(iw.width, iw.height) / max(iw.texture_size))
-        self.margin = ((iw.width-iw.texture_size[0]*self.disp_info[4])/2, (iw.height-iw.texture_size[1]*self.disp_info[4])/2)
-        self.tcg_info = core.param_to_tcg_info(None)
+        tcg_info = {}
+        tcg_info['original_img_size'] = param['original_img_size']
+        tcg_info['disp_info'] = param['disp_info']
+        tcg_info['rotation'] = 0.0
+        tcg_info['rotation2'] = 0.0
+        tcg_info['flip'] = 0
 
     def set_ref_image(self, ref_image, engine_recreate=True):
         self.original_image = ref_image
@@ -436,6 +448,9 @@ class DistortionCanvas(FloatLayout):
 
     def set_primary_param(self, primary_param):
         self.tcg_info = core.param_to_tcg_info(primary_param)
+        
+    def remap_recorded(self):
+        DistortionCanvas.replay_recorded(self.original_image, self.recorded, self.tcg_info, self.engine)
 
     def on_mouse_pos(self, window, pos):
         #print(f"Mouse position: {pos}")
@@ -460,18 +475,16 @@ class DistortionCanvas(FloatLayout):
         self.translate.x, self.translate.y = x - self.brush_size / 2, y - self.brush_size / 2
         self.brush_cursor.ellipse = (0, 0, self.brush_size, self.brush_size)
 
-    def update_texture(self, full_quality=False):
+    def update_texture(self):
         if self.current_image is None:
             return
 
         if self.is_update_texture:
-            # フルクオリティ更新が必要な場合
-            if full_quality or self.needs_full_update:
-                # OpenCV画像をKivyテクスチャに変換
-                self.full_quality_texture = Texture.create(size=(self.current_image.shape[1], self.current_image.shape[0]))
-                self.full_quality_texture.flip_vertical()
-                self.full_quality_texture.blit_buffer(self.current_image.tobytes(), colorfmt='rgb', bufferfmt='float')
-                self.needs_full_update = False
+            # OpenCV画像をKivyテクスチャに変換
+            self.full_quality_texture = Texture.create(size=(self.current_image.shape[1], self.current_image.shape[0]))
+            self.full_quality_texture.flip_vertical()
+            self.full_quality_texture.blit_buffer(self.current_image.tobytes(), colorfmt='rgb', bufferfmt='float')
+            self.needs_full_update = False
             
             # プレビューテクスチャを使用
             self.ids.image_widget.texture = self.full_quality_texture
@@ -486,19 +499,25 @@ class DistortionCanvas(FloatLayout):
             tcg_x, tcg_y = self._window_to_tcg(touch.x, touch.y)
             self.last_touch_pos = [tcg_x, tcg_y]
             self.last_touch_time = time.time()  # 現在のシステム時間を使用
-            self.points_buffer = []
-           
+
             strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
 
-            # 記録開始
-            if self.is_recording:
-                self.recorded.append({
+            # 記録データ作成
+            record = {
                     "x": tcg_x, "y": tcg_y,
                     "size": self.brush_size,
                     "strength": strength,
                     "effect": self.effect_type,
+                    "direction": (0, 0),
                     "time": self.last_touch_time  # タイムスタンプ記録
-                })
+            }
+            # 記録開始
+            if self.is_recording:
+                self.recorded.append(record)
+
+            # ポイントをバッファにも追加
+            self.points_buffer = []
+            self.points_buffer.append(record)
 
         return super().on_touch_down(touch)
 
@@ -513,10 +532,7 @@ class DistortionCanvas(FloatLayout):
             
             # 現在の時間を取得
             current_time = time.time()
-            
-            # ポイントをバッファに追加
-            self.points_buffer.append((tcg_x, tcg_y, direction, current_time))
-            
+                        
             # 前回の更新から一定時間経過したら処理
             if current_time - self.last_touch_time > 0.05:  # 20fps (0.05秒間隔)
                 self.process_buffer()
@@ -524,16 +540,23 @@ class DistortionCanvas(FloatLayout):
 
             strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
 
-            # 記録
-            if self.is_recording:
-                self.recorded.append({
+            # 記録データ作成
+            record = {
                     "x": tcg_x, "y": tcg_y,
                     "size": self.brush_size,
                     "strength": strength,
                     "effect": self.effect_type,
+                    "direction": direction,
                     "time": current_time
-                })
+            }
+
+            # 記録
+            if self.is_recording:
+                self.recorded.append(record)
                 
+            # ポイントをバッファに追加
+            self.points_buffer.append(record)
+
             self.last_touch_pos = [tcg_x, tcg_y]
 
         return True
@@ -555,21 +578,26 @@ class DistortionCanvas(FloatLayout):
         return img_x, img_y
 
     def process_buffer(self):
-        if not self.points_buffer:
+        if not self.points_buffer or len(self.points_buffer) <= 0:
             return
-            
+                    
         # バッファ内のポイントを処理
-        for tcg_x, tcg_y, direction, _ in self.points_buffer:
+        for record in self.points_buffer:
+            tcg_x, tcg_y = record['x'], record['y']
+            brush_size = record['size']
+            strength = record['strength']
+            effect_type = record['effect']
+            direction = record['direction']
+            time = record['time']
+
             img_x, img_y = core.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info)
             try:
-                strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
-
                 # 変形適用
                 self.current_image = self.engine.apply_effect(
                     center=(img_x, img_y),
-                    radius=self.brush_size / self.tcg_info['disp_info'][4],
-                    strength=strength * (DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
-                    effect_type=self.effect_type,
+                    radius=brush_size / self.tcg_info['disp_info'][4],
+                    strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
+                    effect_type=effect_type,
                     direction=direction,
                     original_image=self.original_image
                 )
@@ -584,7 +612,6 @@ class DistortionCanvas(FloatLayout):
         self.points_buffer = []
 
     def delayed_texture_update(self, dt):
-        self.needs_full_update = True
         self.update_texture()
         self.update_event = None
 
@@ -594,78 +621,33 @@ class DistortionCanvas(FloatLayout):
             self.process_buffer()
         return super().on_touch_up(touch)
 
-    def serialize(self):
-
-        if len(self.recorded) <= 0:
-            return None
-
-        dict = {
-            'distortion_points': self.recorded,
-        }
-        return dict
-
-    def deserialize(self, dict):
-        self.recorded = dict['distortion_points']
-        #self.replay_recorded()
-        
-    def save_recorded(self, path="distortion_record.json"):
-        try:
-            with open(path, 'w') as f:
-                json.dump(self.recorded, f, indent=2)
-            print(f"Recording saved to {path}")
-        except Exception as e:
-            print(f"Error saving recorded: {e}")
-
-    def load_recorded(self, path="distortion_record.json"):
-        try:
-            with open(path, 'r') as f:
-                self.recorded = json.load(f)
-            #self.replay_recorded()
-            print(f"Recording loaded from {path}")
-        except Exception as e:
-            print(f"Error loading recorded: {e}")
-
     def remap_image(self):
         self.current_image = self.engine.warp_image(self.original_image)
-        #DistortionCanvas.replay_recorded_with(self.current_image, self.recorded, self.tcg_info, self.engine)
 
     @staticmethod
     def replay_recorded(original_image, recorded, tcg_info, engine=None):
         if original_image is None:
-            print("No image loaded for replay")
+            logging.warning("No image loaded for replay")
             return original_image
 
         if recorded is None or len(recorded) == 0:
-            print("No recorded to replay")
+            logging.warning("No recorded to replay")
             return original_image
 
-        h, w = original_image.shape[:2]
         if engine is None:
+            h, w = original_image.shape[:2]
             engine = DistortionEngine((w, h))
-        
+
         # 記録再生
-        for index in range(len(recorded)):
-            action = recorded[index]
-            try:
-                # 方向ベクトルを計算（次の点がある場合）
-                direction = (0, 0)
-                if index < len(recorded) - 1:
-                    next_action = recorded[index + 1]
-                    dx = next_action['x'] - action['x']
-                    dy = next_action['y'] - action['y']
-                    direction = (dx, dy)
-                
-                engine.apply_effect(
-                    center=core.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info),
-                    radius=action['size'] / tcg_info['disp_info'][4],
-                    strength=action['strength'] * (DistortionCanvas.STRENGTH_SCALE if action.get('effect', 'forward_warp') != 'restore' else 0.01),
-                    effect_type=action.get('effect', 'forward_warp'),
-                    direction=direction,
-                    original_image=None,
-                )
-                                
-            except Exception as e:
-                print(f"Error replaying action {index}: {e}")
+        for action in recorded:
+            engine.apply_effect(
+                center=core.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info),
+                radius=action['size'] / tcg_info['disp_info'][4],
+                strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
+                effect_type=action.get('effect', 'forward_warp'),
+                direction=action['direction'],
+                original_image=None,
+            )
 
         img = engine.warp_image(original_image)
 
@@ -674,22 +656,19 @@ class DistortionCanvas(FloatLayout):
     def reset_image(self):
         if self.original_image is not None:
             self.current_image = self.original_image.copy()
-            self.needs_full_update = True
             self.recorded = []
+            self.engine.reset()
             self.update_texture()
             print("Image reset")
 
     def set_effect(self, effect_type):
         self.effect_type = effect_type
-        print(f"Effect set to: {effect_type}")
 
     def set_brush_size(self, size):
         self.brush_size = size
-        print(f"Brush size set to: {size}")
 
     def set_strength(self, strength):
         self.strength = strength
-        print(f"Strength set to: {strength}")
 
     def get_current_image(self):
         return self.current_image
@@ -709,13 +688,5 @@ class Distortion_PainterApp(App):
         return widget        
 
 if __name__ == '__main__':
-    # テスト用画像が存在しない場合に作成
-    if not os.path.exists("input.jpg"):
-        # 単純なテスト画像を作成
-        img = np.zeros((600, 800, 3), dtype=np.uint8)
-        cv2.putText(img, "Distortion Test", (50, 300), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 255), 4)
-        cv2.imwrite("input.jpg", img)
-        print("Created test image: input.jpg")
-    
+
     Distortion_PainterApp().run()

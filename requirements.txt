@@ -1,6 +1,7 @@
 numpy==1.26.4
+kivy
 kivymd
-facer
+git+https://github.com/FacePerceiver/facer.git@main
 opencv-contrib-python
 jax==0.5.0
 jax-metal

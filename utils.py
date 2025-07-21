@@ -3,9 +3,7 @@ from importlib.machinery import BYTECODE_SUFFIXES
 import math
 import cv2
 import numpy as np
-from pillow_heif.options import QUALITY
 import json
-import base64
 import logging
 import numpy as np
 

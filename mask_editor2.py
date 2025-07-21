@@ -289,9 +289,11 @@ class BaseMask(Widget):
             'sat': 255,
         }
 
+        full_image_hls = self.editor.get_full_image_hls()
+        crop_image_hls = self.editor.get_crop_image_hls()
         if self.editor.full_image_hls is not None:            
-            fimg = self.editor.full_image_hls[..., HLS_NUM[hls_str]]
-            cimg = self.editor.crop_image_hls[..., HLS_NUM[hls_str]]
+            fimg = full_image_hls[..., HLS_NUM[hls_str]]
+            cimg = crop_image_hls[..., HLS_NUM[hls_str]]
             dmax = HLS_DIS_MAX[hls_str]
             mmax = HLS_MAX[hls_str]
             
@@ -1416,6 +1418,7 @@ class FreeDrawMask(BaseMask):
 
 # セグメントマスクのクラス
 class SegmentMask(BaseMask):
+    __model = None
     __iopaint_plugins = None
     __iopaint_predict = None
 
@@ -1536,6 +1539,15 @@ class SegmentMask(BaseMask):
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_segment(self, image_size, center):
+        """
+        import sam2unet_helper
+
+        if SegmentMask.__model is None:
+            SegmentMask.__model = sam2unet_helper.setup_sam2unet("checkpoints/SAM2UNet/SAM2UNet-MSD.pth", 'cpu')
+        
+        img = self.editor.full_image_rgb
+        result = sam2unet_helper.predict_mask(SegmentMask.__model, img)
+        """
         if SegmentMask.__iopaint_plugins is None:
             SegmentMask.__iopaint_plugins = importlib.import_module('iopaint.plugins')
         if SegmentMask.__iopaint_predict is None:
@@ -1544,7 +1556,7 @@ class SegmentMask(BaseMask):
         img = self.editor.full_image_rgb
         result = SegmentMask.__iopaint_predict.predict_plugin(img, SegmentMask.__iopaint_plugins.InteractiveSeg.name, click=center)
         result = ((result > 0) * 1).astype(np.float32)
-
+        
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
         result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
@@ -2101,11 +2113,23 @@ class MaskEditor2(FloatLayout):
         return True
     
     def set_ref_image(self, crop_image, full_image):
-        self.crop_image_rgb = crop_image
-        self.crop_image_hls = cv2.cvtColor(crop_image, cv2.COLOR_RGB2HLS_FULL)
+        if self.crop_image_rgb is not crop_image:
+            self.crop_image_rgb = crop_image
+            self.crop_image_hls = None
+
         if self.full_image_rgb is not full_image:
             self.full_image_rgb = full_image
-            self.full_image_hls = cv2.cvtColor(full_image, cv2.COLOR_RGB2HLS_FULL)
+            self.full_image_hls = None
+
+    def get_crop_image_hls(self):
+        if self.crop_image_hls is None:
+            self.crop_image_hls = cv2.cvtColor(self.crop_image_rgb, cv2.COLOR_RGB2HLS_FULL)
+        return self.crop_image_hls
+
+    def get_full_image_hls(self):
+        if self.full_image_hls is None:
+            self.full_image_hls = cv2.cvtColor(self.full_image_rgb, cv2.COLOR_RGB2HLS_FULL)
+        return self.full_image_hls
 
     def set_texture_size(self, tx, ty):
         self.texture_size = (tx, ty)

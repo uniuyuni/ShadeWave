@@ -266,7 +266,7 @@ class DistortionEffect(Effect):
         pass
 
     def set2param(self, param, widget):
-        distortion_enable = False if widget.ids["effects"].current_tab.text != "Painter" else True
+        distortion_enable = False if widget.ids["effects"].current_tab.text != "Liquify" else True
 
         # クロップエディタを開く
         if distortion_enable == True:
@@ -296,7 +296,10 @@ class DistortionEffect(Effect):
             if self.is_initial_open > 1:
                 self.distortion_painter.set_effect(self.effect_type)
                 self.distortion_painter.set_ref_image(img, True)
-            self.distortion_painter.set_primary_param(param)
+                self.distortion_painter.set_primary_param(param)
+                self.distortion_painter.remap_recorded()
+            else:
+                self.distortion_painter.set_primary_param(param)
             self.is_initial_open -= 1
 
         if self.is_initial_close > 0:

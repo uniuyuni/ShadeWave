@@ -5,7 +5,6 @@ from kivymd.uix.card import MDCard
 from kivymd.uix.slider import MDSlider
 from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton
 from kivymd.uix.gridlayout import MDGridLayout
 from kivy.properties import ListProperty, NumericProperty
 from kivy.graphics import Color, Ellipse, Quad
