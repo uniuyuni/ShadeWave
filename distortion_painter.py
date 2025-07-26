@@ -534,7 +534,7 @@ class DistortionCanvas(FloatLayout):
             current_time = time.time()
                         
             # 前回の更新から一定時間経過したら処理
-            if current_time - self.last_touch_time > 0.05:  # 20fps (0.05秒間隔)
+            if current_time - self.last_touch_time > 0.1: # 0.1秒以上経過した場合
                 self.process_buffer()
                 self.last_touch_time = current_time
 
@@ -591,18 +591,18 @@ class DistortionCanvas(FloatLayout):
             time = record['time']
 
             img_x, img_y = core.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info)
-            try:
-                # 変形適用
-                self.current_image = self.engine.apply_effect(
-                    center=(img_x, img_y),
-                    radius=brush_size / self.tcg_info['disp_info'][4],
-                    strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
-                    effect_type=effect_type,
-                    direction=direction,
-                    original_image=self.original_image
-                )
-            except Exception as e:
-                print(f"Error applying distortion: {e}")
+            # 変形
+            self.current_image = self.engine.apply_effect(
+                center=(img_x, img_y),
+                radius=brush_size / self.tcg_info['disp_info'][4],
+                strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
+                effect_type=effect_type,
+                direction=direction,
+                #original_image=self.original_image
+            )
+        
+        # 変形をまとめて適用
+        self.current_image = self.engine.warp_image(self.original_image)
         
         # テクスチャ更新をスケジュール（パフォーマンスのため遅延処理）
         if self.update_event is None:

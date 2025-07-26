@@ -1634,14 +1634,14 @@ class HuevsHueEffect(Effect):
             param_hash = hash(np.sum(hh))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(hh)
-                self.diff = ((lut-0.5)*2.0)*360
+                self.diff = ((lut - 0.5) * 2.0) * 360
                 self.hash = param_hash
 
         return self.diff
 
     def apply_diff(self, hls_h):
         hls_h = core.type_convert(hls_h, jnp.ndarray)
-        return core.apply_lut(hls_h, self.diff, 359) + hls_h
+        return core.apply_lut(hls_h / 360, self.diff, 1.0) + hls_h
 
 class HuevsLumEffect(Effect):
 
@@ -1665,14 +1665,14 @@ class HuevsLumEffect(Effect):
             param_hash = hash(np.sum(hl))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(hl)
-                self.diff = 2.0**((lut-0.5)*2.0)
+                self.diff = 2.0 ** ((lut - 0.5) * 4.0)
                 self.hash = param_hash
 
         return self.diff
 
-    def apply_diff(self, hls_l):
-        hls_l = core.type_convert(hls_l, jnp.ndarray)
-        return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
+    def apply_diff(self, hls_hl):
+        hls_hl = core.type_convert(hls_hl, jnp.ndarray)
+        return core.apply_lut(hls_hl[0] / 360, self.diff, 1.0) * hls_hl[1]
 
 class HuevsSatEffect(Effect):
 
@@ -1696,14 +1696,14 @@ class HuevsSatEffect(Effect):
             param_hash = hash(np.sum(hs))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(hs)
-                self.diff = (lut-0.5)*2.0+1.0
+                self.diff = (lut - 0.5) * 2.0 + 1.0
                 self.hash = param_hash
 
         return self.diff
 
-    def apply_diff(self, hls_s):
-        hls_s = core.type_convert(hls_s, jnp.ndarray)
-        return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
+    def apply_diff(self, hls_hs):
+        hls_hs = core.type_convert(hls_hs, jnp.ndarray)
+        return core.apply_lut(hls_hs[0] / 360.0, self.diff, 1.0) * hls_hs[1]
 
 class LumvsLumEffect(Effect):
 
@@ -1727,7 +1727,7 @@ class LumvsLumEffect(Effect):
             param_hash = hash(np.sum(ll))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(ll)
-                self.diff = 2.0**((lut-0.5)*2.0)
+                self.diff = 2.0 ** ((lut - 0.5) * 4.0)
                 self.hash = param_hash
 
         return self.diff
@@ -1758,14 +1758,14 @@ class LumvsSatEffect(Effect):
             param_hash = hash(np.sum(ls))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(ls)
-                self.diff = (lut-0.5)*2.0+1.0
+                self.diff = (lut - 0.5) * 2.0 + 1.0
                 self.hash = param_hash
 
         return self.diff
 
-    def apply_diff(self, hls_s):
-        hls_s = core.type_convert(hls_s, jnp.ndarray)
-        return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
+    def apply_diff(self, hls_ls):
+        hls_ls = core.type_convert(hls_ls, jnp.ndarray)
+        return core.apply_lut(hls_ls[0], self.diff, 1.0) * hls_ls[1]
 
 class SatvsLumEffect(Effect):
 
@@ -1789,14 +1789,14 @@ class SatvsLumEffect(Effect):
             param_hash = hash(np.sum(sl))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(sl)
-                self.diff = 2.0**((lut-0.5)*2.0)
+                self.diff = 2.0 ** ((lut - 0.5) * 4.0)
                 self.hash = param_hash
 
         return self.diff
 
-    def apply_diff(self, hls_l):
-        hls_l = core.type_convert(hls_l, jnp.ndarray)
-        return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
+    def apply_diff(self, hls_sl):
+        hls_sl = core.type_convert(hls_sl, jnp.ndarray)
+        return core.apply_lut(hls_sl[0], self.diff, 1.0) * hls_sl[1]
 
 class SatvsSatEffect(Effect):
 
@@ -1820,14 +1820,14 @@ class SatvsSatEffect(Effect):
             param_hash = hash(np.sum(ss))
             if self.hash != param_hash:
                 lut = core.calc_point_list_to_lut(ss)
-                self.diff = (lut-0.5)*2.0+1.0
+                self.diff = (lut - 0.5) * 2.0 + 1.0
                 self.hash = param_hash
 
         return self.diff
 
     def apply_diff(self, hls_s):
         hls_s = core.type_convert(hls_s, jnp.ndarray)
-        return core.apply_lut(hls_s, self.diff, 1.0) + hls_s
+        return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
 
 class SaturationEffect(Effect):
 

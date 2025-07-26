@@ -165,18 +165,19 @@ if __name__ == '__main__':
                 img = np.array(img)
                 utils.print_nan_inf(img, "output")
 
+                img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+
                 # ヒストグラム表示
                 img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
-                img_hist = colour.RGB_to_RGB(img_hist, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
-                                        apply_cctf_encoding=True, apply_gamut_mapping=False).astype(np.float32)
                 self.draw_histogram(img_hist, 0, exclude_count)
 
                 # プレビュー表示
                 img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                 img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
                 img_draw = np.clip(img_draw, 0, 1)
-                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
-                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+#                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+#                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
                 self.blit_image(img_draw)
 
             self.is_draw_image = False

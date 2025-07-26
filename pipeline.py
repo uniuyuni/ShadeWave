@@ -241,29 +241,30 @@ def pipeline_curve(rgb, effects, param, efconfig):
 
 def pipeline_vs_and_saturation(hls, effects, param, efconfig):
 
-    # Hのみ
     hls_h = hls[..., 0]
-    hls2_h = hls_h
-    diff = effects['HuevsHue'].make_diff(hls_h, param, efconfig)
-    if diff is not None: hls2_h = effects['HuevsHue'].apply_diff(hls_h)
-
-    #　Lのみ
+    hls2_h = hls_h.copy()
     hls_l = hls[..., 1]
     hls2_l = hls_l.copy()
+    hls_s = hls[..., 2]
+    hls2_s = hls_s.copy()
+
+    # Hのみ
+    diff = effects['HuevsHue'].make_diff(hls_h, param, efconfig)
+    if diff is not None: hls2_h = effects['HuevsHue'].apply_diff(hls2_h)
+
+    #　Lのみ
     diff = effects['HuevsLum'].make_diff(hls_l, param, efconfig)
-    if diff is not None: hls2_l = effects['HuevsLum'].apply_diff(hls2_l)
+    if diff is not None: hls2_l = effects['HuevsLum'].apply_diff([hls_h, hls2_l])
     diff = effects['LumvsLum'].make_diff(hls_l, param, efconfig)
     if diff is not None: hls2_l = effects['LumvsLum'].apply_diff(hls2_l)
     diff = effects['SatvsLum'].make_diff(hls_l, param, efconfig)
-    if diff is not None: hls2_l = effects['SatvsLum'].apply_diff(hls2_l)
+    if diff is not None: hls2_l = effects['SatvsLum'].apply_diff([hls_s, hls2_l])
 
     # Sのみ
-    hls_s = hls[..., 2]
-    hls2_s = hls_s.copy()
     diff = effects['HuevsSat'].make_diff(hls_s, param, efconfig)
-    if diff is not None: hls2_s = effects['HuevsSat'].apply_diff(hls2_s)
+    if diff is not None: hls2_s = effects['HuevsSat'].apply_diff([hls2_h, hls2_s])
     diff = effects['LumvsSat'].make_diff(hls_s, param, efconfig)
-    if diff is not None: hls2_s = effects['LumvsSat'].apply_diff(hls2_s)
+    if diff is not None: hls2_s = effects['LumvsSat'].apply_diff([hls_l, hls2_s])
     diff = effects['SatvsSat'].make_diff(hls_s, param, efconfig)
     if diff is not None: hls2_s = effects['SatvsSat'].apply_diff(hls2_s)
     diff = effects['saturation'].make_diff(hls_s, param, efconfig)

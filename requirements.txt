@@ -24,10 +24,11 @@ thop
 einops
 timm
 matplotlib
-mediapipe
+git+https://github.com/google-ai-edge/mediapipe.git@main
 typer
 typer_config
 fastapi
 omegaconf
 etils
 huggingface_hub
+pillow_heif

@@ -911,35 +911,12 @@
                                 default_tab: tab_lum_vs_lum
 
                                 TabbedPanelItem:
-                                    id: tab_lum_vs_lum
-                                    text: 'Lum vs Lum'
-
-                                    HeadLabel:
-                                        text: "Lum vs Lum"
-                                    CurveWidget:
-                                        id: LumvsLum
-                                        start_y: 0.5
-                                        end_y: 0.5
-                                        on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
-
-                                TabbedPanelItem:
                                     text: 'Hue vs Hue'
 
                                     HeadLabel:
                                         text: "Hue vs Hue"
                                     CurveWidget:
                                         id: HuevsHue
-                                        start_y: 0.5
-                                        end_y: 0.5
-                                        on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
-
-                                TabbedPanelItem:
-                                    text: 'Hue vs Sat'
-
-                                    HeadLabel:
-                                        text: "Hue vs Sat"
-                                    CurveWidget:
-                                        id: HuevsSat
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
@@ -956,23 +933,35 @@
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
 
                                 TabbedPanelItem:
+                                    text: 'Hue vs Sat'
+
+                                    HeadLabel:
+                                        text: "Hue vs Sat"
+                                    CurveWidget:
+                                        id: HuevsSat
+                                        start_y: 0.5
+                                        end_y: 0.5
+                                        on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+
+                                TabbedPanelItem:
+                                    id: tab_lum_vs_lum
+                                    text: 'Lum vs Lum'
+
+                                    HeadLabel:
+                                        text: "Lum vs Lum"
+                                    CurveWidget:
+                                        id: LumvsLum
+                                        start_y: 0.5
+                                        end_y: 0.5
+                                        on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+
+                                TabbedPanelItem:
                                     text: 'Lum vs Sat'
 
                                     HeadLabel:
                                         text: "Lum vs Sat"
                                     CurveWidget:
                                         id: LumvsSat
-                                        start_y: 0.5
-                                        end_y: 0.5
-                                        on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
-
-                                TabbedPanelItem:
-                                    text: 'Sat vs Sat'
-
-                                    HeadLabel:
-                                        text: "Sat vs Sat"
-                                    CurveWidget:
-                                        id: SatvsSat
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
@@ -987,6 +976,18 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')                            
+
+                                TabbedPanelItem:
+                                    text: 'Sat vs Sat'
+
+                                    HeadLabel:
+                                        text: "Sat vs Sat"
+                                    CurveWidget:
+                                        id: SatvsSat
+                                        start_y: 0.5
+                                        end_y: 0.5
+                                        on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+
 
                 TabbedPanelItem:
                     text: 'Extra'
