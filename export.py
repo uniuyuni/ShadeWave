@@ -1,7 +1,7 @@
 
 import os
 import numpy as np
-from wand.image import Image as WandImage
+from imagecodecs import imwrite
 import json
 import exiftool
 import colour
@@ -182,13 +182,15 @@ class ExportFile():
         os.makedirs(ex_dir, exist_ok=True)
 
         # ファイル書き込み
+        imwrite(self.ex_path, img, level=self.quality)
+        """
         with WandImage.from_array(img) as wi:
             wi.compression_quality = self.quality 
             wi.format = format
             wi.sharpen(sharpen)
             wi.transform(resize=resize_str)
             wi.save(filename=self.ex_path)
-
+        """
         # Exif書き込み
         if exifsw:
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:

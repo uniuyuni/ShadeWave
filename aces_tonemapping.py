@@ -1,10 +1,23 @@
-import numpy as np
-import cv2
 
 import torch
 
+import numpy as np
+
 def aces_tonemapping(image, exposure=0.6, device='cpu'):
-    """ PyTorchによる高速実装 """
+    """
+    ACESトーンマッピングを画像に適用する関数。
+    Args:
+        image (numpy.ndarray): 入力画像（float型、shape: [H, W, 3]）。
+        exposure (float, optional): 露出係数。デフォルトは0.6。
+        device (str, optional): 計算に使用するデバイス（'cpu'または'cuda'）。デフォルトは'cpu'。
+    Returns:
+        numpy.ndarray: トーンマッピング後の画像（float型、shape: [H, W, 3]、値域は[0, 1]）。
+    Note:
+        - 入力画像はfloat型（0以上）である必要があります。
+        - ACES（Academy Color Encoding System）方式によるトーンマッピングを行います。
+        - 行列変換により色空間変換を行い、非線形処理でダイナミックレンジを圧縮します。
+    """
+
     # テンソル変換
     tensor = torch.from_numpy(image).to(device)
     
@@ -37,7 +50,7 @@ if __name__ == "__main__":
     hdr = np.clip(hdr, 0, 10) #/ 10  # 0-1に正規化
     
     # 処理
-    result_cpu = torch_aces(hdr, exposure=0.8)
+    result_cpu = aces_tonemapping(hdr, exposure=0.8)
     
     # 結果比較
     print("CPU/GPU差分:", np.max(np.abs(result_cpu - result_cpu)))

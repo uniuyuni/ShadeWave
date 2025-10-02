@@ -13,7 +13,11 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "cwd": "${fileDirname}",
-            "env": { "ENABLE_PJRT_COMPATIBILITY": "1" }
+            "env": { "ENABLE_PJRT_COMPATIBILITY": "1",
+                     "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
+                     "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+            }
+    
         }
         {
             "name": "Python デバッガー: main.py",
@@ -21,7 +25,10 @@
             "request": "launch",
             "program": "main.py",
             "console": "integratedTerminal",
-            "env": { "ENABLE_PJRT_COMPATIBILITY": "1" }
+            "env": { "ENABLE_PJRT_COMPATIBILITY": "1",
+                     "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
+                     "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+            }
         }
     ]
 }

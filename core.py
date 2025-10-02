@@ -890,7 +890,7 @@ def get_multiple_mask_bbox(mask):
         mask マスク画像（2次元のnumpy配列）
         
     Returns:
-        各領域の(x_min, y_min, x_max, y_max)座標のリスト
+        各領域の(x, y, w, h)のリスト
             空のマスクの場合は空リストを返す
     """
     # マスクが空かチェック
@@ -898,6 +898,8 @@ def get_multiple_mask_bbox(mask):
         return []
     
     # 連結成分のラベリングを実行
+#    structure = np.ones((3, 3), dtype=int)
+#    labeled_array, num_features = label(mask > 0, structure=structure)
     labeled_array, num_features = label(mask > 0)
     
     bboxes = []
@@ -980,7 +982,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
 
     # シャドウ（暗部）の調整
     def enhance_shadow_positive(img, shadows):
-        factor = shadows / 100
+        factor = shadows / 100 * shadow_scale
         influence = jnp.exp(-5 * img)
         mask = factor * influence
         return img * (1 + mask), mask
@@ -993,6 +995,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         raw_result = img * mask
         return jnp.maximum(raw_result, min_val), None
 
+    shadow_scale = 8.0
     img, shadows_mask = _conditional_operation(shadows, img, enhance_shadow_positive, enhance_shadow_negative)
     
     # ハイライト（明部）の調整

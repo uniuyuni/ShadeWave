@@ -8,5 +8,6 @@
         "chrono": "cpp",
         "__locale": "cpp"
     },
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "cmake.sourceDirectory": "/Users/uniuyuni/PythonProjects/platypus/detectron2/tools/deploy"
 }

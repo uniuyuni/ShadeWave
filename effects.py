@@ -27,6 +27,7 @@ import params
 import utils
 import mediapipe_util
 import distortion_painter
+import aiutil
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -165,6 +166,106 @@ class InpaintDiff:
             self.image = utils.convert_image_from_list(self.image)
             #self.image = np.reshape(np.frombuffer(bz2.decompress(bytearray(self.image[1])), dtype=np.float32), self.image[0])
 
+"""
+class InpaintEffect(Effect):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        self.inpaint_diff_list = []
+        self.mask_editor = None
+        self.pipe = None
+
+    def get_param_dict(self, param):
+        return {
+            'inpaint': 0,
+            'inpaint_predict': 0,
+            'inpaint_diff_list': [],
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["switch_inpaint"].active = False if self.get_param(param, 'inpaint') == 0 else True
+        widget.ids["button_inpaint_predict"].state = "normal" if self.get_param(param, 'inpaint_predict') == 0 else "down"
+
+    def set2param(self, param, widget):
+        param['inpaint'] = 0 if widget.ids["switch_inpaint"].active == False else 1
+        param['inpaint_predict'] = 0 if widget.ids["button_inpaint_predict"].state == "normal" else 1
+
+        if param['inpaint'] > 0:
+            if self.mask_editor is None:
+                self.mask_editor = mask_editor.MaskEditor(param['img_size'][0], param['img_size'][1])
+                self.mask_editor.zoom = params.get_disp_info(param)[4]
+                self.mask_editor.pos = [0, 0]
+                widget.ids["preview_widget"].add_widget(self.mask_editor)
+            
+        if param['inpaint'] <= 0:
+            if self.mask_editor is not None:
+                widget.ids["preview_widget"].remove_widget(self.mask_editor)
+                self.mask_editor = None
+
+    def make_diff(self, img, param, efconfig):
+        self.inpaint_diff_list = self.get_param(param, 'inpaint_diff_list')
+        ip = self.get_param(param, 'inpaint')
+        ipp = self.get_param(param, 'inpaint_predict')
+        if (ip > 0 and ipp > 0) is True:
+            param['inpaint_predict'] = 0 # なぜか二重起動するときがあるので予防
+
+            import mat_helper
+            #import realesrgan_helper
+            
+            if self.pipe is None:
+                self.pipe = mat_helper.setup("checkpoints/MAT/Places_512_FullData.pkl", "cpu", 1024)
+
+            # マスク取得
+            mask = self.mask_editor.get_mask()
+            #mask = cv2.GaussianBlur(self.mask_editor.get_mask(), (63, 63), 0)
+
+            # イメージが四角く処理されていた場合のオフセット計算
+            w, h = param['original_img_size']
+            eh, ew = img.shape[:2]
+            x, y = (ew-w)//2, (eh-h)//2 # 四角画像の場合の余白
+
+            # 処理
+            bboxes = core.get_multiple_mask_bbox(self.mask_editor.get_mask()) # ぼかしてないもので処理
+            for bbox in bboxes:
+                proc_x, proc_y, proc_w, proc_h = aiutil.calculate_expanded_crop(
+                                                    img.shape[1], img.shape[0],
+                                                    bbox[0] + x, bbox[1] + y, bbox[2], bbox[3],
+                                                    1024, 1024)
+
+                img2 = mat_helper.inpaint(self.pipe,
+                                          img[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w],
+                                          mask[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w])
+
+                # 範囲を記録
+                self.inpaint_diff_list.append(
+                    InpaintDiff(disp_info=(bbox[0] + x, bbox[1] + y, bbox[2], bbox[3]),
+                                image=img2[bbox[1]-proc_y:bbox[1]-proc_y+bbox[3], bbox[0]-proc_x:bbox[0]-proc_x+bbox[2]]))
+
+            #                model=config.get_config('iopaint_model'),
+            #                resize_limit=config.get_config('iopaint_resize_limit'),
+            #                use_realesrgan=config.get_config('iopaint_use_realesrgan'))
+
+            param['inpaint_diff_list'] = self.inpaint_diff_list
+            self.mask_editor.clear_mask()
+            self.mask_editor.update_canvas()
+        
+        param_hash = hash((len(self.inpaint_diff_list)))
+        if self.hash != param_hash:
+            if len(self.inpaint_diff_list) > 0:
+                img2 = img.copy()
+                for inpaint_diff in self.inpaint_diff_list:
+                    inpaint_diff.list2image()   # データを変換する必要があるときがある
+                    cx, cy, cw, ch = inpaint_diff.disp_info
+                    img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
+                self.diff = img2
+            else:
+                self.diff = None
+            self.hash = param_hash
+
+        return self.diff
+
+"""
 class InpaintEffect(Effect):
     __iopaint = None
 
@@ -212,17 +313,32 @@ class InpaintEffect(Effect):
                 InpaintEffect.__iopaint = importlib.import_module('iopaint.predict')
 
             mask = cv2.GaussianBlur(self.mask_editor.get_mask(), (63, 63), 0)
+
+            # イメージが四角く処理されていた場合のオフセット計算
             w, h = param['original_img_size']
             eh, ew = img.shape[:2]
             x, y = (ew-w)//2, (eh-h)//2
-            img2 = InpaintEffect.__iopaint.predict(img[y:y+h, x:x+w], mask,
-                            model=config.get_config('iopaint_model'),
-                            resize_limit=config.get_config('iopaint_resize_limit'),
-                            use_realesrgan=config.get_config('iopaint_use_realesrgan'))
-            img2 = img2 #/ param.get('white_balance', [1, 1, 1])
-            bboxes = core.get_multiple_mask_bbox(self.mask_editor.get_mask())
+
+            # 処理
+            bboxes = core.get_multiple_mask_bbox(self.mask_editor.get_mask()) # ぼかしてないもので処理
             for bbox in bboxes:
-                self.inpaint_diff_list.append(InpaintDiff(disp_info=(bbox[0] + x, bbox[1] + y, bbox[2], bbox[3]), image=img2[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]))
+                proc_x, proc_y, proc_w, proc_h = aiutil.calculate_expanded_crop(
+                                                    img.shape[1], img.shape[0],
+                                                    bbox[0] + x, bbox[1] + y, bbox[2], bbox[3],
+                                                    config.get_config('iopaint_resize_limit'), config.get_config('iopaint_resize_limit'))
+
+                img2 = InpaintEffect.__iopaint.predict(
+                                img[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w],
+                                mask[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w],
+                                model=config.get_config('iopaint_model'),
+                                resize_limit=config.get_config('iopaint_resize_limit'),
+                                use_realesrgan=config.get_config('iopaint_use_realesrgan'))
+
+                # 範囲を記録
+                self.inpaint_diff_list.append(
+                    InpaintDiff(disp_info=(bbox[0] + x, bbox[1] + y, bbox[2], bbox[3]),
+                                image=img2[bbox[1]-proc_y:bbox[1]-proc_y+bbox[3], bbox[0]-proc_x:bbox[0]-proc_x+bbox[2]]))
+
             param['inpaint_diff_list'] = self.inpaint_diff_list
             self.mask_editor.clear_mask()
             self.mask_editor.update_canvas()
@@ -241,7 +357,8 @@ class InpaintEffect(Effect):
             self.hash = param_hash
 
         return self.diff
-    
+
+
 # 画像回転、反転
 class DistortionEffect(Effect):
 
