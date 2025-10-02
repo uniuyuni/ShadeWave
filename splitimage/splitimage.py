@@ -12,8 +12,7 @@ def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: 
     
     Returns:
     - blocks: 分割されたブロックが格納されたリスト
-    - padding_info: パディングの情報 (pad_height, pad_width, img_height, img_width)
-    - block_info: ブロックの情報 (block_height, block_width, overlap)
+    - split_info: ブロックの情報 (pad_height, pad_width, img_height, img_width, block_height, block_width, overlap)
     """
     img_height, img_width, channels = image.shape
 
@@ -66,8 +65,7 @@ def combine_image_with_overlap(blocks: list, split_info: tuple) -> np.ndarray:
     
     Parameters:
     - blocks: 分割されたブロックが格納されたリスト
-    - padding_info: パディングの情報 (pad_height, pad_width, img_height, img_width)
-    - block_info: ブロックの情報 (block_height, block_width, overlap)
+    - split_info: ブロックの情報 (pad_height, pad_width, img_height, img_width, block_height, block_width, overlap)
     
     Returns:
     - 結合された画像 (ndarray)
