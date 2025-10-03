@@ -1,0 +1,6 @@
+.DS_Store
+.jpg
+.png
+**/__pycache__/**
+**/venv3.11.9/**
+**/picture/**
