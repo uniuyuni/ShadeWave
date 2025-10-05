@@ -14,7 +14,7 @@ from kivy.lang import Builder as KVBuilder
 from colorsys import rgb_to_hls, hls_to_rgb
 import math
 
-import param_slider
+import widget.param_slider
 
 class CWColorPreview(MDCard):
     color = ListProperty([0.5, 0.5, 0.5, 1])

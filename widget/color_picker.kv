@@ -1,4 +1,5 @@
-#:include param_slider.kv
+
+#:include widget/param_slider.kv
 
 <CWColorWheel>:
     pos_hint: {'center_x': .5, 'center_y': .5}
@@ -7,7 +8,7 @@
     ref_height: 130
 
     Image:
-        source: 'color_wheel.png'
+        source: 'widget/color_wheel.png'
 
 <CWColorPreview>:
     size_hint: None, None

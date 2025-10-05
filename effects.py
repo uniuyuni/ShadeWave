@@ -14,8 +14,6 @@ from enum import Enum
 
 import core
 import cubelut
-import mask_editor
-import crop_editor
 import subpixel_shift
 import film_emulator
 import lens_simulator
@@ -26,8 +24,11 @@ import local_contrast
 import params
 import utils
 import mediapipe_util
-import distortion_painter
 import aiutil
+
+from widget.mask_editor import MaskEditor
+from widget.crop_editor import CropEditor
+from widget.distortion_painter import DistortionCanvas
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -292,7 +293,7 @@ class InpaintEffect(Effect):
 
         if param['inpaint'] > 0:
             if self.mask_editor is None:
-                self.mask_editor = mask_editor.MaskEditor(param['img_size'][0], param['img_size'][1])
+                self.mask_editor = MaskEditor(param['img_size'][0], param['img_size'][1])
                 self.mask_editor.zoom = params.get_disp_info(param)[4]
                 self.mask_editor.pos = [0, 0]
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
@@ -437,7 +438,7 @@ class DistortionEffect(Effect):
                 param_hash = hash((len(dr)))
                 if self.hash != param_hash:
                     tcg_info = core.param_to_tcg_info(param)
-                    self.diff = distortion_painter.DistortionCanvas.replay_recorded(img, param['distortion_recorded'], tcg_info)
+                    self.diff = DistortionCanvas.replay_recorded(img, param['distortion_recorded'], tcg_info)
                     self.hash = param_hash
 
         return self.diff
@@ -455,7 +456,7 @@ class DistortionEffect(Effect):
 
     def _open_distortion_painter(self, param, widget):
         if self.distortion_painter is None:
-            self.distortion_painter = distortion_painter.DistortionCanvas(image_widget=widget.ids["preview"],
+            self.distortion_painter = DistortionCanvas(image_widget=widget.ids["preview"],
                     recorded=self.get_param(param, 'distortion_recorded'),
                     callback=self._painter_callback,
                     effect_type=self.effect_type,
@@ -612,7 +613,7 @@ class CropEffect(Effect):
             input_width, input_height = param['original_img_size']
             x1, y1, x2, y2 = params.get_crop_rect(param)
             scale = config.get_config('preview_size')/max(input_width, input_height)
-            self.crop_editor = crop_editor.CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
+            self.crop_editor = CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
             self.crop_editor.set_editing_callback(self._crop_editing)
             widget.ids["preview_widget"].add_widget(self.crop_editor)
 

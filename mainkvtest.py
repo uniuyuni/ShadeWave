@@ -3,13 +3,13 @@ from kivymd.app import MDApp
 from kivymd.uix.widget import MDWidget
 from kivy.core.window import Window
 
-import histogram_widget
-import curve
-import param_slider
-import viewer_widget
-import spacer
-import metainfo
-import mask_editor2
+import widget.histogram
+import widget.curve
+import widget.param_slider
+import widget.viewer
+import widget.spacer
+import widget.metainfo
+import widget.mask_editor2
 
 class MainWidget(MDWidget):
 

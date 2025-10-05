@@ -14,8 +14,8 @@ import json
 import kvutils
 import macos
 
-import param_slider
-import float_input
+import widget.param_slider
+import widget.float_input
 
 class PresetNameDialog(Popup):
     def __init__(self, save_callback, **kwargs):

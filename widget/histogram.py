@@ -3,11 +3,7 @@ import numpy as np
 import cv2
 from kivy.app import App as KVApp
 from kivy.uix.image import Image as KVImage
-from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.graphics import Color as KVColor, Rectangle as KVRectangle, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix
-from kivy.metrics import dp
-
-import core
 
 class HistogramWidget(KVImage):
     
@@ -75,11 +71,11 @@ class HistogramWidget(KVImage):
                 KVRectangle(pos=(x * bar_width + offset_x, offset_y), size=(bar_width, height))
             KVPopMatrix()
 
-class Histogram_WidgetApp(KVApp):
+class HistogramApp(KVApp):
     def build(self):
         histogram = HistogramWidget()
         histogram._load_image("/Users/uniuyuni/PythonProjects/escargot/picture/DSCF0007.JPG")
         return histogram
 
 if __name__ == '__main__':
-    Histogram_WidgetApp().run()
+    HistogramApp().run()

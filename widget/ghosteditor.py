@@ -9,7 +9,7 @@ from kivy.graphics.texture import Texture
 from kivy.properties import ObjectProperty
 
 from lens_ghost import create_ghost
-from param_slider import ParamSlider
+from widget.param_slider import ParamSlider
 
 class GhostEditor(BoxLayout):
     image_widget = ObjectProperty(None)

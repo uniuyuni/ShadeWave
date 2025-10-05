@@ -20,7 +20,7 @@ from kivy.properties import Property as KVProperty, StringProperty as KVStringPr
 from kivy.clock import mainthread
 from kivy.metrics import dp
 
-from draggable_widget import DraggableWidget
+from widget.draggable_widget import DraggableWidget
 
 import core
 import kvutils
@@ -353,7 +353,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
         return file_paths
 
 # テストアプリケーション
-class Viewer_WidgetApp(MDApp):
+class ViewerApp(MDApp):
     def build(self):
         viewer = ViewerWidget(grid_width=dp(120), thumb_width=dp(160))
 
@@ -383,4 +383,4 @@ class Viewer_WidgetApp(MDApp):
                     child.tab_height = kvutils.dpi_scale_height(child.ref_tab_height)
 
 if __name__ == "__main__":
-    Viewer_WidgetApp().run()
+    ViewerApp().run()

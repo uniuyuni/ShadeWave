@@ -1,12 +1,14 @@
-#:include param_slider.kv
-#:include separator.kv
-#:include spacer.kv
-#:include viewer_widget.kv
-#:include histogram_widget.kv
-#:include metainfo.kv
-#:include color_picker.kv
-#:include export_dialog.kv
-#:include hover_spinner.kv
+
+#:include widget/param_slider.kv
+#:include widget/separator.kv
+#:include widget/spacer.kv
+#:include widget/viewer.kv
+#:include widget/histogram.kv
+#:include widget/metainfo.kv
+#:include widget/color_picker.kv
+#:include widget/export_dialog.kv
+#:include widget/hover_spinner.kv
+#:include widget/curve.kv
 
 #:set clear_color 0, 0, 0, 0
 #:set dark_color 0.08, 0.08, 0.08, 1
@@ -48,8 +50,6 @@
     ref_tab_height: 20
     do_default_tab: False
     on_kv_post: self.switch_to(root.tab_list[0]) if root.tab_list else None
-
-<CurveWidget>:
 
 <MainWidget>:
     loading: True

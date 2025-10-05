@@ -26,31 +26,32 @@ if __name__ == '__main__':
     import logging
 
     import core
-    import curve
     import effects
     import pipeline
-    import param_slider
-    import histogram_widget
-    import metainfo
     import utils
     import kvutils
-    import mask_editor2
-    import color_picker
     import macos
     import film_emulator
     import lens_simulator
     import config
     import export
-    from export_dialog import ExportDialog, ExportConfirmDialog
     import color
-    import hover_spinner
-    import float_input
-    import bbox_viewer
     import params
     from processing_dialog import create_processing_dialog
-    import viewer_widget
     import imageset
     import define
+
+    import widget.metainfo
+    import widget.float_input
+    import widget.param_slider
+    import widget.color_picker
+    import widget.hover_spinner
+    import widget.histogram
+    import widget.viewer
+    import widget.curve
+    import widget.bbox_viewer
+    import widget.mask_editor2
+    from widget.export_dialog import ExportDialog, ExportConfirmDialog
 
 import os
 import jax
@@ -456,7 +457,7 @@ if __name__ == '__main__':
 
         def _enable_inpaint_edit(self):
             if self.inpaint_edit is None:
-                self.inpaint_edit = bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
+                self.inpaint_edit = widget.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_inpaint_edit)
                 boxes = []

@@ -3,7 +3,7 @@ from kivymd.app import MDApp
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
 
-import float_input
+import widget.float_input
 
 class ParamSlider(KVBoxLayout):
     text = KVStringProperty()

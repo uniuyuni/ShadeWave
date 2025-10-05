@@ -11,10 +11,10 @@ import define
 from imageset import ImageSet
 import effects
 import pipeline
-import mask_editor2
 import params
 import effects
 import config
+import widget.mask_editor2
 
 safe_tags = [
     # EXIF（カメラと撮影設定）
@@ -140,7 +140,7 @@ class ExportFile():
         self.imgset = None
         self.effects = effects.create_effects()
         self.param = {}
-        self.mask_editor2 = mask_editor2.MaskEditor2()
+        self.mask_editor2 = widget.mask_editor2.MaskEditor2()
 
     def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw, dithering):
         self.quality = quality

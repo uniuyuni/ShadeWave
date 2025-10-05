@@ -4,7 +4,6 @@ from kivy.uix.widget import Widget
 from kivy.graphics import Color, Line, PopMatrix, PushMatrix, PushMatrix, PopMatrix
 from kivy.core.window import Window
 
-
 class BoundingBoxViewer(Widget):
     def __init__(self, size=(800, 600), initial_view=(0, 0, 1000, 800, 1.0), on_delete=None, **kwargs):
         super().__init__(**kwargs)

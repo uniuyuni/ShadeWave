@@ -64,17 +64,19 @@ def predict_helper(client, image, mask, bbox):
     blocks, split_info = splitimage.split_image_with_overlap(mskimg, 1024, 1024, 192)  # オーバーラップを大きめに設定
     predict_blocks = []
     for i, block in enumerate(blocks):
-        if True:
-#        if np.any((block == [1.0, 0.0, 0.0]).all(axis=-1)):
-            pre_image = predict(client, block, i)
+        Image.fromarray((predict_image * 255).astype(np.uint8)).save(f"test/X-T5 Room input {i+1}.jpg")
+        if np.any((block == [1.0, 0.0, 0.0]).all(axis=-1)):
+            print(f"Nano banana inpainting predict {i+1} {block.shape}.")
+            pre_image = predict(client, block)
             block[..., :] = pre_image  # 予測結果でブロックを更新することで境界の不連続を減らす
             predict_blocks.append(pre_image)            
         else:
             predict_blocks.append(block)
+        Image.fromarray((predict_image * 255).astype(np.uint8)).save(f"test/X-T5 Room output {i+1}.jpg")
 
     # 分割した処理画像を結合
     combine = splitimage.combine_image_with_overlap(predict_blocks, split_info)
-    Image.fromarray((combine * 255).astype(np.uint8)).save("X-T5 Room combine.jpg")
+    Image.fromarray((combine * 255).astype(np.uint8)).save("test/X-T5 Room combine.jpg")
 
     # エッジ部分をなめらかに合成するためのブレンド処理
     blend_width = 192  # ブレンドする幅（ピクセル）
@@ -100,7 +102,7 @@ def predict_helper(client, image, mask, bbox):
     return image
 
 
-def predict(client, fp32_image, num=0):
+def predict(client, fp32_image):
     """
     画像の赤いマスク領域のみをインペイントする関数。
     Args:
@@ -129,11 +131,8 @@ def predict(client, fp32_image, num=0):
     7. As the sole exception, if the texture boundary is located approximately 192 pixels from the top, bottom, left, or right edge of the image, blend the boundary to make it disappear. Avoid editing areas outside the boundary whenever possible.
     8. This image is a cropped section of a larger image. Other images exist above, below, to the left, and to the right, and will be composited later. Therefore, please refrain from performing any processing that could interfere with the compositing work, such as moving the object's position, resizing it, or altering the overall color tone.
     """
-    print(f"Nano banana inpainting predict {num} {fp32_image.shape}.")
-
     pil_image = Image.fromarray((fp32_image * 255).astype(np.uint8))
 #    my_file = client.files.upload(file="X-T5 Room.png")
-    pil_image.save(f"X-T5 Room input {num}.jpg")
 
     response = client.models.generate_content(
         model="gemini-2.5-flash-image-preview",
@@ -154,22 +153,20 @@ def predict(client, fp32_image, num=0):
                 np_image = np.array(res_image)
                 result = np_image.astype(np.float32) / 255.0
                 if np.any(np.all(np_image == [255, 0, 0], axis=-1)):
-                    result = predict(client, result, num)
-
-                Image.fromarray((result * 255).astype(np.uint8)).save(f"X-T5 Room banana {num}.jpg")
+                    result = predict(client, result)
                 return result
         
     return fp32_image
 
 if __name__ == "__main__":
-    image = Image.open("X-T5 Room image.jpg")
+    image = Image.open("test/X-T5 Room image.jpg")
     image = np.array(image).astype(np.float32) / 255.0
 
-    mask = Image.open("X-T5 Room mask.png")
+    mask = Image.open("test/X-T5 Room mask.png")
     mask = np.array(mask).astype(np.float32) / 255.0
 
     bboxs = core.get_multiple_mask_bbox(mask)
     if len(bboxs) > 0:
         client = setup()
         predict_image = predict_helper(client, image, mask, bboxs[0])
-        Image.fromarray((predict_image * 255).astype(np.uint8)).save("X-T5 Room complete.jpg")
+        Image.fromarray((predict_image * 255).astype(np.uint8)).save("test/X-T5 Room complete.jpg")
