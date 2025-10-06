@@ -105,7 +105,7 @@ __dialog = None
 
 def create_processing_dialog():
     global __dialog
-    __dialog = _ProcessingDialog("spinner.gif")
+    __dialog = _ProcessingDialog("assets/spinner.gif")
     
 def show_processing_dialog():
     global __dialog

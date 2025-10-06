@@ -2,7 +2,7 @@
 import numpy as np
 import cv2
 
-import realesrgan_helper
+import helpers.realesrgan_helper
 
 
 def calculate_expanded_crop(img_width, img_height, x, y, w, h, width, height):
@@ -143,8 +143,8 @@ def downscaler(image, width, height):
 def upscaler(image, width, height):
     outscale = width / image.shape[1]
 
-    regan = realesrgan_helper.init_realesrgan()
-    result = realesrgan_helper.inference_realesrgan(regan, image, outscale=outscale)
+    regan = helpers.realesrgan_helper.init_realesrgan()
+    result = helpers.realesrgan_helper.inference_realesrgan(regan, image, outscale=outscale)
 
     result = cv2.resize(result, (width, height), interpolation=cv2.INTER_LANCZOS4)
 

@@ -23,12 +23,12 @@ import filter
 import local_contrast
 import params
 import utils
-import mediapipe_util
+import helpers.mediapipe_helper
 import aiutil
 
-from widget.mask_editor import MaskEditor
-from widget.crop_editor import CropEditor
-from widget.distortion_painter import DistortionCanvas
+from widgets.mask_editor import MaskEditor
+from widgets.crop_editor import CropEditor
+from widgets.distortion_painter import DistortionCanvas
 
 class EffectMode(Enum):
     PREVIEW = 0
@@ -212,7 +212,7 @@ class InpaintEffect(Effect):
             param['inpaint_predict'] = 0 # なぜか二重起動するときがあるので予防
 
             import mat_helper
-            #import realesrgan_helper
+            #import helpers.realesrgan_helper
             
             if self.pipe is None:
                 self.pipe = mat_helper.setup("checkpoints/MAT/Places_512_FullData.pkl", "cpu", 1024)
@@ -1006,13 +1006,13 @@ class FaceEffect(Effect):
         else:
             param_hash = hash((jls, js, ls, rs, lipss))
             if self.hash != param_hash:
-                fms = mediapipe_util.setup_face_mesh(rgb)
-                rgb = mediapipe_util.adjust_face_jawline(fms, rgb, jls/100, False) #efconfig.mode == EffectMode.PREVIEW)
-                rgb = mediapipe_util.adjust_face_jaw(fms, rgb, js/100, False)
-                rgb = mediapipe_util.adjust_left_eye(fms, rgb, ls/100, False)
-                rgb = mediapipe_util.adjust_right_eye(fms, rgb, rs/100, False)
-                rgb = mediapipe_util.adjust_lips(fms, rgb, lipss/100, False)
-                mediapipe_util.clear_face_mesh(fms)
+                fms = helpers.mediapipe_helper.setup_face_mesh(rgb)
+                rgb = helpers.mediapipe_helper.adjust_face_jawline(fms, rgb, jls/100, False) #efconfig.mode == EffectMode.PREVIEW)
+                rgb = helpers.mediapipe_helper.adjust_face_jaw(fms, rgb, js/100, False)
+                rgb = helpers.mediapipe_helper.adjust_left_eye(fms, rgb, ls/100, False)
+                rgb = helpers.mediapipe_helper.adjust_right_eye(fms, rgb, rs/100, False)
+                rgb = helpers.mediapipe_helper.adjust_lips(fms, rgb, lipss/100, False)
+                helpers.mediapipe_helper.clear_face_mesh(fms)
                 self.diff = rgb
                 self.hash = param_hash
 

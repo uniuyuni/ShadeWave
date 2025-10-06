@@ -1,6 +1,6 @@
 
 #from splashscreen import display_splash_screen, close_splash_screen
-#display_splash_screen("platypus.png")
+#display_splash_screen("assets/platypus.png")
 
 if __name__ == '__main__':
     import matplotlib
@@ -41,17 +41,17 @@ if __name__ == '__main__':
     import imageset
     import define
 
-    import widget.metainfo
-    import widget.float_input
-    import widget.param_slider
-    import widget.color_picker
-    import widget.hover_spinner
-    import widget.histogram
-    import widget.viewer
-    import widget.curve
-    import widget.bbox_viewer
-    import widget.mask_editor2
-    from widget.export_dialog import ExportDialog, ExportConfirmDialog
+    import widgets.metainfo
+    import widgets.float_input
+    import widgets.param_slider
+    import widgets.color_picker
+    import widgets.hover_spinner
+    import widgets.histogram
+    import widgets.viewer
+    import widgets.curve
+    import widgets.bbox_viewer
+    import widgets.mask_editor2
+    from widgets.export_dialog import ExportDialog, ExportConfirmDialog
 
 import os
 import jax

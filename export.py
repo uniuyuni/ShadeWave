@@ -14,7 +14,7 @@ import pipeline
 import params
 import effects
 import config
-import widget.mask_editor2
+import widgets.mask_editor2
 
 safe_tags = [
     # EXIF（カメラと撮影設定）

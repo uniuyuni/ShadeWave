@@ -50,7 +50,7 @@ def close_splash_screen():
 # 使用例
 if __name__ == "__main__":
     # 画像パスを指定してください
-    image_path = "escargot.jpg"  # ここに画像パスを入力
+    image_path = "assets/platypus.png"  # ここに画像パスを入力
         
     display_splash_screen(image_path)
 
