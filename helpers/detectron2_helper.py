@@ -1,3 +1,4 @@
+
 from detectron2.config import get_cfg
 from detectron2.engine.defaults import DefaultPredictor
 import numpy as np

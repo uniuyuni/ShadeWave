@@ -29,7 +29,7 @@ import importlib
 import core
 import params
 import effects
-import facer_util
+import helpers.facer_helper
 import expand_mask
 import config
 from processing_dialog import wait_prosessing
@@ -1836,13 +1836,13 @@ class FaceMask(BaseMask):
 
     def draw_face(self, image_size, center, exclude_names):
         if FaceMask.__faces is None or self.editor.rotation_changed_flag:
-            FaceMask.__faces = facer_util.create_faces(self.editor.full_image_rgb, device='cpu')
+            FaceMask.__faces = helpers.facer_helper.create_faces(self.editor.full_image_rgb, device='cpu')
         
         # マスク画像を作成
         if FaceMask.__faces == 0:
             return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
-        result = facer_util.draw_face_mask(FaceMask.__faces, exclude_names)
+        result = helpers.facer_helper.draw_face_mask(FaceMask.__faces, exclude_names)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info
@@ -1980,7 +1980,7 @@ class SceneMask(BaseMask):
     def draw_scene(self, image_size, center):
 
         def _process(full_image):
-            import detectron2_helper
+            import helpers.detectron2_helper
 
             if SceneMask.__model is None:
                 config_file = 'detectron2/configs/COCO-PanopticSegmentation/panoptic_fpn_R_50_3x.yaml'
@@ -1989,12 +1989,12 @@ class SceneMask(BaseMask):
                 #checkpoint_file = 'checkpoints/kmax_convnext_large_ade20k.pth'
                 #config_file = 'kmax_deeplab/configs/coco/panoptic_segmentation/kmax_r50.yaml'
                 #checkpoint_file = 'checkpoints/kmax_r50.pth'
-                SceneMask.__model = detectron2_helper.setup_model(config_file, checkpoint_file, 'cpu', 0.35)
+                SceneMask.__model = helpers.detectron2_helper.setup_model(config_file, checkpoint_file, 'cpu', 0.35)
             
             height, width = full_image.shape[:2]
             img = cv2.resize(full_image, (width//2, height//2))
-            result = detectron2_helper.run_inference(SceneMask.__model, img)
-            result = detectron2_helper.create_mask(result)
+            result = helpers.detectron2_helper.run_inference(SceneMask.__model, img)
+            result = helpers.detectron2_helper.create_mask(result)
             result = result * 0.5 + 0.5
             result = cv2.resize(result, (width, height))
 

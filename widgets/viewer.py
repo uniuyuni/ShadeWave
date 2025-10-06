@@ -20,7 +20,7 @@ from kivy.properties import Property as KVProperty, StringProperty as KVStringPr
 from kivy.clock import mainthread
 from kivy.metrics import dp
 
-from widget.draggable_widget import DraggableWidget
+from widgets.draggable_widget import DraggableWidget
 
 import core
 import kvutils
@@ -50,7 +50,7 @@ class ThumbnailCard(MDCard):
         self.add_widget(vbox)
 
         # サムネイル表示
-        self.image = KVImage(source='spinner.gif', size_hint_y=7, anim_delay=0.01)
+        self.image = KVImage(source='assets/spinner.gif', size_hint_y=7, anim_delay=0.01)
         vbox.add_widget(self.image)
 
         # ファイル名ラベル

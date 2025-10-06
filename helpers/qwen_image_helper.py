@@ -157,17 +157,10 @@ def predict_helper(image, mask, bbox, predict_func):
 def predict_erace(image):
     # 設定
     PROMPT="""
-    Remove ALL red masked pixels completely.
-    Fill red areas with perfectly matched background.
-    Ensure a natural finish that blends seamlessly with the surrounding area when filling in.
-    Keep every non-red pixel EXACTLY as original.
-    Zero modifications beyond red mask boundaries.
-    This image is a cropped section of a larger image. Other images exist above, below, to the left, and to the right, and will be composited later. Therefore, please refrain from performing any processing that could interfere with the compositing work, such as moving the object's position, resizing it, or altering the overall color tone.
+    赤（色コード 255,0,0）の領域を周囲に馴染むように自然に削除
     """
     NEGATIVE_PROMPT="""
-    DO NOT TOUCH any non-red areas - not even slightly!
-    No color changes, no brightness changes, no texture edits, no noise alteration outside red areas.
-    As the sole exception, if the texture boundary is located approximately 192 pixels from the top, bottom, left, or right edge of the image, blend the boundary to make it disappear. Avoid editing areas outside the boundary whenever possible.
+    赤の領域外の修正
     """
 
     return predict(image, PROMPT, NEGATIVE_PROMPT)
@@ -211,6 +204,7 @@ def predict(image_array, prompt, negative_prompt=""):
             temperature=0.0,
             negative_prompt=negative_prompt,
             watermark=False,
+            prompt_extend=True,
         )
         
         # レスポンスを確認
