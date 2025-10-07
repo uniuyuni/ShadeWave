@@ -16,16 +16,18 @@ if __name__ == '__main__':
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivy.core.window import Window as KVWindow
     from kivy.graphics.texture import Texture as KVTexture
-    from kivy.clock import Clock, mainthread
     from kivy.properties import BooleanProperty as KVBooleanProperty
-    from functools import partial
-    import numpy as np
-    import re
+    from kivy.clock import Clock, mainthread
+
     import multiprocessing
+    from functools import partial
     import colour
     import logging
+    import re
 
+    import define
     import core
+    import params
     import effects
     import pipeline
     import utils
@@ -35,11 +37,8 @@ if __name__ == '__main__':
     import lens_simulator
     import config
     import export
-    import color
-    import params
     from processing_dialog import create_processing_dialog
-    import imageset
-    import define
+    from dynamic_image_processor import DynamicImageProcessor
 
     import widgets.metainfo
     import widgets.float_input
@@ -54,11 +53,13 @@ if __name__ == '__main__':
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
 
 import os
+import numpy as np
 import jax
 import cv2
 
 import file_cache_system
 
+# JAXとOpenCVの設定
 os.environ['JAX_LOG_VERBOSITY'] = '0'
 jax.config.update("jax_platform_name", "METAL")
 cv2.ocl.setUseOpenCL(True)
@@ -113,6 +114,10 @@ if __name__ == '__main__':
             self.cache_system = cache_system
             self.ids['viewer'].set_cache_system(self.cache_system)
 
+            self.processor = DynamicImageProcessor(num_workers=4)
+            self.processor.start()
+            self.pipeline_version = 0
+
             KVWindow.bind(on_key_down=self.on_key_down)
 
         def on_kv_post(self, *args, **kwargs):
@@ -162,7 +167,8 @@ if __name__ == '__main__':
 
         def draw_image(self, offset, dt):
             if (self.imgset is not None) and (self.imgset.img is not None):
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'])
+                self.pipeline_version += 1
+                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version)
                 img = np.array(img)
                 utils.print_nan_inf(img, "output")
 
@@ -457,7 +463,7 @@ if __name__ == '__main__':
 
         def _enable_inpaint_edit(self):
             if self.inpaint_edit is None:
-                self.inpaint_edit = widget.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
+                self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_inpaint_edit)
                 boxes = []
@@ -563,7 +569,7 @@ if __name__ == '__main__':
             #self.ids['exif_'].value = exif_data.get("", "-")
         
         def shutdown(self):
-            pass
+            self.processor.stop()
             
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")

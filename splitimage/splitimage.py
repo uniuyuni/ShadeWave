@@ -1,6 +1,6 @@
 import numpy as np
 
-def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: int, overlap: int):
+def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: int, overlap: int, crops_out: bool=False) -> tuple:
     """
     画像を指定したピクセル数のブロックに分割し、重なる部分を設ける。
     
@@ -9,6 +9,7 @@ def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: 
     - block_height: 分割するブロックの高さ
     - block_width: 分割するブロックの幅
     - overlap: ブロック間の重なるピクセル数
+    - crops_out: ブロックのクロップ情報を含めるかどうか
     
     Returns:
     - blocks: 分割されたブロックが格納されたリスト
@@ -28,11 +29,16 @@ def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: 
 
     # ブロックごとに分割する
     blocks = []
+    crops = []
     for i in range(0, new_height - overlap, block_height - overlap):
         for j in range(0, new_width - overlap, block_width - overlap):
             block = padded_image[i:i+block_height, j:j+block_width]
             blocks.append(block)
+            crops.append((i, j, i+block_height, j+block_width))
 
+    if crops_out:
+        return blocks, crops, [pad_height, pad_width, img_height, img_width, block_height, block_width, overlap]
+    
     return blocks, [pad_height, pad_width, img_height, img_width, block_height, block_width, overlap]
 
 def blend_images(img1: np.ndarray, img2: np.ndarray, overlap: int, axis: int) -> np.ndarray:

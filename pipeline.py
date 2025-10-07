@@ -5,8 +5,10 @@ import core
 import config
 import params
 import effects
+import time
+import splitimage
 
-def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2):
+def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version):
     
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
@@ -40,17 +42,26 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     # 環境設定更新
     efconfig.disp_info = disp_info2
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info2[4])
-
+    
     # 並列処理
-    #split_img = []
-    #split_img.extend(np.vsplit(imgc, 4))
-    #height = 1024//4
-    #for i, img in enumerate(split_img):
-    #    split_img[i] = MainWidget._process_pipeline2(img, height*i, height, primary_effects, primary_param, mask_editor2)
-    #result_img = joblib.Parallel(n_jobs=-1, require='sharedmem')(joblib.delayed(MainWidget._process_pipeline2)(img, height*i, height, primary_effects, primary_param, mask_editor2) for i, img in enumerate(split_img))
-    #img2 = np.vstack(result_img)        
-    img2 = pipeline2(imgc, 0, 1024, primary_effects, primary_param, mask_editor2, efconfig)
-
+    """
+    process_params = {
+        "param": primary_param,
+        "efconfig": efconfig,
+    }
+    processor.submit_tiles(imgc, process_params, pipeline_version)
+    results = processor.collect_results(pipeline_version)
+    
+    # 画像の再構築
+    if len(results) > 0:
+        results = sorted(results, key=lambda x: x[0][0])
+        blocks = [tile_result for (tile_id, split_info), tile_result in results]
+        img2 = splitimage.combine_image_with_overlap(blocks, results[0][0][1])
+    else:
+        img2 = imgc
+    """
+    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig)
+    
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
 
     return img2, imgc
@@ -76,7 +87,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
 
-    img2 = pipeline2(imgc, 0, imgc.shape[0], primary_effects, primary_param, mask_editor2, efconfig)
+    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig)
 
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
     
@@ -86,20 +97,24 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
 
     return img2
 
-def pipeline2(imgc, slice_y, slice_h, primary_effects, primary_param, mask_editor2, efconfig):
+def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig):
     img1 = pipeline_lv1(imgc, primary_effects, primary_param, efconfig)
     img2 = pipeline_lv2(img1, primary_effects, primary_param, efconfig)
     img3 = pipeline_lv3(img2, primary_effects, primary_param, efconfig)
 
     # マスクレイヤー
-    mask_list = mask_editor2.get_layers_list()
-    for mask in mask_list:
-        
-        img2 = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig)
-        img2 = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig)
+    if mask_editor2 is not None:
+        mask_list = mask_editor2.get_layers_list()
+        for mask in mask_list:
+            
+            img2 = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig)
+            img2 = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig)
 
-        img3 = core.apply_mask(img3, mask.get_mask_image()[slice_y:slice_y+slice_h, :], img2)
-    mask_editor2.set_rotation_changed_flag(False)
+            if crop is None:
+                img3 = core.apply_mask(img3, mask.get_mask_image(), img2)
+            else:
+                img3 = core.apply_mask(img3, mask.get_mask_image()[crop[1]:crop[3], crop[0]:crop[2], :], img2)
+        mask_editor2.set_rotation_changed_flag(False)
 
     return img3
 
