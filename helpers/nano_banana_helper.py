@@ -64,7 +64,7 @@ def predict_helper(client, image, mask, bbox):
     blocks, split_info = splitimage.split_image_with_overlap(mskimg, 1024, 1024, 192)  # オーバーラップを大きめに設定
     predict_blocks = []
     for i, block in enumerate(blocks):
-        Image.fromarray((predict_image * 255).astype(np.uint8)).save(f"test/X-T5 Room input {i+1}.jpg")
+        Image.fromarray((predict_image * 255).astype(np.uint8)).save(f"../test/X-T5 Room input {i+1}.jpg")
         if np.any((block == [1.0, 0.0, 0.0]).all(axis=-1)):
             print(f"Nano banana inpainting predict {i+1} {block.shape}.")
             pre_image = predict(client, block)
@@ -72,11 +72,11 @@ def predict_helper(client, image, mask, bbox):
             predict_blocks.append(pre_image)            
         else:
             predict_blocks.append(block)
-        Image.fromarray((predict_image * 255).astype(np.uint8)).save(f"test/X-T5 Room output {i+1}.jpg")
+        Image.fromarray((predict_image * 255).astype(np.uint8)).save(f"../test/X-T5 Room output {i+1}.jpg")
 
     # 分割した処理画像を結合
     combine = splitimage.combine_image_with_overlap(predict_blocks, split_info)
-    Image.fromarray((combine * 255).astype(np.uint8)).save("test/X-T5 Room combine.jpg")
+    Image.fromarray((combine * 255).astype(np.uint8)).save("../test/X-T5 Room combine.jpg")
 
     # エッジ部分をなめらかに合成するためのブレンド処理
     blend_width = 192  # ブレンドする幅（ピクセル）
@@ -159,14 +159,14 @@ def predict(client, fp32_image):
     return fp32_image
 
 if __name__ == "__main__":
-    image = Image.open("test/X-T5 Room image.jpg")
+    image = Image.open("../test/X-T5 Room image.jpg")
     image = np.array(image).astype(np.float32) / 255.0
 
-    mask = Image.open("test/X-T5 Room mask.png")
+    mask = Image.open("../test/X-T5 Room mask.png")
     mask = np.array(mask).astype(np.float32) / 255.0
 
     bboxs = core.get_multiple_mask_bbox(mask)
     if len(bboxs) > 0:
         client = setup()
         predict_image = predict_helper(client, image, mask, bboxs[0])
-        Image.fromarray((predict_image * 255).astype(np.uint8)).save("test/X-T5 Room complete.jpg")
+        Image.fromarray((predict_image * 255).astype(np.uint8)).save("../test/X-T5 Room complete.jpg")
