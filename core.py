@@ -995,7 +995,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         raw_result = img * mask
         return jnp.maximum(raw_result, min_val), None
 
-    shadow_scale = 8.0
+    shadow_scale = 6.0
     img, shadows_mask = _conditional_operation(shadows, img, enhance_shadow_positive, enhance_shadow_negative)
     
     # ハイライト（明部）の調整
@@ -1013,7 +1013,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         mask = target * factor
         return img * (1-factor) + mask, mask
 
-    highlight_scale = 4
+    highlight_scale = 6.0
     img, highlight_mask = _conditional_operation(highlights, img, enhance_highlight_positive, enhance_highlight_negative)
 
     """

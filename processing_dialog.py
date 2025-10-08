@@ -4,7 +4,6 @@ from PIL import Image, ImageTk
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-
 class _ProcessingDialog():
 
     def __init__(self, gif_path):
@@ -42,7 +41,7 @@ class _ProcessingDialog():
         self.parent.attributes('-alpha', 0.8)
 
         self._animate()
-        self._maintain_front()
+        #self._maintain_front()
     
     def _load_gif_frames(self):
         """GIFファイルをフレームに分割して読み込む"""
@@ -90,7 +89,8 @@ class _ProcessingDialog():
         self.parent.deiconify()
         self.parent.grab_set()
 
-    def update(self, sleep_time=0.05):
+    def update(self, sleep_time=0.04):
+        self.parent.lift()
         self._animate()
         self.parent.update()
         time.sleep(sleep_time)
@@ -124,7 +124,7 @@ def wait_prosessing(process, arg):
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(process, arg)
         while not future.done():
-            update_processing_dialog(sleep_time=0.05)
+            update_processing_dialog(sleep_time=0.04)
         result = future.result()
     hide_processing_dialog()
 
