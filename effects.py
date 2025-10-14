@@ -25,6 +25,7 @@ import params
 import utils
 import helpers.mediapipe_helper
 import aiutil
+from processing_dialog import wait_prosessing
 
 from widgets.mask_editor import MaskEditor
 from widgets.crop_editor import CropEditor
@@ -596,7 +597,8 @@ class CropEffect(Effect):
             self.hash = None
             param['img_size'] = (param['original_img_size'][0], param['original_img_size'][1])
             msize = max(param['original_img_size'][0], param['original_img_size'][1])
-            params.set_disp_info(param, (0, 0, msize, msize, disp_info[4]))
+            scale = config.get_config('preview_size')/msize
+            params.set_disp_info(param, (0, 0, msize, msize, scale))
         else:
             param_hash = hash((ce))
             if self.hash != param_hash:
@@ -668,7 +670,7 @@ class AINoiseReductonEffect(Effect):
 
     def make_diff(self, img, param, efconfig):
         nr = self.get_param(param, 'ai_noise_reduction')
-        if nr <= 0 or efconfig.mode == EffectMode.PREVIEW:
+        if nr <= 0: #or efconfig.mode == EffectMode.PREVIEW:
             self.diff = None
             self.hash = None
         else:
@@ -679,8 +681,7 @@ class AINoiseReductonEffect(Effect):
                 if AINoiseReductonEffect.__net is None:
                     AINoiseReductonEffect.__net = AINoiseReductonEffect.__module.setup_model(device=config.get_config('gpu_device'))
 
-                #img = np.clip(img, 0, 1)
-                self.diff = AINoiseReductonEffect.__module.denoise_image_helper(AINoiseReductonEffect.__net, img, config.get_config('gpu_device'))
+                self.diff = wait_prosessing(AINoiseReductonEffect.__module.denoise_image_helper, AINoiseReductonEffect.__net, img, config.get_config('gpu_device'))
                 self.hash = param_hash
         
         return self.diff
@@ -2381,6 +2382,7 @@ def create_effects(distortion_callback=None):
 
     lv0 = effects[0]
     lv0['lens_modifier'] = LensModifierEffect()
+    lv0['ai_noise_reduction'] = AINoiseReductonEffect()
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
     lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
@@ -2388,7 +2390,6 @@ def create_effects(distortion_callback=None):
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]
-    lv1['ai_noise_reduction'] = AINoiseReductonEffect()
     lv1['bm3d_noise_reduction'] = BM3DNoiseReductionEffect()
     lv1['light_noise_reduction'] = LightNoiseReductionEffect()
     lv1['deblur_filter'] = DeblurFilterEffect()

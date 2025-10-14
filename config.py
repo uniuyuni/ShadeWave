@@ -1,26 +1,31 @@
 
 import os
 import json
+import multiprocessing
 
-_config = {
-    'preview_size': 1024,
-    'raw_auto_exposure': True,
-    'raw_depth_expansion': False,
-    'scale_threshold': 0.5,
-    'iopaint_model': "lama",
-    'iopaint_resize_limit': 1280,
-    'iopaint_use_realesrgan': True,
-    'display_color_gamut': "sRGB",
-    'gpu_device': "mps",
-    'cat': "cat16",
-    'base_resolution_scale': [4096, 4096],
-    'display_output_dither': True
-}
+_config = None
 _main_widget = None
 
-def set_main_widget(widget):
-    global _main_widget
+def init_config(widget):
+    global _config, _main_widget
+    _config = multiprocessing.Manager().dict()
     _main_widget = widget
+
+    _config.update(
+    {
+        'preview_size': 1024,
+        'raw_auto_exposure': True,
+        'raw_depth_expansion': False,
+        'scale_threshold': 0.5,
+        'iopaint_model': "lama",
+        'iopaint_resize_limit': 1280,
+        'iopaint_use_realesrgan': True,
+        'display_color_gamut': "sRGB",
+        'gpu_device': "mps",
+        'cat': "cat16",
+        'base_resolution_scale': [4096, 4096],
+        'display_output_dither': True
+    })
 
 def get_config(key):
     global _config
@@ -55,7 +60,7 @@ def save_config():
         json.dump(_config, f)
 
 def load_config():
-    global _config
+    global _config    
     file_path = os.getcwd() + '/config.json'
     try:
         with open(file_path, 'r') as f:

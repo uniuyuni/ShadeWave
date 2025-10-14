@@ -8,8 +8,11 @@ import effects
 import pipeline
 import splitimage
 
-def worker_function(worker_id, task_queue, result_queue, stop_event, current_effects):
+def worker_function(worker_id, task_queue, result_queue, stop_event):
     """ワーカー関数（グローバルスコープに定義）"""
+    current_effects = effects.create_effects()
+    effects.reeffect_all(current_effects, 1)
+
     while not stop_event.is_set():
         try:
             task = task_queue.get(timeout=0.1)
@@ -18,7 +21,11 @@ def worker_function(worker_id, task_queue, result_queue, stop_event, current_eff
             
             # 共有メモリの情報を受け取る
             tile_id, shm_name, shape, dtype_str, params, crop, version = task
-            
+
+            if tile_id[0] != worker_id:
+                task_queue.put(task)  # 再度キューに戻す
+                continue
+
             # 共有メモリから配列を取得（コピー不要）
             shm = shared_memory.SharedMemory(name=shm_name)
             tile_array = np.ndarray(shape, dtype=dtype_str, buffer=shm.buf)
@@ -57,11 +64,9 @@ class DynamicImageProcessor:
     def start(self):
         """ワーカープロセスを起動"""
         for i in range(self.num_workers):
-            p = Process(
-                target=worker_function,
-                args=(i, self.task_queue, self.result_queue, self.stop_event, effects.create_effects())
-            )
-            p.daemon = True
+            p = Process(target=worker_function,
+                        args=(i, self.task_queue, self.result_queue, self.stop_event),
+                        daemon=True )
             p.start()
             self.workers.append(p)
     
@@ -77,23 +82,24 @@ class DynamicImageProcessor:
             image, block_height=((h + 7) // 8 * 8) // 2 + 32, block_width=((w + 7) // 8 * 8) // 2 + 32, overlap=32, crops_out=True)
         
         tile_id = 0
-        for i, block in enumerate(blocks):
-                # 共有メモリに書き込み
-                shm = shared_memory.SharedMemory(create=True, size=block.nbytes)
-                shm_array = np.ndarray(block.shape, dtype=block.dtype, buffer=shm.buf)
-                shm_array[:] = block[:]
-                
-                # タスクをキューに追加
-                self.task_queue.put((
-                    (tile_id, split_info),
-                    shm.name,  # 共有メモリの名前だけ
-                    block.shape,
-                    str(block.dtype),
-                    params.copy(),
-                    crops[i],
-                    version
-                ))
-                tile_id += 1
+        for block in blocks:
+            # 共有メモリに書き込み
+            shm = shared_memory.SharedMemory(create=True, size=block.nbytes)
+            shm_array = np.ndarray(block.shape, dtype=block.dtype, buffer=shm.buf)
+            shm_array[:] = block[:]
+            shm.close()
+            
+            # タスクをキューに追加
+            self.task_queue.put((
+                (tile_id, split_info),
+                shm.name,  # 共有メモリの名前だけ
+                block.shape,
+                str(block.dtype),
+                params.copy(),
+                crops[tile_id],
+                version
+            ))
+            tile_id += 1
 
         self.expected_results = tile_id  # 期待する結果数を記録
         print(f"Submitted {tile_id} tiles")
@@ -109,8 +115,8 @@ class DynamicImageProcessor:
     def collect_results(self, current_version, timeout=1):
         """結果を収集（最新バージョンのみ）"""
         results = []
-        try:
-            while len(results) < self.expected_results:
+        while len(results) < self.expected_results:
+            try:
                 tile_id, shm_name, shape, dtype_str, version = self.result_queue.get(timeout=timeout)
 
                 # 共有メモリから読み取り
@@ -120,12 +126,14 @@ class DynamicImageProcessor:
                 if version == current_version:
                     result = np.ndarray(shape, dtype=dtype_str, buffer=shm.buf).copy()
                     results.append((tile_id, result))
+                    print(f"Collected tile {tile_id} for version {version}")
 
                 shm.close()
                 shm.unlink()
 
-        except Empty:
-            pass
+            except Empty:
+                pass
+
         return results
     
     def stop(self):

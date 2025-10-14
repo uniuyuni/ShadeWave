@@ -19,11 +19,13 @@ if __name__ == '__main__':
     from kivy.properties import BooleanProperty as KVBooleanProperty
     from kivy.clock import Clock, mainthread
 
-    import multiprocessing
+    import threading
     from functools import partial
     import colour
     import logging
     import re
+    import time
+    import multiprocessing
 
     import define
     import core
@@ -96,8 +98,6 @@ if __name__ == '__main__':
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
 
-            self.texture_height = config.get_config('preview_height')
-            self.texture_width = config.get_config('preview_width')
             self.texture = None
             self.imgset = None
             self.click_x = 0
@@ -108,8 +108,6 @@ if __name__ == '__main__':
             self.primary_param = {}
             self.primary_effects = effects.create_effects(distortion_callback=self.distortion_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
-            self.apply_thread = None
-            self.is_draw_image = False
             self.inpaint_edit = None
             self.cache_system = cache_system
             self.ids['viewer'].set_cache_system(self.cache_system)
@@ -117,6 +115,10 @@ if __name__ == '__main__':
             self.processor = DynamicImageProcessor(num_workers=4)
             self.processor.start()
             self.pipeline_version = 0
+            
+            self.apply_draw_image_offset = None
+            self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
+            self.apply_thread.start()
 
             KVWindow.bind(on_key_down=self.on_key_down)
 
@@ -129,7 +131,7 @@ if __name__ == '__main__':
             self._set_lens_presets()
     
         def empty_image(self):
-            self.texture = KVTexture.create(size=(self.texture_width, self.texture_height), colorfmt='rgb', bufferfmt='float')
+            self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
             self.texture.flip_vertical()
             self.ids["preview"].texture = None
 
@@ -145,14 +147,13 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].clear_mask()
         
         def start_draw_image_and_crop(self, imgset, offset=(0, 0)):
-            if self.is_draw_image == False:
-                if self.imgset == imgset:
-                    self.crop_image = None
-                    #effects.reeffect_all(self.primary_effects)
-                    self.start_draw_image(offset)
+            if self.imgset == imgset:
+                self.crop_image = None
+                #effects.reeffect_all(self.primary_effects)
+                self.start_draw_image(offset)
 
         # @mainthread
-        def blit_image(self, img):
+        def blit_image(self, img, dt=0):
             if config.get_config('display_output_dither'):
                 img = core.jjn_dither_uint8(img)
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
@@ -161,40 +162,45 @@ if __name__ == '__main__':
             self.ids["preview"].texture = None # 更新のために必要
             self.ids["preview"].texture = self.texture
 
-        def draw_histogram(self, img, blue_count=0, black_count=0):
+        def draw_histogram(self, img, blue_count=0, black_count=0, dt=0):
             logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
             self.ids["histogram"].draw_histogram(img, blue_count, black_count)
 
-        def draw_image(self, offset, dt):
-            if (self.imgset is not None) and (self.imgset.img is not None):
-                self.pipeline_version += 1
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, self.texture_width, self.texture_height, self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version)
-                img = np.array(img)
-                utils.print_nan_inf(img, "output")
+        def draw_image(self):            
+            while self.apply_thread is not None:
 
-                img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
-                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+                while self.apply_draw_image_offset is not None:
+                    offset = self.apply_draw_image_offset
+                    self.apply_draw_image_offset = None
 
-                # ヒストグラム表示
-                img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
-                self.draw_histogram(img_hist, 0, exclude_count)
+                    if (self.imgset is not None) and (self.imgset.img is not None):
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version)
+                        img = np.array(img)
+                        utils.print_nan_inf(img, "output")
 
-                # プレビュー表示
-                img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
-                img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
-                img_draw = np.clip(img_draw, 0, 1)
-#                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
-#                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-                self.blit_image(img_draw)
+                        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                                                apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
-            self.is_draw_image = False
+                        # ヒストグラム表示
+                        img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
+                        #self.draw_histogram(img_hist, 0, exclude_count)
+                        Clock.schedule_once(partial(self.draw_histogram, img_hist, 0, exclude_count), -1)
 
+                        # プレビュー表示
+                        img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
+                        img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
+                        img_draw = np.clip(img_draw, 0, 1)
+        #                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+        #                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+
+                        #self.blit_image(img_draw)
+                        Clock.schedule_once(partial(self.blit_image, img_draw), -1)
+
+                time.sleep(0.01)
+            
         def start_draw_image(self, offset=(0, 0)):
-            if self.is_draw_image == False: #２重コール防止
-                self.is_draw_image = True
-                Clock.schedule_once(partial(self.draw_image, offset), -1)
-            #self.apply_thread = threading.Thread(target=self.draw_image, daemon=True)
-            #self.apply_thread.start()
+            self.pipeline_version += 1
+            self.apply_draw_image_offset = offset
         
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
@@ -253,7 +259,7 @@ if __name__ == '__main__':
 
             if card is not None:
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
-                exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5: file_cache_system.run_method(self, "on_fcs_get_file", f1, f2, f3, f4, f5))
+                exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5))
 
                 # とりあえずEXIF表示
                 self._set_exif_data(exif_data)
@@ -437,7 +443,7 @@ if __name__ == '__main__':
 
         def _set_image_for_mask2(self, param):
             #self.ids['mask_editor2'].set_orientation(param.get('rotation', 0), param.get('rotation2', 0), param.get('flip_mode', 0))
-            self.ids['mask_editor2'].set_texture_size(self.texture_width, self.texture_height)
+            self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
             self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
             self.ids['mask_editor2'].update()
 
@@ -587,8 +593,11 @@ if __name__ == '__main__':
             
             self.cache_system = cache_system
 
-        def build(self): 
+        def build(self):
             self.main_widget = MainWidget(self.cache_system)
+
+            config.init_config(self.main_widget)
+            config.load_config()
 
             display = kvutils.get_current_dispay()
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
@@ -597,9 +606,6 @@ if __name__ == '__main__':
 
             # testcode
             #self.main_widget.ids['viewer'].set_path(os.getcwd() + "/picture")
-
-            config.set_main_widget(self.main_widget)
-            config.load_config()
 
             return self.main_widget
         

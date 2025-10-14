@@ -37,31 +37,31 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     else:
         imgc = crop_image
         disp_info2 = disp_info
-    mask_editor2.update()
+    #mask_editor2.update()
 
     # 環境設定更新
     efconfig.disp_info = disp_info2
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info2[4])
     
     # 並列処理
-    """
-    process_params = {
-        "param": primary_param,
-        "efconfig": efconfig,
-    }
-    processor.submit_tiles(imgc, process_params, pipeline_version)
-    results = processor.collect_results(pipeline_version)
-    
-    # 画像の再構築
-    if len(results) > 0:
-        results = sorted(results, key=lambda x: x[0][0])
-        blocks = [tile_result for (tile_id, split_info), tile_result in results]
-        img2 = splitimage.combine_image_with_overlap(blocks, results[0][0][1])
+    if False:
+        process_params = {
+            "param": primary_param,
+            "efconfig": efconfig,
+        }
+        processor.submit_tiles(imgc, process_params, pipeline_version)
+        results = processor.collect_results(pipeline_version)
+        
+        # 画像の再構築
+        if len(results) > 0:
+            results = sorted(results, key=lambda x: x[0][0])
+            blocks = [tile_result for (tile_id, split_info), tile_result in results]
+            img2 = splitimage.combine_image_with_overlap(blocks, results[0][0][1])
+        else:
+            img2 = imgc
     else:
-        img2 = imgc
-    """
-    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig)
-    
+        img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig)
+        
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
 
     return img2, imgc

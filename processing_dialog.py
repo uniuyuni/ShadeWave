@@ -2,7 +2,10 @@
 import tkinter as tk
 from PIL import Image, ImageTk
 import time
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from kivy.clock import Clock
+from functools import partial
 
 class _ProcessingDialog():
 
@@ -89,11 +92,10 @@ class _ProcessingDialog():
         self.parent.deiconify()
         self.parent.grab_set()
 
-    def update(self, sleep_time=0.04):
+    def update(self):
         self.parent.lift()
         self._animate()
         self.parent.update()
-        time.sleep(sleep_time)
     
     def hide(self):
         """ダイアログを閉じる"""
@@ -107,25 +109,40 @@ def create_processing_dialog():
     global __dialog
     __dialog = _ProcessingDialog("assets/spinner.gif")
     
-def show_processing_dialog():
+def show_processing_dialog(dt=0):
     global __dialog
     __dialog.show()
 
-def update_processing_dialog(sleep_time=0.05):
+def update_processing_dialog(dt=0):
     global __dialog
-    __dialog.update(sleep_time)
+    __dialog.update()
 
-def hide_processing_dialog():
+def hide_processing_dialog(dt=0):
     global __dialog
     __dialog.hide()
 
-def wait_prosessing(process, arg):
+def wait_threading(process, *args, **kwargs):
     show_processing_dialog()
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(process, arg)
+        future = executor.submit(process, *args, **kwargs)
         while not future.done():
-            update_processing_dialog(sleep_time=0.04)
+            update_processing_dialog()
+            time.sleep(0.04)
         result = future.result()
     hide_processing_dialog()
+    return result
 
+def wait_prosessing(process, *args, **kwargs):
+    if threading.current_thread() is threading.main_thread():
+        return wait_threading(process, *args, **kwargs)
+    
+    Clock.schedule_once(show_processing_dialog)
+    event = Clock.schedule_interval(update_processing_dialog, 0.04)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(process, *args, **kwargs)
+        while not future.done():
+            time.sleep(0.5)
+        result = future.result()
+    Clock.unschedule(event)
+    Clock.schedule_once(hide_processing_dialog)
     return result

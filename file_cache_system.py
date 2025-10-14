@@ -6,6 +6,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 import logging
 
 import imageset
+import config
 
 # メインプロセスで実行されるコールバック関数
 def _task_callback(file_callbacks, shared_resources, future):
@@ -32,7 +33,10 @@ def _task_callback(file_callbacks, shared_resources, future):
         logging.error(f"FCS: {str(e)}")
 
 # インスタンスメソッド用ラッパー
-def run_method(obj, method_name, *args, **kwargs):
+def run_method(obj, method_name, copy_config, *args, **kwargs):
+    if copy_config:
+        config._config = copy_config
+
     return getattr(obj, method_name)(*args, **kwargs)
 
 # ヘルパー関数（スレッド間で共有）
@@ -64,10 +68,10 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
                 futures = []
                 for i, task in enumerate(result):
                     if i > 0:
-                        future = executor.submit(run_method, imgset, task.worker, None, file_path, exif_data, param)
+                        future = executor.submit(run_method, imgset, task.worker, config._config, None, file_path, exif_data, param)
                         future.add_done_callback(lambda f: _task_callback(file_callbacks, shared_resources, f))  # コールバック登録
                         futures.append(future)
-                result = run_method(imgset, result[0].worker, None, file_path, exif_data, param)
+                result = run_method(imgset, result[0].worker, config._config, None, file_path, exif_data, param)
                 _task_callback(file_callbacks, shared_resources, result)
 
                 # キャッシュに登録（すでにキャンセルされていたらスキップ）

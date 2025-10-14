@@ -10,6 +10,7 @@ from PIL import Image as PILImage, ImageOps as PILImageOps
 from multiprocessing import shared_memory
 import base64
 
+import libraw_enhanced as lre
 from dcp_profile import DCPReader, DCPProcessor
 import config
 import define
@@ -117,7 +118,7 @@ class ImageSet:
 
             # 色空間変換
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
-                                apply_cctf_decoding=True, apply_gamut_mapping=False).astype(np.float32)
+                                apply_cctf_encoding=False, apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
             
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -154,30 +155,23 @@ class ImageSet:
                              
     def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
         try:
-            raw = rawpy.imread(file_path)
+            raw = lre.imread(file_path)
 
-            img_array = raw.postprocess(output_color=rawpy.ColorSpace.raw,
-                                        #demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD,
-                                        output_bps=16,
-                                        no_auto_scale=False,
+            img_array = raw.postprocess(output_color=lre.ColorSpace.ProPhotoRGB,
+                                        demosaic_algorithm=lre.DemosaicAlgorithm.AMaZE,
+                                        output_bps=32,
+                                        #no_auto_scale=False,
                                         use_camera_wb=True,
                                         #user_wb = [1.0, 1.0, 1.0, 0.0],
-                                        gamma=(1.0, 1.0),
-                                        four_color_rgb=True if half == False else False,
+                                        #gamma=(1.0, 1.0),
+                                        #four_color_rgb=True if half == False else False,
                                         half_size=half,
                                         #user_black=0,
-                                        no_auto_bright=True,
-                                        highlight_mode=5,)
+                                        #no_auto_bright=True,
+                                        highlight_mode=5,
+                                        use_gpu_acceleration=True)
                                         #auto_bright_thr=0.0005)
                                         #fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
-
-            """
-            # ブラックレベル補正
-            raw_image = self._black(raw.raw_image_visible, raw.black_level_per_channel[0])
-
-            # float32へ
-            raw_image = raw_image.astype(np.float32) / ((1<<exif_data.get('BitsPerSample', 14))-1)
-            """
 
             # クロップとexifデータの回転
             top, left, width, height = self._delete_exif_orientation(exif_data)
@@ -195,12 +189,13 @@ class ImageSet:
                 img_array = img_array[-cheight:, :cwidth]
             
             # 下位2bit補完
+            """
             if half == False and config.get_config('raw_depth_expansion') == True:
                 img_array = img_array >> 2
                 img_array = bit_depth_expansion.process_rgb_image(img_array)
-
+            """
             # float32へ
-            img_array = core.convert_to_float32(img_array)
+            #img_array = core.convert_to_float32(img_array)
 
             #img_array = img_array - raw.black_level_per_channel[0] / ((1<<14)-1)
             #img_array = np.clip(img_array, 0, 1)
@@ -209,6 +204,7 @@ class ImageSet:
             #if half == False:
             #    img_array = core.chromatic_aberration_correction(img_array)
 
+            """
             if True:
                 # プロファイルを適用
                 reader = DCPReader("dcp/Fujifilm X-E3 Adobe Standard.dcp")
@@ -221,7 +217,7 @@ class ImageSet:
                 # プロファイルを使わない時用
                 img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
                 img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
-                
+            """
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
@@ -249,12 +245,12 @@ class ImageSet:
                 #img_array = core.process_color_image_lab(img_array, core.histeq_16bit)
                 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
-                img_array = highlight_recovery.reconstruct_highlight_details(img_array, True)
+                #img_array = highlight_recovery.reconstruct_highlight_details(img_array, True)
 
                 #hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
                 #hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
                 #img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-
+            
             # サイズを合わせる
             #if img_array.shape[1] != width or img_array.shape[0] != height:
             if half == True:
@@ -329,7 +325,7 @@ class ImageSet:
         if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):            
             result = []
             result.append(ImageSet.Result(worker="_load_raw_preview", source=None))
-            result.append(ImageSet.Result(worker="_load_raw_fast", source=None))
+            #result.append(ImageSet.Result(worker="_load_raw_fast", source=None))
             result.append(ImageSet.Result(worker="_load_raw_full", source=None))
 
             return result
@@ -345,4 +341,4 @@ class ImageSet:
     def load(self, preload_result, file_path, exif_data, param):
         if not isinstance(preload_result, list):
             return
-        file_cache_system.run_method(self, preload_result[len(preload_result)-1].worker, None, file_path, exif_data, param)
+        file_cache_system.run_method(self, preload_result[len(preload_result)-1].worker, config._config, None, file_path, exif_data, param)
