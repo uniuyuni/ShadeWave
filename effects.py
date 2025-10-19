@@ -2390,7 +2390,6 @@ def create_effects(distortion_callback=None):
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]
-    lv1['bm3d_noise_reduction'] = BM3DNoiseReductionEffect()
     lv1['light_noise_reduction'] = LightNoiseReductionEffect()
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()

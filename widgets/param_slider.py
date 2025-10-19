@@ -14,6 +14,8 @@ class ParamSlider(KVBoxLayout):
     for_float = KVBooleanProperty(False)
     slider = KVNumericProperty(float('inf')) #　最初の変更は必ずコールバックが呼ばれるようにする
     label_width = KVNumericProperty(100)
+    history_down = KVNumericProperty(float('inf'))
+    history_up = KVNumericProperty(float('inf'))
 
     #def __init__(self, **kwargs):
     #    super(ParamSlider, self).__init__(**kwargs)
@@ -51,18 +53,36 @@ class ParamSlider(KVBoxLayout):
         except ValueError:
             val = self.reset_value
         val = min(self.max, max(self.min, val))
+        self.history_down = self.value
         self.ids['input'].set_value(val)
         self.value = val
         self.ids['slider'].value = self.value
+        self.history_up = self.value
     
     def on_button_press(self, step):
         self.value = min(self.max, max(self.min, self.ids['slider'].value + step))
+        self.history_down = self.value
         self.ids['slider'].value = self.value
+        self.history_up = self.value
     
     def on_slider_touch_down(self, touch):
-        if self.collide_point(*touch.pos):
-            if touch.is_double_tap:
+        if touch.is_double_tap:
+            if self.ids['label'].collide_point(*touch.pos):
+                self.history_down = self.value
                 self.ids['slider'].value = self.reset_value
+                self.history_up = self.value
+            return True
+        
+        if self.ids['slider'].collide_point(*touch.pos):
+            self.history_down = self.value
+            self.ids['slider'].value = self.reset_value
+            return True        
+        
+        return False
+    
+    def on_slider_touch_up(self, touch):
+        self.history_up = self.value
+        return True
 
     def set_slider_value(self, value):
         from kivy.event import EventDispatcher
@@ -72,7 +92,7 @@ class ParamSlider(KVBoxLayout):
 
     def set_slider_reset(self, value):
         self.reset_value = value
-
+    
 class Param_SliderApp(MDApp):
     def __init__(self, **kwargs):
         super(Param_SliderApp, self).__init__(**kwargs)

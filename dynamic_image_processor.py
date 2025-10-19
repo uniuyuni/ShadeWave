@@ -4,12 +4,15 @@ import numpy as np
 from queue import Empty
 import time
 
+import config
 import effects
 import pipeline
 import splitimage
 
-def worker_function(worker_id, task_queue, result_queue, stop_event):
+def worker_function(copy_config, worker_id, task_queue, result_queue, stop_event):
     """ワーカー関数（グローバルスコープに定義）"""
+    config._config = copy_config
+    
     current_effects = effects.create_effects()
     effects.reeffect_all(current_effects, 1)
 
@@ -65,7 +68,7 @@ class DynamicImageProcessor:
         """ワーカープロセスを起動"""
         for i in range(self.num_workers):
             p = Process(target=worker_function,
-                        args=(i, self.task_queue, self.result_queue, self.stop_event),
+                        args=(config._config, i, self.task_queue, self.result_queue, self.stop_event),
                         daemon=True )
             p.start()
             self.workers.append(p)
