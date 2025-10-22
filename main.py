@@ -17,8 +17,6 @@ if __name__ == '__main__':
     from kivy.core.window import Window as KVWindow
     from kivy.graphics.texture import Texture as KVTexture
     from kivy.properties import BooleanProperty as KVBooleanProperty
-    from kivymd.uix.expansionpanel import MDExpansionPanel, MDExpansionPanelOneLine
-    from kivymd.uix.list import MDList, OneLineListItem
     from kivy.clock import Clock, mainthread
 
     import threading
@@ -55,6 +53,7 @@ if __name__ == '__main__':
     import widgets.curve
     import widgets.bbox_viewer
     import widgets.mask_editor2
+    import widgets.history_content as history_content
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
 
 import os
@@ -94,56 +93,6 @@ if __name__ == '__main__':
         #core.fast_median_filter(rgb[..., 0])
         core.apply_mask(rgb, msk, rgb)
 
-    class HistoryContent(MDList):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            
-        def append_operation(self, op, on_selected):
-            # バックアップとアップデートで共通のキーかつ値が違うものを抽出
-            result = [
-                [key, op.backup[key], op.update[key]]
-                for key in op.backup.keys() & op.update.keys()
-                if op.backup[key] != op.update[key]
-            ][0]
-            # 項目の追加
-            list_item = OneLineListItem(text=f"{self._format_string(result[0], 15)}{self._format_number(result[1])}, {self._format_number(result[2])}")
-            list_item.bind(on_release=on_selected)
-            self.add_widget(list_item, index=0)
-
-        def delete_operation(self, index):
-            pass
-
-        def active_operation(self, index):
-            pass
-
-        def _format_number(self, num):
-            integer_part = int(num)
-            decimal_part = num - integer_part
-            
-            if decimal_part == 0:
-                # 小数部がない場合
-                return f"{integer_part: 7d}"
-            else:
-                # 小数部がある場合
-                d = f"{decimal_part:.2f}".split('.')[1]
-                return f"{integer_part: 4d}.{d}"
-
-        def _format_string(self, text, n):
-            """
-            正規表現を使用した簡潔なバージョン
-            """
-            if not text:
-                return " " * n
-            
-            # アンダースコアをスペースに変換し、次の文字を大文字にする
-            # 正規表現でアンダースコア+次の文字を検出して処理
-            result = re.sub(r'_([a-z])?', lambda m: ' ' + m.group(1).upper() if m.group(1) else ' ', text)
-            
-            # 先頭文字を大文字にする
-            result = result[0].upper() + result[1:] if result else ""
-            
-            # n文字に成形
-            return result.ljust(n)[:n]
 
     class MainWidget(MDBoxLayout):
         loading=KVBooleanProperty(False)
@@ -186,10 +135,7 @@ if __name__ == '__main__':
             self._set_film_presets()
             self._set_lens_presets()
 
-            self.history_panel = MDExpansionPanel(
-                        content=HistoryContent(),
-                        panel_cls=MDExpansionPanelOneLine(text="History"),
-                    )
+            self.history_panel = history_content.create_history_content_panel(self._on_history_selected)
             self.ids['info'].add_widget(self.history_panel)
     
         def empty_image(self):
@@ -305,10 +251,22 @@ if __name__ == '__main__':
             current_effects, current_param = self._get_active_effects()
             self.current_op.set_update(current_effects, current_param)
             self.history.append(self.current_op)
-            self.history_panel.content.append_operation(self.current_op, self._on_history_selected)
+            self.history_panel.set_op_list(self.history.operations)
             self.current_op = None
-        
-        def _on_history_selected(self, item):
+
+        def _undo(self):        
+            if self.history.can_undo():
+                if self.history.undo(self):
+                    #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                    self.start_draw_image()
+
+        def _redo(self):        
+            if self.history.can_redo():
+                if self.history.redo(self):
+                    #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                    self.start_draw_image()
+
+        def _on_history_selected(self, index):
             pass
         
         def reset_param(self, param):
@@ -668,18 +626,10 @@ if __name__ == '__main__':
                 return True
                                 
             if (key == 122 and ('shift' not in modifier) and ('ctrl' in modifier or 'meta' in modifier)):  # Zキー
-                if self.history.can_undo():
-                    if self.history.undo(self):
-                        #self.ids['mask_editor2'].set_draw_mask(lv == 3)
-                        self.start_draw_image()
-                        return True                    
+                self._undo()
                     
             if (key == 122 and ('shift' in modifier) and ('ctrl' in modifier or 'meta' in modifier)):  # shift-Zキー
-                if self.history.can_redo():
-                    if self.history.redo(self):
-                        #self.ids['mask_editor2'].set_draw_mask(lv == 3)
-                        self.start_draw_image()
-                        return True
+                self._redo()
         
     class MainApp(MDApp):
         def __init__(self, cache_system, **kwargs):

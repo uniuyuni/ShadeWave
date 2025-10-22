@@ -1,0 +1,35 @@
+
+<HistoryCustomHeader>:
+    size_hint_y: None
+    height: 10  # ここで縦幅を調整
+
+<HistoryItem>:
+    size_hint_y: None
+    ref_height: 20  # リストアイテムの高さ
+    color: (.8, .8, .8, 1) if self.active == True else (.4, .4, .4, 1)
+
+    canvas.before:
+        Color:
+            rgba: (0, 1, 1, 0.3) if self.is_selected else (0, 0, 0, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+<SelectableRecycleBoxLayout>:
+
+<HistoryContentPanel>:
+    orientation: "vertical"
+    spacing: "10dp"
+    size_hint_y: None
+    ref_height: 300
+
+    MDRecycleView:
+        id: history_rv
+        viewclass: 'HistoryItem'
+
+        SelectableRecycleBoxLayout:
+            orientation: 'vertical'
+            default_size_hint: 1, None
+            default_size: None, 35
+            size_hint_y: None
+            height: self.minimum_height

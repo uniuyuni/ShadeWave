@@ -37,9 +37,9 @@ def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: 
             crops.append((i, j, i+block_height, j+block_width))
 
     if crops_out:
-        return blocks, crops, [pad_height, pad_width, img_height, img_width, block_height, block_width, overlap]
+        return blocks, crops, (pad_height, pad_width, img_height, img_width, block_height, block_width, overlap)
     
-    return blocks, [pad_height, pad_width, img_height, img_width, block_height, block_width, overlap]
+    return blocks, (pad_height, pad_width, img_height, img_width, block_height, block_width, overlap)
 
 def blend_images(img1: np.ndarray, img2: np.ndarray, overlap: int, axis: int) -> np.ndarray:
     """
