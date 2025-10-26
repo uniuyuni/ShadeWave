@@ -14,8 +14,8 @@ class ParamSlider(KVBoxLayout):
     for_float = KVBooleanProperty(False)
     slider = KVNumericProperty(float('inf')) #　最初の変更は必ずコールバックが呼ばれるようにする
     label_width = KVNumericProperty(100)
-    history_down = KVNumericProperty(float('inf'))
-    history_up = KVNumericProperty(float('inf'))
+    before_edit = KVNumericProperty(float('inf'))
+    after_edit = KVNumericProperty(float('inf'))
 
     #def __init__(self, **kwargs):
     #    super(ParamSlider, self).__init__(**kwargs)
@@ -52,37 +52,36 @@ class ParamSlider(KVBoxLayout):
                 val = int(self.ids['input'].get_value())
         except ValueError:
             val = self.reset_value
+        self.before_edit = self.value
         val = min(self.max, max(self.min, val))
-        self.history_down = self.value
         self.ids['input'].set_value(val)
         self.value = val
         self.ids['slider'].value = self.value
-        self.history_up = self.value
+        self.after_edit = self.value
     
     def on_button_press(self, step):
+        self.before_edit = self.value
         self.value = min(self.max, max(self.min, self.ids['slider'].value + step))
-        self.history_down = self.value
         self.ids['slider'].value = self.value
-        self.history_up = self.value
+        self.after_edit = self.value
     
     def on_slider_touch_down(self, touch):
         if touch.is_double_tap:
             if self.ids['label'].collide_point(*touch.pos):
-                self.history_down = self.value
+                self.before_edit = self.value
                 self.ids['slider'].value = self.reset_value
-                self.history_up = self.value
-            return True
+                return True
         
         if self.ids['slider'].collide_point(*touch.pos):
-            self.history_down = self.value
+            self.before_edit = self.value
             self.ids['slider'].value = self.reset_value
             return True        
         
         return False
     
     def on_slider_touch_up(self, touch):
-        self.history_up = self.value
-        return True
+        self.after_edit = self.value
+        return False
 
     def set_slider_value(self, value):
         from kivy.event import EventDispatcher

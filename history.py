@@ -6,24 +6,29 @@ import logging
 
 class Operation:
 
-    def __init__(self, lv, effect):
+    def __init__(self, lv, effect, subname=None):
         self.id = str(uuid.uuid4())
         self.type = 0       # type effect
         self.name = ""
         self.lv = lv
         self.effect = effect
+        self.subname = subname
         self.effects = None
         self.effects_param = None
         self.update = {}    # 更新パラメータ
         self.backup = {}    # もとに戻す時のパラメータ
+        self.diff = []      # 差分
     
-    def set_backup(self, effects, param):
+    def set_backup(self, effects, param, subname=None):
         self.name = effects[self.lv][self.effect].__class__.__name__
         self.effects = effects
         self.effects_param = param
 
         # パラメータ辞書を取得
-        ef_dict = effects[self.lv][self.effect].get_param_dict(param)
+        if subname is not None:
+            ef_dict = effects[self.lv][self.effect].get_param_dict(param, subname)
+        else:
+            ef_dict = effects[self.lv][self.effect].get_param_dict(param)
 
         # バックアップを作成
         for key in ef_dict.keys():
@@ -31,16 +36,30 @@ class Operation:
         
         return (self.lv, self.effect)
     
-    def set_update(self, effects, param):
+    def set_update(self, effects, param, subname=None):
         if self.effects_param is not param:
             logging.error("Operation.set_update param is not match error.")
 
         # パラメータ辞書を取得
-        ef_dict = effects[self.lv][self.effect].get_param_dict(param)
+        if subname is not None:
+            ef_dict = effects[self.lv][self.effect].get_param_dict(param, subname)
+        else:
+            ef_dict = effects[self.lv][self.effect].get_param_dict(param)
+        if ef_dict is None:
+            return None
 
         # アップデートを作成
         for key in ef_dict.keys():
             self.update[key] = param.get(key, ef_dict[key])
+
+        # 差分を作成
+        self.diff = [
+            [key, self.backup[key], self.update[key]]
+            for key in self.backup.keys() & self.update.keys()
+            if self.backup[key] != self.update[key]
+        ]
+        if len(self.diff) == 0:
+            return None
         
         return (self.lv, self.effect)
 
@@ -62,6 +81,8 @@ class History:
     
     def append(self, operation: Operation) -> None:
         """新しい操作を実行"""
+        result = self.current_index
+
         # 現在位置より後ろの操作を削除（redoスタックをクリア）
         self.operations = self.operations[:self.current_index + 1]
         
@@ -73,6 +94,8 @@ class History:
         if len(self.operations) > self.max_history:
             self.operations.pop(0)
             self.current_index -= 1
+
+        return result
     
     def undo(self, widget) -> bool:
         """1つ前の状態に戻す"""

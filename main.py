@@ -234,13 +234,13 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
-        def begin_effect_ctrl(self, lv, effect):
+        def begin_effect_ctrl(self, lv, effect, subname=None):
             current_effects, current_param = self._get_active_effects()
-            self.current_op = history.Operation(lv, effect)
-            self.current_op.set_backup(current_effects, current_param)
+            self.current_op = history.Operation(lv, effect, subname)
+            self.current_op.set_backup(current_effects, current_param, subname)
             return True
         
-        def end_effect_ctrl(self, lv, effect):
+        def end_effect_ctrl(self, lv, effect, subname=None):
             if self.current_op is None:
                 logging.error("MainWidget.end_effect_ctrl None error.")
                 return
@@ -248,27 +248,47 @@ if __name__ == '__main__':
             if self.current_op.lv != lv or self.current_op.effect != effect:
                 logging.warning("MainWidget.end_effect_ctrl Unmatching error.")
 
+            if self.current_op.subname != subname:
+                logging.error("MainWidget.end_effect_ctrl Unmatching error.")
+                return
+
             current_effects, current_param = self._get_active_effects()
-            self.current_op.set_update(current_effects, current_param)
-            self.history.append(self.current_op)
-            self.history_panel.set_op_list(self.history.operations)
-            self.current_op = None
+            if self.current_op.set_update(current_effects, current_param, subname) is not None:
+                self.history.append(self.current_op)
+                self.history_panel.set_history(self.history)
+                self.current_op = None
 
         def _undo(self):        
             if self.history.can_undo():
                 if self.history.undo(self):
+                    self.history_panel.set_history(self.history)
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
                     self.start_draw_image()
 
         def _redo(self):        
             if self.history.can_redo():
                 if self.history.redo(self):
+                    self.history_panel.set_history(self.history)
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
                     self.start_draw_image()
 
         def _on_history_selected(self, index):
-            pass
-        
+            if index < self.history.current_index:
+                n = self.history.current_index - index
+                for _ in range(n):
+                    self.history.undo(self)
+                self.history_panel.set_history(self.history)
+                #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                self.start_draw_image()
+
+            elif index >= self.history.current_index:
+                n = index - self.history.current_index
+                for _ in range(n):
+                    self.history.redo(self)
+                self.history_panel.set_history(self.history)
+                #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                self.start_draw_image()
+
         def reset_param(self, param):
             param.clear()
 

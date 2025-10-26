@@ -270,8 +270,8 @@
                                 value: 5000
                                 step: 10
                                 on_slider: root.apply_effects_lv(2, 'color_temperature')
-                                on_history_down: root.begin_effect_ctrl(2, 'color_temperature')
-                                on_history_up: root.end_effect_ctrl(2, 'color_temperature')
+                                on_before_edit: root.begin_effect_ctrl(2, 'color_temperature')
+                                on_after_edit: root.end_effect_ctrl(2, 'color_temperature')
 
                             ParamSlider:
                                 id: slider_color_tint
@@ -281,8 +281,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'color_temperature')
-                                on_history_down: root.begin_effect_ctrl(2, 'color_temperature')
-                                on_history_up: root.end_effect_ctrl(2, 'color_temperature')
+                                on_before_edit: root.begin_effect_ctrl(2, 'color_temperature')
+                                on_after_edit: root.end_effect_ctrl(2, 'color_temperature')
 
                             VSeparator:
  
@@ -298,8 +298,8 @@
                                 step: 0.05
                                 for_float: True
                                 on_slider: root.apply_effects_lv(2, 'exposure')
-                                on_history_down: root.begin_effect_ctrl(2, 'exposure')
-                                on_history_up: root.end_effect_ctrl(2, 'exposure')
+                                on_before_edit: root.begin_effect_ctrl(2, 'exposure')
+                                on_after_edit: root.end_effect_ctrl(2, 'exposure')
 
                             ParamSlider:
                                 id: slider_contrast
@@ -309,8 +309,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'contrast')
-                                on_history_down: root.begin_effect_ctrl(2, 'contrast')
-                                on_history_up: root.end_effect_ctrl(2, 'contrast')
+                                on_before_edit: root.begin_effect_ctrl(2, 'contrast')
+                                on_after_edit: root.end_effect_ctrl(2, 'contrast')
 
                             VSeparator:
 
@@ -322,8 +322,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'tone')
-                                on_history_down: root.begin_effect_ctrl(2, 'tone')
-                                on_history_up: root.end_effect_ctrl(2, 'tone')
+                                on_before_edit: root.begin_effect_ctrl(2, 'tone')
+                                on_after_edit: root.end_effect_ctrl(2, 'tone')
 
                             ParamSlider:
                                 id: slider_highlight
@@ -333,8 +333,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'tone')
-                                on_history_down: root.begin_effect_ctrl(2, 'tone')
-                                on_history_up: root.end_effect_ctrl(2, 'tone')
+                                on_before_edit: root.begin_effect_ctrl(2, 'tone')
+                                on_after_edit: root.end_effect_ctrl(2, 'tone')
 
                             ParamSlider:
                                 id: slider_shadow
@@ -344,8 +344,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'tone')
-                                on_history_down: root.begin_effect_ctrl(2, 'tone')
-                                on_history_up: root.end_effect_ctrl(2, 'tone')
+                                on_before_edit: root.begin_effect_ctrl(2, 'tone')
+                                on_after_edit: root.end_effect_ctrl(2, 'tone')
 
                             VSeparator:
 
@@ -361,8 +361,8 @@
                                 for_float: True
                                 step: 0.1
                                 on_slider: root.apply_effects_lv(2, 'level')
-                                on_history_down: root.begin_effect_ctrl(2, 'level')
-                                on_history_up: root.end_effect_ctrl(2, 'level')
+                                on_before_edit: root.begin_effect_ctrl(2, 'level')
+                                on_after_edit: root.end_effect_ctrl(2, 'level')
 
                             ParamSlider:
                                 id: slider_mid_level
@@ -373,8 +373,8 @@
                                 for_float: True
                                 step: 0.1
                                 on_slider: root.apply_effects_lv(2, 'level')
-                                on_history_down: root.begin_effect_ctrl(2, 'level')
-                                on_history_up: root.end_effect_ctrl(2, 'level')
+                                on_before_edit: root.begin_effect_ctrl(2, 'level')
+                                on_after_edit: root.end_effect_ctrl(2, 'level')
 
                             ParamSlider:
                                 id: slider_white_level
@@ -385,8 +385,8 @@
                                 for_float: True
                                 step: 0.1
                                 on_slider: root.apply_effects_lv(2, 'level')
-                                on_history_down: root.begin_effect_ctrl(2, 'level')
-                                on_history_up: root.end_effect_ctrl(2, 'level')
+                                on_before_edit: root.begin_effect_ctrl(2, 'level')
+                                on_after_edit: root.end_effect_ctrl(2, 'level')
 
                             VSeparator:
                             
@@ -401,8 +401,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'clarity')
-                                on_history_down: root.begin_effect_ctrl(2, 'clarity')
-                                on_history_up: root.end_effect_ctrl(2, 'clarity')
+                                on_before_edit: root.begin_effect_ctrl(2, 'clarity')
+                                on_after_edit: root.end_effect_ctrl(2, 'clarity')
 
                             ParamSlider:
                                 id: slider_texture
@@ -412,8 +412,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'texture')
-                                on_history_down: root.begin_effect_ctrl(2, 'texture')
-                                on_history_up: root.end_effect_ctrl(2, 'texture')
+                                on_before_edit: root.begin_effect_ctrl(2, 'texture')
+                                on_after_edit: root.end_effect_ctrl(2, 'texture')
 
                             ParamSlider:
                                 id: slider_microcontrast
@@ -423,8 +423,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'microcontrast')
-                                on_history_down: root.begin_effect_ctrl(2, 'microcontrast')
-                                on_history_up: root.end_effect_ctrl(2, 'microcontrast')
+                                on_before_edit: root.begin_effect_ctrl(2, 'microcontrast')
+                                on_after_edit: root.end_effect_ctrl(2, 'microcontrast')
 
                             ParamSlider:
                                 id: slider_dehaze
@@ -434,8 +434,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'dehaze')
-                                on_history_down: root.begin_effect_ctrl(2, 'dehaze')
-                                on_history_up: root.end_effect_ctrl(2, 'dehaze')
+                                on_before_edit: root.begin_effect_ctrl(2, 'dehaze')
+                                on_after_edit: root.end_effect_ctrl(2, 'dehaze')
 
                             ParamSlider:
                                 id: slider_clahe_intensity
@@ -445,8 +445,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'clahe')
-                                on_history_down: root.begin_effect_ctrl(2, 'clahe')
-                                on_history_up: root.end_effect_ctrl(2, 'clahe')
+                                on_before_edit: root.begin_effect_ctrl(2, 'clahe')
+                                on_after_edit: root.end_effect_ctrl(2, 'clahe')
 
                             VSeparator:
                             
@@ -458,8 +458,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'vs_and_saturation')
-                                on_history_down: root.begin_effect_ctrl(2, 'vs_and_saturation')
-                                on_history_up: root.end_effect_ctrl(2, 'vs_and_saturation')
+                                on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'saturation')
+                                on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'saturation')
 
                             ParamSlider:
                                 text: "Vibrance"
@@ -469,8 +469,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'vs_and_saturation')
-                                on_history_down: root.begin_effect_ctrl(2, 'vs_and_saturation')
-                                on_history_up: root.end_effect_ctrl(2, 'vs_and_saturation')
+                                on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'saturation')
+                                on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'saturation')
 
                             VSeparator:
                                                         
@@ -501,8 +501,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_red_lum
                                             text: "Luminance"
@@ -511,8 +511,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_red_sat
                                             text: "Saturation"
@@ -521,8 +521,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                     
                                 TabbedPanelItem:
                                     text: 'Orange'
@@ -541,8 +541,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_orange_lum
                                             text: "Luminance"
@@ -551,8 +551,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_orange_sat
                                             text: "Saturation"
@@ -561,8 +561,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                                 TabbedPanelItem:
                                     text: 'Yellow'
@@ -581,8 +581,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_yellow_lum
                                             text: "Luminance"
@@ -591,8 +591,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_yellow_sat
                                             text: "Saturation"
@@ -601,8 +601,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                                 TabbedPanelItem:
                                     text: 'Green'
@@ -621,8 +621,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_green_lum
                                             text: "Luminance"
@@ -631,8 +631,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_green_sat
                                             text: "Saturation"
@@ -641,8 +641,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                                 TabbedPanelItem:
                                     text: 'Cyan'
@@ -661,8 +661,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_cyan_lum
                                             text: "Luminance"
@@ -671,8 +671,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_cyan_sat
                                             text: "Saturation"
@@ -681,8 +681,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                                 TabbedPanelItem:
                                     text: 'Blue'
@@ -701,8 +701,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_blue_lum
                                             text: "Luminance"
@@ -711,8 +711,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_blue_sat
                                             text: "Saturation"
@@ -721,8 +721,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                                 TabbedPanelItem:
                                     text: 'Purple'
@@ -741,8 +741,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_purple_lum
                                             text: "Luminance"
@@ -751,8 +751,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_purple_sat
                                             text: "Saturation"
@@ -761,8 +761,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                                 TabbedPanelItem:
                                     text: 'Magenta'
@@ -781,8 +781,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_magenta_lum
                                             text: "Luminance"
@@ -791,8 +791,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
                                         ParamSlider:
                                             id: slider_hls_magenta_sat
                                             text: "Saturation"
@@ -801,8 +801,8 @@
                                             value: 0
                                             step: 1
                                             on_slider: root.apply_effects_lv(2, 'hls')
-                                            on_history_down: root.begin_effect_ctrl(2, 'hls')
-                                            on_history_up: root.end_effect_ctrl(2, 'hls')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'hls')
+                                            on_after_edit: root.end_effect_ctrl(2, 'hls')
 
                             VSeparator:
  
@@ -817,8 +817,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'unsharp_mask')
-                                on_history_down: root.begin_effect_ctrl(2, 'unsharp_mask')
-                                on_history_up: root.end_effect_ctrl(2, 'unsharp_mask')
+                                on_before_edit: root.begin_effect_ctrl(2, 'unsharp_mask')
+                                on_after_edit: root.end_effect_ctrl(2, 'unsharp_mask')
 
                             ParamSlider:
                                 id: slider_unsharp_mask_sigma
@@ -828,8 +828,8 @@
                                 value: 50
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'unsharp_mask')
-                                on_history_down: root.begin_effect_ctrl(2, 'unsharp_mask')
-                                on_history_up: root.end_effect_ctrl(2, 'unsharp_mask')
+                                on_before_edit: root.begin_effect_ctrl(2, 'unsharp_mask')
+                                on_after_edit: root.end_effect_ctrl(2, 'unsharp_mask')
 
                             VSeparator:
  
@@ -844,8 +844,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'vignette')
-                                on_history_down: root.begin_effect_ctrl(4, 'vignette')
-                                on_history_up: root.end_effect_ctrl(4, 'vignette')
+                                on_before_edit: root.begin_effect_ctrl(4, 'vignette')
+                                on_after_edit: root.end_effect_ctrl(4, 'vignette')
 
                             ParamSlider:
                                 id: slider_vignette_radius_percent
@@ -855,8 +855,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'vignette')
-                                on_history_down: root.begin_effect_ctrl(4, 'vignette')
-                                on_history_up: root.end_effect_ctrl(4, 'vignette')
+                                on_before_edit: root.begin_effect_ctrl(4, 'vignette')
+                                on_after_edit: root.end_effect_ctrl(4, 'vignette')
 
                             ParamSlider:
                                 id: slider_vignette_softness
@@ -866,8 +866,8 @@
                                 value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'vignette')
-                                on_history_down: root.begin_effect_ctrl(4, 'vignette')
-                                on_history_up: root.end_effect_ctrl(4, 'vignette')
+                                on_before_edit: root.begin_effect_ctrl(4, 'vignette')
+                                on_after_edit: root.end_effect_ctrl(4, 'vignette')
                             
                             VSeparator:
 
@@ -886,18 +886,24 @@
                                     id: checkbox_color_modification
                                     active: True
                                     on_press: root.apply_effects_lv(0, 'lens_modifier')
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_effect_ctrl(0, 'lens_modifier')
+                                    on_touch_up: root.end_effect_ctrl(0, 'lens_modifier')
                                 ParamLabel:          
                                     text: "Subpixel"
                                 CheckBox:
                                     id: checkbox_subpixel_distortion
                                     active: True
                                     on_press: root.apply_effects_lv(0, 'lens_modifier')
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_effect_ctrl(0, 'lens_modifier')
+                                    on_touch_up: root.end_effect_ctrl(0, 'lens_modifier')
                                 ParamLabel:          
                                     text: "Geometry"
                                 CheckBox:
                                     id: checkbox_geometry_distortion
                                     active: True
                                     on_press: root.apply_effects_lv(0, 'lens_modifier')
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_effect_ctrl(0, 'lens_modifier')
+                                    on_touch_up: root.end_effect_ctrl(0, 'lens_modifier')
 
                             VSpacer
 
@@ -926,6 +932,8 @@
                                         start_y: 0.0
                                         end_y: 1.0
                                         on_curve: root.apply_effects_lv(2, 'curve')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'curve', 'tonecurve')
+                                        on_after_edit: root.end_effect_ctrl(2, 'curve', 'tonecurve')
 
                                 TabbedPanelItem:
                                     text: 'Red'
@@ -935,6 +943,8 @@
                                         start_y: 0.0
                                         end_y: 1.0
                                         on_curve: root.apply_effects_lv(2, 'curve')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'curve', 'tonecurve_red')
+                                        on_after_edit: root.end_effect_ctrl(2, 'curve', 'tonecurve_red')
 
                                 TabbedPanelItem:
                                     text: 'Green'
@@ -944,6 +954,8 @@
                                         start_y: 0.0
                                         end_y: 1.0
                                         on_curve: root.apply_effects_lv(2, 'curve')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'curve', 'tonecurve_green')
+                                        on_after_edit: root.end_effect_ctrl(2, 'curve', 'tonecurve_green')
 
                                 TabbedPanelItem:
                                     text: 'Blue'
@@ -953,6 +965,8 @@
                                         start_y: 0.0
                                         end_y: 1.0
                                         on_curve: root.apply_effects_lv(2, 'curve')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'curve', 'tonecurve_blue')
+                                        on_after_edit: root.end_effect_ctrl(2, 'curve', 'tonecurve_blue')
                                 
                             VSpacer:
                             
@@ -977,10 +991,14 @@
                                             start_y: 1.0
                                             end_y: 0.0
                                             on_curve: root.apply_effects_lv(2, 'curve')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'curve', 'grading1')
+                                            on_after_edit: root.end_effect_ctrl(2, 'curve', 'grading1')
 
                                         CWColorPicker:
                                             id: grading1_color_picker
                                             on_current_color: root.apply_effects_lv(2, 'curve')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'curve', 'grading1')
+                                            on_after_edit: root.end_effect_ctrl(2, 'curve', 'grading1')
 
 
                                 TabbedPanelItem:
@@ -996,10 +1014,14 @@
                                             start_y: 0.0
                                             end_y: 1.0
                                             on_curve: root.apply_effects_lv(2, 'curve')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'curve', 'grading2')
+                                            on_after_edit: root.end_effect_ctrl(2, 'curve', 'grading2')
 
                                         CWColorPicker:
                                             id: grading2_color_picker
                                             on_current_color: root.apply_effects_lv(2, 'curve')
+                                            on_before_edit: root.begin_effect_ctrl(2, 'curve', 'grading2')
+                                            on_after_edit: root.end_effect_ctrl(2, 'curve', 'grading2')
                             
                             VSpacer:
                             
@@ -1017,6 +1039,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'HuevsHue')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'HuevsHue')
 
                                 TabbedPanelItem:
                                     text: 'Hue vs Lum'
@@ -1028,6 +1052,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'HuevsLum')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'HuevsLum')
 
                                 TabbedPanelItem:
                                     text: 'Hue vs Sat'
@@ -1039,6 +1065,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'HuevsSat')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'HuevsSat')
 
                                 TabbedPanelItem:
                                     id: tab_lum_vs_lum
@@ -1051,6 +1079,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'LumvsLum')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'LumvsLum')
 
                                 TabbedPanelItem:
                                     text: 'Lum vs Sat'
@@ -1062,6 +1092,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'LumvsSat')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'LumvsSat')
 
                                 TabbedPanelItem:
                                     text: 'Sat vs Lum'
@@ -1073,6 +1105,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')                            
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'SatvsLum')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'SatvsLum')
 
                                 TabbedPanelItem:
                                     text: 'Sat vs Sat'
@@ -1084,6 +1118,8 @@
                                         start_y: 0.5
                                         end_y: 0.5
                                         on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
+                                        on_before_edit: root.begin_effect_ctrl(2, 'vs_and_saturation', 'SatvsSat')
+                                        on_after_edit: root.end_effect_ctrl(2, 'vs_and_saturation', 'SatvsSat')
 
 
                 TabbedPanelItem:
@@ -1118,8 +1154,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'light_noise_reduction')
-                                on_history_down: root.begin_effect_ctrl(1, 'light_noise_reduction')
-                                on_history_up: root.end_effect_ctrl(1, 'light_noise_reduction')
+                                on_before_edit: root.begin_effect_ctrl(1, 'light_noise_reduction')
+                                on_after_edit: root.end_effect_ctrl(1, 'light_noise_reduction')
 
                             ParamSlider:
                                 id: slider_light_color_noise_reduction
@@ -1129,8 +1165,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'light_noise_reduction')
-                                on_history_down: root.begin_effect_ctrl(1, 'light_noise_reduction')
-                                on_history_up: root.end_effect_ctrl(1, 'light_noise_reduction')
+                                on_before_edit: root.begin_effect_ctrl(1, 'light_noise_reduction')
+                                on_after_edit: root.end_effect_ctrl(1, 'light_noise_reduction')
 
                             VSeparator:
 
@@ -1189,8 +1225,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'deblur_filter')
-                                on_history_down: root.begin_effect_ctrl(1, 'deblur_filter')
-                                on_history_up: root.end_effect_ctrl(1, 'deblur_filter')
+                                on_before_edit: root.begin_effect_ctrl(1, 'deblur_filter')
+                                on_after_edit: root.end_effect_ctrl(1, 'deblur_filter')
                                 
                             VSeparator:
 
@@ -1221,8 +1257,8 @@
                                 value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'lut')
-                                on_history_down: root.begin_effect_ctrl(2, 'lut')
-                                on_history_up: root.end_effect_ctrl(2, 'lut')
+                                on_before_edit: root.begin_effect_ctrl(2, 'lut')
+                                on_after_edit: root.end_effect_ctrl(2, 'lut')
 
                             VSeparator:
 
@@ -1248,8 +1284,8 @@
                                 value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'film_emulation')
-                                on_history_down: root.begin_effect_ctrl(2, 'film_emulation')
-                                on_history_up: root.end_effect_ctrl(2, 'film_emulation')
+                                on_before_edit: root.begin_effect_ctrl(2, 'film_emulation')
+                                on_after_edit: root.end_effect_ctrl(2, 'film_emulation')
 
                             ParamSlider:
                                 id: slider_film_expired
@@ -1259,8 +1295,8 @@
                                 value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'film_emulation')
-                                on_history_down: root.begin_effect_ctrl(2, 'film_emulation')
-                                on_history_up: root.end_effect_ctrl(2, 'film_emulation')
+                                on_before_edit: root.begin_effect_ctrl(2, 'film_emulation')
+                                on_after_edit: root.end_effect_ctrl(2, 'film_emulation')
 
                             HeadLabel:
                                 text: ' Lens Simulator'
@@ -1284,8 +1320,8 @@
                                 value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(2, 'lens_simulator')
-                                on_history_down: root.begin_effect_ctrl(2, 'lens_simulator')
-                                on_history_up: root.end_effect_ctrl(2, 'lens_simulator')
+                                on_before_edit: root.begin_effect_ctrl(2, 'lens_simulator')
+                                on_after_edit: root.end_effect_ctrl(2, 'lens_simulator')
 
                             VSeparator:
 
@@ -1300,8 +1336,8 @@
                                 value: 0
                                 step: 2
                                 on_slider: root.apply_effects_lv(1, 'lensblur_filter')
-                                on_history_down: root.begin_effect_ctrl(1, 'lensblur_filter')
-                                on_history_up: root.end_effect_ctrl(1, 'lensblur_filter')
+                                on_before_edit: root.begin_effect_ctrl(1, 'lensblur_filter')
+                                on_after_edit: root.end_effect_ctrl(1, 'lensblur_filter')
 
                             ParamSlider:
                                 id: slider_scratch
@@ -1311,8 +1347,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'scratch')
-                                on_history_down: root.begin_effect_ctrl(1, 'scratch')
-                                on_history_up: root.end_effect_ctrl(1, 'scratch')
+                                on_before_edit: root.begin_effect_ctrl(1, 'scratch')
+                                on_after_edit: root.end_effect_ctrl(1, 'scratch')
 
                             ParamSlider:
                                 id: slider_frosted_glass
@@ -1322,8 +1358,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'frosted_glass')
-                                on_history_down: root.begin_effect_ctrl(1, 'frosted_glass')
-                                on_history_up: root.end_effect_ctrl(1, 'frosted_glass')
+                                on_before_edit: root.begin_effect_ctrl(1, 'frosted_glass')
+                                on_after_edit: root.end_effect_ctrl(1, 'frosted_glass')
 
                             ParamSlider:
                                 id: slider_mosaic
@@ -1333,8 +1369,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'mosaic')
-                                on_history_down: root.begin_effect_ctrl(1, 'mosaic')
-                                on_history_up: root.end_effect_ctrl(1, 'mosaic')
+                                on_before_edit: root.begin_effect_ctrl(1, 'mosaic')
+                                on_after_edit: root.end_effect_ctrl(1, 'mosaic')
 
                             VSeparator:
 
@@ -1349,8 +1385,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'glow')
-                                on_history_down: root.begin_effect_ctrl(1, 'glow')
-                                on_history_up: root.end_effect_ctrl(1, 'glow')
+                                on_before_edit: root.begin_effect_ctrl(1, 'glow')
+                                on_after_edit: root.end_effect_ctrl(1, 'glow')
 
                             ParamSlider:
                                 id: slider_glow_gauss
@@ -1360,8 +1396,8 @@
                                 value: 0
                                 step: 2
                                 on_slider: root.apply_effects_lv(1, 'glow')
-                                on_history_down: root.begin_effect_ctrl(1, 'glow')
-                                on_history_up: root.end_effect_ctrl(1, 'glow')
+                                on_before_edit: root.begin_effect_ctrl(1, 'glow')
+                                on_after_edit: root.end_effect_ctrl(1, 'glow')
 
                             ParamSlider:
                                 id: slider_glow_opacity
@@ -1371,8 +1407,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'glow')
-                                on_history_down: root.begin_effect_ctrl(1, 'glow')
-                                on_history_up: root.end_effect_ctrl(1, 'glow')
+                                on_before_edit: root.begin_effect_ctrl(1, 'glow')
+                                on_after_edit: root.end_effect_ctrl(1, 'glow')
 
                             VSeparator:
  
@@ -1387,8 +1423,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'grain')
-                                on_history_down: root.begin_effect_ctrl(4, 'grain')
-                                on_history_up: root.end_effect_ctrl(4, 'grain')
+                                on_before_edit: root.begin_effect_ctrl(4, 'grain')
+                                on_after_edit: root.end_effect_ctrl(4, 'grain')
                             ParamSlider:
                                 id: slider_grain_size
                                 text: "Size"
@@ -1397,8 +1433,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'grain')
-                                on_history_down: root.begin_effect_ctrl(4, 'grain')
-                                on_history_up: root.end_effect_ctrl(4, 'grain')
+                                on_before_edit: root.begin_effect_ctrl(4, 'grain')
+                                on_after_edit: root.end_effect_ctrl(4, 'grain')
                             ParamSlider:
                                 id: slider_grain_blue_bias
                                 text: "Blue bias"
@@ -1407,8 +1443,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'grain')
-                                on_history_down: root.begin_effect_ctrl(4, 'grain')
-                                on_history_up: root.end_effect_ctrl(4, 'grain')
+                                on_before_edit: root.begin_effect_ctrl(4, 'grain')
+                                on_after_edit: root.end_effect_ctrl(4, 'grain')
                             ParamSlider:
                                 id: slider_grain_shadow_boost
                                 text: "Shadow boost"
@@ -1417,8 +1453,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'grain')
-                                on_history_down: root.begin_effect_ctrl(4, 'grain')
-                                on_history_up: root.end_effect_ctrl(4, 'grain')
+                                on_before_edit: root.begin_effect_ctrl(4, 'grain')
+                                on_after_edit: root.end_effect_ctrl(4, 'grain')
                             ParamSlider:
                                 id: slider_grain_color_noise_ratio
                                 text: "Color noise"
@@ -1427,8 +1463,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(4, 'grain')
-                                on_history_down: root.begin_effect_ctrl(4, 'grain')
-                                on_history_up: root.end_effect_ctrl(4, 'grain')
+                                on_before_edit: root.begin_effect_ctrl(4, 'grain')
+                                on_after_edit: root.end_effect_ctrl(4, 'grain')
 
                             VSeparator:
  
@@ -1469,6 +1505,8 @@
                                 CWColorPicker:
                                     id: cp_solid_color
                                     on_current_color: root.apply_effects_lv(2, 'solid_color')
+                                    on_before_edit: root.begin_effect_ctrl(2, 'solid_color')
+                                    on_after_edit: root.end_effect_ctrl(2, 'solid_color')
                             
                             VSpacer:
 
@@ -1495,8 +1533,8 @@
                                 step: 1
                                 on_slider: root.apply_effects_lv(0, 'rotation')
                                 on_slider: root.apply_effects_lv(0, 'crop')
-                                on_history_down: root.begin_effect_ctrl(0, 'rotation')
-                                on_history_up: root.end_effect_ctrl(0, 'rotation')
+                                on_before_edit: root.begin_effect_ctrl(0, 'rotation')
+                                on_after_edit: root.end_effect_ctrl(0, 'rotation')
 
                             VSpacer:
                             
@@ -1576,8 +1614,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
-                                on_history_down: root.begin_effect_ctrl(1, 'face')
-                                on_history_up: root.end_effect_ctrl(1, 'face')
+                                on_before_edit: root.begin_effect_ctrl(1, 'face')
+                                on_after_edit: root.end_effect_ctrl(1, 'face')
                             ParamSlider:
                                 id: slider_jaw_scale
                                 text: "Jaw"
@@ -1586,8 +1624,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
-                                on_history_down: root.begin_effect_ctrl(1, 'face')
-                                on_history_up: root.end_effect_ctrl(1, 'face')
+                                on_before_edit: root.begin_effect_ctrl(1, 'face')
+                                on_after_edit: root.end_effect_ctrl(1, 'face')
 
                             ParamSlider:
                                 id: slider_left_eye_scale
@@ -1597,8 +1635,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
-                                on_history_down: root.begin_effect_ctrl(1, 'face')
-                                on_history_up: root.end_effect_ctrl(1, 'face')
+                                on_before_edit: root.begin_effect_ctrl(1, 'face')
+                                on_after_edit: root.end_effect_ctrl(1, 'face')
                             ParamSlider:
                                 id: slider_right_eye_scale
                                 text: "Right eye"
@@ -1607,8 +1645,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
-                                on_history_down: root.begin_effect_ctrl(1, 'face')
-                                on_history_up: root.end_effect_ctrl(1, 'face')
+                                on_before_edit: root.begin_effect_ctrl(1, 'face')
+                                on_after_edit: root.end_effect_ctrl(1, 'face')
 
                             ParamSlider:
                                 id: slider_lips_scale
@@ -1618,8 +1656,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(1, 'face')
-                                on_history_down: root.begin_effect_ctrl(1, 'face')
-                                on_history_up: root.end_effect_ctrl(1, 'face')
+                                on_before_edit: root.begin_effect_ctrl(1, 'face')
+                                on_after_edit: root.end_effect_ctrl(1, 'face')
 
                 TabbedPanelItem:
                     text: 'Mask2'
@@ -1642,8 +1680,8 @@
                                 step: 0.1
                                 for_float: True
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_depth_max
                                 text: "Max"
@@ -1653,8 +1691,8 @@
                                 step: 0.1
                                 for_float: True
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             HeadLabel:
                                 text: ' Hue'
@@ -1666,8 +1704,8 @@
                                 value: 179
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_hue_min
                                 text: "Min"
@@ -1676,8 +1714,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_hue_max
                                 text: "Max"
@@ -1686,8 +1724,8 @@
                                 value: 359
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             HeadLabel:
                                 text: ' Lum'
@@ -1699,8 +1737,8 @@
                                 value: 127
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_lum_min
                                 text: "Min"
@@ -1709,8 +1747,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_lum_max
                                 text: "Max"
@@ -1719,8 +1757,8 @@
                                 value: 255
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             HeadLabel:
                                 text: ' Sat'
@@ -1732,8 +1770,8 @@
                                 value: 127
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_sat_min
                                 text: "Min"
@@ -1742,8 +1780,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
                             ParamSlider:
                                 id: slider_mask2_sat_max
                                 text: "Max"
@@ -1752,8 +1790,8 @@
                                 value: 255
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             VSeparator:
 
@@ -1765,8 +1803,8 @@
                                 value: 0
                                 step: 2
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             ParamSlider:
                                 id: slider_mask2_open_space
@@ -1776,8 +1814,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             ParamSlider:
                                 id: slider_mask2_close_space
@@ -1787,8 +1825,8 @@
                                 value: 0
                                 step: 1
                                 on_slider: root.apply_effects_lv(3, 'mask2')
-                                on_history_down: root.begin_effect_ctrl(3, 'mask2')
-                                on_history_up: root.end_effect_ctrl(3, 'mask2')
+                                on_before_edit: root.begin_effect_ctrl(3, 'mask2')
+                                on_after_edit: root.end_effect_ctrl(3, 'mask2')
 
                             VSeparator:
 
@@ -1890,8 +1928,8 @@
                                 value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(0, 'distortion')
-                                on_history_down: root.begin_effect_ctrl(0, 'distortion')
-                                on_history_up: root.end_effect_ctrl(0, 'distortion')
+                                on_before_edit: root.begin_effect_ctrl(0, 'distortion')
+                                on_after_edit: root.end_effect_ctrl(0, 'distortion')
                             ParamSlider:
                                 id: slider_distortion_strength
                                 text: "Strength"
@@ -1900,8 +1938,8 @@
                                 value: 50
                                 step: 1
                                 on_slider: root.apply_effects_lv(0, 'distortion')
-                                on_history_down: root.begin_effect_ctrl(0, 'distortion')
-                                on_history_up: root.end_effect_ctrl(0, 'distortion')
+                                on_before_edit: root.begin_effect_ctrl(0, 'distortion')
+                                on_after_edit: root.end_effect_ctrl(0, 'distortion')
 
                             ParamBoxLayout:
                                 ParamLabel:

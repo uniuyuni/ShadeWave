@@ -11,6 +11,7 @@ from kivy.graphics import Color, Ellipse, Quad
 from kivy.metrics import dp
 from kivy.clock import Clock
 from kivy.lang import Builder as KVBuilder
+from kivy.config import Config as KVConfig
 from colorsys import rgb_to_hls, hls_to_rgb
 import math
 
@@ -20,10 +21,12 @@ class CWColorPreview(MDCard):
     color = ListProperty([0.5, 0.5, 0.5, 1])
 
 class CWColorWheel(MDBoxLayout):
-    selected_color = ListProperty([0.5, 0.5, 0.5, 1])
+    selected_color = ListProperty([0, 0.5, 0])
     hue = NumericProperty(0)
     lightness = NumericProperty(0.5)
     saturation = NumericProperty(0)  # 初期値を0に変更
+    before_edit = NumericProperty(0)
+    after_edit = NumericProperty(0)
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -36,6 +39,8 @@ class CWColorWheel(MDBoxLayout):
         
         Clock.schedule_once(self.draw_wheel)
         self.bind(pos=self.update_wheel, size=self.update_wheel)
+        self._ignore_next_up = False
+        self._single_tap_event = None
     
     def draw_wheel(self, dt):
         self.wheel_radius = min(self.size[0], self.size[1]) / 2
@@ -100,30 +105,50 @@ class CWColorWheel(MDBoxLayout):
     
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
+            self.before_edit += 1
             if touch.is_double_tap:
+                if self._single_tap_event:
+                    self._single_tap_event.cancel()
+                self._ignore_next_up = True
                 self._reset_color()
-                return True
             else:
-                self._update_color_from_touch(touch)
-                return True
+                self._ignore_next_up = True
+                touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
+                self._single_tap_event = Clock.schedule_once(
+                    lambda dt: self.on_single_tap(touch_info),
+                    KVConfig.getint('postproc', 'double_tap_time') * 0.001 + 0.1
+                )
+            return True
         return super().on_touch_down(touch)
+    
+    def on_single_tap(self, touch_info):
+        self._update_color_from_touch(touch_info)
+        self.after_edit += 1
     
     def on_touch_move(self, touch):
         if self.collide_point(*touch.pos):
-            self._update_color_from_touch(touch)
+            touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
+            self._update_color_from_touch(touch_info)
             return True
         return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._ignore_next_up:
+            self._ignore_next_up = False
+            return True
+        self.after_edit += 1
+        return super().on_touch_up(touch)
 
     def _reset_color(self):
         self.hue = 0
         self.lightness = 0.5
         self.saturation = 0
-        self.selected_color = [0.5, 0.5, 0.5, 1]
+        self.selected_color = [0, 0.5, 0]
         self.update_marker()
     
-    def _update_color_from_touch(self, touch):
-        dx = touch.pos[0] - self.center_x
-        dy = touch.pos[1] - self.center_y
+    def _update_color_from_touch(self, touch_info):
+        dx = touch_info['x'] - self.center_x
+        dy = touch_info['y'] - self.center_y
         
         distance = math.sqrt(dx ** 2 + dy ** 2)
         if distance >= self.wheel_radius:
@@ -136,14 +161,11 @@ class CWColorWheel(MDBoxLayout):
             angle += 2 * math.pi
         self.hue = angle / (2 * math.pi)
         
-        r, g, b = hls_to_rgb(self.hue, self.lightness, self.saturation)
-        self.selected_color = [r, g, b, 1]
+        self.selected_color = [self.hue, self.lightness, self.saturation]
         self.update_marker()
 
-    def _set_color_from_rgb(self, rgba):
-        # RGBをHLSに変換
-        r, g, b, a = rgba
-        hue, lightness, saturation = rgb_to_hls(r, g, b)
+    def _set_color_from_hls(self, hls):
+        hue, lightness, saturation = hls
         
         # プロパティを更新
         self.hue = hue
@@ -151,36 +173,37 @@ class CWColorWheel(MDBoxLayout):
         self.saturation = saturation
         
         # 選択色を更新
-        self.selected_color = [r, g, b, 1]
+        self.selected_color = [hue, lightness, saturation]
         
         # マーカーの位置を更新
         self.update_marker()
 
 class CWColorPicker(MDCard):
-    current_color = ListProperty([0.5, 0.5, 0.5, 1])
+    current_color = ListProperty([0, 0.5, 0])
+    before_edit = NumericProperty(0)
+    after_edit = NumericProperty(0)
 
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)
 
         self.ids.color_wheel.bind(selected_color=self.on_wheel_color)
+        self.ids.color_wheel.bind(before_edit=self.on_wheel_before_edit)
+        self.ids.color_wheel.bind(after_edit=self.on_wheel_after_edit)
         self.bind(current_color=self.on_current_color)
 
-    def update_preview(self, instance, value):
-        self.ids.preview.color = value
-
     def on_current_color(self, instance, value):
-        r, g, b, _ = self.current_color
-        self.ids.slider_red.set_slider_value(r * 255)
-        self.ids.slider_green.set_slider_value(g * 255)
-        self.ids.slider_blue.set_slider_value(b * 255)
-
-        h, l, s = rgb_to_hls(r, g, b)
+        h, l, s = value
         self.ids.slider_hue.set_slider_value(h * 360)
         self.ids.slider_lum.set_slider_value(l * 100)
         self.ids.slider_sat.set_slider_value(s * 100)
 
-        self.ids.color_wheel._set_color_from_rgb(self.current_color)
-        self.update_preview(instance, value)
+        r, g, b = hls_to_rgb(h, l, s)
+        self.ids.slider_red.set_slider_value(r * 255)
+        self.ids.slider_green.set_slider_value(g * 255)
+        self.ids.slider_blue.set_slider_value(b * 255)
+
+        self.ids.color_wheel._set_color_from_hls(value)
+        self.ids.preview.color = self.get_current_color_rgb()
 
     def on_wheel_color(self, instance, value):
         self.current_color = value
@@ -189,17 +212,34 @@ class CWColorPicker(MDCard):
         r = self.ids.slider_red.value / 255
         g = self.ids.slider_green.value / 255
         b = self.ids.slider_blue.value / 255
-        self.current_color = [r, g, b, 1]
+        h, l, s = rgb_to_hls(r, g, b)
+        self.current_color = [h, l, s]
 
     def on_slider_change_hls(self):
         h = self.ids.slider_hue.value / 360
         l = self.ids.slider_lum.value / 100
         s = self.ids.slider_sat.value / 100
-        r, g, b = hls_to_rgb(h, l, s)
-        self.current_color = [r, g, b, 1]
+        self.current_color = [h, l, s]
 
-    def get_current_color_hls(self):
-        return rgb_to_hls(*self.current_color)
+    def set_slider_value(self, value):
+        h, l, s = value
+        self.current_color = [h / 360, l / 100, s / 100]
+
+    def get_current_color_rgb(self):
+        r, g, b = hls_to_rgb(*self.current_color)
+        return [r, g, b, 1]
+
+    def on_wheel_before_edit(self, instance, value):
+        self.before_edit += 1
+
+    def on_wheel_after_edit(self, instance, value):
+        self.after_edit += 1
+
+    def on_slider_before_edit(self):
+        self.before_edit += 1
+
+    def on_slider_after_edit(self):
+        self.after_edit += 1
 
 class MainScreen(MDScreen):
     pass

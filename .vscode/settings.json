@@ -9,5 +9,6 @@
         "__locale": "cpp"
     },
     "git.ignoreLimitWarning": true,
-    "cmake.sourceDirectory": "/Users/uniuyuni/PythonProjects/platypus/detectron2/tools/deploy"
+    "cmake.sourceDirectory": "/Users/uniuyuni/PythonProjects/platypus/detectron2/tools/deploy",
+    "chat.disableAIFeatures": true
 }

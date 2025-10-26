@@ -4,13 +4,16 @@
     height: 10  # ここで縦幅を調整
 
 <HistoryItem>:
-    size_hint_y: None
-    ref_height: 20  # リストアイテムの高さ
-    color: (.8, .8, .8, 1) if self.active == True else (.4, .4, .4, 1)
+    _txt_bot_pad: 6
+    _txt_left_pad: 0
+    _txt_right_pad: 0
+    _txt_top_pad: 0
+    on_kv_post:
+        self.ids._lbl_primary.font_size = '10pt'
 
     canvas.before:
         Color:
-            rgba: (0, 1, 1, 0.3) if self.is_selected else (0, 0, 0, 1)
+            rgba: (0, 1, 1, 0.3) if self.selected else (0, 0, 0, 1)
         Rectangle:
             pos: self.pos
             size: self.size
@@ -19,17 +22,24 @@
 
 <HistoryContentPanel>:
     orientation: "vertical"
-    spacing: "10dp"
-    size_hint_y: None
-    ref_height: 300
+#    size_hint_y: None
+#    ref_height: 150
 
-    MDRecycleView:
+    Label:
+        text: "History"
+        halign: 'left'
+
+    RecycleView:
         id: history_rv
         viewclass: 'HistoryItem'
+        do_scroll_y: True
+        scroll_type: ['bars', 'content']
+        size_hint_y: None
+        ref_height: 150
 
         SelectableRecycleBoxLayout:
             orientation: 'vertical'
             default_size_hint: 1, None
-            default_size: None, 35
+            default_size: None, dp(20)
             size_hint_y: None
             height: self.minimum_height

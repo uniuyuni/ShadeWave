@@ -43,7 +43,7 @@
 
             CWColorPreview:
                 id: preview
-                color: root.current_color
+                color: root.get_current_color_rgb()
 
             ParamSlider:
                 text: 'R:'
@@ -54,6 +54,8 @@
                 max: 255
                 value: 127.5
                 on_slider: root.on_slider_change_rgb()
+                on_before_edit: root.on_slider_before_edit()
+                on_after_edit: root.on_slider_after_edit()
 
             ParamSlider:
                 text: 'G:'
@@ -64,6 +66,8 @@
                 max: 255
                 value: 127.5
                 on_slider: root.on_slider_change_rgb()
+                on_before_edit: root.on_slider_before_edit()
+                on_after_edit: root.on_slider_after_edit()
 
             ParamSlider:
                 text: 'B:'
@@ -74,6 +78,8 @@
                 max: 255
                 value: 127.5
                 on_slider: root.on_slider_change_rgb()
+                on_before_edit: root.on_slider_before_edit()
+                on_after_edit: root.on_slider_after_edit()
 
             ParamSlider:
                 text: 'H:'
@@ -84,6 +90,8 @@
                 max: 360
                 value: 0
                 on_slider: root.on_slider_change_hls()
+                on_before_edit: root.on_slider_before_edit()
+                on_after_edit: root.on_slider_after_edit()
 
             ParamSlider:
                 text: 'L:'
@@ -94,6 +102,8 @@
                 max: 100
                 value: 50
                 on_slider: root.on_slider_change_hls()
+                on_before_edit: root.on_slider_before_edit()
+                on_after_edit: root.on_slider_after_edit()
 
             ParamSlider:
                 text: 'S:'
@@ -104,3 +114,6 @@
                 max: 100
                 value: 0
                 on_slider: root.on_slider_change_hls()
+                on_before_edit: root.on_slider_before_edit()
+                on_after_edit: root.on_slider_after_edit()
+

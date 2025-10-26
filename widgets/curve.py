@@ -44,10 +44,12 @@ class CurveWidget(Widget):
     start_y = NumericProperty(0.0)
     end_x = NumericProperty(1.0)
     end_y = NumericProperty(1.0)
+    before_edit = NumericProperty(-1)
+    after_edit = NumericProperty(-1)
 
     def __init__(self, **kwargs):
         super(CurveWidget, self).__init__(**kwargs)
-
+        self.touch_self = False
 
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)
@@ -65,6 +67,8 @@ class CurveWidget(Widget):
         if not self.collide_point(*touch.pos):
             return False
         
+        self.touch_self = True
+        
         local_x = (touch.x - self.x)/self.width
         local_y = (touch.y - self.y)/self.height
 
@@ -73,20 +77,24 @@ class CurveWidget(Widget):
                 if point not in [self.start_point, self.end_point] and point.collide_point(local_x, local_y, self.width, self.height):
                     self.points.remove(point)
                     self.__update_curve()
+                    self.before_edit = self.curve
                     self.curve += 1
-                    return
+                    return True
         else:
             for point in self.points:
                 if point.collide_point(local_x, local_y, self.width, self.height):
                     self.selected_point = point
-                    return  # Select existing point
+                    self.before_edit = self.curve
+                    return True # Select existing point
                 
             point = DraggablePoint()
             point.x, point.y = local_x, local_y
             self.points.append(point)
             self.selected_point = point
             self.__update_curve()
+            self.before_edit = self.curve
             self.curve += 1
+            return True
 
     def on_touch_move(self, touch):
         if not self.collide_point(*touch.pos):
@@ -105,9 +113,16 @@ class CurveWidget(Widget):
             self.selected_point.x, self.selected_point.y = new_x, new_y
             self.__update_curve()
             self.curve += 1
+        return True
 
     def on_touch_up(self, touch):
-        self.selected_point = None
+        if self.touch_self:
+            self.selected_point = None
+            if self.before_edit != self.curve:
+                self.after_edit = self.curve
+            self.touch_self = False
+            return True
+        return False
 
     def update_grid(self, instance, size):
         self.__update_points()

@@ -1483,6 +1483,12 @@ class CLAHEEffect(Effect):
     
 class CurveEffect(Effect):
 
+    def get_param_dict(self, param, subname):
+        ef = self.effects.get(subname, None)
+        if ef is not None:
+            return ef.get_param_dict(param)
+        return None
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -1655,9 +1661,11 @@ class GradingEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids["grading" + self.numstr].set_point_list(self.get_param(param, 'grading' + self.numstr))
-        widget.ids["grading" + self.numstr + "_color_picker"].ids['slider_hue'].set_slider_value(self.get_param(param, 'grading' + self.numstr + '_hue'))
-        widget.ids["grading" + self.numstr + "_color_picker"].ids['slider_lum'].set_slider_value(self.get_param(param, 'grading' + self.numstr + '_lum'))
-        widget.ids["grading" + self.numstr + "_color_picker"].ids['slider_sat'].set_slider_value(self.get_param(param, 'grading' + self.numstr + '_sat'))
+        widget.ids["grading" + self.numstr + "_color_picker"].set_slider_value(
+            [self.get_param(param, 'grading' + self.numstr + '_hue'),
+             self.get_param(param, 'grading' + self.numstr + '_lum'),
+             self.get_param(param, 'grading' + self.numstr + '_sat')]
+        )
 
     def set2param(self, param, widget):
         param["grading" + self.numstr] = widget.ids["grading" + self.numstr].get_point_list(True)
@@ -1695,6 +1703,9 @@ class GradingEffect(Effect):
         return core.apply_mask(rgb, blend, rgb * rgbs)
 
 class VSandSaturationEffect(Effect):
+
+    def get_param_dict(self, param, subname):
+        return self.effects[subname].get_param_dict(param)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
