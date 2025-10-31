@@ -1110,6 +1110,9 @@ class HLS2RGBEffect(Effect):
 
 class HLSEffect(Effect):
 
+    def get_param_dict(self, param, subname):
+        return self.hls_effects[subname].get_param_dict(param)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
