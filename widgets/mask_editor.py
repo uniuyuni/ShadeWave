@@ -39,6 +39,9 @@ class MaskEditor(KVImage):
     def clear_mask(self):
         self.mask = np.zeros((self.canvas_height, self.canvas_width, 4), dtype=np.uint8)
 
+    def delay_update_canvas(self, *args):
+        Clock.schedule_once(self.update_canvas, 0.1)
+
     def update_canvas(self, *args):
         # Update canvas with the current mask
         self.canvas_texture.blit_buffer(self.mask.tobytes(), colorfmt='rgba', bufferfmt='ubyte')

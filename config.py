@@ -18,7 +18,7 @@ def init_config(widget):
         'raw_depth_expansion': False,
         'scale_threshold': 0.5,
         'iopaint_model': "lama",
-        'iopaint_resize_limit': 1280,
+        'iopaint_resize_limit': 1024,
         'iopaint_use_realesrgan': True,
         'display_color_gamut': "sRGB",
         'gpu_device': "mps",
