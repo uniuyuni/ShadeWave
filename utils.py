@@ -6,7 +6,7 @@ import numpy as np
 import json
 import logging
 import numpy as np
-
+import pyvips
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -127,18 +127,16 @@ def print_nan_inf(img, label=""):
     if nan_count > 0 or inf_count > 0:
         logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
 
-
 def convert_image_to_list(image):
     # 画像を処理できる方に変換
-    img = (image * 65535).astype(np.uint16)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    img = (image * 255).astype(np.uint8)
 
-    # 圧縮＆パック
-    is_success, buffer = cv2.imencode(".jp2", img, [cv2.IMWRITE_JPEG2000_COMPRESSION_X1000, 1000])
-    if is_success is None:
-        return None
+    # データ読み込み
+    vips = pyvips.Image.new_from_array(img)
+    buffer = vips.write_to_buffer('.jxl', lossless=True)
+    arr = np.frombuffer(buffer, dtype=np.uint8)
 
-    pack_buffer, original_len = pack_uint8_to_uint32(buffer)
+    pack_buffer, original_len = pack_uint8_to_uint32(arr)
     list_buffer = pack_buffer #pack_buffer.tolist()
     save_data = (list_buffer, original_len)
 
@@ -149,13 +147,12 @@ def convert_image_from_list(save_data):
     list_buffer, original_len = save_data
     array_buffer = list_buffer #np.array(list_buffer, dtype=np.uint32)
     unpack_buffer = unpack_uint32_to_uint8(array_buffer, original_len)
-    img = cv2.imdecode(unpack_buffer, cv2.IMREAD_UNCHANGED)
+    img = pyvips.Image.new_from_buffer(unpack_buffer.tobytes(), "").numpy()
 
     # 画像を処理できる方に変換
-    image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    image = image.astype(np.float32) / 65535
+    img = img.astype(np.float32) / 255
 
-    return image
+    return img
 
 def pack_uint8_to_uint32(uint8_arr):
     """

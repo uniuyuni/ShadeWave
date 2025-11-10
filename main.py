@@ -68,6 +68,7 @@ os.environ['JAX_LOG_VERBOSITY'] = '0'
 jax.config.update("jax_platform_name", "METAL")
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
+#os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
 
 if __name__ == '__main__':
 
@@ -263,6 +264,7 @@ if __name__ == '__main__':
                 if self.history.undo(self):
                     self.history_panel.set_history(self.history)
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                    self._set_diff_list_to_inpaint_edit()
                     self.start_draw_image()
 
         def _redo(self):        
@@ -270,6 +272,7 @@ if __name__ == '__main__':
                 if self.history.redo(self):
                     self.history_panel.set_history(self.history)
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                    self._set_diff_list_to_inpaint_edit()
                     self.start_draw_image()
 
         def _on_history_selected(self, index):
@@ -279,6 +282,7 @@ if __name__ == '__main__':
                     self.history.undo(self)
                 self.history_panel.set_history(self.history)
                 #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                self._set_diff_list_to_inpaint_edit()
                 self.start_draw_image()
 
             elif index >= self.history.current_index:
@@ -287,6 +291,7 @@ if __name__ == '__main__':
                     self.history.redo(self)
                 self.history_panel.set_history(self.history)
                 #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                self._set_diff_list_to_inpaint_edit()
                 self.start_draw_image()
 
         def reset_param(self, param):
@@ -533,10 +538,7 @@ if __name__ == '__main__':
                 self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_inpaint_edit)
-                boxes = []
-                for inpaint_diff in self.primary_param.get('inpaint_diff_list', []):
-                    boxes.append(inpaint_diff.disp_info)
-                self.inpaint_edit.set_boxes(boxes)
+                self._set_diff_list_to_inpaint_edit()
                 self.ids['preview_widget'].add_widget(self.inpaint_edit)
                 #print(f"Inpaint x:{self.inpaint_edit.x}, y:{self.inpaint_edit.y}")
                 #print(f"Preview x:{self.ids['preview'].x}, y:{self.ids['preview'].y}")
@@ -548,8 +550,17 @@ if __name__ == '__main__':
                 del self.inpaint_edit
                 self.inpaint_edit = None
 
+        def _set_diff_list_to_inpaint_edit(self):
+            if self.inpaint_edit is not None:
+                boxes = []
+                for inpaint_diff in self.primary_param.get('inpaint_diff_list', []):
+                    boxes.append(inpaint_diff.disp_info)
+                self.inpaint_edit.set_boxes(boxes)
+
         def _on_inpaint_edit(self, deleted_index, deleted_box):
+            self.begin_effect_ctrl(0, 'inpaint')
             self.primary_param['inpaint_diff_list'].pop(deleted_index)
+            self.end_effect_ctrl(0, 'inpaint')
             self.apply_effects_lv(0, 'inpaint')
 
         def on_inpaint_edit_press(self, value):
@@ -667,7 +678,7 @@ if __name__ == '__main__':
             config.init_config(self.main_widget)
             config.load_config()
 
-            display = kvutils.get_current_dispay()
+            display = kvutils.get_current_display()
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
             KVWindow.left = (display["width"] - display["width"] * 0.9) // 2
             KVWindow.top = (display["height"] - display["height"] * 0.9) // 2

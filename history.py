@@ -3,6 +3,7 @@ import uuid
 from typing import List, Dict, Any
 import numpy as np
 import logging
+from kivymd.app import MDApp
 
 class Operation:
 
@@ -32,7 +33,11 @@ class Operation:
 
         # バックアップを作成
         for key in ef_dict.keys():
-            self.backup[key] = param.get(key, ef_dict[key])
+            val = param.get(key, ef_dict[key])
+            if isinstance(val, list):
+                self.backup[key] = val.copy()
+            else:
+                self.backup[key] = val
         
         return (self.lv, self.effect)
     
@@ -50,7 +55,11 @@ class Operation:
 
         # アップデートを作成
         for key in ef_dict.keys():
-            self.update[key] = param.get(key, ef_dict[key])
+            val = param.get(key, ef_dict[key])
+            if isinstance(val, list):
+                self.update[key] = val.copy()
+            else:
+                self.update[key] = val
 
         # 差分を作成
         self.diff = [
@@ -108,7 +117,7 @@ class History:
     def redo(self, widget) -> bool:
         """1つ先の状態に進む"""
         if self.can_redo():
-            self.operations[self.current_index].redo(widget)
+            self.operations[self.current_index+1].redo(widget)
             self.current_index += 1
             return True
         return False
@@ -136,3 +145,6 @@ class History:
                 "active": i < self.current_index
             })
         return info
+
+def get_history_ctrl():
+    return MDApp.get_running_app().main_widget

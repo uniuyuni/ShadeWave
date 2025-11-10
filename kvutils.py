@@ -3,7 +3,12 @@ from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
 from screeninfo import get_monitors
 
-def get_current_dispay():
+def get_root_widget(widget):
+    while widget.parent is not widget:
+        widget = widget.parent
+    return widget.children[0]
+
+def get_current_display():
     # 現在のウィンドウの左上座標
     win_x, win_y = KVWindow.left, KVWindow.top
 

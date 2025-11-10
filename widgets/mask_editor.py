@@ -11,15 +11,17 @@ from kivy.clock import Clock
 import cv2
 import numpy as np
 
+import kvutils
+
 
 class MaskEditor(KVImage):
     brush_size = KVNumericProperty(300)
     zoom = KVNumericProperty(1.0)
 
-    def __init__(self, width=512*2, height=512*2, **kwargs):
-        super(MaskEditor, self).__init__(**kwargs)
-        self.canvas_width = width
-        self.canvas_height = height
+    def __init__(self, param, **kwargs):
+        super(MaskEditor, self).__init__()
+        self.canvas_width = param.get('img_size', (512, 512))[0]
+        self.canvas_height = param.get('img_size', (512, 512))[1]
         self.drawing = False
         self.erasing = False
         self.clear_mask()
@@ -27,6 +29,9 @@ class MaskEditor(KVImage):
         self.canvas_texture.flip_vertical()
         self.update_canvas()
         self.bind(size=self.update_canvas, pos=self.update_canvas)
+        self.callback_param = param
+        self.effect_ctrl_param = kwargs.get('effect_ctrl_param', None)
+        self.touch_up_callback = kwargs.get('touch_up_callback', None)
 
         Clock.schedule_once(self.create_ui, -1)
 
@@ -72,6 +77,13 @@ class MaskEditor(KVImage):
     def on_touch_up(self, touch):
         self.drawing = False
         self.erasing = False
+        if self.collide_point(*touch.pos):
+            if self.touch_up_callback:
+                if self.effect_ctrl_param:
+                    kvutils.get_root_widget(self).begin_effect_ctrl(*self.effect_ctrl_param)
+                self.touch_up_callback(self.callback_param, self.get_mask())
+                if self.effect_ctrl_param:
+                    kvutils.get_root_widget(self).end_effect_ctrl(*self.effect_ctrl_param)
         return super(MaskEditor, self).on_touch_up(touch)
 
     def get_shift_pos(self):
@@ -139,6 +151,10 @@ class MaskEditor(KVImage):
     def save_mask(self, filepath):
         image = KVImage.fromarray(self.mask)
         image.save(filepath, format='PNG')
+
+    def add_mask(self, disp_info, image):
+        proc_x, proc_y, proc_w, proc_h = disp_info
+        self.mask[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w] = np.stack([image] * 4, axis=-1)
 
 class MyApp(KVApp):
     def build(self):

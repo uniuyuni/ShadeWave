@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 import splitimage
-import aiutil
+import aiutils
 import core
 
 # DashScope APIキーを設定
@@ -97,7 +97,7 @@ def predict_helper(image, mask, bbox, predict_func):
     target_height = max(1024, (bbox[3] * 2 + 7) // 8 * 8)  # 8の倍数に切り上げ
 
     # 拡張された切り抜き範囲を計算
-    x, y, w, h = aiutil.calculate_expanded_crop(
+    x, y, w, h = aiutils.calculate_expanded_crop(
         img_width=image.shape[1],
         img_height=image.shape[0],
         x=bbox[0],

@@ -1,6 +1,5 @@
 
 import cv2
-from cv2.gapi import crop
 import numpy as np
 import jax.numpy as jnp
 import importlib
@@ -25,7 +24,7 @@ import params
 import utils
 import helpers.mediapipe_helper
 import helpers.qwen_image_helper as qih
-import aiutil
+import aiutils
 from processing_dialog import wait_prosessing
 
 from widgets.mask_editor import MaskEditor
@@ -156,6 +155,7 @@ class SubpixelShiftEffect(Effect):
 
 class InpaintDiff:
     def __init__(self, **kwargs):
+        self.type = kwargs.get('type', "mask")
         self.disp_info = kwargs.get('disp_info', None)
         self.image = kwargs.get('image', None)
 
@@ -175,6 +175,7 @@ class InpaintEffect(Effect):
         super().__init__(**kwargs)
         
         self.inpaint_diff_list = []
+        self.inpaint_mask_list = []
         self.mask_editor = None
 
     def get_param_dict(self, param):
@@ -182,11 +183,20 @@ class InpaintEffect(Effect):
             'inpaint': 0,
             'inpaint_predict': 0,
             'inpaint_diff_list': [],
+            'inpaint_mask_list': [],
         }
 
     def set2widget(self, widget, param):
         widget.ids["switch_inpaint"].active = False if self.get_param(param, 'inpaint') == 0 else True
         widget.ids["button_inpaint_predict"].state = "normal" if self.get_param(param, 'inpaint_predict') == 0 else "down"
+
+        # 履歴描画
+        if self.mask_editor is not None:
+            self.mask_editor.clear_mask()
+            self.inpaint_mask_list = self.get_param(param, 'inpaint_mask_list')
+            for inpaint_mask in self.inpaint_mask_list:
+                self.mask_editor.add_mask(inpaint_mask.disp_info, inpaint_mask.image)
+            self.mask_editor.delay_update_canvas()
 
     def set2param(self, param, widget):
         param['inpaint'] = 0 if widget.ids["switch_inpaint"].active == False else 1
@@ -194,18 +204,24 @@ class InpaintEffect(Effect):
 
         if param['inpaint'] > 0:
             if self.mask_editor is None:
-                self.mask_editor = MaskEditor(param['img_size'][0], param['img_size'][1])
+                self.mask_editor = MaskEditor(param,
+                                              effect_ctrl_param=(0, 'inpaint'),
+                                              touch_up_callback=self.mask_editor_touch_up)
                 self.mask_editor.zoom = params.get_disp_info(param)[4]
                 self.mask_editor.pos = [0, 0]
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
+                param['inpaint_mask_list'] = self.inpaint_mask_list = []
             
         if param['inpaint'] <= 0:
             if self.mask_editor is not None:
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
                 self.mask_editor = None
+                param['inpaint_mask_list'] = self.inpaint_mask_list = []
 
     def make_diff(self, img, param, efconfig):
         self.inpaint_diff_list = self.get_param(param, 'inpaint_diff_list')
+        self.inpaint_mask_list = self.get_param(param, 'inpaint_mask_list')
+
         ip = self.get_param(param, 'inpaint')
         ipp = self.get_param(param, 'inpaint_predict')
         if (ip > 0 and ipp > 0) is True:
@@ -213,29 +229,23 @@ class InpaintEffect(Effect):
 
             mask = self.mask_editor.get_mask().astype(np.float32) / 255.0
 
-            # イメージが四角く処理されていた場合のオフセット計算
-            w, h = param['original_img_size']
-            eh, ew = img.shape[:2]
-            x, y = (ew-w)//2, (eh-h)//2
+            for inpaint_mask in self.inpaint_mask_list:
+                proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
 
-            # 処理
-            bboxes = core.get_multiple_mask_bbox(self.mask_editor.get_mask()) # ぼかしてないもので処理
-            for bbox in bboxes:
-                proc_x, proc_y, proc_w, proc_h = aiutil.calculate_expanded_crop(
-                                                    img.shape[1], img.shape[0],
-                                                    bbox[0] + x, bbox[1] + y, bbox[2], bbox[3],
-                                                    32, 32)
-
-                img2 = qih.predict_helper(img, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace)
-                #img2 = img
+                #img2 = qih.predict_helper(img, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace)
+                img2 = img
 
                 # 範囲を記録
                 self.inpaint_diff_list.append(
-                    InpaintDiff(disp_info=(proc_x, proc_y, proc_w, proc_h),
+                    InpaintDiff(type="image",
+                                disp_info=(proc_x, proc_y, proc_w, proc_h),
                                 image=img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
 
             param['inpaint_diff_list'] = self.inpaint_diff_list
+            
+            # マスク消去
             self.mask_editor.clear_mask()
+            param['inpaint_mask_list'] = self.inpaint_mask_list = []
             self.mask_editor.delay_update_canvas()
         
         param_hash = hash((len(self.inpaint_diff_list)))
@@ -243,9 +253,10 @@ class InpaintEffect(Effect):
             if len(self.inpaint_diff_list) > 0:
                 img2 = img.copy()
                 for inpaint_diff in self.inpaint_diff_list:
-                    inpaint_diff.list2image()   # データを変換する必要があるときがある
-                    cx, cy, cw, ch = inpaint_diff.disp_info
-                    img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
+                    if inpaint_diff.type == "image":
+                        inpaint_diff.list2image()   # データを変換する必要があるときがある
+                        cx, cy, cw, ch = inpaint_diff.disp_info
+                        img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
                 self.diff = img2
             else:
                 self.diff = None
@@ -253,6 +264,29 @@ class InpaintEffect(Effect):
 
         return self.diff
 
+    def mask_editor_touch_up(self, param, mask):
+        
+        # イメージが四角く処理されていた場合のオフセット計算
+        w, h = param['original_img_size']
+        eh, ew = mask.shape[:2]
+        x, y = (ew-w)//2, (eh-h)//2
+
+        # 処理
+        self.inpaint_mask_list = []
+        bboxes = core.get_multiple_mask_bbox(mask)
+        for bbox in bboxes:
+            proc_x, proc_y, proc_w, proc_h = aiutils.calculate_expanded_crop(
+                                                mask.shape[1], mask.shape[0],
+                                                bbox[0] + x, bbox[1] + y, bbox[2], bbox[3],
+                                                32, 32)
+
+            # 範囲を記録
+            self.inpaint_mask_list.append(
+                InpaintDiff(type="mask",
+                            disp_info=(proc_x, proc_y, proc_w, proc_h),
+                            image=mask[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
+
+        param['inpaint_mask_list'] = self.inpaint_mask_list
 
 # 画像回転、反転
 class DistortionEffect(Effect):

@@ -6,6 +6,7 @@ from datetime import datetime as dt
 import config
 import define
 import core
+import effects
 
 SPECIAL_PARAM = [
     # for set_image_param
@@ -185,7 +186,7 @@ def _inpaint_dump(param):
         inpaint_diff_list_dumps = []
         for inpaint_diff in inpaint_diff_list:
             inpaint_diff.image2list()
-            inpaint_diff_list_dumps.append((inpaint_diff.disp_info, inpaint_diff.image))
+            inpaint_diff_list_dumps.append((inpaint_diff.type, inpaint_diff.disp_info, inpaint_diff.image))
         param['inpaint_diff_list'] = inpaint_diff_list_dumps
 
 def _inpaint_load(param):
@@ -193,7 +194,7 @@ def _inpaint_load(param):
     if inpaint_diff_list_dumps is not None:
         inpaint_diff_list = []
         for inpaint_diff_dump in inpaint_diff_list_dumps:
-            inpaint_diff = InpaintDiff(disp_info=inpaint_diff_dump[0], image=inpaint_diff_dump[1])
+            inpaint_diff = effects.InpaintDiff(type=inpaint_diff_dump[0], disp_info=inpaint_diff_dump[1], image=inpaint_diff_dump[2])
             inpaint_diff.list2image()
             inpaint_diff_list.append(inpaint_diff)
         param['inpaint_diff_list'] = inpaint_diff_list

@@ -21,6 +21,7 @@ from PIL import ImageCms
 from multipledispatch import dispatch
 import json
 from typing import Any, Dict
+import base64
 
 import highlight_recovery
 import sigmoid
@@ -2118,7 +2119,7 @@ class CompactNumpyEncoder(json.JSONEncoder):
         # NumPyスカラーの処理
         if isinstance(obj, np.generic):
             return obj.item()
-            
+                    
         return super().default(obj)
     
     def _compress_array(self, array: np.ndarray) -> Dict[str, Any]:

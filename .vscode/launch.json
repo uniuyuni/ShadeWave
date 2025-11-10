@@ -18,7 +18,7 @@
                      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
             }
     
-        }
+        },
         {
             "name": "Python デバッガー: main.py",
             "type": "debugpy",
@@ -28,7 +28,8 @@
             "env": { "ENABLE_PJRT_COMPATIBILITY": "1",
                      "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
                      "PYTORCH_ENABLE_MPS_FALLBACK": "1",
-                     "KMP_DUPLICATE_LIB_OK": "TRUE"
+                     "KMP_DUPLICATE_LIB_OK": "TRUE",
+                     "DYLD_FALLBACK_LIBRARY_PATH": "/usr/lib:/usr/local/lib:/opt/homebrew/lib:${env:DYLD_FALLBACK_LIBRARY_PATH}",
             }
         }
     ]

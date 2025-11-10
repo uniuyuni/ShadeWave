@@ -6,7 +6,7 @@ from PIL import Image
 from io import BytesIO
 
 import splitimage
-import aiutil
+import aiutils
 import core
 
 def setup():
@@ -44,7 +44,7 @@ def predict_helper(client, image, mask, bbox):
     target_height = max(1024, (bbox[3] * 2 + 7) // 8 * 8)  # 8の倍数に切り上げ
 
     # 拡張された切り抜き範囲を計算
-    x, y, w, h = aiutil.calculate_expanded_crop(
+    x, y, w, h = aiutils.calculate_expanded_crop(
         img_width=image.shape[1],
         img_height=image.shape[0],
         x=bbox[0],

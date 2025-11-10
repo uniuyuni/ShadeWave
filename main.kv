@@ -1183,12 +1183,17 @@
                                 ParamChip:
                                     id: switch_inpaint
                                     on_active: root.apply_effects_lv(0, 'inpaint')
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_effect_ctrl(0, 'inpaint')
+                                    on_touch_up: root.end_effect_ctrl(0, 'inpaint')
                                     ParamChipText:
                                         text: "Make mask"
                                 ParamChip:
                                     type: 'assist'
                                     id: button_inpaint_predict
                                     on_press: root.apply_effects_lv(0, 'inpaint')
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_effect_ctrl(0, 'inpaint')
+                                    on_touch_up: root._set_diff_list_to_inpaint_edit()
+                                    on_touch_up: root.end_effect_ctrl(0, 'inpaint')
                                     ParamChipText:
                                         text: "Erase"
                                 ToggleButton:
