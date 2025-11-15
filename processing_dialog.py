@@ -5,7 +5,6 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from kivy.clock import Clock
-from functools import partial
 
 class _ProcessingDialog():
 

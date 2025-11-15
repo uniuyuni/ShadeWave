@@ -4,10 +4,11 @@ import cv2
 
 def lensblur_filter(image, radius):
     # カーネルを生成
-    kernel_size = 2 * radius + 1
+    kernel_size = int(2 * radius + 1)
     kernel = np.zeros((kernel_size, kernel_size), np.float32)
     
     # カーネルに円を描く
+    radius = int(radius)
     cv2.circle(kernel, (radius, radius), radius, 1, -1)
     kernel /= np.sum(kernel)
 

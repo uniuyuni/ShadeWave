@@ -80,10 +80,10 @@ class MaskEditor(KVImage):
         if self.collide_point(*touch.pos):
             if self.touch_up_callback:
                 if self.effect_ctrl_param:
-                    kvutils.get_root_widget(self).begin_effect_ctrl(*self.effect_ctrl_param)
+                    kvutils.get_root_widget(self).begin_history_effect_ctrl(*self.effect_ctrl_param)
                 self.touch_up_callback(self.callback_param, self.get_mask())
                 if self.effect_ctrl_param:
-                    kvutils.get_root_widget(self).end_effect_ctrl(*self.effect_ctrl_param)
+                    kvutils.get_root_widget(self).end_history_effect_ctrl(*self.effect_ctrl_param)
         return super(MaskEditor, self).on_touch_up(touch)
 
     def get_shift_pos(self):

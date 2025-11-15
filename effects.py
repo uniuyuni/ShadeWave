@@ -889,7 +889,8 @@ class GlowEffect(Effect):
                 hls[:,:,1] = core.apply_level_adjustment(hls[:,:,1], gb, 127+gg/2, 255)
                 rgb2 = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
                 if gg > 0:
-                    rgb2 = filter.lensblur_filter(rgb2, (gg * 2 * efconfig.resolution_scale) | 1) 
+                    radius = gg * 10 * efconfig.resolution_scale
+                    rgb2 = filter.lensblur_filter(rgb2, 1 if radius <= 0 else radius) 
                 go = go/100.0
                 self.diff = cv2.addWeighted(rgb, 1.0-go, core.blend_screen(rgb, rgb2), go, 0)
                 self.hash = param_hash

@@ -4,6 +4,7 @@ import numpy as np
 import math
 import cv2
 import time
+import uuid
 
 from kivy.app import App
 from kivy.core.window import Window
@@ -33,6 +34,7 @@ import helpers.facer_helper
 import expand_mask
 import config
 from processing_dialog import wait_prosessing
+from history import LayerCtrl, get_history_ctrl
 
 MASKTYPE_CIRCULAR = 'circular'
 MASKTYPE_GRADIENT = 'gradient'
@@ -100,8 +102,9 @@ class BaseMask(Widget):
     selected = BooleanProperty(False)
     active = BooleanProperty(False)
     name = StringProperty("Mask")
+    mask_id = StringProperty(str(uuid.uuid4()))
 
-    def __init__(self, editor, **kwargs):
+    def __init__(self, editor,  **kwargs):
         super().__init__(**kwargs)
         self.editor = editor  # MaskEditorのインスタンスへの参照
         self.control_points = []  # 標準のPythonリストで管理
@@ -116,6 +119,11 @@ class BaseMask(Widget):
         self.is_draw_mask = True
         self.image_mask_cache = None
         self.image_mask_cache_hash = None
+
+    def clear(self):
+        for cp in self.control_points:
+            self.remove_widget(cp)
+        self.control_points = []
 
     def start(self):
         pass
@@ -161,10 +169,12 @@ class BaseMask(Widget):
                 if cp.is_center:
                     self.editor.set_active_mask(self)
                     cp.on_touch_down(touch)
+                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_layers_list().index(self))
                     self.is_draw_mask = True
                     return True
                 elif self.active:
                     cp.on_touch_down(touch)
+                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_layers_list().index(self))
                     self.is_draw_mask = True
                     return True
         return False
@@ -181,6 +191,7 @@ class BaseMask(Widget):
         for cp in self.control_points:
             if cp.touching:
                 cp.on_touch_up(touch)
+                get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_layers_list().index(self))
                 return True
         return False
 
@@ -2026,13 +2037,19 @@ class MaskLayer(BoxLayout):
         self.mask_name = mask.get_name()
 
         btn_delete = Button(text='Del', size_hint=(0.4, 1))
-        btn_delete.bind(on_press=self.delete_mask)
+        btn_delete.bind(on_press=self.pre_delete_mask)
 
         label = Button(text=self.mask_name, size_hint=(0.8, 1), background_normal='', background_color=(0,0,0,1))
         label.bind(on_press=self.set_active)
 
         self.add_widget(label)
         self.add_widget(btn_delete)
+
+    def pre_delete_mask(self, instance):
+        index = self.mask.editor.get_layers_list().index(self.mask)
+        get_history_ctrl().begin_history_layer_ctrl(self.mask.editor, "Create", index)
+        get_history_ctrl().end_history_layer_ctrl(self.mask.editor, "Delete", index)
+        self.delete_mask(instance)
 
     def delete_mask(self, instance):
         self.parent.remove_widget(self)
@@ -2043,7 +2060,7 @@ class MaskLayer(BoxLayout):
         self.mask.editor.set_active_mask(self.mask)
 
 # メインのエディタークラス
-class MaskEditor2(FloatLayout):
+class MaskEditor2(FloatLayout, LayerCtrl):
     mask_layers = ListProperty([])
     active_mask = ObjectProperty(None, allownone=True)
     image_size = ListProperty([0, 0])  # 画像のサイズを保持
@@ -2201,6 +2218,31 @@ class MaskEditor2(FloatLayout):
         
         return self.active_mask
     
+    def find_mask(self, mask_id):
+        for mask in reversed(self.mask_layers):
+            if mask.mask_id == mask_id:
+                return mask
+        return None
+        
+    def update_layer(self, op, index, dict):
+        match op:
+            case "Create":
+                mask = self._create_mask(dict['type'], index)
+                mask.deserialize(dict)
+                mask.update_mask()
+
+            case "Delete":
+                self.layer_list.children[index].delete_mask(self)
+
+            case "Update":
+                mask = self.layer_list.children[index].mask
+                mask.clear()
+                mask.deserialize(dict)
+                mask.update_mask()
+    
+    def get_layer(self, index):
+        return self.mask_layers[index]
+    
     def get_layers_list(self):
         return self.mask_layers
     
@@ -2309,9 +2351,14 @@ class MaskEditor2(FloatLayout):
         self.set_active_mask(None)
         self.create_mask = mask
 
+        # ここで履歴の更新を始める
+        get_history_ctrl().begin_history_layer_ctrl(self, "Delete", self.get_layers_list().index(self.create_mask))
+
     def _create_end_new_mask(self):
         self.ui_layout.disabled = False
         self.set_active_mask(self.create_mask)
+        
+        get_history_ctrl().end_history_layer_ctrl(self, "Create", self.get_layers_list().index(self.create_mask))
 
     def on_touch_down(self, touch):
         if self.disabled == True:
@@ -2337,7 +2384,7 @@ class MaskEditor2(FloatLayout):
         
         return result
 
-    def _create_mask(self, mask_type):
+    def _create_mask(self, mask_type, index=0):
         # マスク作成
         if mask_type == MASKTYPE_CIRCULAR:
             mask = CircularGradientMask(editor=self)
@@ -2358,13 +2405,13 @@ class MaskEditor2(FloatLayout):
         else:
             Logger.error(f"MaskEditor: 不明なマスクタイプ: {self.current_mask_type}")
             return None
-            
-        self.mask_container.add_widget(mask)
-        self.mask_layers.append(mask)
+
+        self.mask_container.add_widget(mask, index)
+        self.mask_layers.insert(index, mask)
 
         # レイヤーUIに追加
         layer = MaskLayer(mask=mask)
-        self.layer_list.add_widget(layer)
+        self.layer_list.add_widget(layer, index)
         if self.root is not None:
             self.root.set2widget_all(mask.effects, mask.effects_param)
 

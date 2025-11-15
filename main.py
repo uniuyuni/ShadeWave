@@ -217,43 +217,65 @@ if __name__ == '__main__':
         def distortion_callback(self):
             self.apply_effects_lv(0, 'distortion')
 
-        def _get_active_effects(self):
-            mask = self.ids['mask_editor2'].get_active_mask()
-            if mask is None:
-                return (self.primary_effects, self.primary_param)            
-            return (mask.effects, mask.effects_param)
+        def _get_active_effects(self, mask_id=None):
+            if mask_id is None:
+                mask = self.ids['mask_editor2'].get_active_mask()
+            else:
+                mask = self.ids['mask_editor2'].find_mask(mask_id)
 
+            if mask is None:
+                return (self.primary_effects, self.primary_param, None)
+            return (mask.effects, mask.effects_param, mask.mask_id)
+        
         def apply_effects_lv(self, lv, effect):
-            current_effects, current_param = self._get_active_effects()
+            current_effects, current_param, mask_id = self._get_active_effects()
             current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
         def set_effect_param(self, lv, effect, arg):
-            current_effects, current_param = self._get_active_effects()
+            current_effects, current_param, _ = self._get_active_effects()
             current_effects[lv][effect].set2param2(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
-        def begin_effect_ctrl(self, lv, effect, subname=None):
-            current_effects, current_param = self._get_active_effects()
-            self.current_op = history.Operation(lv, effect, subname)
+        def begin_history_layer_ctrl(self, layer_ctrl, op, index):
+            self.current_op = history.Operation(type="Layer")
+            self.current_op.set_backup_layer(layer_ctrl, op, index)
+
+        def end_history_layer_ctrl(self, layer_ctrl, op, index):
+            if self.current_op is None:
+                logging.error("MainWidget.end_history_layer_ctrl None error.")
+                return
+            
+            if self.current_op.layer_ctrl is not layer_ctrl:
+                logging.error("MainWidget.end_history_layer_ctrl Unmatching error.")
+                return
+
+            if self.current_op.set_update_layer(layer_ctrl, op, index) is not None:
+                self.history.append(self.current_op)
+                self.history_panel.set_history(self.history)
+                self.current_op = None
+
+        def begin_history_effect_ctrl(self, lv, effect, subname=None):
+            current_effects, current_param, mask_id = self._get_active_effects()
+            self.current_op = history.Operation(lv, effect, subname, mask_id)
             self.current_op.set_backup(current_effects, current_param, subname)
             return True
         
-        def end_effect_ctrl(self, lv, effect, subname=None):
+        def end_history_effect_ctrl(self, lv, effect, subname=None):
             if self.current_op is None:
-                logging.error("MainWidget.end_effect_ctrl None error.")
+                logging.error("MainWidget.end_history_effect_ctrl None error.")
                 return
             
             if self.current_op.lv != lv or self.current_op.effect != effect:
-                logging.warning("MainWidget.end_effect_ctrl Unmatching error.")
+                logging.warning("MainWidget.end_history_effect_ctrl Unmatching error.")
 
             if self.current_op.subname != subname:
-                logging.error("MainWidget.end_effect_ctrl Unmatching error.")
+                logging.error("MainWidget.end_history_effect_ctrl Unmatching error.")
                 return
 
-            current_effects, current_param = self._get_active_effects()
+            current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id)
             if self.current_op.set_update(current_effects, current_param, subname) is not None:
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
@@ -558,9 +580,9 @@ if __name__ == '__main__':
                 self.inpaint_edit.set_boxes(boxes)
 
         def _on_inpaint_edit(self, deleted_index, deleted_box):
-            self.begin_effect_ctrl(0, 'inpaint')
+            self.begin_history_effect_ctrl(0, 'inpaint')
             self.primary_param['inpaint_diff_list'].pop(deleted_index)
-            self.end_effect_ctrl(0, 'inpaint')
+            self.end_history_effect_ctrl(0, 'inpaint')
             self.apply_effects_lv(0, 'inpaint')
 
         def on_inpaint_edit_press(self, value):

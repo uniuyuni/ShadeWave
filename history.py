@@ -3,22 +3,49 @@ import uuid
 from typing import List, Dict, Any
 import numpy as np
 import logging
+from enum import Enum
+
 from kivymd.app import MDApp
+
+class LayerCtrl:
+    def update_layer(self, op, type, index, param):
+        pass
+
+    def get_layer(self, index):
+        pass
 
 class Operation:
 
-    def __init__(self, lv, effect, subname=None):
+    def __init__(self, lv=0, effect=None, subname=None, mask_id=None, type="Effect"):
         self.id = str(uuid.uuid4())
-        self.type = 0       # type effect
+        self.type = type
         self.name = ""
         self.lv = lv
         self.effect = effect
         self.subname = subname
-        self.effects = None
-        self.effects_param = None
+        self.mask_id = mask_id
         self.update = {}    # 更新パラメータ
         self.backup = {}    # もとに戻す時のパラメータ
         self.diff = []      # 差分
+    
+    def set_backup_layer(self, layer_ctrl, op, index):
+        self.layer_ctrl = layer_ctrl
+        self.backup['op'] = op
+        self.backup['index'] = index
+        self.backup['dict'] = None if op == "Delete" else layer_ctrl.get_layer(index).serialize()
+        
+    def set_update_layer(self, layer_ctrl, op, index):
+        if self.layer_ctrl is not layer_ctrl:
+            logging.error("Operation.set_update_layer layer_ctrl is not match error.")
+            return None
+
+        self.update['op'] = op
+        self.update['index'] = index
+        self.update['dict'] = layer_ctrl.get_layer(index).serialize()
+
+        self.diff.append(["Layer " + op, self.update['dict']['name'], str(index)])
+
+        return self.update
     
     def set_backup(self, effects, param, subname=None):
         self.name = effects[self.lv][self.effect].__class__.__name__
@@ -73,12 +100,20 @@ class Operation:
         return (self.lv, self.effect)
 
     def undo(self, widget):
-        self.effects_param.update(self.backup)
-        self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
+        if self.type == "Effect":
+            self.effects_param.update(self.backup)
+            self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
+
+        elif self.type == "Layer":
+            self.layer_ctrl.update_layer(self.backup['op'], self.backup['index'], self.backup['dict'])
 
     def redo(self, widget):
-        self.effects_param.update(self.update)
-        self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
+        if self.type == "Effect":
+            self.effects_param.update(self.update)
+            self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
+
+        elif self.type == "Layer":
+            self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['dict'])
 
 class History:
     """操作履歴マネージャー"""
