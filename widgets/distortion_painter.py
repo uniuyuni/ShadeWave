@@ -64,7 +64,7 @@ class DistortionEngine:
         
         # 領域サイズが0の場合は処理しない
         if x_min >= x_max or y_min >= y_max:
-            return image
+            return original_image
         
         # Numbaで高速化された処理を実行
         if effect_type == 'forward_warp':
@@ -598,7 +598,7 @@ class DistortionCanvas(FloatLayout):
                 strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
                 effect_type=effect_type,
                 direction=direction,
-                #original_image=self.original_image
+                original_image=self.original_image
             )
         
         # 変形をまとめて適用

@@ -2012,7 +2012,8 @@ class SceneMask(BaseMask):
             return result
 
         # 裏でやらせているつもり（ダイアログ表示あり）
-        result = wait_prosessing(_process, self.editor.full_image_rgb)
+        #result = wait_prosessing(_process, self.editor.full_image_rgb)
+        result = _process(self.editor.full_image_rgb)
 
         nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
         cx, cy ,cw, ch, scale = self.editor.disp_info

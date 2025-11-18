@@ -126,10 +126,9 @@ class CWColorWheel(MDBoxLayout):
         self.after_edit += 1
     
     def on_touch_move(self, touch):
-        if self.collide_point(*touch.pos):
-            touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
-            self._update_color_from_touch(touch_info)
-            return True
+        #if self.collide_point(*touch.pos):
+        touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
+        self._update_color_from_touch(touch_info)
         return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):

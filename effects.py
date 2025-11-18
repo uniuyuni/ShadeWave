@@ -288,7 +288,7 @@ class InpaintEffect(Effect):
 
         param['inpaint_mask_list'] = self.inpaint_mask_list
 
-# 画像回転、反転
+# 変形描画
 class DistortionEffect(Effect):
 
     def __init__(self, distortion_callback=None, **kwargs):

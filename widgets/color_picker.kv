@@ -27,6 +27,7 @@
 <CWColorPicker>:
     orientation: 'vertical'
     spacing: 20
+    radius: [0]
     size_hint: 1, None
     ref_height: 160
     pos_hint: {'center_x': 0.5, 'center_y': .5}
@@ -39,7 +40,7 @@
         MDBoxLayout:
             id: sliders_container
             orientation: 'vertical'
-            #pos_hint: {'center_x': .5, 'center_y': .5}
+            pos_hint: {'center_x': .5, 'center_y': .55}
 
             CWColorPreview:
                 id: preview

@@ -178,7 +178,7 @@ if __name__ == '__main__':
         def draw_image(self):            
             while self.apply_thread is not None:
 
-                while self.apply_draw_image_offset is not None:
+                if self.apply_draw_image_offset is not None:
                     offset = self.apply_draw_image_offset
                     self.apply_draw_image_offset = None
 
@@ -235,7 +235,7 @@ if __name__ == '__main__':
 
         def set_effect_param(self, lv, effect, arg):
             current_effects, current_param, _ = self._get_active_effects()
-            current_effects[lv][effect].set2param2(current_param, self)
+            current_effects[lv][effect].set2param2(current_param, arg)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
@@ -396,7 +396,10 @@ if __name__ == '__main__':
                     self.is_zoomed = not self.is_zoomed
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
-                        self.primary_param['disp_info'] = None
+                        #self.primary_param['disp_info'] = None
+                        disp_info = core.convert_rect_to_info(params.get_crop_rect(self.primary_param), config.get_config('preview_size')/max(self.primary_param['original_img_size']))
+                        params.set_disp_info(self.primary_param, disp_info)
+
                     else:
                         # ウィンドウ座標からローカルイメージ座標に変換
                         self.click_x, self.click_y = utils.to_texture(touch.pos, self.ids['preview'])
@@ -407,23 +410,29 @@ if __name__ == '__main__':
                 # ドラッグ操作
                 elif self.is_zoomed == True:
                     self.drag_start_point = touch.pos
+            
+            return False
 
         def on_image_touch_move(self, touch):
             if self.collide_point(*touch.pos):
                 if self.is_zoomed == True:
                     if self.drag_start_point != None:
-                        offset_x = touch.pos[0] - self.drag_start_point[0]
-                        offset_y = touch.pos[1] - self.drag_start_point[1]
-                        offset_x = -offset_x
+                        scale = max(self.primary_param['original_img_size'])/config.get_config('preview_size')
+                        offset_x = -(touch.pos[0] - self.drag_start_point[0]) * scale
+                        offset_y =  (touch.pos[1] - self.drag_start_point[1]) * scale
                         effects.reeffect_all(self.primary_effects, 1)
                         self.start_draw_image_and_crop(self.imgset, (offset_x, offset_y))
 
                         self.drag_start_point = touch.pos
+
+            return False
                     
         def on_image_touch_up(self, touch):
             if self.is_zoomed == True:
                 if self.drag_start_point != None:
                     self.drag_start_point = None
+
+            return False
 
         def on_select_press(self):
             self.save_current_sidecar()
