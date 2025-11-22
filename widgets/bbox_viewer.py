@@ -94,14 +94,14 @@ class BoundingBoxViewer(Widget):
         # 最大表示サイズと比較してパディングを計算
         if scaled_view_w <= self.max_display_width:
             display_width = scaled_view_w
-            offset_x = (self.width - display_width) / 2
+            offset_x = ((self.width - display_width) + (self.max_display_width - scaled_view_w))/ 2
         else:
             display_width = self.max_display_width
             offset_x = (self.width - display_width) / 2
             
         if scaled_view_h <= self.max_display_height:
             display_height = scaled_view_h
-            offset_y = (self.height - display_height) / 2
+            offset_y = ((self.height - display_height) + (self.max_display_height - scaled_view_h))/ 2
         else:
             display_height = self.max_display_height
             offset_y = (self.height - display_height) / 2
