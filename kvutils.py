@@ -1,6 +1,7 @@
 
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
+from kivymd.uix.scrollview import MDScrollView
 from screeninfo import get_monitors
 
 def get_root_widget(widget):
@@ -73,6 +74,10 @@ def traverse_widget(root):
                 child.tab_width = dpi_scale_width(child.ref_tab_width)
             if hasattr(child, 'ref_tab_height'):
                 child.tab_height = dpi_scale_height(child.ref_tab_height)
+        
+        for child in get_entire_widget_tree(root):
+            if isinstance(child, MDScrollView):
+                child.children[0].height = child.children[0].minimum_height
 
 
 def dpi_scale_width(ref):

@@ -23,7 +23,7 @@ def worker_function(copy_config, worker_id, task_queue, result_queue, stop_event
                 break
             
             # 共有メモリの情報を受け取る
-            tile_id, shm_name, shape, dtype_str, params, crop, version = task
+            tile_id, shm_name, shape, dtype_str, params, crop, version, lv1reset = task
 
             if tile_id[0] != worker_id:
                 task_queue.put(task)  # 再度キューに戻す
@@ -34,7 +34,7 @@ def worker_function(copy_config, worker_id, task_queue, result_queue, stop_event
             tile_array = np.ndarray(shape, dtype=dtype_str, buffer=shm.buf)
             
             # 処理を実行
-            result = process_tile(tile_array, current_effects, crop, params)
+            result = process_tile(tile_array, current_effects, crop, params, lv1reset)
             
             # 結果も共有メモリに書き込む
             tile_array[:] = result[:]
@@ -48,10 +48,10 @@ def worker_function(copy_config, worker_id, task_queue, result_queue, stop_event
         except Exception as e:
             print(f"Worker {worker_id} error: {e}")
 
-def process_tile(tile_data, current_effects, crop, params):
+def process_tile(tile_data, current_effects, crop, params, lv1reset):
     """タイル処理関数（グローバルスコープに定義）"""
     effects.reeffect_all(current_effects, 1)
-    img2 = pipeline.pipeline2(tile_data, crop, current_effects, params["param"], None, params["efconfig"])
+    img2 = pipeline.pipeline2(tile_data, crop, current_effects, params["param"], None, params["efconfig"], lv1reset)
     
     return img2
 
@@ -73,7 +73,7 @@ class DynamicImageProcessor:
             p.start()
             self.workers.append(p)
     
-    def submit_tiles(self, image, params, version):
+    def submit_tiles(self, image, params, version, lv1reset):
         """画像をタイルに分割して処理キューに投入"""
         h, w = image.shape[:2]
         
@@ -100,7 +100,8 @@ class DynamicImageProcessor:
                 str(block.dtype),
                 params.copy(),
                 crops[tile_id],
-                version
+                version,
+                lv1reset,
             ))
             tile_id += 1
 

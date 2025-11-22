@@ -186,6 +186,8 @@ class ImageSet:
             if cwidth > cheight:
                 img_array = img_array[:cheight, :cwidth]
             else:
+                # 回転させる
+                img_array = np.rot90(img_array)
                 img_array = img_array[-cheight:, :cwidth]
             
             # 下位2bit補完

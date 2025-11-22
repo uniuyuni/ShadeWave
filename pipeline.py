@@ -24,10 +24,10 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
 
     # 背景レイヤー
-    img0, reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
+    img0, lv1reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
     disp_info = params.get_disp_info(primary_param) # Cropによって値が更新されてるかも
 
-    if crop_image is None or reset == True:
+    if crop_image is None or lv1reset == True:
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, offset, is_zoomed)
         #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
         #mask_editor2.set_texture_size(texture_width, texture_height)
@@ -49,7 +49,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
             "param": primary_param,
             "efconfig": efconfig,
         }
-        processor.submit_tiles(imgc, process_params, pipeline_version)
+        processor.submit_tiles(imgc, process_params, pipeline_version, lv1reset)
         results = processor.collect_results(pipeline_version)
         
         # 画像の再構築
@@ -60,7 +60,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
         else:
             img2 = imgc
     else:
-        img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig)
+        img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset)
         
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
 
@@ -77,7 +77,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
 
     # 背景レイヤー
-    img0, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig)
+    img0, lv1reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
     imgc = img0
     #imgc, disp_info2 = core.crop_image(img0, disp_info, *primary_param['original_img_size'], 0, 0, (0, 0), False)
     #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
@@ -87,7 +87,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     mask_editor2.set_ref_image(imgc, img0)
     mask_editor2.update()
 
-    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig)
+    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset)
 
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig)
     
@@ -97,18 +97,18 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
 
     return img2
 
-def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig):
-    img1 = pipeline_lv1(imgc, primary_effects, primary_param, efconfig)
-    img2 = pipeline_lv2(img1, primary_effects, primary_param, efconfig)
-    img3 = pipeline_lv3(img2, primary_effects, primary_param, efconfig)
+def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig, lv1reset=False):
+    img1, lv2reset = pipeline_lv1(imgc, primary_effects, primary_param, efconfig, lv1reset)
+    img2, lv3reset = pipeline_lv2(img1, primary_effects, primary_param, efconfig, lv2reset)
+    img3, lv1reset = pipeline_lv3(img2, primary_effects, primary_param, efconfig, lv3reset)
 
     # マスクレイヤー
     if mask_editor2 is not None:
         mask_list = mask_editor2.get_layers_list()
         for mask in mask_list:
             
-            img2 = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig)
-            img2 = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig)
+            img2, lv2reset = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig, lv1reset)
+            img2, lv1reset = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig, lv2reset)
 
             img2 = core.type_convert(img2, np.ndarray)
             if crop is None:
@@ -148,9 +148,9 @@ def pipeline_lv0(img, effects, param, efconfig):
 
     return rgb, lv1reset
 
-def pipeline_lv1(img, effects, param, efconfig):
+def pipeline_lv1(img, effects, param, efconfig, prev_reset=False):
     lv1 = effects[1]
-    lv2reset = False
+    lv2reset = prev_reset
 
     rgb = img.copy()
     for i, n in enumerate(lv1):
@@ -165,23 +165,14 @@ def pipeline_lv1(img, effects, param, efconfig):
         if pre_diff is not diff:
             lv2reset = True
             
-    if lv2reset == True:
-        for l in effects[2].values():
-            l.reeffect()
-        for l in effects[3].values():
-            l.reeffect()
-        for l in effects[4].values():
-            l.reeffect()
+    return rgb, lv2reset
 
-    return rgb
-
-def pipeline_lv2(rgb, effects, param, efconfig):
+def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False):
     lv2 = effects[2]
-
-    lv1reset = False
+    lv3reset = prev_reset
 
     for i, n in enumerate(lv2):
-        if lv1reset == True:
+        if lv3reset == True:
             lv2[n].reeffect()
         """
         f1 = rgb[..., 0] < 0.0
@@ -195,30 +186,32 @@ def pipeline_lv2(rgb, effects, param, efconfig):
             rgb = lv2[n].apply_diff(rgb)
 
         if pre_diff is not diff:
-            lv1reset = True
+            lv3reset = True
 
-    if lv1reset == True:
-        for v in effects[3].values():
-            v.reeffect()
-        for v in effects[4].values():
-            v.reeffect()
+    return rgb, lv3reset
 
-    return rgb
-
-def pipeline_lv3(rgb, effects, param, efconfig):
+def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False):
     lv3 = effects[3]
+    lv4reset = prev_reset
 
     for i, n in enumerate(lv3):            
+        if lv4reset == True:
+            lv3[n].reeffect()
+
         diff = lv3[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv3[n].apply_diff(rgb)
 
-    return rgb
+    return rgb, lv4reset
 
-def pipeline_last(rgb, effects, param, efconfig):
+def pipeline_last(rgb, effects, param, efconfig, prev_reset=False):
     lv4 = effects[4]
+    lv5reset = prev_reset
 
     for i, n in enumerate(lv4):            
+        if lv5reset == True:
+            lv4[n].reeffect()
+
         diff = lv4[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv4[n].apply_diff(rgb)

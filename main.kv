@@ -23,7 +23,7 @@
 <ParamChip@MDChip>:
     type: 'filter'
     pos_hint: {"center_x": .5, "center_y": .5}
-    size_hint: 0.2, None
+    size_hint_y: None
     ref_height: 20
     radius: 40
     line_color: 'grey'
@@ -71,13 +71,17 @@
                 size_hint_x: 0.9
             Button:
                 size_hint_x: None
-                ref_width: 80
+                ref_width: 60
+                ref_height: 15
+                font_size: '9pt'
                 text: "Reset"
                 on_press: root.on_reset_press()
             ToggleButton:
                 id: preset
                 size_hint_x: None
-                ref_width: 80
+                ref_width: 60
+                ref_height: 15
+                font_size: '9pt'
                 text: "Preset"
                 #on_state: root.on_preset_press(self.state)
 
@@ -255,8 +259,8 @@
                     MDScrollView:
 
                         BoxLayout:
-                            size_hint_y: None
                             orientation: "vertical"
+                            size_hint_y: None
                             height: self.minimum_height
 
                             HeadLabel:
@@ -488,9 +492,7 @@
                                     text: 'Red'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Red'
                                         ParamSlider:
@@ -528,9 +530,7 @@
                                     text: 'Orange'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Orange'
                                         ParamSlider:
@@ -568,9 +568,7 @@
                                     text: 'Yellow'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Yellow'
                                         ParamSlider:
@@ -608,9 +606,7 @@
                                     text: 'Green'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Green'
                                         ParamSlider:
@@ -648,9 +644,7 @@
                                     text: 'Cyan'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Cyan'
                                         ParamSlider:
@@ -688,9 +682,7 @@
                                     text: 'Blue'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Blue'
                                         ParamSlider:
@@ -728,9 +720,7 @@
                                     text: 'Purple'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Purple'
                                         ParamSlider:
@@ -768,9 +758,7 @@
                                     text: 'Magenta'
 
                                     BoxLayout:
-                                        size_hint_y: None
                                         orientation: "vertical"
-                                        height: self.minimum_height
                                         HeadLabel:
                                             text: ' Magenta'
                                         ParamSlider:
@@ -1024,6 +1012,10 @@
                                             on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'grading2')
                             
                             VSpacer:
+                                ref_height: 4
+
+                            HeadLabel:
+                                text: ' Color Curves'
                             
                             CurveTabbedPanel:
                                 ref_tab_width: 100
@@ -1121,6 +1113,7 @@
                                         on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'SatvsSat')
                                         on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'SatvsSat')
 
+                                VSpacer:
 
                 TabbedPanelItem:
                     text: 'Extra'
@@ -1142,6 +1135,8 @@
                                     size_hint_x: 0.55
                                 ParamChip:
                                     id: switch_ai_noise_reduction
+                                    size_hint_x: None
+                                    ref_width: 40
                                     on_active: root.apply_effects_lv(0, 'ai_noise_reduction')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
                                     on_touch_up: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
@@ -1182,14 +1177,18 @@
                                     size_hint_x: 0.25
                                 ParamChip:
                                     id: switch_inpaint
+                                    size_hint_x: None
+                                    ref_width: 60
                                     on_active: root.apply_effects_lv(0, 'inpaint')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'inpaint')
                                     on_touch_up: root.end_history_effect_ctrl(0, 'inpaint')
                                     ParamChipText:
-                                        text: "Make mask"
+                                        text: "Mask"
                                 ParamChip:
                                     type: 'assist'
                                     id: button_inpaint_predict
+                                    size_hint_x: None
+                                    ref_width: 60
                                     on_press: root.apply_effects_lv(0, 'inpaint')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'inpaint')
                                     on_touch_up: root._set_diff_list_to_inpaint_edit()
@@ -1198,6 +1197,8 @@
                                         text: "Erase"
                                 ToggleButton:
                                     id: toggle_inpaint_edit
+                                    size_hint_x: None
+                                    ref_width: 40
                                     text: "Edit"
                                     on_state: root.on_inpaint_edit_press(self.state)
                                     #on_state: geometry.disabled = True if mask2.state == 'down' else False
@@ -1209,6 +1210,8 @@
                                     size_hint_x: 0.55
                                 ParamChip:
                                     id: switch_defocus
+                                    size_hint_x: None
+                                    ref_width: 40
                                     on_active: root.apply_effects_lv(1, 'defocus')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(1, 'defocus')
                                     on_touch_up: root.end_history_effect_ctrl(1, 'defocus')
@@ -1222,6 +1225,8 @@
                                     size_hint_x: 0.55
                                 ParamChip:
                                     id: switch_subpixel_shift
+                                    size_hint_x: None
+                                    ref_width: 40
                                     on_active: root.apply_effects_lv(0, 'subpixel_shift')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'subpixel_shift')
                                     on_touch_up: root.end_history_effect_ctrl(0, 'subpixel_shift')
@@ -1492,12 +1497,14 @@
                                     size_hint_x: 0.45
                                 ParamChip:
                                     id: switch_highlight_compress
+                                    size_hint_x: None
+                                    ref_width: 60
                                     active: False
                                     on_active: root.apply_effects_lv(2, 'highlight_compress')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'highlight_compress')
                                     on_touch_up: root.end_history_effect_ctrl(2, 'highlight_compress')
                                     ParamChipText:
-                                        text: "Compress"
+                                        text: "Apply"
 
                             ParamBoxLayout:
                                 ParamLabel:
@@ -1506,6 +1513,8 @@
                                     size_hint_x: 0.45
                                 ParamChip:
                                     id: switch_solid_color
+                                    size_hint_x: None
+                                    ref_width: 60
                                     on_active: root.apply_effects_lv(2, 'solid_color')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'solid_color')
                                     on_touch_up: root.end_history_effect_ctrl(2, 'solid_color')
@@ -1515,16 +1524,11 @@
                             VSpacer:
                                 ref_height: 4
 
-                            BoxLayout:
-                                size_hint_y: None
-                                orientation: "vertical"
-                                height: self.minimum_height
-                                
-                                CWColorPicker:
-                                    id: cp_solid_color
-                                    on_current_color: root.apply_effects_lv(2, 'solid_color')
-                                    on_before_edit: root.begin_history_effect_ctrl(2, 'solid_color')
-                                    on_after_edit: root.end_history_effect_ctrl(2, 'solid_color')
+                            CWColorPicker:
+                                id: cp_solid_color
+                                on_current_color: root.apply_effects_lv(2, 'solid_color')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'solid_color')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'solid_color')
                             
                             VSpacer:
 
@@ -1598,6 +1602,8 @@
                                 ParamChip:
                                     type: 'assist'
                                     id: button_crop_reset
+                                    size_hint_x: None
+                                    ref_width: 60
                                     on_press: root.apply_effects_lv(0, 'crop')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'crop')
                                     on_touch_up: root.end_history_effect_ctrl(0, 'crop')
@@ -1969,6 +1975,8 @@
                                 ParamChip:
                                     type: 'assist'
                                     id: button_distortion_reset
+                                    size_hint_x: None
+                                    ref_width: 60
                                     on_press: root.apply_effects_lv(0, 'distortion')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'distortion')
                                     on_touch_up: root.end_history_effect_ctrl(0, 'distortion')
