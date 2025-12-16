@@ -13,8 +13,10 @@ def init_config(widget):
 
     _config.update(
     {
+        'import_path': os.getcwd() + "/test_photos",
+        'lut_path': os.getcwd() + "/lut",
         'preview_size': 1024,
-        'raw_auto_exposure': True,
+        'raw_auto_exposure': False,
         'raw_depth_expansion': False,
         'scale_threshold': 0.5,
         'iopaint_model': "lama",
@@ -24,8 +26,11 @@ def init_config(widget):
         'gpu_device': "mps",
         'cat': "cat16",
         'base_resolution_scale': [4096, 4096],
-        'display_output_dither': True
+        'display_output_dither': False
     })
+
+    if not os.path.exists(os.getcwd() + '/config.json'):
+        save_config()
 
 def get_config(key):
     global _config
@@ -46,7 +51,7 @@ def _apply_config(key):
     if key == 'lut_path':
         _main_widget.set_lut_path(_config.get('lut_path', os.getcwd() + "/lut"))
     elif key == 'import_path':
-        _main_widget.ids['viewer'].set_path(_config.get('import_path', os.getcwd() + "/picture"))
+        _main_widget.ids['viewer'].set_path(_config.get('import_path', os.getcwd() + "/test_photos"))
 
 def apply_config():
     global _config
@@ -57,7 +62,7 @@ def save_config():
     global _config
     file_path = os.getcwd() + '/config.json'
     with open(file_path, 'w') as f:
-        json.dump(_config, f)
+        json.dump(dict(_config), f)
 
 def load_config():
     global _config    

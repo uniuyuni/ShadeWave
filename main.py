@@ -68,7 +68,6 @@ os.environ['JAX_LOG_VERBOSITY'] = '0'
 jax.config.update("jax_platform_name", "METAL")
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
-#os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
 
 if __name__ == '__main__':
 
@@ -122,6 +121,7 @@ if __name__ == '__main__':
             self.apply_draw_image_offset = None
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
             self.apply_thread.start()
+            self.enabledelay = None
 
             self.history = history.History()
             self.current_op = None
@@ -193,7 +193,10 @@ if __name__ == '__main__':
                         # ヒストグラム表示
                         img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
                         #self.draw_histogram(img_hist, 0, exclude_count)
-                        Clock.schedule_once(partial(self.draw_histogram, img_hist, 0, exclude_count), -1)
+                        #Clock.schedule_once(partial(self.draw_histogram, img_hist, 0, exclude_count), -1)
+                        event = Clock.create_trigger(partial(self.draw_histogram, img_hist, 0, exclude_count))
+                        if not event.is_triggered:
+                            event()  # スケジュール
 
                         # プレビュー表示
                         img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
@@ -202,9 +205,19 @@ if __name__ == '__main__':
         #                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
         #                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
+                        #描画をスケジューリング
                         #self.blit_image(img_draw)
-                        Clock.schedule_once(partial(self.blit_image, img_draw), -1)
-
+                        event = Clock.create_trigger(partial(self.blit_image, img_draw))
+                        if not event.is_triggered:
+                            event()  # スケジュール
+                        """
+                        try:
+                            if self.enabledelay is not None:
+                                self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
+                        except:
+                            pass  # 未スケジュール時は無視
+                        self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
+                        """
                 time.sleep(0.01)
             
         def start_draw_image(self, offset=(0, 0)):

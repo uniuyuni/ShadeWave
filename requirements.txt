@@ -31,5 +31,4 @@ fastapi
 omegaconf
 etils
 huggingface_hub
-pillow_heif
 color-matcher

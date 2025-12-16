@@ -163,7 +163,7 @@ class ImageSet:
                                         #no_auto_scale=False,
                                         use_camera_wb=True,
                                         #user_wb = [1.0, 1.0, 1.0, 0.0],
-                                        #gamma=(1.0, 1.0),
+                                        gamma=(1.0, 1.0),
                                         #four_color_rgb=True if half == False else False,
                                         half_size=half,
                                         #user_black=0,

@@ -16,6 +16,7 @@ import cubelut
 import subpixel_shift
 import film_emulator
 import lens_simulator
+import linear_to_log.linear_to_log_lut as linear_to_log
 import config
 import pipeline
 import filter
@@ -582,7 +583,6 @@ class CropEffect(Effect):
 # AI ノイズ除去
 class AINoiseReductonEffect(Effect):
     __net = None
-    __module = None
 
     def get_param_dict(self, param):
         return {
@@ -602,13 +602,12 @@ class AINoiseReductonEffect(Effect):
             self.hash = None
         else:
             param_hash = hash((nr))
-            if self.hash != param_hash:
-                if AINoiseReductonEffect.__module is None:
-                    AINoiseReductonEffect.__module = importlib.import_module('SCUNet')
+            if self.hash != param_hash:                
+                import SCUNet
                 if AINoiseReductonEffect.__net is None:
-                    AINoiseReductonEffect.__net = AINoiseReductonEffect.__module.setup_model(device=config.get_config('gpu_device'))
+                    AINoiseReductonEffect.__net = SCUNet.setup_model(device=config.get_config('gpu_device'))
 
-                self.diff = wait_prosessing(AINoiseReductonEffect.__module.denoise_image_helper, AINoiseReductonEffect.__net, img, config.get_config('gpu_device'))
+                self.diff = wait_prosessing(SCUNet.denoise_image_helper, AINoiseReductonEffect.__net, img, config.get_config('gpu_device'))
                 self.hash = param_hash
         
         return self.diff
@@ -1283,21 +1282,7 @@ class ToneEffect(Effect):
 
         elif self.hash != param_hash:
             rgb = core.type_convert(rgb, jnp.ndarray)
-            self.diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)
-            """
-            if masks[0] is not None:
-                mask = np.array(masks[0])
-                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
-                mask = 1 - mask
-                threshold = np.max(mask)
-                mask[mask > threshold / 2] = 0.0
-                source = np.array(self.diff)
-                #cv2.imwrite("mask.jpg", cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
-                #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
-                target = local_contrast.apply_microcontrast(source, 150)
-                mask = mask[..., np.newaxis]
-                self.diff = source * (1-mask) + target * mask
-            """
+            self.diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)            
             if masks[1] is not None:
                 mask = np.array(masks[1])
                 mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
@@ -1309,7 +1294,6 @@ class ToneEffect(Effect):
                 target = local_contrast.apply_microcontrast(source, 200 * efconfig.resolution_scale)
                 mask = mask[..., np.newaxis]
                 self.diff = source * (1-mask) + target * mask
-
             self.hash = param_hash
         return self.diff
     
@@ -1935,14 +1919,17 @@ class LUTEffect(Effect):
 
     def get_param_dict(self, param):
         return {
+            'lut_to_log': 'None',
             'lut_name': 'None',
             'lut_path': None,
         }
 
     def set2widget(self, widget, param):
+        widget.ids["lut_to_log_spinner"].text = self.get_param(param, 'lut_to_log')
         widget.ids["lut_spinner"].text = self.get_param(param, 'lut_name')
 
     def set2param(self, param, widget):
+        param['lut_to_log'] = widget.ids["lut_to_log_spinner"].text
         spinner = widget.ids["lut_spinner"]
         name = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
         if self.get_param(param, 'lut_name') != name:
@@ -1951,24 +1938,28 @@ class LUTEffect(Effect):
         param['lut_path'] = LUTEffect.file_pathes.get(param['lut_name'], None)
 
     def make_diff(self, rgb, param, efconfig):
+        lut_to_log = self.get_param(param, 'lut_to_log')
         lut_path = self.get_param(param, 'lut_path')
         if lut_path is None:
             self.diff = None
             self.hash = None
         
         else:
-            param_hash = hash((lut_path))
+            param_hash = hash((lut_path, lut_to_log))
             if self.hash != param_hash:
                 if self.lut is None:
                     self.lut = cubelut.read_lut(lut_path)
-                self.diff = self.lut
+
+                self.diff = (lut_to_log, self.lut)
                 self.hash = param_hash
 
         return self.diff
     
     def apply_diff(self, rgb):
         rgb = core.type_convert(rgb, np.ndarray)
-        return cubelut.process_image(rgb, self.diff)
+        if self.diff[0] != 'None':
+            rgb = linear_to_log.process_image(rgb, self.diff[0])
+        return cubelut.process_image(rgb, self.diff[1])
 
 class LensSimulatorEffect(Effect):
 

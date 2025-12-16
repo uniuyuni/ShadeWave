@@ -1707,7 +1707,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
     return np.array(adjusted_hls)
 
 
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
+#@njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
 def jjn_dither_uint8(img_float):
     """
     float32画像(0.0-1.0)をJJN法でディザリングしてuint8に変換
@@ -1754,7 +1754,7 @@ def jjn_dither_uint8(img_float):
         
     return output
 
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+#@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def jjn_dither_uint16(img_float):
     """
     float32画像(0.0-1.0)をJJN法でディザリングしてuint16に変換
