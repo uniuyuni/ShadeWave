@@ -35,11 +35,11 @@ from kivy.uix.popup import Popup
 from functools import partial
 import importlib
 
-import core
+import cores.core as core
+import cores.expand_mask as expand_mask
 import params
 import effects
 #import helpers.facer_helper
-import cores.expand_mask as expand_mask
 import config
 import logging
 from processing_dialog import wait_prosessing

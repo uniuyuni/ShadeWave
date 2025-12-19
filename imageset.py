@@ -11,14 +11,14 @@ from multiprocessing import shared_memory
 import base64
 
 import libraw_enhanced as lre
-from cores.dcp_profile import DCPReader, DCPProcessor
 import config
 import define
 import file_cache_system
 import params
+from cores.dcp_profile import DCPReader, DCPProcessor
 import cores.bit_depth_expansion as bit_depth_expansion
 #import cores.highlight_recovery as highlight_recovery
-import core
+import cores.core as core
 
 print(f"libraw version:{rawpy.libraw_version}")
 

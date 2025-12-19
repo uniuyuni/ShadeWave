@@ -1,12 +1,12 @@
 
 <Mask2CustomHeader>:
     size_hint_y: None
-    height: 10  # ここで縦幅を調整
+    ref_height: 10  # ここで縦幅を調整
 
 <Mask2Item>:
     orientation: 'horizontal'
     size_hint_y: None
-    height: 48
+    ref_height: 46
     canvas.before:
         Color:
             rgba: (0.2, 0.2, 0.6, 0.6) if self.active else (0, 0, 0, 0)
@@ -57,9 +57,9 @@
 
     Label:
         text: "Masks"
-        halign: 'center'
+        halign: 'left'
     Button:
-        text: "Add Mask"
+        text: "Add Layer"
         on_release: root.add_layer()
 
     RecycleView:
@@ -68,7 +68,7 @@
         do_scroll_y: True
         scroll_type: ['bars', 'content']
         size_hint_y: None
-        ref_height: 150
+        ref_height: 150-16
 
         SelectableRecycleBoxLayout:
             orientation: 'vertical'

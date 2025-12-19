@@ -28,7 +28,7 @@ if __name__ == '__main__':
     import multiprocessing
 
     import define
-    import core
+    import cores.core as core
     import params
     import effects
     import pipeline

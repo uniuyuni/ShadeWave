@@ -17,7 +17,7 @@ import time
 import numba as nb
 import logging
 
-import core
+import cores.core as core
 
 class DistortionEngine:
     def __init__(self, image_size, grid_size=30):

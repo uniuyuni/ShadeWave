@@ -111,7 +111,7 @@
                     id: histogram
                     size_hint: None, None
                     ref_width: 256+128
-                    ref_height: 128
+                    ref_height: 128-32
                     ref_margin: 4
                     canvas:
                         Color:
@@ -123,8 +123,8 @@
                 BoxLayout:
                     orientation: 'horizontal'
                     size_hint_y: None
-                    ref_height: 20
-                    ref_margin: 4
+                    ref_height: 16
+                    ref_margin: 0
                     
                     ToggleButton:
                         id: toggle_underexposure

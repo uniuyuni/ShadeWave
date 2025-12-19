@@ -1,7 +1,7 @@
 
 import numpy as np
 
-import core
+import cores.core as core
 import config
 import params
 import effects

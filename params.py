@@ -3,9 +3,9 @@ import os
 import json
 from datetime import datetime as dt
 
+import cores.core as core
 import config
 import define
-import core
 import effects
 
 SPECIAL_PARAM = [

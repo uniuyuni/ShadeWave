@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 
-import core
+import cores.core as core
 
 def apply_clarity(rgb_image, clarity_amount):
     """

@@ -11,7 +11,7 @@ from enum import Enum
 from typing import List, Tuple
 import math
 
-import core
+import cores.core as core
 
 class CropEditor(KVFloatLayout):
     input_width = KVNumericProperty(dp(400))

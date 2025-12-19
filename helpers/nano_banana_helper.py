@@ -7,7 +7,7 @@ from io import BytesIO
 
 import splitimage
 import aiutils
-import core
+import cores.core as core
 
 def setup():
     """

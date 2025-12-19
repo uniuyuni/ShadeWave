@@ -1,10 +1,10 @@
 
 <HistoryCustomHeader>:
     size_hint_y: None
-    height: 10  # ここで縦幅を調整
+    ref_height: 10  # ここで縦幅を調整
 
 <HistoryItem>:
-    _txt_bot_pad: 6
+    _txt_bot_pad: 1
     _txt_left_pad: 0
     _txt_right_pad: 0
     _txt_top_pad: 0
@@ -25,7 +25,8 @@
 
     Label:
         text: "History"
-        halign: 'center'
+        halign: 'left'
+        ref_height: 10
 
     RecycleView:
         id: history_rv

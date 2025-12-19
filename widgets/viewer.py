@@ -22,7 +22,7 @@ from kivy.metrics import dp
 
 from widgets.draggable_widget import DraggableWidget
 
-import core
+import cores.core as core
 import kvutils
 import define
 

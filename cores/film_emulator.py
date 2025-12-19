@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 from scipy.interpolate import interp1d
 
-import core
+import cores.core as core
 
 class FilmEmulator:
 

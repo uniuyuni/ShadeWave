@@ -12,7 +12,7 @@ from PIL import Image
 
 import splitimage
 import aiutils
-import core
+import cores.core as core
 
 # DashScope APIキーを設定
 dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")

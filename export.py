@@ -6,7 +6,7 @@ import json
 import exiftool
 import colour
 
-import core
+import cores.core as core
 import define
 from imageset import ImageSet
 import effects
