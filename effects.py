@@ -32,7 +32,7 @@ from widgets.mask_editor import MaskEditor
 from widgets.crop_editor import CropEditor
 from widgets.distortion_painter import DistortionCanvas
 
-class EffectMode(Enum):
+class EffectMode(int, Enum):
     PREVIEW = 0
     LOUPE = 1
     EXPORT = 2
@@ -496,7 +496,7 @@ class CropEffect(Effect):
         widget.ids["spinner_acpect_ratio"].text = param.get('aspect_ratio', "None")
 
     def set2param(self, param, widget):
-        param['crop_enable'] = False if widget.ids["effects"].current_tab.text != "Geometry" else True
+        param['crop_enable'] = False if widget.ids["effects"].current_tab.text != "Ge" else True
         param['aspect_ratio'] = widget.ids["spinner_acpect_ratio"].text
 
         # crop_rect がないのはマスク

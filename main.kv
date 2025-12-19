@@ -262,9 +262,10 @@
                 tab_height: self.height * 0.05
                 disabled: root.loading == True
                 on_current_tab: root.on_current_tab(self.current_tab)
-                on_current_tab: mask2.disabled = self.current_tab.text == "Geometry" or root.loading == True
+                on_current_tab: mask2.disabled = self.current_tab.text == "Ge" or root.loading == True
 
                 IconTabbedPanelItem:
+                    text: 'Ba'
                     icon_source: 'assets/Basic.png'
 
                     MDScrollView:
@@ -907,6 +908,7 @@
                             VSpacer
 
                 IconTabbedPanelItem:
+                    text: 'Cu'
                     icon_source: 'assets/Curves.png'
 
                     MDScrollView:
@@ -1127,6 +1129,7 @@
                                 VSpacer:
 
                 IconTabbedPanelItem:
+                    text: 'Ex'
                     icon_source: 'assets/Extra.png'
 
                     MDScrollView:
@@ -1573,6 +1576,7 @@
                 IconTabbedPanelItem:
                     id: geometry
                     icon_source: 'assets/Geometry.png'
+                    text: 'Ge'
 
                     MDScrollView:
 
@@ -1659,6 +1663,7 @@
                                     on_text: root.apply_effects_lv(0, 'crop')
 
                 IconTabbedPanelItem:
+                    text: 'Lo'
                     icon_source: 'assets/Looks.png'
 
                     MDScrollView:
@@ -1724,6 +1729,7 @@
                                 on_after_edit: root.end_history_effect_ctrl(1, 'face')
 
                 IconTabbedPanelItem:
+                    text: 'M2'
                     icon_source: 'assets/Mask2.png'
 
                     MDScrollView:
@@ -1943,6 +1949,7 @@
                                     on_press: root.apply_effects_lv(3, 'mask2')
 
                 IconTabbedPanelItem:
+                    text: 'Li'
                     icon_source: 'assets/Liquify.png'
 
                     MDScrollView:

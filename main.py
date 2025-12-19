@@ -429,7 +429,7 @@ if __name__ == '__main__':
         def on_image_touch_down(self, touch):
             if self.collide_point(*touch.pos):
                 # ズーム操作
-                if touch.is_double_tap == True and self.ids["effects"].current_tab.text != "Geometry":
+                if touch.is_double_tap == True and self.ids["effects"].current_tab.text != "Ge":
                     self.is_zoomed = not self.is_zoomed
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
@@ -656,7 +656,7 @@ if __name__ == '__main__':
         #--------------------------------
 
         def on_current_tab(self, current):
-            if current.text == "Geometry":
+            if current.text == "Ge":
                 self.is_zoomed = False
 
             if self.imgset is not None:

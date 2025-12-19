@@ -23,7 +23,7 @@ import json
 from typing import Any, Dict
 import base64
 
-import highlight_recovery
+import cores.highlight_recovery as highlight_recovery
 import cores.sigmoid as sigmoid
 import dng_sdk
 import utils
