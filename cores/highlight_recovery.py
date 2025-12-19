@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 import core
-import local_contrast
+import cores.local_contrast as local_contrast
 
 def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
     """
