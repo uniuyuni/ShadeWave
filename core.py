@@ -24,12 +24,12 @@ from typing import Any, Dict
 import base64
 
 import highlight_recovery
-import sigmoid
+import cores.sigmoid as sigmoid
 import dng_sdk
 import utils
 import params
 import config
-import aces_tonemapping
+import cores.aces_tonemapping as aces_tonemapping
 
 @dispatch(np.ndarray)
 def normalize_image(image_data):

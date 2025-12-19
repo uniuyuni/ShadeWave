@@ -35,8 +35,8 @@ if __name__ == '__main__':
     import utils
     import kvutils
     import macos
-    import film_emulator
-    import lens_simulator
+    import cores.film_emulator as film_emulator
+    import cores.lens_simulator as lens_simulator
     import config
     import export
     from processing_dialog import create_processing_dialog

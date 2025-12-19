@@ -12,15 +12,15 @@ from enum import Enum
 #import dehazing.dehaze
 
 import core
-import cubelut
-import subpixel_shift
-import film_emulator
-import lens_simulator
+import cores.cubelut as cubelut
+import cores.subpixel_shift as subpixel_shift
+import cores.film_emulator as film_emulator
+import cores.lens_simulator as lens_simulator
 import linear_to_log.linear_to_log_lut as linear_to_log
 import config
 import pipeline
-import filter
-import local_contrast
+import cores.filters as filters
+import cores.local_contrast as local_contrast
 import params
 import utils
 #import helpers.mediapipe_helper
@@ -770,7 +770,7 @@ class LensblurFilterEffect(Effect):
         else:
             param_hash = hash((lpfr))
             if self.hash != param_hash:
-                self.diff = filter.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
+                self.diff = filters.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
                 self.hash = param_hash
 
         return self.diff
@@ -797,7 +797,7 @@ class ScratchEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.scratch_effect(img, 1.0, fr / 100 * efconfig.resolution_scale)
+                self.diff = filters.scratch_effect(img, 1.0, fr / 100 * efconfig.resolution_scale)
                 self.hash = param_hash
 
         return self.diff
@@ -824,7 +824,7 @@ class FrostedGlassEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.frosted_glass_effect(img, fr / 100 * efconfig.resolution_scale, fr / 1000 * efconfig.resolution_scale)
+                self.diff = filters.frosted_glass_effect(img, fr / 100 * efconfig.resolution_scale, fr / 1000 * efconfig.resolution_scale)
                 self.hash = param_hash
 
         return self.diff
@@ -851,7 +851,7 @@ class MosaicEffect(Effect):
         else:
             param_hash = hash((fr))
             if self.hash != param_hash:
-                self.diff = filter.mosaic_effect(img, int(fr * efconfig.resolution_scale))
+                self.diff = filters.mosaic_effect(img, int(fr * efconfig.resolution_scale))
                 self.hash = param_hash
 
         return self.diff
@@ -891,7 +891,7 @@ class GlowEffect(Effect):
                 rgb2 = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
                 if gg > 0:
                     radius = gg * 10 * efconfig.resolution_scale
-                    rgb2 = filter.lensblur_filter(rgb2, 1 if radius <= 0 else radius) 
+                    rgb2 = filters.lensblur_filter(rgb2, 1 if radius <= 0 else radius) 
                 go = go/100.0
                 self.diff = cv2.addWeighted(rgb, 1.0-go, core.blend_screen(rgb, rgb2), go, 0)
                 self.hash = param_hash

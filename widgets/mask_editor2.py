@@ -39,7 +39,7 @@ import core
 import params
 import effects
 #import helpers.facer_helper
-import expand_mask
+import cores.expand_mask as expand_mask
 import config
 import logging
 from processing_dialog import wait_prosessing
