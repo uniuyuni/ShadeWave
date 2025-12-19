@@ -152,7 +152,7 @@ class HistoryContentPanel(KVBoxLayout):
 
 def create_history_content_panel(callback):
     return HistoryContentPanel(callback)
-
+    """
     content = HistoryContentPanel()
     header = HistoryCustomHeader(text="History")
 
@@ -163,3 +163,4 @@ def create_history_content_panel(callback):
     )
 
     return panel
+    """

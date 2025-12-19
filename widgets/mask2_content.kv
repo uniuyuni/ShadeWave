@@ -1,0 +1,78 @@
+
+<Mask2CustomHeader>:
+    size_hint_y: None
+    height: 10  # ここで縦幅を調整
+
+<Mask2Item>:
+    orientation: 'horizontal'
+    size_hint_y: None
+    height: 48
+    canvas.before:
+        Color:
+            rgba: (0.2, 0.2, 0.6, 0.6) if self.active else (0, 0, 0, 0)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    # インデント用スペーサー（BoxLayoutなのでWidgetで代用、またはpaddingで調整）
+    # MDOneLineListItem継承だとBoxLayout的な追加がしにくいので、BoxLayout継承に変更したほうがよかったかも。
+    # python側で MDOneLineListItem を継承しているが、中身をカスタマイズするなら BoxLayout に変えるべき。
+    # ここでは MDOneLineListItem の構造をハックするより BoxLayout で作り直す定義にする。
+    
+    Label:
+        text: root.text
+        size_hint_x: 0.4
+        halign: 'left'
+        text_size: self.size
+        # padding_x: 10 + root.indent * 20
+        color: 1, 1, 1, 1
+
+    Label:
+        text: root.mask_op
+        size_hint_x: 0.2
+        font_size: '11sp'
+
+    BoxLayout:
+        size_hint_x: 0.4
+        opacity: 1 if root.is_composit else 0
+        disabled: not root.is_composit
+        Button:
+            text: '+'
+            on_release: root.add_child('Add')
+        Button:
+            text: '-'
+            on_release: root.add_child('Subtract')
+
+    Button:
+        text: 'x'
+        size_hint_x: 0.1
+        on_release: root.delete_item()
+        background_color: 1, 0, 0, 1
+
+<SelectableRecycleBoxLayout>:
+
+<Mask2ContentPanel>:
+    orientation: "vertical"
+    size_hint_y: 1
+
+    Label:
+        text: "Masks"
+        halign: 'center'
+    Button:
+        text: "Add Mask"
+        on_release: root.add_layer()
+
+    RecycleView:
+        id: mask2_rv
+        viewclass: 'Mask2Item'
+        do_scroll_y: True
+        scroll_type: ['bars', 'content']
+        size_hint_y: None
+        ref_height: 150
+
+        SelectableRecycleBoxLayout:
+            orientation: 'vertical'
+            default_size_hint: 1, None
+            default_size: None, dp(20)
+            size_hint_y: None
+            height: self.minimum_height

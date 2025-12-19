@@ -1,10 +1,16 @@
 
 import os
+import sys
+if __name__ == '__main__':
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import math
 import cv2
 import time
 import uuid
+from enum import Enum
+import copy
 
 from kivy.app import App
 from kivy.core.window import Window
@@ -23,7 +29,9 @@ from kivy.graphics import (
 )
 from kivy.graphics.texture import Texture
 from kivy.clock import Clock
-from kivy.logger import Logger
+from kivy.logger import logging
+from kivy.uix.label import Label
+from kivy.uix.popup import Popup
 from functools import partial
 import importlib
 
@@ -33,17 +41,20 @@ import effects
 import helpers.facer_helper
 import expand_mask
 import config
+import logging
 from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 
-MASKTYPE_CIRCULAR = 'circular'
-MASKTYPE_GRADIENT = 'gradient'
-MASKTYPE_FULL = 'full'
-MASKTYPE_FREEDRAW = 'free_draw'
-MASKTYPE_SEGMENT = 'segment'
-MASKTYPE_DEPTHMAP = 'depth_map'
-MASKTYPE_FACE = 'face'
-MASKTYPE_SCENE = 'scene'
+class MaskType(Enum):
+    COMPOSIT = 'composit'
+    CIRCULAR = 'circular'
+    GRADIENT = 'gradient'
+    FULL = 'full'
+    FREEDRAW = 'free_draw'
+    SEGMENT = 'segment'
+    DEPTHMAP = 'depth_map'
+    FACE = 'face'
+    SCENE = 'scene'
 
 # コントロールポイントのクラス
 class ControlPoint(Widget):
@@ -96,6 +107,8 @@ class ControlPoint(Widget):
             return True
         return False
 
+        return False
+
 # マスクのベースクラス
 class BaseMask(Widget):
     color = ListProperty([1, 0, 0, 0.5])  # デフォルトの半透明赤色
@@ -104,7 +117,7 @@ class BaseMask(Widget):
     name = StringProperty("Mask")
     mask_id = StringProperty(str(uuid.uuid4()))
 
-    def __init__(self, editor,  **kwargs):
+    def __init__(self, editor, **kwargs):
         super().__init__(**kwargs)
         self.editor = editor  # MaskEditorのインスタンスへの参照
         self.control_points = []  # 標準のPythonリストで管理
@@ -119,17 +132,23 @@ class BaseMask(Widget):
         self.is_draw_mask = True
         self.image_mask_cache = None
         self.image_mask_cache_hash = None
+        self.do_draw_composit_mask = True
 
     def clear(self):
         for cp in self.control_points:
             self.remove_widget(cp)
         self.control_points = []
+        self.effects_param = params.delete_not_special_param(self.effects_param)
+        effects.reeffect_all(self.effects)
 
     def start(self):
         pass
 
     def end(self):
         pass
+
+    def is_composit(self):
+        return isinstance(self, CompositMask)
 
     def on_active_changed(self, instance, value):
         if value:
@@ -165,18 +184,20 @@ class BaseMask(Widget):
     def on_touch_down(self, touch):
         for cp in self.control_points:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
-            if cp.collide_point(cx, cy):
+            if cp.collide_point(cx, cy) or (self.editor.collide_point(*touch.pos) and isinstance(self, FreeDrawMask)): # フリーだけコントロールポイント関係ない
                 if cp.is_center:
                     self.editor.set_active_mask(self)
                     cp.on_touch_down(touch)
-                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_layers_list().index(self))
+                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
                     self.is_draw_mask = True
                     return True
+
                 elif self.active:
                     cp.on_touch_down(touch)
-                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_layers_list().index(self))
+                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
                     self.is_draw_mask = True
                     return True
+
         return False
 
     def on_touch_move(self, touch):
@@ -191,7 +212,7 @@ class BaseMask(Widget):
         for cp in self.control_points:
             if cp.touching:
                 cp.on_touch_up(touch)
-                get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_layers_list().index(self))
+                get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
                 return True
         return False
 
@@ -223,14 +244,13 @@ class BaseMask(Widget):
         self.update_mask()
         self.editor.start_draw_image()
     
-    def draw_mask_to_fbo(self):
+    def draw_mask_to_fbo(self, absolute=False):
         if not self.editor.disp_info:
-            Logger.warning(f"{self.__class__.__name__}: disp_infoが未設定。")
+            logging.warning(f"{self.__class__.__name__}: disp_infoが未設定。")
             return
 
-        if self.active == True:
+        if self.active == True or absolute == True:
             mask_image = self.get_mask_image()
-
             # イメージを描画してもらう
             self.editor.draw_mask_image(mask_image)
 
@@ -359,6 +379,120 @@ class BaseMask(Widget):
     def draw_sat_mask(self, mask):
         return self._draw_hls_mask(mask, 'sat')
 
+# マスクの合成マスク
+class CompositMask(BaseMask):
+    def __init__(self, editor, **kwargs):
+        super().__init__(editor, **kwargs)
+        self.name = "Composit"
+        self.mask_list = list()
+        self.initializing = False
+
+    def add_mask(self, mask, maskop='Add', index=0):
+        # 子マスクの追加
+        self.mask_list.insert(index, (mask, maskop))
+        #self.editor.dispatch('on_structure_change')
+
+    def remove_mask(self, mask):
+        # 子マスクの削除
+        for item in self.mask_list:
+            if item[0] is mask:
+                mask.clear()
+                self.mask_list.remove(item)
+                break
+        #self.editor.dispatch('on_structure_change')
+
+    def get_mask_list(self):
+        # 子マスクのリスト
+        return self.mask_list
+
+    def find_mask_op(self, mask):
+        # 登録されている子マスクのタイプを取得
+        for cmask, maskop in self.mask_list:
+            if cmask is mask:
+                return maskop
+        return None
+
+    def get_mask(self, index):
+        # 子マスクの取得
+        return self.mask_list[index]
+
+    def clear(self):
+        # 子マスクのクリア
+        for mask, _ in self.mask_list:
+            mask.clear()
+        self.mask_list.clear()
+
+    def on_touch_down(self, touch):
+        # 子マスクのイベント処理（逆順で、上に描画されたものを先に）
+        for mask, _ in reversed(self.mask_list):
+            if mask.active or mask.initializing:
+                if mask.on_touch_down(touch):
+                    return True
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        for mask, _ in reversed(self.mask_list):
+            if mask.active or mask.initializing:
+                if mask.on_touch_move(touch):
+                    return True
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        for mask, _ in reversed(self.mask_list):
+            if mask.active or mask.initializing:
+                if mask.on_touch_up(touch):
+                    return True
+        return super().on_touch_up(touch)
+
+    def serialize(self):
+        # パラメータの余計なものを削除
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+        
+        mdict = {
+            'type': MaskType.COMPOSIT,
+            'name': self.name,
+            'effects_param': param,
+            'mask_list': list(),
+        }
+        # 子マスクのシリアライズ
+        for mask, maskop in self.mask_list:
+            mdict['mask_list'].append((mask.serialize(), maskop))
+
+        return mdict
+
+    def deserialize(self, dict):
+        self.name = dict['name']
+        self.effects_param.update(dict['effects_param'])
+        # 子マスクのデシリアライズ
+        index = self.editor.mask_list.index(self)
+        for i, mask_info in enumerate(dict['mask_list']):
+            index += 1
+            new_mask = self.editor._create_mask(mask_info[0]['type'], index)
+            new_mask.deserialize(mask_info[0])
+            self.add_mask(new_mask, mask_info[1], i)
+
+    def update_mask(self):
+        if self.is_draw_mask == True:
+            self.draw_mask_to_fbo()
+
+    def get_mask_image(self):
+        # 合成マスクの画像作成
+        composit = np.zeros((int(self.editor.texture_size[0]), int(self.editor.texture_size[1])), dtype=np.float32)
+
+        for mask, maskop in reversed(self.mask_list):
+            mimage = mask.get_mask_image()
+            match(maskop):
+                case 'Add':
+                    composit = np.clip(composit + mimage, 0, 1)
+                case 'Subtract':
+                    composit = np.clip(composit - mimage, 0, 1)
+                case _:
+                    logger.error(f"Unknown mask operation: {maskop}")
+                    
+        return composit                
+
+
 # 円形グラデーションマスクのクラス
 class CircularGradientMask(BaseMask):
     inner_radius_x = NumericProperty(0)
@@ -465,6 +599,8 @@ class CircularGradientMask(BaseMask):
 
         if not self.active:
             self.show_center_control_point_only()
+        else:
+            self.show_all_control_points()  # アクティブなら全ポイントの色・表示を更新
 
     def serialize(self):
         cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
@@ -475,7 +611,7 @@ class CircularGradientMask(BaseMask):
         param = params.delete_special_param(param)
         
         dict = {
-            'type': MASKTYPE_CIRCULAR,
+            'type': MaskType.CIRCULAR,
             'name': self.name,
             'center': [cx, cy],
             'inner_radius': [ix, iy],
@@ -586,7 +722,7 @@ class CircularGradientMask(BaseMask):
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:            
@@ -599,7 +735,12 @@ class CircularGradientMask(BaseMask):
             self.outer_line.ellipse = (-ox, -oy, ox*2, oy*2)
         
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
         # パラメータ設定
@@ -745,7 +886,7 @@ class GradientMask(BaseMask):
         param = params.delete_special_param(param)
          
         dict = {
-            'type': MASKTYPE_GRADIENT,
+            'type': MaskType.GRADIENT,
             'name': self.name,
             'start_point': [sx, sy],
             'end_point': [ex, ey],
@@ -799,6 +940,8 @@ class GradientMask(BaseMask):
     
         if not self.active:
             self.show_center_control_point_only()
+        else:
+            self.show_all_control_points()  # アクティブなら全ポイントの色・表示を更新
     
     def calculate_point(self, point, dir):
         r = np.sqrt((point[0]-self.center_x)**2+(point[1]-self.center_y)**2)
@@ -875,7 +1018,7 @@ class GradientMask(BaseMask):
 
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:
@@ -896,7 +1039,12 @@ class GradientMask(BaseMask):
             self.rotate.angle = math.degrees(rad)
 
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
     
     def get_mask_image(self):
         # パラメータ設定
@@ -1017,7 +1165,7 @@ class FullMask(BaseMask):
         param = params.delete_special_param(param)
         
         dict = {
-            'type': MASKTYPE_FULL,
+            'type': MaskType.FULL,
             'name': self.name,
             'center': [cx, cy],
             'effects_param': param
@@ -1043,7 +1191,7 @@ class FullMask(BaseMask):
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:
@@ -1051,7 +1199,12 @@ class FullMask(BaseMask):
             self.translate.x, self.translate.y = cx, cy
         
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
 
@@ -1120,6 +1273,11 @@ class FreeDrawMask(BaseMask):
         self.brush_color.rgba = (0, 0, 0, 0)
         Window.unbind(mouse_pos=self.on_mouse_pos)
 
+    def clear(self):
+        self.lines = []
+        self.current_line = None
+        super().clear()
+
     def serialize(self):
         """マスクの状態をシリアライズ"""
         cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
@@ -1128,10 +1286,10 @@ class FreeDrawMask(BaseMask):
         param = params.delete_special_param(param)
         
         dict = {
-            'type': MASKTYPE_FREEDRAW,
+            'type': MaskType.FREEDRAW,
             'name': self.name,
             'center': [cx, cy],
-            'lines': self.lines,
+            'lines': copy.deepcopy(self.lines),
             'effects_param': param
         }
         return dict
@@ -1167,7 +1325,6 @@ class FreeDrawMask(BaseMask):
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.center_x = cx
             self.center_y = cy
-            self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)            
 
@@ -1180,8 +1337,13 @@ class FreeDrawMask(BaseMask):
         self.lines.append(self.current_line)
 
         self.update_mask()
-        self.editor.start_draw_image()        
+        self.editor.start_draw_image()
         
+        # 初期化時はBaseMaskの方を呼び出さない
+        if self.initializing:
+            self.initializing = False
+            return True
+
         return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
@@ -1225,7 +1387,12 @@ class FreeDrawMask(BaseMask):
         self.rotate.angle = math.degrees(self.editor.get_rotate_rad(0))
 
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
         # パラメータ設定
@@ -1491,7 +1658,7 @@ class SegmentMask(BaseMask):
         param = params.delete_special_param(param)
         
         dict = {
-            'type': MASKTYPE_SEGMENT,
+            'type': MaskType.SEGMENT,
             'name': self.name,
             'center': [cx, cy],
             'effects_param': param
@@ -1517,7 +1684,7 @@ class SegmentMask(BaseMask):
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:
@@ -1525,7 +1692,12 @@ class SegmentMask(BaseMask):
             self.translate.x, self.translate.y = cx, cy
         
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
 
@@ -1639,7 +1811,7 @@ class DepthMapMask(BaseMask):
         param = params.delete_special_param(param)
 
         dict = {
-            'type': MASKTYPE_DEPTHMAP,
+            'type': MaskType.DEPTHMAP,
             'name': self.name,
             'center': [cx, cy],
             'effects_param': param
@@ -1666,7 +1838,7 @@ class DepthMapMask(BaseMask):
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:
@@ -1674,7 +1846,12 @@ class DepthMapMask(BaseMask):
             self.translate.x, self.translate.y = cx, cy
         
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
 
@@ -1774,7 +1951,7 @@ class FaceMask(BaseMask):
         param = params.delete_special_param(param)
 
         dict = {
-            'type': MASKTYPE_FACE,
+            'type': MaskType.FACE,
             'name': self.name,
             'center': [cx, cy],
             'effects_param': param
@@ -1800,7 +1977,7 @@ class FaceMask(BaseMask):
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:
@@ -1808,7 +1985,12 @@ class FaceMask(BaseMask):
             self.translate.x, self.translate.y = cx, cy
         
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
 
@@ -1929,7 +2111,7 @@ class SceneMask(BaseMask):
         param = params.delete_special_param(param)
         
         dict = {
-            'type': MASKTYPE_SCENE,
+            'type': MaskType.SCENE,
             'name': self.name,
             'center': [cx, cy],
             'effects_param': param
@@ -1955,7 +2137,7 @@ class SceneMask(BaseMask):
     def update_mask(self):
         if not self.editor or self.editor.image_size[0] == 0 or self.editor.image_size[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
-            Logger.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
+            logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
         with self.canvas:
@@ -1963,7 +2145,12 @@ class SceneMask(BaseMask):
             self.translate.x, self.translate.y = cx, cy
         
         if self.is_draw_mask == True:
-            self.draw_mask_to_fbo()
+            if self.do_draw_composit_mask == True:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
 
     def get_mask_image(self):
 
@@ -2022,53 +2209,18 @@ class SceneMask(BaseMask):
 
         return result
 
-# マスクレイヤーの管理クラス
-class MaskLayer(BoxLayout):
-    mask = ObjectProperty(None)
-    mask_name = StringProperty('')
 
-    def __init__(self, mask, **kwargs):
-        super().__init__(**kwargs)
-        self.root = None
-
-        self.orientation = 'horizontal'
-        self.size_hint_y = None
-        self.height = 30
-        self.mask = mask
-        self.mask_name = mask.get_name()
-
-        btn_delete = Button(text='Del', size_hint=(0.4, 1))
-        btn_delete.bind(on_press=self.pre_delete_mask)
-
-        label = Button(text=self.mask_name, size_hint=(0.8, 1), background_normal='', background_color=(0,0,0,1))
-        label.bind(on_press=self.set_active)
-
-        self.add_widget(label)
-        self.add_widget(btn_delete)
-
-    def pre_delete_mask(self, instance):
-        index = self.mask.editor.get_layers_list().index(self.mask)
-        get_history_ctrl().begin_history_layer_ctrl(self.mask.editor, "Create", index)
-        get_history_ctrl().end_history_layer_ctrl(self.mask.editor, "Delete", index)
-        self.delete_mask(instance)
-
-    def delete_mask(self, instance):
-        self.parent.remove_widget(self)
-        self.mask.parent.remove_widget(self.mask)
-        self.mask.editor._delete_mask(self.mask)
-
-    def set_active(self, instance):
-        self.mask.editor.set_active_mask(self.mask)
 
 # メインのエディタークラス
 class MaskEditor2(FloatLayout, LayerCtrl):
-    mask_layers = ListProperty([])
+    mask_list = ListProperty([])
     active_mask = ObjectProperty(None, allownone=True)
     image_size = ListProperty([0, 0])  # 画像のサイズを保持
     disp_info = Property((0, 0, 0, 0, 1))
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.register_event_type('on_structure_change')
 
         self.image_widget = Image() #Image(allow_stretch=False, keep_ratio=True)
         self.image_widget.pos_hint = {"x":0, "top":1}
@@ -2078,12 +2230,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.add_widget(self.mask_container)
         self.rectangle = None
 
-        self.ui_layout = BoxLayout(orientation='vertical', size_hint=(0.1, 1))
-        self.ui_layout.pos_hint = {"x":0, "top":1}
-        self.add_widget(self.ui_layout)
-        self.create_ui()
-
-        self.create_mask = None
+        self.created_mask = None
         self.center_rotate_rad = 0
         self.orientation = (0, 0)
         self.margin = (0, 0)
@@ -2095,10 +2242,10 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.crop_image_rgb = None
         self.crop_image_hls = None
 
-        #self._keyboard = Window.request_keyboard(self._keyboard_closed, self)
-        #self._keyboard.bind(on_key_down=self._on_keyboard_down)
+        logging.info("MaskEditor: 初期化完了")
 
-        Logger.info("MaskEditor: 初期化完了")
+    def on_structure_change(self, *args):
+        pass
 
     # 終了処理
     def end(self):
@@ -2114,7 +2261,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     def imread(self, image_source, dt):
         # 画像の読み込みとサイズの取得
         if not os.path.isfile(image_source):
-            Logger.error(f"MaskEditor: 画像ファイルが見つかりません: {image_source}")
+            logging.error(f"MaskEditor: 画像ファイルが見つかりません: {image_source}")
             return False
         
         self.image_widget.source = image_source
@@ -2128,6 +2275,13 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.texture_size = (self.size[0], self.size[0])
         self.disp_info = (0, 0, self.size[0], self.size[1], scale)
         self.__set_image_info()
+
+        arr = np.frombuffer(self.image_widget.texture.pixels, dtype=np.uint8)
+        w, h = self.image_widget.texture.size
+        arr = arr.reshape(h, w, 4)
+        arr = arr.astype(np.float32) / 255.0
+        self.set_ref_image(arr, arr)
+
         return True
     
     def set_ref_image(self, crop_image, full_image):
@@ -2182,19 +2336,19 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
     def __set_image_info(self):
         self.margin = ((self.size[0]-self.texture_size[0])/2, (self.size[1]-self.texture_size[1])/2)
-        for mask in reversed(self.mask_layers):
+        for mask in reversed(self.mask_list):
             #pass    # 無限ループ対策
             effects.reeffect_all(mask.effects)
         
     def update(self):
         # 既存のマスクに対する更新を処理
-        for mask in reversed(self.mask_layers):
+        for mask in reversed(self.mask_list):
             #pass    # 無限ループ対策
             mask.update()
 
     def serialize(self):
         list = []
-        for mask in reversed(self.mask_layers):
+        for mask in reversed(self.mask_list):
             list.append(mask.serialize())
         if len(list) <= 0:
             return None
@@ -2213,6 +2367,8 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             mask.deserialize(dict)
             mask.update()
 
+        self.dispatch('on_structure_change')
+
     def get_active_mask(self):
         if self.disabled == True:
             return None
@@ -2220,70 +2376,83 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return self.active_mask
     
     def find_mask(self, mask_id):
-        for mask in reversed(self.mask_layers):
+        for mask in reversed(self.mask_list):
             if mask.mask_id == mask_id:
                 return mask
         return None
         
-    def update_layer(self, op, index, dict):
+    # LayerCtrl用
+    def update_layer(self, op, index, op_type, dict):
         match op:
             case "Create":
-                mask = self._create_mask(dict['type'], index)
-                mask.deserialize(dict)
+                mask = self._create_mask(dict['type'], index, dict)
+                # 通常マスクなら親にくっつける
+                if op_type != "Composit":
+                    # なんでもいいから親探す
+                    composit_mask = self.find_composit_mask(mask, index)
+                    if composit_mask is None:
+                        logging.error("Composit mask not found")
+                        assert False
+
+                    # インデクスがコンポジットマスクの中の何番目かを調べる
+                    composit_mask_index = 0
+                    for i in range(index-1, -1, -1):
+                        composit_mask = self.mask_list[i]
+                        if composit_mask.is_composit():
+                            composit_mask_index = index - 1 - i
+                            break
+                    composit_mask.add_mask(mask, op_type, composit_mask_index)
+                self.set_active_mask(mask)
                 mask.update_mask()
 
             case "Delete":
-                self.layer_list.children[index].delete_mask(self)
+                self._remove_mask(self.get_mask(index))
 
             case "Update":
-                mask = self.layer_list.children[index].mask
+                mask = self.get_mask(index)
                 mask.clear()
                 mask.deserialize(dict)
+                self.set_active_mask(mask)
                 mask.update_mask()
+
+            case _:
+                logging.error("Invalid operation: " + op)
+                assert False
+
+        self.dispatch('on_structure_change')
     
+    # LayerCtrl用
     def get_layer(self, index):
-        return self.mask_layers[index]
+        return self.get_mask(index)
     
-    def get_layers_list(self):
-        return self.mask_layers
+    def get_mask(self, index):
+        return self.mask_list[index]
     
-    def create_ui(self):
-        # マスクタイプ選択ボタン
-        btn_circular = Button(text='Circle', size_hint=(1, 0.05))
-        btn_circular.bind(on_release=self.select_circular_gradient_mask)
-        self.ui_layout.add_widget(btn_circular)
+    def get_mask_list(self):
+        return self.mask_list
 
-        btn_gradient = Button(text='Line', size_hint=(1, 0.05))
-        btn_gradient.bind(on_release=self.select_gradient_mask)
-        self.ui_layout.add_widget(btn_gradient)
+    # mask2_content用
+    def add_mask(self, mask_type, op_type, index):
+        return self._create_start_new_mask(mask_type, op_type, index)
 
-        btn_full = Button(text='Full', size_hint=(1, 0.05))
-        btn_full.bind(on_release=self.select_full_mask)
-        self.ui_layout.add_widget(btn_full)
+    # mask2_content用
+    def add_composit_mask(self, instance):
+        self._create_start_new_mask(MaskType.COMPOSIT, "Composit")
+    
+    # mask2_content用
+    def del_mask(self, mask):
+        index = self.get_mask_list().index(mask)
+        is_composit = mask.is_composit()
+        if is_composit:
+            maskop = 'Composit'
+        else:
+            composit_mask = self.find_composit_mask(mask, index)
+            if composit_mask:
+                maskop = composit_mask.find_mask_op(mask)
 
-        btn_free_draw = Button(text='Draw', size_hint=(1, 0.05))
-        btn_free_draw.bind(on_release=self.select_free_draw_mask)
-        self.ui_layout.add_widget(btn_free_draw)
-
-        btn_segment = Button(text='Segment', size_hint=(1, 0.05))
-        btn_segment.bind(on_release=self.select_segment_mask)
-        self.ui_layout.add_widget(btn_segment)
-
-        btn_depth_map = Button(text='Depth', size_hint=(1, 0.05))
-        btn_depth_map.bind(on_release=self.select_depth_map_mask)
-        self.ui_layout.add_widget(btn_depth_map)
-
-        btn_face = Button(text='Face', size_hint=(1, 0.05))
-        btn_face.bind(on_release=self.select_face_mask)
-        self.ui_layout.add_widget(btn_face)
-
-        btn_scene = Button(text='Scene', size_hint=(1, 0.05))
-        btn_scene.bind(on_release=self.select_scene)
-        self.ui_layout.add_widget(btn_scene)
-
-        # マスクレイヤー表示
-        self.layer_list = BoxLayout(orientation='vertical', size_hint=(2, 0.7))
-        self.ui_layout.add_widget(self.layer_list)
+        get_history_ctrl().begin_history_layer_ctrl(self, "Create", index, maskop)
+        get_history_ctrl().end_history_layer_ctrl(self, "Delete", index)
+        self._remove_mask(mask)
 
     def set_draw_mask(self, is_draw_mask):
         if is_draw_mask == False:
@@ -2317,56 +2486,39 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
         # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
 
-    def select_circular_gradient_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_CIRCULAR)
-
-    def select_gradient_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_GRADIENT)
-
-    def select_full_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_FULL)
-
-    def select_free_draw_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_FREEDRAW)
-
-    def select_segment_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_SEGMENT)
-
-    def select_depth_map_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_DEPTHMAP)
-
-    def select_face_mask(self, instance):
-        self._create_start_new_mask(MASKTYPE_FACE)
-
-    def select_scene(self, instance):
-        self._create_start_new_mask(MASKTYPE_SCENE)
-
-    def _create_start_new_mask(self, type):
+    def _create_start_new_mask(self, type, op_type, index=0):
         # 画像サイズがまだ設定されていない場合、マスクの作成をスキップ
         if self.image_size == [0, 0]:
-            Logger.warning("MaskEditor: 画像がまだロードされていません。マスクを追加できません。")
+            logging.warning("MaskEditor: 画像がまだロードされていません。マスクを追加できません。")
             return
         
-        self.ui_layout.disabled = True
-        mask = self._create_mask(type)
+        mask = self._create_mask(type, index)
         self.set_active_mask(None)
-        self.create_mask = mask
+        self.created_mask = mask
 
         # ここで履歴の更新を始める
-        get_history_ctrl().begin_history_layer_ctrl(self, "Delete", self.get_layers_list().index(self.create_mask))
+        get_history_ctrl().begin_history_layer_ctrl(self, "Delete", self.get_mask_list().index(self.created_mask), op_type)
+        
+        # CompositMaskなど初期化が不要な場合は即座に終了処理を行う
+        if not mask.initializing:
+             self._create_end_new_mask()
+             self.created_mask = None
+        
+        return self.created_mask
 
     def _create_end_new_mask(self):
-        self.ui_layout.disabled = False
-        self.set_active_mask(self.create_mask)
+        self.set_active_mask(self.created_mask)
         
-        get_history_ctrl().end_history_layer_ctrl(self, "Create", self.get_layers_list().index(self.create_mask))
+        # 履歴記録。 create_maskがレイヤーリストにある場合のみ
+        if self.created_mask in self.get_mask_list():
+            get_history_ctrl().end_history_layer_ctrl(self, "Create", self.get_mask_list().index(self.created_mask))
 
     def on_touch_down(self, touch):
         if self.disabled == True:
             return False
         
-        # 既存のマスクに対するタッチイベントを処理
-        for mask in reversed(self.mask_layers):
+        # 既存のマスクに対するタッチイベントを処理（新しい方から）
+        for mask in self.mask_list:
             if mask.on_touch_down(touch):
                 return True
 
@@ -2379,64 +2531,117 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         result = super().on_touch_up(touch)
 
         # こっちを後でやらないとまだコントロールポイントが作られてない
-        if self.create_mask is not None:
+        if self.created_mask is not None:
             self._create_end_new_mask()        
-            self.create_mask = None
+            self.created_mask = None
         
         return result
 
-    def _create_mask(self, mask_type, index=0):
-        # マスク作成
-        if mask_type == MASKTYPE_CIRCULAR:
-            mask = CircularGradientMask(editor=self)
-        elif mask_type == MASKTYPE_GRADIENT:
-            mask = GradientMask(editor=self)
-        elif mask_type == MASKTYPE_FULL:
-            mask = FullMask(editor=self)
-        elif mask_type == MASKTYPE_FREEDRAW:
-            mask = FreeDrawMask(editor=self)
-        elif mask_type == MASKTYPE_SEGMENT:
-            mask = SegmentMask(editor=self)
-        elif mask_type == MASKTYPE_DEPTHMAP:
-            mask = DepthMapMask(editor=self)
-        elif mask_type == MASKTYPE_FACE:
-            mask = FaceMask(editor=self)
-        elif mask_type == MASKTYPE_SCENE:
-            mask = SceneMask(editor=self)
-        else:
-            Logger.error(f"MaskEditor: 不明なマスクタイプ: {self.current_mask_type}")
-            return None
-
-        self.mask_container.add_widget(mask, index)
-        self.mask_layers.insert(index, mask)
-
-        # レイヤーUIに追加
-        layer = MaskLayer(mask=mask)
-        self.layer_list.add_widget(layer, index)
-        if self.root is not None:
-            self.root.set2widget_all(mask.effects, mask.effects_param)
+    def _create_mask_object(self, mask_type):
+        # マスクオブジェクト作成のみを行う
+        match mask_type:
+            case MaskType.CIRCULAR:
+                mask = CircularGradientMask(editor=self)
+            case MaskType.GRADIENT:
+                mask = GradientMask(editor=self)
+            case MaskType.FULL:
+                mask = FullMask(editor=self)
+            case MaskType.FREEDRAW:
+                mask = FreeDrawMask(editor=self)
+            case MaskType.SEGMENT:
+                mask = SegmentMask(editor=self)
+            case MaskType.DEPTHMAP:
+                mask = DepthMapMask(editor=self)
+            case MaskType.FACE:
+                mask = FaceMask(editor=self)
+            case MaskType.SCENE:
+                mask = SceneMask(editor=self)
+            case MaskType.COMPOSIT:
+                mask = CompositMask(editor=self)
+            case _:
+                logging.error(f"MaskEditor: 不明なマスクタイプ: {mask_type}")
+                assert False
 
         return mask
 
-    def _delete_mask(self, mask):
-        if len(self.mask_layers) <= 1:
+    def _create_mask(self, mask_type, index=0, dict=None):
+        # マスクオブジェクト作成
+        mask = self._create_mask_object(mask_type)
+
+        # コンテナに追加
+        self.mask_container.add_widget(mask, index)
+        self.mask_list.insert(index, mask)
+
+        # デシリアライズ
+        if dict is not None:
+            mask.deserialize(dict)
+
+        # パラメータをウィジェットに反映        
+        if self.root is not None:
+            self.root.set2widget_all(mask.effects, mask.effects_param)
+
+        #self.dispatch('on_structure_change')
+        return mask
+
+    def _remove_mask(self, mask):
+        # 削除する前にアクティブなものを移動する
+        if len(self.mask_list) <= 1:
             self.draw_mask_image(None)
             self.set_active_mask(None)
         else:
-            i = self.mask_layers.index(mask)
-            i = i+1 if i+1 < len(self.mask_layers) else i-1
-            self.set_active_mask(self.mask_layers[i])
- 
+            i = self.mask_list.index(mask)
+            i = i+1 if i+1 < len(self.mask_list) else i-1
+            self.set_active_mask(self.mask_list[i])
+
+        # 親探す
+        composit_mask = self.find_composit_mask(mask)
+        if composit_mask is mask:
+            # Compositなら子をすべて削除
+            for child, _ in composit_mask.get_mask_list():
+                self._remove_mask(child)
+            composit_mask.clear()
+        elif composit_mask is not None:
+            # Compositでないなら親から削除
+            composit_mask.remove_mask(mask)
+        else:
+            logging.error(f"MaskEditor: 親が見つかりませんでした。マスクを削除できません。")
+            assert False
+
+        # コンテナから削除
         self.mask_container.remove_widget(mask)
-        self.mask_layers.remove(mask)
+        self.mask_list.remove(mask)
+
+        # 再描画
+        if self.active_mask:
+            self.active_mask.update_mask()
+        #self.dispatch('on_structure_change')
 
     def clear_mask(self):
         self.set_active_mask(None)
         self.draw_mask_image(None)
         self.mask_container.clear_widgets()
-        self.mask_layers.clear()
-        self.layer_list.clear_widgets()
+        self.mask_list.clear()
         FaceMask.delete_faces()
+        self.dispatch('on_structure_change')
+
+    def find_composit_mask(self, mask, index=0):
+        # 自分の親（コンポジット）を探す
+        if mask.is_composit():
+            return mask     # 自分がコンポジット
+
+        # 自分がコンポジットでない場合、コンポジットを探す
+        for composit_mask in self.mask_list:
+            if composit_mask.is_composit():
+                if composit_mask.find_mask_op(mask) is not None:
+                    return composit_mask
+        
+        # リスト内の直前の親にする
+        for i in range(index-1, -1, -1):
+            composit_mask = self.mask_list[i]
+            if composit_mask.is_composit():
+                return composit_mask
+            
+        return None
 
     def set_active_mask(self, mask):
         if self.active_mask and self.active_mask != mask:
@@ -2446,7 +2651,15 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.active_mask = mask
         if mask is not None:
             mask.active = True
-            self.root.set2widget_all(mask.effects, mask.effects_param)
+            if mask.is_composit():
+                # コンポジットなら通常属性のみ反映
+                self.root.set2widget_all(mask.effects, mask.effects_param)
+            else:
+                # コンポジットでないならコンポジットの属性と合わせて反映
+                composit_mask = self.find_composit_mask(mask)
+                marge_param = composit_mask.effects_param.copy()
+                marge_param.update(mask.effects_param)
+                self.root.set2widget_all(composit_mask.effects, marge_param)
             mask.start()
             #mask.update()
         else:
@@ -2455,6 +2668,10 @@ class MaskEditor2(FloatLayout, LayerCtrl):
                 self.root.set2widget_all(None, None)
         self.start_draw_image()
 
+        # Mask2パネルのON / OFF
+        if self.root is not None:
+            self.root.ids['mask2_panel'].disabled = self.active_mask is None or self.active_mask.is_composit()
+ 
     def get_rotate_rad(self, rotate_rad):
         rad, flip = self.orientation
         """
@@ -2556,94 +2773,43 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
         return (new_cx, new_cy)
 
-    def _keyboard_closed(self):
-        self._keyboard.unbind(on_key_down=self._on_keyboard_down)
-        self._keyboard = None
-
-    def _on_keyboard_down(self, keyboard, keycode, text, modifiers):
-        if keycode[1] == 'z':
-            if self.disp_info[4] == 1.0:
-                self.disp_info[0], self.disp_info[1] = 0, 0
-                if self.image_size[0] >= self.image_size[1]:
-                    scale = self.size[0] / self.image_size[0]
-                else:
-                    scale = self.size[1] / self.image_size[1]
-                self.disp_info[4] = scale
-            else:
-                self.disp_info[0], self.disp_info[1] = self.image_size[0]/2, self.image_size[1]/2
-                self.disp_info[4] = 1.0
-        elif keycode[1] == 'up':
-            self.disp_info[1] -= 100
-        elif keycode[1] == 'down':
-            self.disp_info[1] += 100
-        elif keycode[1] == 'left':
-            self.disp_info[0] -= 100
-        elif keycode[1] == 'right':
-            self.disp_info[0] += 100
-        elif keycode[1] == 't':
-            for mask in reversed(self.mask_layers):
-                dict = mask.serialize()        
-                mask.deserialize(dict)
-            return True
-
-        elif keycode[1] == 'r':
-            self.center_rotate_rad += math.radians(5)
-            for mask in reversed(self.mask_layers):
-                mask.update()
-            return True
-
-        elif keycode[1] == 'a':
-            self.root.force_full_redraw()
-            
-            return True
-        
-        elif keycode[1] == 's':
-            self.root.save_json()
-            return True
-        
-        # 既存のマスクに対するタッチイベントを処理
-        for mask in reversed(self.mask_layers):
-            mask.update()  
-    
-        return True
-
 # アプリケーションクラス
 class MaskEditor2App(App):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.main_widget = self
+
+    def begin_history_layer_ctrl(self, layer_ctrl, op, index):
+        pass
+
+    def end_history_layer_ctrl(self, layer_ctrl, op, index):
+        pass
+
     def build(self):
         # 画像ファイルのパスを正しく設定してください
-        image_path = 'your_image.jpg'
+        image_path = 'your_image.JPG'
+        if not os.path.exists(image_path):
+             image_path = 'your_image.jpg'
 
-        box0 = BoxLayout()
-        box0.orientation = 'vertical'
-        box0.size = (Window.width, Window.height)
-        box0.size_hint = (None, None)
+        # KVファイルをロード
+        from kivy.lang import Builder
+        Builder.load_file(os.path.join(os.path.dirname(__file__), 'mask2_content.kv'))
 
-        box1 = FloatLayout()
-        box1.size_hint_y = 2
-        box0.add_widget(box1)
-        box2 = BoxLayout()
-        box2.orientation = 'horizontal'
-        box2.size_hint_y = 6
-        box0.add_widget(box2)
-        box3 = FloatLayout()
-        box3.size_hint_y = 2
-        box0.add_widget(box3)
-
-        box4 = FloatLayout()
-        box4.size_hint_x = 2
-        box2.add_widget(box4)
-        float = FloatLayout()
-        float.size_hint_x = 6
+        box0 = BoxLayout(orientation='horizontal') # 全体を横並びに
+        
+        # エディタ部
         editor = MaskEditor2()
-        editor.pos_hint = {'x': 0, 'top': 1}
-        #editor.size_hint_x = 6
-        float.add_widget(editor)
-        box2.add_widget(float)
-        box5 = FloatLayout()
-        box5.size_hint_x = 2
-        box2.add_widget(box5)
+        box0.add_widget(editor)
 
-        Clock.schedule_once(partial(editor.imread, image_path), -1)
+        # サイドパネル部
+        from widgets import mask2_content
+        side_panel = mask2_content.create_mask2_content_panel(editor)
+        # サイドパネルの幅を制限
+        side_panel.size_hint_x = 0.3
+        box0.add_widget(side_panel)
+
+        Clock.schedule_once(partial(editor.imread, image_path), 0.5)
 
         return box0
 

@@ -9,6 +9,7 @@
 #:include widgets/export_dialog.kv
 #:include widgets/hover_spinner.kv
 #:include widgets/curve.kv
+#:include widgets/mask2_content.kv
 #:include widgets/history_content.kv
 
 #:set clear_color 0, 0, 0, 0
@@ -64,7 +65,7 @@
 
         BoxLayout:
             orientation: 'horizontal'
-            size_hint: (1, None)
+            size_hint: 1, None
             ref_height: 30
 
             HSpacer:
@@ -87,20 +88,19 @@
 
         BoxLayout:
             orientation: 'horizontal'
-            #size_hint_y: 1
 
             BoxLayout:
                 id: info
                 orientation: 'vertical'
-                size_hint_x: 0.3
-                margin: dp(8)
-                spacing: dp(8)
+                size_hint: 0.3, 1
+                ref_margin: 8
+                ref_spacing: 8
 
                 HistogramWidget:
                     id: histogram
                     size_hint: None, None
-                    ref_width: 512
-                    ref_height: 256
+                    ref_width: 256+128
+                    ref_height: 128
                     ref_margin: 4
                     canvas:
                         Color:
@@ -1703,6 +1703,7 @@
                     MDScrollView:
 
                         MDBoxLayout:
+                            id: mask2_panel
                             orientation: "vertical"
                             size_hint_y: None
                             height: self.minimum_height

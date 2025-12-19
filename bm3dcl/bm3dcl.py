@@ -1,3 +1,4 @@
+
 import numpy as np
 import pyopencl as cl
 import pyopencl.array as cl_array
@@ -341,16 +342,14 @@ def bm3d_denoise(image, sigma=1, platform_preference='auto', device_preference=0
 # 使用例
 if __name__ == "__main__":
     # 入力画像読み込み（例：512x512 RGB画像）
-    input_rgb = imageio.v2.imread("your_imageA.jpg").astype(np.float32) / 255.0
+    input_rgb = imageio.v2.imread("sample.jpg").astype(np.float32) / 255.0
     
     # ノイズ除去実行
     starttime = time.time()
     denoised = bm3d_denoise(input_rgb, sigma=0.1)
     print(f"実行時間: {time.time()-starttime:.6f}秒")
-    # 5.439034秒
     
     # 結果保存
-    denoised = (denoised * 255).astype(np.uint8)
-    imageio.imwrite("denoised_result.png", denoised)
+    imageio.imwrite("bm3d_result.png", (denoised * 255).astype(np.uint8))
     
     print("Denoising completed with both Basic and Wiener filters.")

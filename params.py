@@ -275,7 +275,7 @@ def load_json(file_path, param, mask_editor2):
 
 def is_empty_param(param, mask_editor2):
     param2 = delete_special_param(param)
-    mask_list = mask_editor2.get_layers_list()
+    mask_list = mask_editor2.get_mask_list()
     if len(param2) == 0 and (mask_list is None or len(mask_list) == 0):
         return True
 

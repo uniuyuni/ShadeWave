@@ -8,7 +8,7 @@ from enum import Enum
 from kivymd.app import MDApp
 
 class LayerCtrl:
-    def update_layer(self, op, type, index, param):
+    def update_layer(self, op, type, index, op_type, param):
         pass
 
     def get_layer(self, index):
@@ -28,10 +28,11 @@ class Operation:
         self.backup = {}    # もとに戻す時のパラメータ
         self.diff = []      # 差分
     
-    def set_backup_layer(self, layer_ctrl, op, index):
+    def set_backup_layer(self, layer_ctrl, op, index, op_type):
         self.layer_ctrl = layer_ctrl
         self.backup['op'] = op
         self.backup['index'] = index
+        self.backup['op_type'] = op_type
         self.backup['dict'] = None if op == "Delete" else layer_ctrl.get_layer(index).serialize()
         
     def set_update_layer(self, layer_ctrl, op, index):
@@ -41,9 +42,10 @@ class Operation:
 
         self.update['op'] = op
         self.update['index'] = index
+        self.update['op_type'] = self.backup['op_type']
         self.update['dict'] = layer_ctrl.get_layer(index).serialize()
 
-        self.diff.append(["Layer " + op, self.update['dict']['name'], str(index)])
+        self.diff.append(["Mask2 " + op, self.update['dict']['name'], str(index)])
 
         return self.update
     
@@ -105,7 +107,7 @@ class Operation:
             self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
 
         elif self.type == "Layer":
-            self.layer_ctrl.update_layer(self.backup['op'], self.backup['index'], self.backup['dict'])
+            self.layer_ctrl.update_layer(self.backup['op'], self.backup['index'], self.backup['op_type'], self.backup['dict'])
 
     def redo(self, widget):
         if self.type == "Effect":
@@ -113,7 +115,7 @@ class Operation:
             self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
 
         elif self.type == "Layer":
-            self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['dict'])
+            self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['op_type'], self.update['dict'])
 
 class History:
     """操作履歴マネージャー"""

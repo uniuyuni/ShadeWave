@@ -104,8 +104,10 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
 
     # マスクレイヤー
     if mask_editor2 is not None:
-        mask_list = mask_editor2.get_layers_list()
+        mask_list = mask_editor2.get_mask_list()
         for mask in mask_list:
+            if not mask.is_composit():
+                continue
             
             img2, lv2reset = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig, lv1reset)
             img2, lv1reset = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig, lv2reset)

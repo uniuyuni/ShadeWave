@@ -54,6 +54,7 @@ if __name__ == '__main__':
     import widgets.bbox_viewer
     import widgets.mask_editor2
     import widgets.history_content as history_content
+    import widgets.mask2_content as mask2_content
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
 
 import os
@@ -135,6 +136,9 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].disabled = True
             self._set_film_presets()
             self._set_lens_presets()
+
+            self.mask2_panel = mask2_content.create_mask2_content_panel(self.ids['mask_editor2'])
+            self.ids['info'].add_widget(self.mask2_panel)
 
             self.history_panel = history_content.create_history_content_panel(self._on_history_selected)
             self.ids['info'].add_widget(self.history_panel)
@@ -230,7 +234,7 @@ if __name__ == '__main__':
         def distortion_callback(self):
             self.apply_effects_lv(0, 'distortion')
 
-        def _get_active_effects(self, mask_id=None):
+        def _get_active_effects(self, mask_id=None, lv=None):
             if mask_id is None:
                 mask = self.ids['mask_editor2'].get_active_mask()
             else:
@@ -238,23 +242,37 @@ if __name__ == '__main__':
 
             if mask is None:
                 return (self.primary_effects, self.primary_param, None)
-            return (mask.effects, mask.effects_param, mask.mask_id)
+
+            # マスクパラメータの振り分け
+            if lv is not None:
+                composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
+                if lv == 3:
+                     # Mask2パラメータは常に自分自身
+                    pass
+                else: 
+                     # それ以外は親のCompositMaskへ（自分がCompositMaskなら自分へ）
+                    if not mask.is_composit():
+                        composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
+                        if composit_mask is not None:
+                            mask = composit_mask
+
+            return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
         def apply_effects_lv(self, lv, effect):
-            current_effects, current_param, mask_id = self._get_active_effects()
+            current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
         def set_effect_param(self, lv, effect, arg):
-            current_effects, current_param, _ = self._get_active_effects()
+            current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
-        def begin_history_layer_ctrl(self, layer_ctrl, op, index):
+        def begin_history_layer_ctrl(self, layer_ctrl, op, index, op_type):
             self.current_op = history.Operation(type="Layer")
-            self.current_op.set_backup_layer(layer_ctrl, op, index)
+            self.current_op.set_backup_layer(layer_ctrl, op, index, op_type)
 
         def end_history_layer_ctrl(self, layer_ctrl, op, index):
             if self.current_op is None:
@@ -271,7 +289,7 @@ if __name__ == '__main__':
                 self.current_op = None
 
         def begin_history_effect_ctrl(self, lv, effect, subname=None):
-            current_effects, current_param, mask_id = self._get_active_effects()
+            current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
             self.current_op = history.Operation(lv, effect, subname, mask_id)
             self.current_op.set_backup(current_effects, current_param, subname)
             return True
@@ -288,7 +306,7 @@ if __name__ == '__main__':
                 logging.error("MainWidget.end_history_effect_ctrl Unmatching error.")
                 return
 
-            current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id)
+            current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id, lv=lv)
             if self.current_op.set_update(current_effects, current_param, subname) is not None:
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)

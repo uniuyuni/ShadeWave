@@ -1,6 +1,13 @@
 .DS_Store
 .jpg
 .png
+test/
+test_photos/
+checkpoints/
+icc/
+dcp/
+luts/
+metal/
 **/__pycache__/**
 **/venv3.11.9/**
 **/picture/**
