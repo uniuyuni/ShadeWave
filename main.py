@@ -116,7 +116,7 @@ if __name__ == '__main__':
             self.ids['viewer'].set_cache_system(self.cache_system)
 
             self.processor = DynamicImageProcessor(num_workers=4)
-            self.processor.start()
+            #self.processor.start()
             self.pipeline_version = 0
             
             self.apply_draw_image_offset = None
@@ -317,6 +317,7 @@ if __name__ == '__main__':
                 if self.history.undo(self):
                     self.history_panel.set_history(self.history)
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                    self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                     self._set_diff_list_to_inpaint_edit()
                     self.start_draw_image()
 
@@ -325,6 +326,7 @@ if __name__ == '__main__':
                 if self.history.redo(self):
                     self.history_panel.set_history(self.history)
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                    self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                     self._set_diff_list_to_inpaint_edit()
                     self.start_draw_image()
 
@@ -335,6 +337,7 @@ if __name__ == '__main__':
                     self.history.undo(self)
                 self.history_panel.set_history(self.history)
                 #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                 self._set_diff_list_to_inpaint_edit()
                 self.start_draw_image()
 
@@ -344,6 +347,7 @@ if __name__ == '__main__':
                     self.history.redo(self)
                 self.history_panel.set_history(self.history)
                 #self.ids['mask_editor2'].set_draw_mask(lv == 3)
+                self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                 self._set_diff_list_to_inpaint_edit()
                 self.start_draw_image()
 
@@ -399,8 +403,10 @@ if __name__ == '__main__':
                     params.load_json(file_path, param, self.ids['mask_editor2'])
 
                 # １回目の時だけパラメータを反映して、編集できる様にする
-                self.primary_param = param
-                self.set2widget_all(self.primary_effects, param)
+                # １回目の時だけパラメータを反映して、編集できる様にする
+                self.primary_param.clear()
+                self.primary_param.update(param)
+                self.set2widget_all(self.primary_effects, self.primary_param)
                 
                 # 特別あつかいでエディタを起動できるなら起動する
                 self.apply_effects_lv(0, 'distortion')
@@ -549,7 +555,7 @@ if __name__ == '__main__':
             Y = self.primary_param['color_Y']
 
             # 全消去
-            self.primary_param = {}
+            self.primary_param.clear()
 
             # 初期化パラメータ設定
             params.set_image_param(self.primary_param, self.imgset.img)
@@ -711,6 +717,11 @@ if __name__ == '__main__':
         def shutdown(self):
             self.processor.stop()
             
+            if self.apply_thread is not None:
+                t = self.apply_thread
+                self.apply_thread = None
+                t.join()
+                
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
 

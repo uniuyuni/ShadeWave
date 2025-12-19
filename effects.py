@@ -23,8 +23,8 @@ import filter
 import local_contrast
 import params
 import utils
-import helpers.mediapipe_helper
-import helpers.qwen_image_helper as qih
+#import helpers.mediapipe_helper
+#import helpers.qwen_image_helper as qih
 import aiutils
 from processing_dialog import wait_prosessing
 
@@ -226,6 +226,8 @@ class InpaintEffect(Effect):
         ip = self.get_param(param, 'inpaint')
         ipp = self.get_param(param, 'inpaint_predict')
         if (ip > 0 and ipp > 0) is True:
+            import helpers.qwen_image_helper as qih
+            
             param['inpaint_predict'] = 0 # なぜか二重起動するときがあるので予防
 
             mask = self.mask_editor.get_mask().astype(np.float32) / 255.0
@@ -934,6 +936,7 @@ class FaceEffect(Effect):
         else:
             param_hash = hash((jls, js, ls, rs, lipss))
             if self.hash != param_hash:
+                import helpers.mediapipe_helper
                 fms = helpers.mediapipe_helper.setup_face_mesh(rgb)
                 rgb = helpers.mediapipe_helper.adjust_face_jawline(fms, rgb, jls/100, False) #efconfig.mode == EffectMode.PREVIEW)
                 rgb = helpers.mediapipe_helper.adjust_face_jaw(fms, rgb, js/100, False)

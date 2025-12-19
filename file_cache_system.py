@@ -2,6 +2,8 @@
 import threading
 import time
 from typing import Dict, Any
+import os
+import concurrent.futures
 from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 import logging
 
@@ -64,19 +66,23 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
         result = imgset.preload(file_path, exif_data, param)
         if result is not None:
             # 続きの読み込みがある
-            with ProcessPoolExecutor(max_workers=len(result)) as executor:
-                futures = []
-                for i, task in enumerate(result):
-                    if i > 0:
-                        future = executor.submit(run_method, imgset, task.worker, config._config, None, file_path, exif_data, param)
-                        future.add_done_callback(lambda f: _task_callback(file_callbacks, shared_resources, f))  # コールバック登録
-                        futures.append(future)
-                result = run_method(imgset, result[0].worker, config._config, None, file_path, exif_data, param)
-                _task_callback(file_callbacks, shared_resources, result)
+            # 続きの読み込みがある
+            executor = shared_resources['executor']
+            futures = []
+            for i, task in enumerate(result):
+                if i > 0:
+                    future = executor.submit(run_method, imgset, task.worker, config._config, None, file_path, exif_data, param)
+                    future.add_done_callback(lambda f: _task_callback(file_callbacks, shared_resources, f))  # コールバック登録
+                    futures.append(future)
+            result = run_method(imgset, result[0].worker, config._config, None, file_path, exif_data, param)
+            _task_callback(file_callbacks, shared_resources, result)
+            
+            # 完了待ち
+            concurrent.futures.wait(futures)
 
-                # キャッシュに登録（すでにキャンセルされていたらスキップ）
-                #if file_path in active_processes:
-                #    cache[file_path] = (imgset, exif_data, param.copy())
+            # キャッシュに登録（すでにキャンセルされていたらスキップ）
+            #if file_path in active_processes:
+            #    cache[file_path] = (imgset, exif_data, param.copy())
         
         # 先行読み込み登録から削除
         if file_path in preload_registry:
@@ -101,11 +107,13 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
 class FileCacheSystem:
     def __init__(self, max_cache_size: int = 10, max_concurrent_loads: int = 4):
         # 共有リソースを初期化
+        self.ppe = ProcessPoolExecutor(max_workers=os.cpu_count())
         self.shared_resources = {
             'cache': {},
             'preload_registry': {},
             'active_processes': {},
-            'process_queue_flag': False
+            'process_queue_flag': False,
+            'executor': self.ppe
         }
         
         # 各共有リソースへの参照を設定
@@ -353,5 +361,6 @@ class FileCacheSystem:
         #    process.terminate()
         
         self.p.shutdown()
+        self.ppe.shutdown()
         
         logging.info("FCS shutdown complete")

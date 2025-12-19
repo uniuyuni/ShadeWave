@@ -38,14 +38,14 @@ import importlib
 import core
 import params
 import effects
-import helpers.facer_helper
+#import helpers.facer_helper
 import expand_mask
 import config
 import logging
 from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 
-class MaskType(Enum):
+class MaskType(str, Enum):
     COMPOSIT = 'composit'
     CIRCULAR = 'circular'
     GRADIENT = 'gradient'
@@ -2028,6 +2028,7 @@ class FaceMask(BaseMask):
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_face(self, image_size, center, exclude_names):
+        import helpers.facer_helper
         if FaceMask.__faces is None or self.editor.rotation_changed_flag:
             FaceMask.__faces = helpers.facer_helper.create_faces(self.editor.full_image_rgb, device='cpu')
         
@@ -2349,6 +2350,9 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     def serialize(self):
         list = []
         for mask in reversed(self.mask_list):
+            parent = self.find_composit_mask(mask)
+            if parent is not None and parent != mask:
+                continue
             list.append(mask.serialize())
         if len(list) <= 0:
             return None
@@ -2597,7 +2601,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         composit_mask = self.find_composit_mask(mask)
         if composit_mask is mask:
             # Compositなら子をすべて削除
-            for child, _ in composit_mask.get_mask_list():
+            for child, _ in list(composit_mask.get_mask_list()):
                 self._remove_mask(child)
             composit_mask.clear()
         elif composit_mask is not None:
@@ -2657,9 +2661,13 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             else:
                 # コンポジットでないならコンポジットの属性と合わせて反映
                 composit_mask = self.find_composit_mask(mask)
-                marge_param = composit_mask.effects_param.copy()
-                marge_param.update(mask.effects_param)
-                self.root.set2widget_all(composit_mask.effects, marge_param)
+                if composit_mask is not None:
+                    marge_param = composit_mask.effects_param.copy()
+                    marge_param.update(mask.effects_param)
+                    self.root.set2widget_all(composit_mask.effects, marge_param)
+                else:
+                    logging.error(f"MaskEditor: 親が見つかりませんでした。マスクを反映できません。")
+                    
             mask.start()
             #mask.update()
         else:

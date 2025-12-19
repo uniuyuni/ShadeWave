@@ -64,6 +64,11 @@ class DynamicImageProcessor:
         self.workers = []
         self.expected_results = 0  # 期待する結果の数
         
+    def ensure_started(self):
+        """ワーカーが起動していなければ起動する"""
+        if not self.workers:
+            self.start()
+
     def start(self):
         """ワーカープロセスを起動"""
         for i in range(self.num_workers):
@@ -77,6 +82,9 @@ class DynamicImageProcessor:
         """画像をタイルに分割して処理キューに投入"""
         h, w = image.shape[:2]
         
+        # ワーカーが起動しているか確認
+        self.ensure_started()
+
         # 古いタスクをクリア（オプション：最新のパラメータのみ処理）
         self._clear_queue(self.task_queue)
 
