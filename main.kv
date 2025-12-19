@@ -1251,18 +1251,6 @@
 
                             ParamBoxLayout:
                                 ParamLabel:
-                                    text: "to Log option"
-                                VSpacer:
-                                    size_hint_x: 0.1
-                                ParamSpinner:
-                                    id: lut_to_log_spinner
-                                    values: [ 'None', 'slog3', 'logc4', 'clog3', 'redlog3g10', 'vlog', 'nlog', 'flog2', 'omlog400' ]
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lut')
-                                    on_text: root.end_history_effect_ctrl(2, 'lut')
-                                    on_text: root.apply_effects_lv(2, 'lut')
-
-                            ParamBoxLayout:
-                                ParamLabel:
                                     text: "File"
                                 VSpacer:
                                     size_hint_x: 0.12
@@ -1288,6 +1276,18 @@
                                 on_slider: root.apply_effects_lv(2, 'lut')
                                 on_before_edit: root.begin_history_effect_ctrl(2, 'lut')
                                 on_after_edit: root.end_history_effect_ctrl(2, 'lut')
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "to Log option"
+                                VSpacer:
+                                    size_hint_x: 0.1
+                                ParamSpinner:
+                                    id: lut_to_log_spinner
+                                    values: [ 'None', 'slog3', 'logc4', 'clog3', 'redlog3g10', 'vlog', 'nlog', 'flog2', 'omlog400' ]
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lut')
+                                    on_text: root.end_history_effect_ctrl(2, 'lut')
+                                    on_text: root.apply_effects_lv(2, 'lut')
 
                             VSeparator:
 
@@ -1500,6 +1500,45 @@
                             VSeparator:
  
                             HeadLabel:
+                                text: ' Solid Color'
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "Solid Color"
+                                VSpacer:
+                                    size_hint_x: 0.45
+                                ParamChip:
+                                    id: switch_solid_color
+                                    size_hint_x: None
+                                    ref_width: 60
+                                    on_active: root.apply_effects_lv(2, 'solid_color')
+                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'solid_color')
+                                    on_touch_up: root.end_history_effect_ctrl(2, 'solid_color')
+                                    ParamChipText:
+                                        text: "Apply"
+                            ParamSlider:
+                                id: slider_solid_color
+                                text: "Opacity"
+                                min: 0
+                                max: 100
+                                value: 50
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'solid_color')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'solid_color')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'solid_color')
+
+                            VSpacer:
+                                ref_height: 4
+
+                            CWColorPicker:
+                                id: cp_solid_color
+                                on_current_color: root.apply_effects_lv(2, 'solid_color')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'solid_color')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'solid_color')
+
+                            VSeparator:
+ 
+                            HeadLabel:
                                 text: ' Exception'
 
                             ParamBoxLayout:
@@ -1517,30 +1556,6 @@
                                     on_touch_up: root.end_history_effect_ctrl(2, 'highlight_compress')
                                     ParamChipText:
                                         text: "Apply"
-
-                            ParamBoxLayout:
-                                ParamLabel:
-                                    text: "Solid Color"
-                                VSpacer:
-                                    size_hint_x: 0.45
-                                ParamChip:
-                                    id: switch_solid_color
-                                    size_hint_x: None
-                                    ref_width: 60
-                                    on_active: root.apply_effects_lv(2, 'solid_color')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'solid_color')
-                                    on_touch_up: root.end_history_effect_ctrl(2, 'solid_color')
-                                    ParamChipText:
-                                        text: "Apply"
-
-                            VSpacer:
-                                ref_height: 4
-
-                            CWColorPicker:
-                                id: cp_solid_color
-                                on_current_color: root.apply_effects_lv(2, 'solid_color')
-                                on_before_edit: root.begin_history_effect_ctrl(2, 'solid_color')
-                                on_after_edit: root.end_history_effect_ctrl(2, 'solid_color')
                             
                             VSpacer:
 

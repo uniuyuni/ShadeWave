@@ -1919,47 +1919,50 @@ class LUTEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'lut_to_log': 'None',
             'lut_name': 'None',
             'lut_path': None,
+            'lut_intensity': 100,
+            'lut_to_log': 'None',
         }
 
     def set2widget(self, widget, param):
-        widget.ids["lut_to_log_spinner"].text = self.get_param(param, 'lut_to_log')
         widget.ids["lut_spinner"].text = self.get_param(param, 'lut_name')
+        widget.ids["lut_to_log_spinner"].text = self.get_param(param, 'lut_to_log')
+        widget.ids["slider_lut_intensity"].set_slider_value(self.get_param(param, 'lut_intensity'))
 
     def set2param(self, param, widget):
-        param['lut_to_log'] = widget.ids["lut_to_log_spinner"].text
         spinner = widget.ids["lut_spinner"]
         name = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
         if self.get_param(param, 'lut_name') != name:
             self.lut = None
         param['lut_name'] = name
         param['lut_path'] = LUTEffect.file_pathes.get(param['lut_name'], None)
+        param['lut_intensity'] = widget.ids["slider_lut_intensity"].value
+        param['lut_to_log'] = widget.ids["lut_to_log_spinner"].text
 
     def make_diff(self, rgb, param, efconfig):
-        lut_to_log = self.get_param(param, 'lut_to_log')
         lut_path = self.get_param(param, 'lut_path')
-        if lut_path is None:
+        lut_to_log = self.get_param(param, 'lut_to_log')
+        lut_intensity = self.get_param(param, 'lut_intensity')
+        if lut_path is None or lut_intensity == 0:
             self.diff = None
             self.hash = None
         
         else:
-            param_hash = hash((lut_path, lut_to_log))
+            param_hash = hash((lut_path, lut_to_log, lut_intensity))
             if self.hash != param_hash:
                 if self.lut is None:
                     self.lut = cubelut.read_lut(lut_path)
 
-                self.diff = (lut_to_log, self.lut)
+                rgb = core.type_convert(rgb, np.ndarray)
+                if lut_to_log != 'None':
+                    rgb = linear_to_log.process_image(rgb, lut_to_log)
+
+                apply_rgb = cubelut.process_image(rgb, self.lut)
+                self.diff = rgb * (1-lut_intensity/100) + apply_rgb * lut_intensity/100
                 self.hash = param_hash
 
         return self.diff
-    
-    def apply_diff(self, rgb):
-        rgb = core.type_convert(rgb, np.ndarray)
-        if self.diff[0] != 'None':
-            rgb = linear_to_log.process_image(rgb, self.diff[0])
-        return cubelut.process_image(rgb, self.diff[1])
 
 class LensSimulatorEffect(Effect):
 
@@ -2049,6 +2052,7 @@ class SolidColorEffect(Effect):
             'solid_color_red': 0,
             'solid_color_green': 0,
             'solid_color_blue': 0,
+            'solid_opacity': 50,
         }
 
     def set2widget(self, widget, param):
@@ -2056,26 +2060,29 @@ class SolidColorEffect(Effect):
         widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(self.get_param(param, 'solid_color_red'))
         widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(self.get_param(param, 'solid_color_green'))
         widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(self.get_param(param, 'solid_color_blue'))
+        widget.ids["slider_solid_color"].set_slider_value(self.get_param(param, 'solid_opacity'))
 
     def set2param(self, param, widget):
         param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
         param["solid_color_red"] = widget.ids["cp_solid_color"].ids['slider_red'].value
         param["solid_color_green"] = widget.ids["cp_solid_color"].ids['slider_green'].value
         param["solid_color_blue"] = widget.ids["cp_solid_color"].ids['slider_blue'].value
+        param["solid_opacity"] = widget.ids["slider_solid_color"].value
 
     def make_diff(self, rgb, param, efconfig):
         coa = self.get_param(param, 'solid_color')
         coar = self.get_param(param, "solid_color_red")
         coag = self.get_param(param, "solid_color_green")
         coab = self.get_param(param, "solid_color_blue")
-        if coa <= 0:
+        coao = self.get_param(param, "solid_opacity")
+        if coa <= 0 or coao <= 0:
             self.diff = None
             self.hash = None
         else:        
-            param_hash = hash((coa, coar, coag, coab))
+            param_hash = hash((coa, coar, coag, coab, coao))
             if self.hash != param_hash:
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255))
+                self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255), opacity=coao/100)
                 self.hash = param_hash
 
         return self.diff

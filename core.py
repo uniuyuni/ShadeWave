@@ -319,9 +319,9 @@ def highlight_compress(image):
     ).process(image)
 
 
-def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96)) -> np.ndarray:
+def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96), opacity=0.5) -> np.ndarray:
     """
-    float32形式のRGB画像（0-1）の白飛び部分を自然に補正する関数
+    ルミノシティマスクと併用してfloat32形式のRGB画像（0-1）の白飛び部分を自然に補正する関数
     
     Parameters:
     -----------
@@ -337,7 +337,7 @@ def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96)) -> 
         correction[:,:,i] = solid_color[i]
         
     # 元の画像と補正色をブレンド
-    result = correction
+    result = image_rgb * (1-opacity) + correction * opacity
     
     return result
 

@@ -73,7 +73,7 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         import widgets.mask_editor2 as me2
 
         content = BoxLayout(orientation='vertical')
-        popup = Popup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(0.5, 0.8))
+        popup = Popup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(0.25, 0.4))
         
         types = [
             ('Circle', me2.MaskType.CIRCULAR),
@@ -138,30 +138,13 @@ class Mask2ContentPanel(KVBoxLayout):
                     continue # まだ子供に追加されてない
 
             data.append({
-                'text': mask.name,
+                'text': mask.name if mask.name != "Composit" else "",
                 'is_composit': is_composit,
                 'indent': 0 if is_composit else 1,
                 'mask_ref': mask,
                 'mask_op': maskop,
                 'active': mask == self.editor.active_mask
             })
-            """
-            # Children
-            if hasattr(mask, 'mask_list'):
-                # mask_listも描画順に入っている？
-                # CompositMask.mask_listは append で追加されている。
-                # 描画順（合成順）はリスト順序通りなら、リストの後ろが「上」に来る。
-                # なのでUIリストとしては reversed して表示する。
-                for child, maskop in reversed(mask.mask_list):
-                    data.append({
-                        'text': child.name,
-                        'is_composit': False,
-                        'indent': 1,
-                        'mask_ref': child,
-                        'mask_op': maskop,
-                        'active': child == self.editor.active_mask
-                    })
-            """
         self.ids['mask2_rv'].data = data
 
     def add_layer(self):
