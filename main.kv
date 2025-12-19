@@ -44,6 +44,17 @@
     font_size: '9pt'
     #option_cls: "MainSpinnerOption"
 
+<IconTabbedPanelItem@TabbedPanelItem>:
+    icon_source: ''
+    text: ''
+    canvas.after:
+        Color:
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            pos: self.center_x - (self.height * 0.7) / 2, self.center_y - (self.height * 0.7) / 2
+            size: self.height * 0.7, self.height * 0.7
+            source: root.icon_source
+
 <CurveTabbedPanel@TabbedPanel>:
     size_hint: None, None
     width: self.parent.width
@@ -247,14 +258,14 @@
                 id: effects
                 size_hint_x: 0.4
                 do_default_tab: False
-                tab_width: self.width * 0.2
+                tab_width: self.width * 0.12
                 tab_height: self.height * 0.05
                 disabled: root.loading == True
                 on_current_tab: root.on_current_tab(self.current_tab)
                 on_current_tab: mask2.disabled = self.current_tab.text == "Geometry" or root.loading == True
 
-                TabbedPanelItem:
-                    text: 'Basic'
+                IconTabbedPanelItem:
+                    icon_source: 'assets/Basic.png'
 
                     MDScrollView:
 
@@ -484,12 +495,12 @@
                             TabbedPanel:
                                 size_hint_y: None
                                 ref_height: 22*3+20+22+6
-                                ref_tab_width: 60
-                                ref_tab_height: 20
+                                ref_tab_width: 40
+                                ref_tab_height: 25
                                 do_default_tab: False
 
-                                TabbedPanelItem:
-                                    text: 'Red'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Red.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -526,8 +537,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_red')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_red')
                     
-                                TabbedPanelItem:
-                                    text: 'Orange'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Orange.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -564,8 +575,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_orange')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_orange')
 
-                                TabbedPanelItem:
-                                    text: 'Yellow'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Yellow.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -602,8 +613,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_yellow')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_yellow')
 
-                                TabbedPanelItem:
-                                    text: 'Green'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Green.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -640,8 +651,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_green')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_green')
 
-                                TabbedPanelItem:
-                                    text: 'Cyan'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Cyan.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -678,8 +689,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_cyan')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_cyan')
 
-                                TabbedPanelItem:
-                                    text: 'Blue'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Blue.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -716,8 +727,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_blue')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_blue')
 
-                                TabbedPanelItem:
-                                    text: 'Purple'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Purple.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -754,8 +765,8 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'hls', 'hls_purple')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'hls', 'hls_purple')
 
-                                TabbedPanelItem:
-                                    text: 'Magenta'
+                                IconTabbedPanelItem:
+                                    icon_source: 'assets/Magenta.png'
 
                                     BoxLayout:
                                         orientation: "vertical"
@@ -895,8 +906,8 @@
 
                             VSpacer
 
-                TabbedPanelItem:
-                    text: 'Curves'
+                IconTabbedPanelItem:
+                    icon_source: 'assets/Curves.png'
 
                     MDScrollView:
 
@@ -1115,8 +1126,8 @@
 
                                 VSpacer:
 
-                TabbedPanelItem:
-                    text: 'Extra'
+                IconTabbedPanelItem:
+                    icon_source: 'assets/Extra.png'
 
                     MDScrollView:
 
@@ -1559,9 +1570,9 @@
                             
                             VSpacer:
 
-                TabbedPanelItem:
+                IconTabbedPanelItem:
                     id: geometry
-                    text: 'Geometry'
+                    icon_source: 'assets/Geometry.png'
 
                     MDScrollView:
 
@@ -1647,8 +1658,8 @@
                                     values: ["None", "1 / 1", "5 / 4", "3 / 2", "4 / 3", "16 / 9", "1.414 / 1", "148 / 100"]
                                     on_text: root.apply_effects_lv(0, 'crop')
 
-                TabbedPanelItem:
-                    text: 'Look'
+                IconTabbedPanelItem:
+                    icon_source: 'assets/Looks.png'
 
                     MDScrollView:
 
@@ -1712,8 +1723,8 @@
                                 on_before_edit: root.begin_history_effect_ctrl(1, 'face')
                                 on_after_edit: root.end_history_effect_ctrl(1, 'face')
 
-                TabbedPanelItem:
-                    text: 'Mask2'
+                IconTabbedPanelItem:
+                    icon_source: 'assets/Mask2.png'
 
                     MDScrollView:
 
@@ -1931,8 +1942,8 @@
                                     active: True
                                     on_press: root.apply_effects_lv(3, 'mask2')
 
-                TabbedPanelItem:
-                    text: 'Liquify'
+                IconTabbedPanelItem:
+                    icon_source: 'assets/Liquify.png'
 
                     MDScrollView:
 
