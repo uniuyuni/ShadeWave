@@ -8,7 +8,6 @@ from enum import Enum
 #import colorsys
 #import skimage
 #import DRBNet
-#import iopaint.predict
 #import dehazing.dehaze
 
 import cores.core as core
