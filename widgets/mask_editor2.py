@@ -1825,7 +1825,8 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            gradient_image = self._draw_segment(image_size, [min_x, min_y, w, h])
+            gradient_image = wait_prosessing(self._draw_segment, image_size, [min_x, min_y, w, h])
+            #gradient_image = self._draw_segment(image_size, [min_x, min_y, w, h])
 
             # SegmentMask用のキャッシュ
             self.segment_mask_cache = gradient_image
@@ -2636,15 +2637,20 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
         if glayimg is not None:
             with self.mask_container.canvas.before:
-                texture = Texture.create(size=(glayimg.shape[1], glayimg.shape[0]), colorfmt='luminance', bufferfmt='float')
-                texture.blit_buffer(glayimg.tobytes(), colorfmt='luminance', bufferfmt='float')
+                # マスクをアルファとして扱い、ルミナンスを白(1.0)にする
+                h, w = glayimg.shape[:2]
+                la_img = np.empty((h, w, 2), dtype=np.float32)
+                la_img[..., 0] = 1.0  # Luminance = White
+                la_img[..., 1] = glayimg  # Alpha = Mask Value
+                texture = Texture.create(size=(w, h), colorfmt='luminance_alpha', bufferfmt='float')
+                texture.blit_buffer(la_img.tobytes(), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.flip_vertical()
                 px, py = self.to_window(*self.pos)
                 px, py = px+self.margin[0], py+self.margin[1]
                 Color(1, 0, 0, 0.3)
                 self.rectangle = Rectangle(texture=texture, pos=(px, py), size=self.texture_size)
 
-        # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
+                # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
 
     def _create_start_new_mask(self, type, op_type, index=0):
         # 画像サイズがまだ設定されていない場合、マスクの作成をスキップ
@@ -2845,6 +2851,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             self.root.ids['mask2_panel'].disabled = self.active_mask is None or self.active_mask.is_composit()
  
     def get_rotate_rad(self, rotate_rad):
+        # 画像の回転角度を取得する
         rad, flip = self.orientation
         """
         if flip == 0:
@@ -2857,13 +2864,16 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return self.center_rotate_rad + rad + rotate_rad
     
     def world_to_tcg_scale(self, x, y):
+        # ワールド座標にスケーリングだけ適用する
         return (x / self.disp_info[4], y / self.disp_info[4])
     
     def tcg_to_world_scale(self, x, y):
+        # TCG座標にスケーリングだけ適用する
         return (x * self.disp_info[4], y * self.disp_info[4])
 
     # ワールド座標からテクスチャのグローバル座標に
     def window_to_tcg(self, cx, cy):
+        # ワールド座標からTCG座標に変換する
         wx, wy = self.to_window(*self.pos)
         cx, cy = cx - wx, cy - wy
         cx, cy = cx - self.margin[0], cy - self.margin[1]
@@ -2878,6 +2888,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return (cx, cy)
 
     def tcg_to_window(self, cx, cy):
+        # TCG座標をウィンドウ座標に変換する
         imax = max(self.image_size[0]/2, self.image_size[1]/2)
         cx, cy = self.center_rotate(cx, cy, self.center_rotate_rad)
         cx, cy = cx + imax, cy + imax
@@ -2892,6 +2903,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return (cx, cy)
 
     def tcg_to_texture(self, cx, cy):
+        # TCG座標をテクスチャ座標に変換する
         imax = max(self.image_size[0]/2, self.image_size[1]/2)
         cx, cy = self.center_rotate(cx, cy, self.center_rotate_rad)
         cx, cy = cx + imax, cy + imax
@@ -2902,12 +2914,14 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return (cx, cy)
 
     def tcg_to_full_image(self, cx, cy):
+        # TCG座標をフル画像（pipeline0処理後画像）座標に変換する
         imax = max(self.image_size[0]/2, self.image_size[1]/2)
         cx, cy = self.center_rotate(cx, cy, self.center_rotate_rad)
         cx, cy = cx + imax, cy + imax
         return (cx, cy)
 
     def tcg_to_crop_image(self, cx, cy):
+        # TCG座標をクロップ（pipeline0処理後のクロップ画像）画像座標に変換する
         cx, cy = self.tcg_to_full_image(cx, cy)
         cx = cx * (self.crop_image_hls.shape[1] / self.full_image_rgb.shape[1])
         cy = cy * (self.crop_image_hls.shape[0] / self.full_image_rgb.shape[0])
@@ -2923,6 +2937,8 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return (cx, cy)
 
     def apply_orientation(self, cx, cy):
+        # orientationを適用する
+        # rad は返すだけ
         rad, flip = self.orientation
 
         if (flip & 1) == 1:

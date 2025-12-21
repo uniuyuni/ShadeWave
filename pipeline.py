@@ -113,6 +113,7 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
             img2, lv1reset = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig, lv2reset)
 
             img2 = core.type_convert(img2, np.ndarray)
+            img3 = core.type_convert(img3, np.ndarray)
             if crop is None:
                 img3 = core.apply_mask(img3, mask.get_mask_image(), img2)
             else:
