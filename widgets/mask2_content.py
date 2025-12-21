@@ -102,7 +102,8 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
 class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior, RecycleBoxLayout):
     pass
 
-class Mask2ContentPanel(KVBoxLayout):    
+class Mask2ContentPanel(KVBoxLayout):
+
     def __init__(self, mask2_editor, **kwargs):
         self.editor = mask2_editor
         super().__init__(**kwargs)
@@ -113,6 +114,7 @@ class Mask2ContentPanel(KVBoxLayout):
         super(Mask2ContentPanel, self).on_kv_post(*args, **kwargs)
         self.ids['mask2_rv'].data = []
         self.refresh_list()
+        self.disabled = True
 
     def set_active_index(self, index):
         pass
@@ -151,5 +153,8 @@ class Mask2ContentPanel(KVBoxLayout):
         self.editor.add_composit_mask(None)
 
 def create_mask2_content_panel(mask2_editor):
-    return Mask2ContentPanel(mask2_editor)
+    panel = Mask2ContentPanel(mask2_editor)
+    panel.id = 'mask2_content_panel'
+    return panel
+
 

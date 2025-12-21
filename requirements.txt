@@ -1,4 +1,3 @@
-numpy==1.26.4
 kivy
 kivymd
 git+https://github.com/FacePerceiver/facer.git@main
@@ -32,3 +31,5 @@ omegaconf
 etils
 huggingface_hub
 color-matcher
+git+https://github.com/facebookresearch/sam3.git
+numpy==1.26.4

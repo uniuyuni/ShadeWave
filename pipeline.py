@@ -24,7 +24,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
 
     # 背景レイヤー
-    img0, lv1reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
+    img0, lv1reset, pre_rotation_img = pipeline_lv0(img, primary_effects, primary_param, efconfig)
     disp_info = params.get_disp_info(primary_param) # Cropによって値が更新されてるかも
 
     if crop_image is None or lv1reset == True:
@@ -32,7 +32,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
         #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
         #mask_editor2.set_texture_size(texture_width, texture_height)
         mask_editor2.set_primary_param(primary_param, disp_info2)
-        mask_editor2.set_ref_image(imgc, img0)
+        mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
         params.set_disp_info(primary_param, disp_info2)
     else:
         imgc = crop_image
@@ -77,14 +77,14 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
 
     # 背景レイヤー
-    img0, lv1reset = pipeline_lv0(img, primary_effects, primary_param, efconfig)
+    img0, lv1reset, pre_rotation_img = pipeline_lv0(img, primary_effects, primary_param, efconfig)
     imgc = img0
     #imgc, disp_info2 = core.crop_image(img0, disp_info, *primary_param['original_img_size'], 0, 0, (0, 0), False)
     #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
     imax = max(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_texture_size(imax, imax)
     mask_editor2.set_primary_param(primary_param, disp_info)
-    mask_editor2.set_ref_image(imgc, img0)
+    mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
     mask_editor2.update()
 
     img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset)
@@ -124,11 +124,16 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
 def pipeline_lv0(img, effects, param, efconfig):
     lv0 = effects[0]
     lv1reset = False
+    
+    pre_rotation_img = None
 
     rgb = img
     for i, n in enumerate(lv0):
         if lv1reset == True:
             lv0[n].reeffect()
+            
+        if n == 'rotation':
+            pre_rotation_img = rgb
             
         pre_diff = lv0[n].diff
         diff = lv0[n].make_diff(rgb, param, efconfig)
@@ -137,6 +142,9 @@ def pipeline_lv0(img, effects, param, efconfig):
 
         if pre_diff is not diff:
             lv1reset = True
+            
+    if pre_rotation_img is None:
+        pre_rotation_img = rgb
 
     if lv1reset == True:
         for v in effects[1].values():
@@ -148,7 +156,7 @@ def pipeline_lv0(img, effects, param, efconfig):
         for v in effects[4].values():
             v.reeffect()
 
-    return rgb, lv1reset
+    return rgb, lv1reset, pre_rotation_img
 
 def pipeline_lv1(img, effects, param, efconfig, prev_reset=False):
     lv1 = effects[1]

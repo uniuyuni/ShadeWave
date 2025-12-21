@@ -810,6 +810,34 @@ def crop_size_and_offset_from_texture(texture_width, texture_height, disp_info):
 
     return (new_width, new_height, offset_x, offset_y)
 
+def crop_image_with_disp_info(image, disp_info):
+    # スケーリング
+    org_h, org_w = image.shape[:2]
+    cx, cy, cw, ch = int(disp_info[0]), int(disp_info[1]), int(disp_info[2]), int(disp_info[3])
+
+    # 切り抜き
+    result = image[cy:cy+ch, cx:cx+cw]
+
+    # 中央へ配置
+    new_h, new_w = result.shape[:2]
+    result = np.pad(result, ((cy, org_h-(new_h+cy)), (cx, org_w-(new_w+cx))), mode="constant")
+
+    return result
+
+def crop_image_with_param_crop_rect(image, param_crop_rect):
+    # スケーリング
+    org_h, org_w = image.shape[:2]
+    cx, cy, cx2, cy2 = int(org_w * param_crop_rect[0]), int(org_h * param_crop_rect[1]), int(org_w * param_crop_rect[2]), int(org_h * param_crop_rect[3])
+
+    # 切り抜き
+    result = image[cy:cy2, cx:cx2]
+
+    # 中央へ配置
+    new_h, new_w = result.shape[:2]
+    result = np.pad(result, ((cy, org_h-(new_h+cy)), (cx, org_w-(new_w+cx))), mode="constant")
+
+    return result
+
 def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click_x, click_y, offset, is_zoomed):
 
     # 画像のサイズを取得

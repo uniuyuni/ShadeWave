@@ -54,9 +54,11 @@
 <Mask2ContentPanel>:
     orientation: "vertical"
     size_hint_y: 1
+    disabled: True if root.disabled == True else False
 
     Label:
         text: "Masks"
+        text_size: self.size
         halign: 'left'
     Button:
         text: "Add Layer"

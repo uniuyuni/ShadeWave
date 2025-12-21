@@ -11,12 +11,6 @@ import logging
 
 import kvutils
 
-from kivy.config import Config
-Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
-Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
-#Config.set('graphics', 'width', 1200)
-#Config.set('graphics', 'height', 800)
-
 class DraggablePoint():
 
     def __init__(self, **kwargs):

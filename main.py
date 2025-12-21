@@ -70,6 +70,13 @@ jax.config.update("jax_platform_name", "METAL")
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
 
+from kivy.config import Config
+Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
+Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
+#Config.set('graphics', 'width', 1200)
+#Config.set('graphics', 'height', 800)
+Config.set('kivy', 'kivy_clock', 'interrupt')
+
 if __name__ == '__main__':
 
     def pillow_init():
@@ -120,6 +127,7 @@ if __name__ == '__main__':
             self.pipeline_version = 0
             
             self.apply_draw_image_offset = None
+            self.draw_event = threading.Event()
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
             self.apply_thread.start()
             self.enabledelay = None
@@ -211,6 +219,7 @@ if __name__ == '__main__':
 
                         #描画をスケジューリング
                         #self.blit_image(img_draw)
+                        """
                         event = Clock.create_trigger(partial(self.blit_image, img_draw))
                         if not event.is_triggered:
                             event()  # スケジュール
@@ -221,12 +230,15 @@ if __name__ == '__main__':
                         except:
                             pass  # 未スケジュール時は無視
                         self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
-                        """
-                time.sleep(0.01)
+                        
+                #time.sleep(0.01)
+                self.draw_event.wait()
             
         def start_draw_image(self, offset=(0, 0)):
             self.pipeline_version += 1
             self.apply_draw_image_offset = offset
+            #time.sleep(0.01)
+            self.draw_event.set()
         
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
@@ -397,7 +409,7 @@ if __name__ == '__main__':
                 if card is not None:
                     # 一度も描画してないので値が設定されてない。暫定処置
                     self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
-                    self.ids['mask_editor2'].set_primary_param(param, param['disp_info'])
+                    self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
 
                     # パラメータを読み込んで追加設定
                     params.load_json(file_path, param, self.ids['mask_editor2'])
@@ -596,8 +608,10 @@ if __name__ == '__main__':
         def on_mask2_press(self, value):
             if value == "down":
                 self._enable_mask2()
+                kvutils.find_adaptive_widget(self, 'mask2_content_panel').disabled = False
             else:
                 self._disable_mask2()
+                kvutils.find_adaptive_widget(self, 'mask2_content_panel').disabled = True
 
         #--------------------------------
 
