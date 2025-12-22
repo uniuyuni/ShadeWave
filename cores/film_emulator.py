@@ -5,6 +5,7 @@ import cv2
 from scipy.interpolate import interp1d
 
 import cores.core as core
+import utils.utils as utils
 
 class FilmEmulator:
 
@@ -16,7 +17,6 @@ class FilmEmulator:
         return self.film_presets
         
     def apply_film_effect(self, img_rgb, film_name, expired=0):
-        import utils
         
         # パラメータ取得
         params = self.film_presets[film_name]

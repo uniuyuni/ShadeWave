@@ -32,8 +32,8 @@ if __name__ == '__main__':
     import params
     import effects
     import pipeline
-    import utils
-    import kvutils
+    import utils.utils as utils
+    import utils.kvutils as kvutils
     import macos
     import cores.film_emulator as film_emulator
     import cores.lens_simulator as lens_simulator
@@ -184,7 +184,7 @@ if __name__ == '__main__':
             self.ids["preview"].texture = self.texture
 
         def draw_histogram(self, img, blue_count=0, black_count=0, dt=0):
-            logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
+            #logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
             self.ids["histogram"].draw_histogram(img, blue_count, black_count)
 
         def draw_image(self):            
@@ -308,14 +308,14 @@ if __name__ == '__main__':
         
         def end_history_effect_ctrl(self, lv, effect, subname=None):
             if self.current_op is None:
-                logging.error("MainWidget.end_history_effect_ctrl None error.")
+                logging.error(f"MainWidget.end_history_effect_ctrl None error. {effect}")
                 return
             
             if self.current_op.lv != lv or self.current_op.effect != effect:
-                logging.warning("MainWidget.end_history_effect_ctrl Unmatching error.")
+                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching error. {effect}")
 
             if self.current_op.subname != subname:
-                logging.error("MainWidget.end_history_effect_ctrl Unmatching error.")
+                logging.error(f"MainWidget.end_history_effect_ctrl Unmatching error. {effect}")
                 return
 
             current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id, lv=lv)

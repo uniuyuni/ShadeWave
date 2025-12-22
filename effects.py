@@ -21,10 +21,10 @@ import cores.local_contrast as local_contrast
 import config
 import pipeline
 import params
-import utils
+import utils.utils as utils
 #import helpers.mediapipe_helper
 #import helpers.qwen_image_helper as qih
-import aiutils
+import utils.aiutils as aiutils
 from processing_dialog import wait_prosessing
 
 from widgets.mask_editor import MaskEditor
@@ -2127,6 +2127,7 @@ class Mask2Effect(Effect):
 
     def get_param_dict(self, param):
         return {
+            'mask2_invert': False,
             'mask2_depth_min': 0,
             'mask2_depth_max': 255,
             'mask2_hue_distance': 179,
@@ -2150,6 +2151,7 @@ class Mask2Effect(Effect):
         }
 
     def set2widget(self, widget, param):
+        widget.ids["checkbox_mask2_invert"].active = self.get_param(param, 'mask2_invert')
         widget.ids["slider_mask2_depth_min"].set_slider_value(self.get_param(param, 'mask2_depth_min'))
         widget.ids["slider_mask2_depth_max"].set_slider_value(self.get_param(param, 'mask2_depth_max'))
         widget.ids["slider_mask2_hue_distance"].set_slider_value(self.get_param(param, 'mask2_hue_distance'))
@@ -2172,6 +2174,7 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_close_space"].set_slider_value(self.get_param(param, 'mask2_close_space'))
 
     def set2param(self, param, widget):
+        param['mask2_invert'] = widget.ids["checkbox_mask2_invert"].active
         param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value
         param['mask2_depth_max'] = widget.ids["slider_mask2_depth_max"].value
         param['mask2_hue_distance'] = widget.ids["slider_mask2_hue_distance"].value
@@ -2194,6 +2197,7 @@ class Mask2Effect(Effect):
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
 
     def make_diff(self, rgb, param, efconfig):
+        invert = self.get_param(param, 'mask2_invert')
         dmin = self.get_param(param, 'mask2_depth_min')
         dmax = self.get_param(param, 'mask2_depth_max')
         hdis = self.get_param(param, 'mask2_hue_distance')
@@ -2214,7 +2218,7 @@ class Mask2Effect(Effect):
         face_lips = self.get_param(param, 'mask2_face_lips')
         open_space = self.get_param(param, 'mask2_open_space')
         close_space = self.get_param(param, 'mask2_close_space')
-        if  (dmin == 0 and dmax == 255 and
+        if  (invert == False and dmin == 0 and dmax == 255 and
              hdis == 179 and hmin == 0 and hmax == 359 and
              ldis == 127 and lmin == 0 and lmax == 255 and
              sdis == 127 and smin == 0 and smax == 255 and
@@ -2222,7 +2226,7 @@ class Mask2Effect(Effect):
             self.diff = None
             self.hash = None
         else:        
-            param_hash = hash((dmin, dmax, hdis, hmin, hmax, ldis, lmin, lmax, sdis, smin, smax, blur))
+            param_hash = hash((invert, dmin, dmax, hdis, hmin, hmax, ldis, lmin, lmax, sdis, smin, smax, blur))
             if self.hash != param_hash:
                 self.diff = None
                 self.hash = param_hash

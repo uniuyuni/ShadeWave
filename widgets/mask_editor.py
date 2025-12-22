@@ -11,7 +11,7 @@ from kivy.clock import Clock
 import cv2
 import numpy as np
 
-import kvutils
+import utils.kvutils as kvutils
 
 
 class MaskEditor(KVImage):

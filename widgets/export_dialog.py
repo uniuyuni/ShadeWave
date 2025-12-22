@@ -11,7 +11,7 @@ from kivy.metrics import dp
 from functools import partial
 import json
 
-import kvutils
+import utils.kvutils as kvutils
 import macos
 
 import widgets.param_slider

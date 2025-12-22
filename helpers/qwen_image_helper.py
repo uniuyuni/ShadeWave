@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 import splitimage
-import aiutils
+import utils.aiutils as aiutils
 import cores.core as core
 
 # DashScope APIキーを設定

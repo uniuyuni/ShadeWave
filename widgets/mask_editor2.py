@@ -34,15 +34,43 @@ from kivy.graphics.texture import Texture
 from kivy.clock import Clock
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
+from kivy.uix.textinput import TextInput
 
 import cores.core as core
 import cores.expand_mask as expand_mask
 import params
 import effects
 import config
-import utils
+import utils.utils as utils
 from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
+
+class TextInputDialog(Popup):
+    def __init__(self, callback, **kwargs):
+        super().__init__(**kwargs)
+        self.title = "Input Target Text"
+        self.size_hint = (0.4, None)
+        self.height = 200
+        
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        self.text_input = TextInput(multiline=False, size_hint_y=None, height=30)
+        self.text_input.bind(on_text_validate=lambda x: self.save(callback))
+        
+        btn_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
+        save_button = Button(text='OK')
+        save_button.bind(on_press=lambda x: self.save(callback))
+        btn_layout.add_widget(save_button)
+        
+        layout.add_widget(self.text_input)
+        layout.add_widget(btn_layout)
+        self.content = layout
+
+    def save(self, callback):
+        text = self.text_input.text
+        if not text or text.isspace():
+            text = "All"
+        self.dismiss()
+        Clock.schedule_once(lambda dt: callback(text), 0.5)
 
 class MaskType(str, Enum):
     COMPOSIT = 'composit'
@@ -53,7 +81,7 @@ class MaskType(str, Enum):
     SEGMENT = 'segment'
     DEPTHMAP = 'depth_map'
     FACE = 'face'
-    SCENE = 'scene'
+    TARGET_TEXT = 'target_text'
 
 # コントロールポイントのクラス
 class ControlPoint(Widget):
@@ -270,7 +298,8 @@ class BaseMask(Widget):
         return result
 
     def get_hash_items(self):
-        return (self.effects_param.get('mask2_open_space', 0),
+        return (self.effects_param.get('mask2_invert', False),
+                self.effects_param.get('mask2_open_space', 0),
                 self.effects_param.get('mask2_close_space', 0),
                 self.effects_param.get('mask2_depth_min', 0),
                 self.effects_param.get('mask2_depth_max', 255),
@@ -525,7 +554,6 @@ class CircularGradientMask(BaseMask):
     outer_radius_x = NumericProperty(0)
     outer_radius_y = NumericProperty(0)
     rotate_rad = NumericProperty(0)
-    invert = NumericProperty(0)
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -555,14 +583,7 @@ class CircularGradientMask(BaseMask):
             self.outer_radius_x = 0
             self.outer_radius_y = 0
             return True
-        else:
-            cx, cy = self.editor.window_to_tcg(*touch.pos)
-            if touch.is_double_tap and self.control_points[0].collide_point(cx, cy):
-                self.invert = 1-self.invert
-                self.update_control_points()
-                self.update_mask()
-                return True
-            
+        else:            
             return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
@@ -642,7 +663,6 @@ class CircularGradientMask(BaseMask):
             'inner_radius': [ix, iy],
             'outer_radius': [ox, oy],
             'rotate_rad': self.rotate_rad,
-            'invert': self.invert,
             'effects_param': param
         }
         return dict
@@ -654,7 +674,6 @@ class CircularGradientMask(BaseMask):
         ix, iy = dict['inner_radius']
         ox, oy = dict['outer_radius']
         self.rotate_rad = dict['rotate_rad']
-        self.invert = dict['invert']
         self.effects_param.update(dict['effects_param'])
 
         self.center = params.denorm_param(self.effects_param, (cx, cy))
@@ -774,12 +793,13 @@ class CircularGradientMask(BaseMask):
         inner_axes = self.editor.tcg_to_world_scale(self.inner_radius_x, self.inner_radius_y)
         outer_axes = self.editor.tcg_to_world_scale(self.outer_radius_x, self.outer_radius_y)
         rotate_rad = self.editor.get_rotate_rad(self.rotate_rad)
+        invert = not self.effects_param.get('mask2_invert', False)
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, inner_axes, outer_axes, rotate_rad, self.invert))
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, inner_axes, outer_axes, rotate_rad, invert))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
 
             # グラデーションを描画
-            gradient_image = self.draw_elliptical_gradient(image_size, center, inner_axes, outer_axes, rotate_rad, self.invert)
+            gradient_image = self.draw_elliptical_gradient(image_size, center, inner_axes, outer_axes, rotate_rad, invert, 1.5)
 
             # ルミノシティマスクを作成
             gradient_image = self.draw_hls_mask(gradient_image)
@@ -792,52 +812,188 @@ class CircularGradientMask(BaseMask):
 
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
-    def draw_elliptical_gradient(self, image_size, center, inner_axes, outer_axes, angle_rad, invert=0, smoothness=2.0):
-    
-        # 座標グリッドの作成
-        y_indices, x_indices = np.indices((image_size[1], image_size[0]))
-        x = x_indices - center[0]
-        y = y_indices - center[1]
+    def draw_elliptical_gradient(self, image_size, center, inner_axes, outer_axes, angle_rad, invert=False, smoothness=1):
 
-        # 回転角をラジアンに変換
-        cos_angle = np.cos(angle_rad)
-        sin_angle = np.sin(angle_rad)
+        width, height = image_size
+        
+        # 0. 極小サイズのチェック
+        if width <= 0 or height <= 0:
+            return np.zeros((height, width), dtype=np.float32)
 
-        # 座標の回転
-        x_rot = x * cos_angle - y * sin_angle
-        y_rot = x * sin_angle + y * cos_angle
+        # 回転方向の修正 (以前のロジックと合わせるため反転)
+        angle_rad = -angle_rad
 
-        # 内側と外側の楕円の値を計算
-        e_inner = (x_rot / inner_axes[0])**2 + (y_rot / inner_axes[1])**2 - 1
-        e_outer = (x_rot / outer_axes[0])**2 + (y_rot / outer_axes[1])**2 - 1
+        # 1. パラメータ計算 (Radius)
+        rx_in, ry_in = inner_axes
+        rx_out, ry_out = outer_axes
+        
+        # 中間の半径（ステップ位置）
+        rx_mid = (rx_in + rx_out) / 2.0
+        ry_mid = (ry_in + ry_out) / 2.0
+        
+        # Sigma計算 (距離の1/4程度がErfの自然な遷移幅)
+        sigma_x = abs(rx_out - rx_in) * 0.25 * smoothness
+        sigma_y = abs(ry_out - ry_in) * 0.25 * smoothness
+        
+        # Sigmaが小さすぎる場合はブラーなし
+        if sigma_x < 0.1 and sigma_y < 0.1:
+            sigma_x = 0.1
+            sigma_y = 0.1
 
-        # グラデーションの初期化
-        gradient = np.ones((image_size[1], image_size[0]), dtype=np.float32)
+        # ダウンサンプリングスケールの計算 (Adaptive Downscaling for Warp Destination)
+        # Warp処理後の出力サイズを小さくすることで、WarpAffineの負荷を下げる
+        # ジッターを防ぐため、ターゲットSigmaを少し大きめ(4.0)に設定
+        target_sigma = 4.0
+        
+        # Sigmaの小さい方に合わせて全体をスケールする（安全策）
+        min_sigma = min(sigma_x, sigma_y)
+        dest_scale = target_sigma / min_sigma if min_sigma > target_sigma else 1.0
+        dest_scale = min(dest_scale, 1.0)
+        
+        # 最終出力（Full Res）へのWarp行列を計算してから、Scaleを適用する方が簡単
+        
+        # 2. 必要なキャンバスサイズの計算 (Rectified Space - Unrotated)
+        # 最終画像の四隅を逆変換して、未回転空間でのバウンディングボックスを求める
+        corners = np.array([
+            [0, 0],
+            [width, 0],
+            [width, height],
+            [0, height]
+        ], dtype=np.float32)
+        
+        cos_a = np.cos(-angle_rad)
+        sin_a = np.sin(-angle_rad)
+        
+        corners_centered = corners - center
+        x_rot = corners_centered[:, 0] * cos_a - corners_centered[:, 1] * sin_a
+        y_rot = corners_centered[:, 0] * sin_a + corners_centered[:, 1] * cos_a
+        
+        # Unrotated空間でのBounding Box
+        min_x = np.min(x_rot)
+        max_x = np.max(x_rot)
+        min_y = np.min(y_rot)
+        max_y = np.max(y_rot)
+        
+        # ソースキャンバス（Unrotated）の解像度
+        # ここも sigma に応じて小さくても良いが、Blurによる劣化を防ぐため
+        # Unrotated空間では「Warp後のScale」と同程度か、あるいは Blur自体を行うのでここでもDownscale可能
+        # 今回は Warp先が小さいので、ソースもそれに準じた解像度で十分
+        
+        # ソース側の解像度も dest_scale に合わせる
+        # Sigmaもスケールされる
+        src_scale = dest_scale
+        eff_sigma_x = sigma_x * src_scale
+        eff_sigma_y = sigma_y * src_scale
+        
+        # Padding
+        pad_x = int(math.ceil(3.0 * eff_sigma_x))
+        pad_y = int(math.ceil(3.0 * eff_sigma_y))
 
-        # 内側の楕円内のピクセルを設定
-        gradient[e_inner <= 0] = 0.0
+        # Unrotated空間での座標 (Full Res)
+        unrot_w = max_x - min_x
+        unrot_h = max_y - min_y
+        
+        # ソース画像サイズ (Scaled)
+        src_w = int(math.ceil(unrot_w * src_scale)) + 2 * pad_x
+        src_h = int(math.ceil(unrot_h * src_scale)) + 2 * pad_y
+        
+        # ソース画像の原点オフセット (Scaled coords)
+        # src_imgの(0,0) は Unrotated空間の (min_x * s - pad, min_y * s - pad)
+        src_origin_x = min_x * src_scale - pad_x
+        src_origin_y = min_y * src_scale - pad_y
+        
+        # 楕円中心 (Scaled coords, relative to src_img origin)
+        # Unrotated Center is (0,0). Scaled is (0,0).
+        # In src_img: (0 - src_origin_x, 0 - src_origin_y)
+        ell_cx = -src_origin_x
+        ell_cy = -src_origin_y
+        
+        # ソース画像作成
+        src_img = np.zeros((src_h, src_w), dtype=np.float32)
+        
+        if invert == False:
+            bg_color = 1.0
+            fg_color = 0.0
+        else:
+            bg_color = 0.0
+            fg_color = 1.0
+            
+        src_img.fill(bg_color)
+        
+        # 楕円描画 (Scaled)
+        cv2.ellipse(src_img, (int(ell_cx), int(ell_cy)), 
+                    (int(rx_mid * src_scale), int(ry_mid * src_scale)), 
+                    0, 0, 360, color=fg_color, thickness=-1)
 
-        # 外側の楕円の外側のピクセル
-        #gradient[e_outer >= 0] = 1.0
+        # ガウシアンブラー (Scaled Anisotropic)
+        src_img = cv2.GaussianBlur(src_img, (0, 0), sigmaX=eff_sigma_x, sigmaY=eff_sigma_y)
+        
+        # 5. Warp to Downscaled Destination
+        dest_w = int(width * dest_scale)
+        dest_h = int(height * dest_scale)
+        
+        if dest_w <= 0 or dest_h <= 0:
+             return np.zeros((height, width), dtype=np.float32)
+        
+        # Matrix Construction: Source(Scaled) -> Dest(Scaled)
+        # Source Pixel (u,v) -> Dest Pixel (dx, dy)
+        
+        # Flow:
+        # P_src(u,v) 
+        # -> Unrotated_Full(X, Y) = (u + src_origin_x)/src_scale ? No. 
+        #    P_src coords are Scaled.
+        #    Unrotated_Scaled = (u + src_origin_x, v + src_origin_y)
+        #    Unrotated_Full = Unrotated_Scaled / src_scale
+        # -> Rotated_Full = Rotate(angle) * Unrotated_Full
+        # -> Dest_Full = Rotated_Full + Center
+        # -> Dest_Scaled = Dest_Full * dest_scale
+        
+        # Since src_scale == dest_scale (we chose them same for simplicity):
+        # Dest_Scaled = (Rotate(angle) * (Unrotated_Scaled / s) + Center) * s
+        #             = Rotate(angle) * Unrotated_Scaled + Center * s
+        # Dest_Scaled = Rotate(angle) * (P_src + Origin_Scaled) + Center * s
+        
+        # M = R(a) * T(Origin_Scaled) + shift(Center*s)
+        
+        cos_v = np.cos(angle_rad)
+        sin_v = np.sin(angle_rad)
+        
+        # R terms (Applied to P_src)
+        a00 = cos_v
+        a01 = -sin_v
+        a10 = sin_v
+        a11 = cos_v
+        
+        # Translation
+        # R * Origin
+        ox = src_origin_x
+        oy = src_origin_y
+        
+        # Center * scale
+        cx = center[0] * dest_scale
+        cy = center[1] * dest_scale
+        
+        tx = ox * cos_v - oy * sin_v + cx
+        ty = ox * sin_v + oy * cos_v + cy
+        
+        M = np.array([
+            [a00, a01, tx],
+            [a10, a11, ty]
+        ], dtype=np.float32)
 
-        # 内側と外側の楕円の間のピクセルに対してグラデーションを計算
-        mask_between = (e_inner > 0) & (e_outer <= 0)
+        border_val = bg_color
+        
+        # Warp to Small Destination
+        dst_small = cv2.warpAffine(src_img, M, (dest_w, dest_h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=float(border_val))
+        
+        # 6. Setup Final Result
+        if dest_scale < 1.0:
+            # Upscale
+            dst_img = cv2.resize(dst_small, (width, height), interpolation=cv2.INTER_LINEAR)
+        else:
+            dst_img = dst_small
 
-        # グラデーション値の計算（線形補間）
-        t = e_inner[mask_between] / (e_inner[mask_between] - e_outer[mask_between])
-        #t = np.clip(t, 0.0, 1.0)
-
-        # スムーズネスを適用
-        t = np.power(t, smoothness)
-
-        # グラデーションを適用
-        gradient[mask_between] = t
-
-        # 反転オプションの適用
-        if invert == 0:
-            gradient = 1.0 - gradient
-
-        return gradient
+        return dst_img
     
 # GradientMask クラス
 class GradientMask(BaseMask):
@@ -871,13 +1027,6 @@ class GradientMask(BaseMask):
             self.start_point = [cx, cy]
             return True
         else:
-            cx, cy = self.editor.window_to_tcg(*touch.pos)
-            if touch.is_double_tap and self.control_points[0].collide_point(cx, cy):
-                self.start_point, self.end_point = self.end_point, self.start_point
-                self.update_control_points()
-                self.update_mask()
-                return True
-            
             return super().on_touch_down(touch)
     
     def on_touch_move(self, touch):
@@ -1077,11 +1226,13 @@ class GradientMask(BaseMask):
         center = self.editor.tcg_to_texture(*self.center)
         start_point = self.editor.tcg_to_texture(*self.start_point)
         end_point = self.editor.tcg_to_texture(*self.end_point)
+        if self.effects_param.get('mask2_invert', False) == True:
+            start_point, end_point = end_point, start_point
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, start_point, end_point))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             # グラデーションを描画
-            gradient_image = self.draw_gradient(image_size, center, start_point, end_point)
+            gradient_image = self.draw_gradient(image_size, center, start_point, end_point, 1)
             
             # ルミノシティマスクを作成
             gradient_image = self.draw_hls_mask(gradient_image)
@@ -1097,35 +1248,72 @@ class GradientMask(BaseMask):
     def draw_gradient(self, image_size, center, start_point, end_point, smoothness=1):
 
         width, height = image_size
-        img = np.zeros((height, width), dtype=np.float32)  # 開始点前はすべて(0, 0, 0, 0)
-
-        # ベクトル計算のための設定
-        start_x, start_y = end_point # 開始点と入れ替える
-        end_x, end_y = start_point   #
+        
+        # ベクトル計算
+        start_x, start_y = end_point # Swap to match gradient direction
+        end_x, end_y = start_point
         vec_start_end = np.array([end_x - start_x, end_y - start_y])
         length_start_end = np.linalg.norm(vec_start_end)
+        
         if length_start_end == 0:
-            return img  # 開始点と終了点が同じ場合はそのまま透明を返す
+            return np.zeros((height, width), dtype=np.float32)
 
-        # 正規化した方向ベクトル
-        unit_vec_start_end = vec_start_end / length_start_end
+        # Sigma計算 (距離の1/4程度)
+        sigma = (length_start_end * 0.25) * smoothness
+        if sigma < 0.1:
+            # Hard Edge
+            img = np.zeros((height, width), dtype=np.float32)
+            mid_x = (start_x + end_x) / 2
+            mid_y = (start_y + end_y) / 2
+            unit_vec = vec_start_end / length_start_end
+            y_coords, x_coords = np.indices((height, width))
+            projected = (x_coords - mid_x) * unit_vec[0] + (y_coords - mid_y) * unit_vec[1]
+            img[projected >= 0] = 1.0
+            return img
 
-        # ピクセルの座標
-        y_coords, x_coords = np.indices((height, width))
-        pixel_vectors = np.stack((x_coords - start_x, y_coords - start_y), axis=-1)
+        # Downscaling Strategy
+        # ターゲットSigma (4.0 ~ 5.0) になるように縮小
+        target_sigma = 4.0
+        scale = target_sigma / sigma if sigma > target_sigma else 1.0
+        scale = min(scale, 1.0)
+        
+        small_w = int(math.ceil(width * scale))
+        small_h = int(math.ceil(height * scale))
+        
+        if small_w <= 0 or small_h <= 0:
+             return np.zeros((height, width), dtype=np.float32)
 
-        # 各ピクセルの射影を計算（開始点からの距離をグラデーションの方向に投影）
-        projection_lengths = np.dot(pixel_vectors, unit_vec_start_end)
-
-        # 射影の割合tを計算し、範囲を制限
-        t = np.clip(projection_lengths / length_start_end, 0, 1)
-
-        # グラデーションの急激さを調整（逆数のべき乗による非線形変換）
-        t = t ** (1 / smoothness)
-
-        # tが0より大きい場所にのみ色を設定（開始点以前は透明）
-        mask = projection_lengths >= 0
-        img[mask] = t[mask]
+        # Small Image Generation
+        img_small = np.zeros((small_h, small_w), dtype=np.float32)
+        
+        # Scale Points
+        start_x_s = start_x * scale
+        start_y_s = start_y * scale
+        end_x_s = end_x * scale
+        end_y_s = end_y * scale
+        mid_x_s = (start_x_s + end_x_s) / 2
+        mid_y_s = (start_y_s + end_y_s) / 2
+        
+        vec_s = np.array([end_x_s - start_x_s, end_y_s - start_y_s])
+        len_s = np.linalg.norm(vec_s)
+        if len_s == 0:
+             return np.zeros((height, width), dtype=np.float32)
+        unit_vec_s = vec_s / len_s
+        
+        y_coords_s, x_coords_s = np.indices((small_h, small_w))
+        projected_s = (x_coords_s - mid_x_s) * unit_vec_s[0] + (y_coords_s - mid_y_s) * unit_vec_s[1]
+        
+        img_small[projected_s >= 0] = 1.0
+        
+        # Blur (Sigma is scaled)
+        eff_sigma = sigma * scale
+        img_small = cv2.GaussianBlur(img_small, (0, 0), sigmaX=eff_sigma, sigmaY=eff_sigma)
+        
+        # Upscale
+        if scale < 1.0:
+            img = cv2.resize(img_small, (width, height), interpolation=cv2.INTER_LINEAR)
+        else:
+            img = img_small
 
         return img
 
@@ -1660,9 +1848,10 @@ class SegmentMask(BaseMask):
             self.center_x = cx
             self.center_y = cy
             self.corner = [cx, cy]
-            self.update_mask()
+            #self.update_mask()
             return True
         else: 
+            self.is_draw_mask = False
             return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
@@ -1680,8 +1869,9 @@ class SegmentMask(BaseMask):
         if self.initializing:
             self.initializing = False
             self.create_control_points()
-            #self.editor.set_active_mask(self)
-            self.update_mask()
+            self.editor.set_active_mask(self)
+            self.get_mask_image() # 即座に計算開始
+            #self.update_mask()
             self.update_draw_mask()
             return True
         else:
@@ -1728,6 +1918,11 @@ class SegmentMask(BaseMask):
             'corner': [crx, cry],
             'effects_param': param
         }
+        # マスクデータ保存
+        if self.image_mask_cache is not None:
+            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
+            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+
         return dict
 
     def deserialize(self, dict):
@@ -1736,9 +1931,14 @@ class SegmentMask(BaseMask):
         crx, cry = dict.get('corner', [cx, cy]) # 後方互換性
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
-
         self.center = params.denorm_param(self.effects_param, (cx, cy))
         self.corner = params.denorm_param(self.effects_param, (crx, cry))
+
+        # マスクデータ展開
+        self.image_mask_cache = dict.get('image_mask_cache', None)
+        if self.image_mask_cache is not None:
+            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
+            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
 
         # 描き直し
         self.create_control_points()
@@ -1757,7 +1957,7 @@ class SegmentMask(BaseMask):
         self.center = value
         self.update_control_points()
 
-        super().on_center_control_point_move(instance, value)
+        #super().on_center_control_point_move(instance, value)
         # update_maskはsuper()の中で呼ばれる
 
     def on_corner_control_point_move(self, instance, value):
@@ -1807,12 +2007,12 @@ class SegmentMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original(*self.center)
         corner = self.editor.tcg_to_original(*self.corner)
-        gradient_image = None
+        segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
         newhash = hash((image_size, center, corner))
-        if (self.segment_mask_cache is None or self.segment_mask_cache_hash != newhash) and self.initializing == False:
-            self.segment_mask_cache_hash = newhash
+        if (self.image_mask_cache_hash != newhash) and self.initializing == False:
+            self.image_mask_cache_hash = newhash
 
             # 描画
             cx, cy = center
@@ -1825,43 +2025,42 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            gradient_image = wait_prosessing(self._draw_segment, image_size, [min_x, min_y, w, h])
-            #gradient_image = self._draw_segment(image_size, [min_x, min_y, w, h])
+            segment_mask = wait_prosessing(self._draw_segment, image_size, [min_x, min_y, w, h])
+            #segment_mask = self._draw_segment(image_size, [min_x, min_y, w, h])
 
             # SegmentMask用のキャッシュ
-            self.segment_mask_cache = gradient_image
+            self.image_mask_cache = segment_mask
 
         # その他更新用
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
-        if (self.segment_mask_cache is gradient_image or self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-            self.image_mask_cache_hash = newhash
+        if self.image_mask_cache is not None and (self.image_mask_cache is segment_mask or self.segment_mask_cache is None or self.segment_mask_cache_hash != newhash) and self.initializing == False:
+            self.segment_mask_cache_hash = newhash
 
             # SegmentMask用のキャッシュ
-            gradient_image = self.segment_mask_cache
+            segment_mask = self.image_mask_cache
 
             # パラメータに従って画像を変形
-            disp_info, param_crop_rect, center_rotate_rad, orientation = self.editor.get_hash_items()
-            gradient_image = core.rotation(gradient_image, np.rad2deg(center_rotate_rad + orientation[0]), orientation[1])
-            gradient_image = core.crop_image_with_disp_info(gradient_image, disp_info)
+            disp_info, center_rotate_rad, orientation = self.editor.get_hash_items()
+            segment_mask = core.rotation(segment_mask, np.rad2deg(center_rotate_rad + orientation[0]), orientation[1])
+            segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
-            # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
-
-            # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
-
-            self.image_mask_cache = gradient_image
-
-        if gradient_image is None:
-            gradient_image = self.image_mask_cache
-
-        if gradient_image is not None:
             nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
             cx, cy ,cw, ch, scale = self.editor.disp_info
-            gradient_image = cv2.resize(gradient_image[cy:cy+ch, cx:cx+cw], (nw, nh))
-            gradient_image = np.pad(gradient_image, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+            segment_mask = cv2.resize(segment_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
+            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
-        return gradient_image if gradient_image is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+            # ルミノシティマスクを作成
+            segment_mask = self.draw_hls_mask(segment_mask)
+
+            # マスクぼかし
+            segment_mask = self.apply_mask_blur(segment_mask)
+
+            self.segment_mask_cache = segment_mask
+
+        if segment_mask is None:
+            segment_mask = self.segment_mask_cache
+
+        return segment_mask if segment_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def _draw_segment(self, image_size, bbox):
         import helpers.sam3_helper as sam3_helper
@@ -1879,24 +2078,23 @@ class SegmentMask(BaseMask):
             return np.zeros((self.editor.texture_size[1], self.editor.texture_size[0]), dtype=np.float32)
         
         # 推論実行 (Original画像に対して)
-        mask_original = sam3_helper.predict_sam3(SegmentMask.__processor, img, bbox)
+        mask_original = sam3_helper.predict_sam3_for_bbox(SegmentMask.__processor, img, bbox)
         
         # マスクの回転・反転はCaller(get_mask_image)で行われるため
         # ここではOriginal画像に対応したマスク（Unrotated）をそのまま返す
         return mask_original
 
 class DepthMapMask(BaseMask):
-    __depth_pro = None
-    __depth_pro_mt = None
+    __model = None
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
         self.name = "Depth Map"
         self.initializing = True  # 初期配置中かどうか
-
-        self.depth_map = None
-
         self.center = (0, 0)
+
+        self.depth_map_mask_cache = None
+        self.depth_map_mask_cache_hash = None
 
         with self.canvas:
             PushMatrix()
@@ -1954,6 +2152,11 @@ class DepthMapMask(BaseMask):
             'center': [cx, cy],
             'effects_param': param
         }
+        # マスクデータ保存
+        if self.image_mask_cache is not None:
+            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
+            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+
         return dict
 
     def deserialize(self, dict):
@@ -1961,14 +2164,17 @@ class DepthMapMask(BaseMask):
         cx, cy = dict['center']
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
-
         self.center = params.denorm_param(self.effects_param, (cx, cy))
+        # マスクデータ展開
+        self.image_mask_cache = dict.get('image_mask_cache', None)
+        if self.image_mask_cache is not None:
+            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
+            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
 
         # 描き直し
         self.create_control_points()
         #self.update_mask()
      
-
     def update_control_points(self):
         cp_center = self.control_points[0]
         cp_center.center = self.center
@@ -1995,38 +2201,61 @@ class DepthMapMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_full_image(*self.center)
+        center = self.editor.tcg_to_original(*self.center)
+        depth_map_mask = None
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center))
+        newhash = hash((image_size))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-           # 描画
-            gradient_image = self.draw_depth_map(image_size, center)
+            self.image_mask_cache_hash = newhash
+
+            depth_map_mask = wait_prosessing(self.draw_depth_map, image_size)
+            #depth_map_mask = self.draw_depth_map(image_size)
+
+            self.image_mask_cache = depth_map_mask
+
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        if self.image_mask_cache is not None and (self.image_mask_cache is depth_map_mask or self.depth_map_mask_cache is None or self.depth_map_mask_cache_hash != newhash) and self.initializing == False:
+            self.depth_map_mask_cache_hash = newhash
+
+            depth_map_mask = self.image_mask_cache
+
+            # パラメータに従って画像を変形
+            disp_info, center_rotate_rad, orientation = self.editor.get_hash_items()
+            depth_map_mask = core.rotation(depth_map_mask, np.rad2deg(center_rotate_rad + orientation[0]), orientation[1])
+            depth_map_mask = core.crop_image_with_disp_info(depth_map_mask, disp_info)
+
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
+            cx, cy ,cw, ch, scale = self.editor.disp_info
+            depth_map_mask = cv2.resize(depth_map_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
+            depth_map_mask = np.pad(depth_map_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
+            depth_map_mask = self.draw_hls_mask(depth_map_mask)
 
             # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
+            depth_map_mask = self.apply_mask_blur(depth_map_mask)
 
-            self.image_mask_cache = gradient_image
-            self.image_mask_cache_hash = newhash
-            
-        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+            self.depth_map_mask_cache = depth_map_mask
 
-    def draw_depth_map(self, image_size, center):
-        if DepthMapMask.__depth_pro is None:
-            DepthMapMask.__depth_pro = importlib.import_module('depth_pro')
-            DepthMapMask.__depth_pro_mt = DepthMapMask.__depth_pro.setup_model(device=config.get_config('gpu_device'))
+        if depth_map_mask is None:
+            depth_map_mask = self.depth_map_mask_cache
 
-        if self.depth_map is None or self.editor.rotation_changed_flag:
-            self.depth_map = DepthMapMask.__depth_pro.predict_model(DepthMapMask.__depth_pro_mt, self.editor.full_image_rgb)
+        return depth_map_mask if depth_map_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
-        nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-        cx, cy ,cw, ch, scale = self.editor.disp_info
-        result = cv2.resize(self.depth_map[cy:cy+ch, cx:cx+cw], (nw, nh))
-        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+    def draw_depth_map(self, image_size):
+        import depth_pro
+        if DepthMapMask.__model is None:
+            DepthMapMask.__model = depth_pro.setup_model(device=config.get_config('gpu_device'))
 
-        return result
+        # 画像の取得
+        if self.editor.original_image is not None:
+            img = self.editor.original_image
+        else:
+            img = self.editor.full_image_rgb
+
+        mask = depth_pro.predict_model(DepthMapMask.__model, img)
+
+        return mask
 
 class FaceMask(BaseMask):
     __faces = None
@@ -2035,8 +2264,10 @@ class FaceMask(BaseMask):
         super().__init__(editor, **kwargs)
         self.name = "Face"
         self.initializing = True  # 初期配置中かどうか
-
         self.center = (0, 0)
+
+        self.faces_mask_cache = None
+        self.faces_mask_cache_hash = None
 
         with self.canvas:
             PushMatrix()
@@ -2094,6 +2325,11 @@ class FaceMask(BaseMask):
             'center': [cx, cy],
             'effects_param': param
         }
+        # マスクデータ保存
+        if self.image_mask_cache is not None:
+            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
+            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+
         return dict
 
     def deserialize(self, dict):
@@ -2101,12 +2337,15 @@ class FaceMask(BaseMask):
         cx, cy = dict['center']
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
-
         self.center = params.denorm_param(self.effects_param, (cx, cy))
+        # マスクデータ展開
+        self.image_mask_cache = dict.get('image_mask_cache', None)
+        if self.image_mask_cache is not None:
+            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
+            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
 
         # 描き直し
-        self.create_control_points()
-        #self.update_mask()      
+        self.create_control_points()     
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -2134,7 +2373,7 @@ class FaceMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_full_image(*self.center)
+        center = self.editor.tcg_to_original(*self.center)
         exclude_names = []
         if self.effects_param.get('mask2_face_face', True) == False:
             exclude_names.append('face')
@@ -2148,38 +2387,64 @@ class FaceMask(BaseMask):
             exclude_names.append('imouth')
         if self.effects_param.get('mask2_face_lips', True) == False:
             exclude_names.extend(['ulip', 'llip'])
+        faces_mask = None
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, tuple(exclude_names)))
+        newhash = hash((image_size, tuple(exclude_names)))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
+            self.image_mask_cache_hash = newhash
+
             # 描画
-            gradient_image = self.draw_face(image_size, center, exclude_names)
+            faces_mask = wait_prosessing(self.draw_face, image_size, exclude_names)
+            #faces_mask = self.draw_face(image_size, exclude_names)
+
+            self.image_mask_cache = faces_mask
+
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        if self.image_mask_cache is not None and (self.image_mask_cache is faces_mask or self.faces_mask_cache is None or self.faces_mask_cache_hash != newhash) and self.initializing == False:
+            self.faces_mask_cache_hash = newhash
+
+            faces_mask = self.image_mask_cache
+
+            # パラメータに従って画像を変形
+            disp_info, center_rotate_rad, orientation = self.editor.get_hash_items()
+            faces_mask = core.rotation(faces_mask, np.rad2deg(center_rotate_rad + orientation[0]), orientation[1])
+            faces_mask = core.crop_image_with_disp_info(faces_mask, disp_info)
+
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
+            cx, cy ,cw, ch, scale = self.editor.disp_info
+            faces_mask = cv2.resize(faces_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
+            faces_mask = np.pad(faces_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
+            faces_mask = self.draw_hls_mask(faces_mask)
 
             # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
+            faces_mask = self.apply_mask_blur(faces_mask)
 
-            self.image_mask_cache = gradient_image
-            self.image_mask_cache_hash = newhash
-            
-        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+            self.faces_mask_cache = faces_mask
 
-    def draw_face(self, image_size, center, exclude_names):
+        if faces_mask is None:
+            faces_mask = self.faces_mask_cache
+
+        return faces_mask if faces_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+    def draw_face(self, image_size, exclude_names):
         import helpers.facer_helper as facer_helper
-        if FaceMask.__faces is None or self.editor.rotation_changed_flag:
-            FaceMask.__faces = facer_helper.create_faces(self.editor.full_image_rgb, device='cpu')
+
+        # 画像の取得
+        if self.editor.original_image is not None:
+            img = self.editor.original_image
+        else:
+            img = self.editor.full_image_rgb
+
+        if FaceMask.__faces is None:
+            FaceMask.__faces = facer_helper.create_faces(img, device='cpu')
         
         # マスク画像を作成
         if FaceMask.__faces == 0:
             return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
         result = facer_helper.draw_face_mask(FaceMask.__faces, exclude_names)
-
-        nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-        cx, cy ,cw, ch, scale = self.editor.disp_info
-        result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
-        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
         return result
 
@@ -2189,22 +2454,24 @@ class FaceMask(BaseMask):
             FaceMask.__faces = None
 
 # セグメントマスクのクラス
-class SceneMask(BaseMask):
-    __model = None
+class TargetTextMask(BaseMask):
+    __processor = None
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
-        self.name = "Scene"
+        self.name = "Target Text"
         self.initializing = True  # 初期配置中かどうか
-
         self.center = (0, 0)
+
+        self.segment_mask_cache = None
+        self.segment_mask_cache_hash = None
+        
+        self.target_text = ""
 
         with self.canvas:
             PushMatrix()
             self.translate = Translate(*self.center)
             PopMatrix()
-
-        #self.update_mask()
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -2212,7 +2479,7 @@ class SceneMask(BaseMask):
             self.center_x = cx
             self.center_y = cy
             return True
-        else: 
+        else:
             return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
@@ -2220,17 +2487,20 @@ class SceneMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
-            self.initializing = False
+            #self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
+            
+            # text inout dialog
+            dialog = TextInputDialog(self.on_text_entered)
+            dialog.open()
+            
             return True
         else:
             return super().on_touch_up(touch)
 
     def create_control_points(self):
-        self.control_points = []
-
-        # 中心のコントロールポイント
+        # 中心のコントロールポイント（始点）
         cp_center = ControlPoint(self.editor)
         cp_center.center = (self.center_x, self.center_y)
         cp_center.ctrl_center = cp_center.center
@@ -2243,6 +2513,15 @@ class SceneMask(BaseMask):
         if not self.active:
             self.show_center_control_point_only()
 
+    def on_text_entered(self, text):
+        self.target_text = text
+        self.initializing = False
+        
+        self.update_mask()
+        
+        self.editor._create_end_new_mask()
+        self.editor.created_mask = None
+
     def serialize(self):
         cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
 
@@ -2250,20 +2529,31 @@ class SceneMask(BaseMask):
         param = params.delete_special_param(param)
         
         dict = {
-            'type': MaskType.SCENE,
+            'type': MaskType.TARGET_TEXT,
             'name': self.name,
             'center': [cx, cy],
+            'target_text': self.target_text,
             'effects_param': param
         }
+        # マスクデータ保存
+        if self.image_mask_cache is not None:
+            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
+            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+
         return dict
 
     def deserialize(self, dict):
         self.initializing = False
         cx, cy = dict['center']
         self.name = dict['name']
+        self.target_text = dict.get('target_text', "All")
         self.effects_param.update(dict['effects_param'])
-
         self.center = params.denorm_param(self.effects_param, (cx, cy))
+        # マスクデータ展開
+        self.image_mask_cache = dict.get('image_mask_cache', None)
+        if self.image_mask_cache is not None:
+            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
+            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
 
         # 描き直し
         self.create_control_points()
@@ -2295,59 +2585,70 @@ class SceneMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_full_image(*self.center)
+        center = self.editor.tcg_to_original(*self.center)
+        text = self.target_text
+        segment_mask = None
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center))
-        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-            # 描画
-            gradient_image = self.draw_scene(image_size, center)
-
-            # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
-
-            # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
-
-            self.image_mask_cache = gradient_image
+        # _draw_segmentを呼び出さなければならない用
+        newhash = hash((image_size, text))
+        if (self.image_mask_cache_hash != newhash) and self.initializing == False:
             self.image_mask_cache_hash = newhash
             
-        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+            # predict_sam3 に渡す box = [x, y, w, h]
+            segment_mask = wait_prosessing(self._draw_segment, image_size, text)
+            #segment_mask = self._draw_segment(image_size, text)
 
+            # SegmentMask用のキャッシュ
+            self.image_mask_cache = segment_mask
 
-    def draw_scene(self, image_size, center):
+        # その他更新用
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        if self.image_mask_cache is not None and (self.image_mask_cache is segment_mask or self.segment_mask_cache is None or self.segment_mask_cache_hash != newhash) and self.initializing == False:
+            self.segment_mask_cache_hash = newhash
 
-        def _process(full_image):
-            import helpers.detectron2_helper
+            # SegmentMask用のキャッシュ
+            segment_mask = self.image_mask_cache
 
-            if SceneMask.__model is None:
-                config_file = 'detectron2/configs/COCO-PanopticSegmentation/panoptic_fpn_R_50_3x.yaml'
-                checkpoint_file = 'checkpoints/model_final_c10459.pkl'
-                #config_file = 'kmax_deeplab/configs/ade20k/panoptic_segmentation/kmax_convnext_large.yaml'
-                #checkpoint_file = 'checkpoints/kmax_convnext_large_ade20k.pth'
-                #config_file = 'kmax_deeplab/configs/coco/panoptic_segmentation/kmax_r50.yaml'
-                #checkpoint_file = 'checkpoints/kmax_r50.pth'
-                SceneMask.__model = helpers.detectron2_helper.setup_model(config_file, checkpoint_file, 'cpu', 0.35)
-            
-            height, width = full_image.shape[:2]
-            img = cv2.resize(full_image, (width//2, height//2))
-            result = helpers.detectron2_helper.run_inference(SceneMask.__model, img)
-            result = helpers.detectron2_helper.create_mask(result)
-            result = result * 0.5 + 0.5
-            result = cv2.resize(result, (width, height))
+            # パラメータに従って画像を変形
+            disp_info, center_rotate_rad, orientation = self.editor.get_hash_items()
+            segment_mask = core.rotation(segment_mask, np.rad2deg(center_rotate_rad + orientation[0]), orientation[1])
+            segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
-            return result
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
+            cx, cy ,cw, ch, scale = self.editor.disp_info
+            segment_mask = cv2.resize(segment_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
+            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
-        # 裏でやらせているつもり（ダイアログ表示あり）
-        #result = wait_prosessing(_process, self.editor.full_image_rgb)
-        result = _process(self.editor.full_image_rgb)
+            # ルミノシティマスクを作成
+            segment_mask = self.draw_hls_mask(segment_mask)
 
-        nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-        cx, cy ,cw, ch, scale = self.editor.disp_info
-        result = cv2.resize(result[cy:cy+ch, cx:cx+cw], (nw, nh))
-        result = np.pad(result, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+            # マスクぼかし
+            segment_mask = self.apply_mask_blur(segment_mask)
 
-        return result
+            self.segment_mask_cache = segment_mask
 
+        if segment_mask is None:
+            segment_mask = self.segment_mask_cache
+
+        return segment_mask if segment_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+    def _draw_segment(self, image_size, text):
+        import helpers.sam3_helper as sam3_helper
+        if TargetTextMask.__processor is None:
+            TargetTextMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
+        
+        # 画像の取得
+        if self.editor.original_image is not None:
+            img = self.editor.original_image
+        else:
+            img = self.editor.full_image_rgb
+        
+        # 推論実行 (Original画像に対して)
+        mask_original = sam3_helper.predict_sam3_for_text(TargetTextMask.__processor, img, text)
+        
+        # マスクの回転・反転はCaller(get_mask_image)で行われるため
+        # ここではOriginal画像に対応したマスク（Unrotated）をそのまま返す
+        return mask_original
 
 
 # メインのエディタークラス
@@ -2375,7 +2676,6 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.orientation = (0, 0)
         self.margin = (0, 0)
         self.texture_size = (0, 0)
-        self.rotation_changed_flag = False
 
         self.full_image_rgb = None
         self.full_image_hls = None
@@ -2460,8 +2760,6 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
         new_center_rotate_rad = math.radians(primary_param.get('rotation', 0))
         new_orientation = (math.radians(primary_param.get('rotation2', 0)), primary_param.get('flip_mode', 0))
-        if new_center_rotate_rad != self.center_rotate_rad or new_orientation != self.orientation:
-            self.set_rotation_changed_flag(True)
         self.center_rotate_rad = new_center_rotate_rad
         self.orientation = new_orientation
 
@@ -2473,12 +2771,8 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.center_rotate_rad = math.radians(rotation)
         self.orientation = (math.radians(rotation2), flip)
     """
-
-    def set_rotation_changed_flag(self, flag):
-        self.rotation_changed_flag = flag
-
     def get_hash_items(self):
-        return (self.disp_info, self.param_crop_rect, self.center_rotate_rad, self.orientation)
+        return (self.disp_info, self.center_rotate_rad, self.orientation)
 
     def __set_image_info(self):
         self.margin = ((self.size[0]-self.texture_size[0])/2, (self.size[1]-self.texture_size[1])/2)
@@ -2647,7 +2941,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
                 texture.flip_vertical()
                 px, py = self.to_window(*self.pos)
                 px, py = px+self.margin[0], py+self.margin[1]
-                Color(1, 0, 0, 0.3)
+                Color(1, 0, 0, 1.0)
                 self.rectangle = Rectangle(texture=texture, pos=(px, py), size=self.texture_size)
 
                 # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
@@ -2666,9 +2960,9 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         get_history_ctrl().begin_history_layer_ctrl(self, "Delete", self.get_mask_list().index(self.created_mask), op_type)
         
         # CompositMaskなど初期化が不要な場合は即座に終了処理を行う
-        if not mask.initializing:
-             self._create_end_new_mask()
-             self.created_mask = None
+        if mask.initializing == False:
+            self._create_end_new_mask()
+            self.created_mask = None
         
         return self.created_mask
 
@@ -2703,8 +2997,9 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
         # こっちを後でやらないとまだコントロールポイントが作られてない
         if self.created_mask is not None:
-            self._create_end_new_mask()        
-            self.created_mask = None
+            if self.created_mask.initializing == False:
+                self._create_end_new_mask()        
+                self.created_mask = None
         
         return result
 
@@ -2725,8 +3020,8 @@ class MaskEditor2(FloatLayout, LayerCtrl):
                 mask = DepthMapMask(editor=self)
             case MaskType.FACE:
                 mask = FaceMask(editor=self)
-            case MaskType.SCENE:
-                mask = SceneMask(editor=self)
+            case MaskType.TARGET_TEXT:
+                mask = TargetTextMask(editor=self)
             case MaskType.COMPOSIT:
                 mask = CompositMask(editor=self)
             case _:

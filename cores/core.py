@@ -26,7 +26,7 @@ import base64
 import cores.highlight_recovery as highlight_recovery
 import cores.sigmoid as sigmoid
 import dng_sdk
-import utils
+import utils.utils as utils
 import params
 import config
 import cores.aces_tonemapping as aces_tonemapping

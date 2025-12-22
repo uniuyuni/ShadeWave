@@ -83,7 +83,7 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
             ('Segment', me2.MaskType.SEGMENT),
             ('Depth', me2.MaskType.DEPTHMAP),
             ('Face', me2.MaskType.FACE),
-            ('Scene', me2.MaskType.SCENE)
+            ('Target Text', me2.MaskType.TARGET_TEXT)
         ]
 
         for name, type_key in types:

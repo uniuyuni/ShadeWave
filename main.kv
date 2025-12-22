@@ -1741,6 +1741,23 @@
                             height: self.minimum_height
 
                             HeadLabel:
+                                text: ' Settings'
+
+                            MDGridLayout:
+                                size_hint_y: None
+                                ref_height: 20
+                                cols: 1
+
+                                ParamLabel:          
+                                    text: "Invert"
+                                CheckBox:
+                                    id: checkbox_mask2_invert
+                                    active: False
+                                    on_press: root.apply_effects_lv(3, 'mask2')
+
+                            VSeparator:
+
+                            HeadLabel:
                                 text: ' Depth'
                             ParamSlider:
                                 id: slider_mask2_depth_min

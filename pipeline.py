@@ -114,11 +114,11 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
 
             img2 = core.type_convert(img2, np.ndarray)
             img3 = core.type_convert(img3, np.ndarray)
+
             if crop is None:
                 img3 = core.apply_mask(img3, mask.get_mask_image(), img2)
             else:
                 img3 = core.apply_mask(img3, mask.get_mask_image()[crop[1]:crop[3], crop[0]:crop[2], :], img2)
-        mask_editor2.set_rotation_changed_flag(False)
 
     return img3
 
@@ -146,16 +146,6 @@ def pipeline_lv0(img, effects, param, efconfig):
             
     if pre_rotation_img is None:
         pre_rotation_img = rgb
-
-    if lv1reset == True:
-        for v in effects[1].values():
-            v.reeffect()
-        for v in effects[2].values():
-            v.reeffect()
-        for v in effects[3].values():
-            v.reeffect()
-        for v in effects[4].values():
-            v.reeffect()
 
     return rgb, lv1reset, pre_rotation_img
 

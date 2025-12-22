@@ -6,7 +6,7 @@ from PIL import Image
 from io import BytesIO
 
 import splitimage
-import aiutils
+import utils.aiutils as aiutils
 import cores.core as core
 
 def setup():

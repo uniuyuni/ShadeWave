@@ -9,7 +9,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty
 import logging
 
-import kvutils
+import utils.kvutils as kvutils
 
 class DraggablePoint():
 

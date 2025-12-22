@@ -2,13 +2,14 @@
 import numpy as np
 import cv2
 import copy
+
 from kivymd.app import MDApp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.clock import Clock
 from kivy.graphics.texture import Texture
 from kivy.properties import ObjectProperty
 
-from lens_ghost import create_ghost
+from cores.lens_ghost import create_ghost
 from widget.param_slider import ParamSlider
 
 class GhostEditor(BoxLayout):

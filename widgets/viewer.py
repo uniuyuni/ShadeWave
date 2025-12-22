@@ -23,7 +23,7 @@ from kivy.metrics import dp
 from widgets.draggable_widget import DraggableWidget
 
 import cores.core as core
-import kvutils
+import utils.kvutils as kvutils
 import define
 
 class ThumbnailCard(MDCard):
