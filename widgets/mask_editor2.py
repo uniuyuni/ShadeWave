@@ -298,34 +298,34 @@ class BaseMask(Widget):
         return result
 
     def get_hash_items(self):
-        return (self.effects_param.get('mask2_invert', False),
-                self.effects_param.get('mask2_open_space', 0),
-                self.effects_param.get('mask2_close_space', 0),
-                self.effects_param.get('mask2_depth_min', 0),
-                self.effects_param.get('mask2_depth_max', 255),
-                self.effects_param.get('mask2_blur', 0),
-                self.effects_param.get('mask2_hue_distance', 179),
-                self.effects_param.get('mask2_hue_min', 0),
-                self.effects_param.get('mask2_hue_max', 359),
-                self.effects_param.get('mask2_lum_distance', 127),
-                self.effects_param.get('mask2_lum_min', 0),
-                self.effects_param.get('mask2_lum_max', 255),
-                self.effects_param.get('mask2_sat_distance', 127),
-                self.effects_param.get('mask2_sat_min', 0),
-                self.effects_param.get('mask2_sat_max', 255))
+        return (effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_distance'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_min'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_max'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_distance'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_min'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_max'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_distance',),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_min'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_max'))
 
     def apply_mask_space(self, image):
-        open_space = self.effects_param.get('mask2_open_space', 0)
+        open_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space')
         image = expand_mask.adjust_foreground_only(image, open_space * self.editor.disp_info[4], False)
 
-        close_space = self.effects_param.get('mask2_close_space', 0)
+        close_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space')
         image = expand_mask.adjust_holes_only(image, close_space * self.editor.disp_info[4], False)
         
         return image
 
     def apply_depth_mask(self, image):
-        dmin = self.effects_param.get('mask2_depth_min', 0) / 255
-        dmax = self.effects_param.get('mask2_depth_max', 255) / 255
+        dmin = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min') / 255
+        dmax = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max') / 255
         if (dmin != 0) or (1 != dmax):
             dimg = np.where((image < dmin) | (dmax < image), 0, image)
         else:
@@ -334,7 +334,7 @@ class BaseMask(Widget):
         return dimg
     
     def apply_mask_blur(self, image):
-        ksize = int(max(0, self.effects_param.get('mask2_blur', 0)*2-1))
+        ksize = int(max(0, effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur')*2-1))
         img2 = core.gaussian_blur_cv(image, (ksize, ksize))
         return img2
 
@@ -363,7 +363,7 @@ class BaseMask(Widget):
             dmax = HLS_DIS_MAX[hls_str]
             mmax = HLS_MAX[hls_str]
             
-            ndis = self.effects_param.get(f'mask2_{hls_str}_distance', dmax)
+            ndis = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_distance', dmax)
             if ndis != dmax:
                 cx, cy = self.editor.tcg_to_full_image(*self.center)
                 print(f"point: {cx}, {cy}, {fimg[int(cy), int(cx)]}")
@@ -387,8 +387,8 @@ class BaseMask(Widget):
             else:
                 nimg = mask
             
-            _min = self.effects_param.get(f'mask2_{hls_str}_min', 0)
-            _max = self.effects_param.get(f'mask2_{hls_str}_max', mmax)
+            _min = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_min')
+            _max = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_max', mmax)
             if _min != 0 or _max != mmax:
                 if hls_str != 'hue':
                     _min = _min / mmax
@@ -793,7 +793,7 @@ class CircularGradientMask(BaseMask):
         inner_axes = self.editor.tcg_to_world_scale(self.inner_radius_x, self.inner_radius_y)
         outer_axes = self.editor.tcg_to_world_scale(self.outer_radius_x, self.outer_radius_y)
         rotate_rad = self.editor.get_rotate_rad(self.rotate_rad)
-        invert = not self.effects_param.get('mask2_invert', False)
+        invert = not effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, inner_axes, outer_axes, rotate_rad, invert))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
@@ -1226,7 +1226,7 @@ class GradientMask(BaseMask):
         center = self.editor.tcg_to_texture(*self.center)
         start_point = self.editor.tcg_to_texture(*self.start_point)
         end_point = self.editor.tcg_to_texture(*self.end_point)
-        if self.effects_param.get('mask2_invert', False) == True:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
             start_point, end_point = end_point, start_point
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, start_point, end_point))
@@ -2007,6 +2007,7 @@ class SegmentMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original(*self.center)
         corner = self.editor.tcg_to_original(*self.corner)
+        invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
@@ -2025,7 +2026,7 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_prosessing(self._draw_segment, image_size, [min_x, min_y, w, h])
+            segment_mask = wait_prosessing(self._draw_segment, image_size, [min_x, min_y, w, h], invert)
             #segment_mask = self._draw_segment(image_size, [min_x, min_y, w, h])
 
             # SegmentMask用のキャッシュ
@@ -2062,7 +2063,7 @@ class SegmentMask(BaseMask):
 
         return segment_mask if segment_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
-    def _draw_segment(self, image_size, bbox):
+    def _draw_segment(self, image_size, bbox, invert):
         import helpers.sam3_helper as sam3_helper
         if SegmentMask.__processor is None:
             SegmentMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
@@ -2080,8 +2081,9 @@ class SegmentMask(BaseMask):
         # 推論実行 (Original画像に対して)
         mask_original = sam3_helper.predict_sam3_for_bbox(SegmentMask.__processor, img, bbox)
         
-        # マスクの回転・反転はCaller(get_mask_image)で行われるため
-        # ここではOriginal画像に対応したマスク（Unrotated）をそのまま返す
+        if invert:
+            mask_original = 1 - mask_original   
+        
         return mask_original
 
 class DepthMapMask(BaseMask):
@@ -2375,17 +2377,17 @@ class FaceMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original(*self.center)
         exclude_names = []
-        if self.effects_param.get('mask2_face_face', True) == False:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_face') == False:
             exclude_names.append('face')
-        if self.effects_param.get('mask2_face_brows', True) == False:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_brows') == False:
             exclude_names.extend(['rb', 'lb'])
-        if self.effects_param.get('mask2_face_eyes', True) == False:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_eyes') == False:
             exclude_names.extend(['re', 'le'])
-        if self.effects_param.get('mask2_face_nose', True) == False:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_nose') == False:
             exclude_names.append('nose')
-        if self.effects_param.get('mask2_face_mouth', True) == False:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_mouth') == False:
             exclude_names.append('imouth')
-        if self.effects_param.get('mask2_face_lips', True) == False:
+        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_lips') == False:
             exclude_names.extend(['ulip', 'llip'])
         faces_mask = None
 
@@ -2586,6 +2588,7 @@ class TargetTextMask(BaseMask):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original(*self.center)
+        invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
         text = self.target_text
         segment_mask = None
 
@@ -2595,7 +2598,7 @@ class TargetTextMask(BaseMask):
             self.image_mask_cache_hash = newhash
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_prosessing(self._draw_segment, image_size, text)
+            segment_mask = wait_prosessing(self._draw_segment, image_size, text, invert)
             #segment_mask = self._draw_segment(image_size, text)
 
             # SegmentMask用のキャッシュ
@@ -2632,7 +2635,7 @@ class TargetTextMask(BaseMask):
 
         return segment_mask if segment_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
-    def _draw_segment(self, image_size, text):
+    def _draw_segment(self, image_size, text, invert):
         import helpers.sam3_helper as sam3_helper
         if TargetTextMask.__processor is None:
             TargetTextMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
@@ -2646,8 +2649,9 @@ class TargetTextMask(BaseMask):
         # 推論実行 (Original画像に対して)
         mask_original = sam3_helper.predict_sam3_for_text(TargetTextMask.__processor, img, text)
         
-        # マスクの回転・反転はCaller(get_mask_image)で行われるため
-        # ここではOriginal画像に対応したマスク（Unrotated）をそのまま返す
+        if invert:
+            mask_original = 1 - mask_original
+        
         return mask_original
 
 
@@ -2941,7 +2945,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
                 texture.flip_vertical()
                 px, py = self.to_window(*self.pos)
                 px, py = px+self.margin[0], py+self.margin[1]
-                Color(1, 0, 0, 1.0)
+                Color(1, 0, 0, 0.4)
                 self.rectangle = Rectangle(texture=texture, pos=(px, py), size=self.texture_size)
 
                 # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))

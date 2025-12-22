@@ -288,11 +288,11 @@ if __name__ == '__main__':
 
         def end_history_layer_ctrl(self, layer_ctrl, op, index):
             if self.current_op is None:
-                logging.error("MainWidget.end_history_layer_ctrl None error.")
+                logging.warning("MainWidget.end_history_layer_ctrl None.")
                 return
             
             if self.current_op.layer_ctrl is not layer_ctrl:
-                logging.error("MainWidget.end_history_layer_ctrl Unmatching error.")
+                logging.warning("MainWidget.end_history_layer_ctrl Unmatching.")
                 return
 
             if self.current_op.set_update_layer(layer_ctrl, op, index) is not None:
@@ -308,14 +308,14 @@ if __name__ == '__main__':
         
         def end_history_effect_ctrl(self, lv, effect, subname=None):
             if self.current_op is None:
-                logging.error(f"MainWidget.end_history_effect_ctrl None error. {effect}")
+                logging.warning(f"MainWidget.end_history_effect_ctrl None. {effect}")
                 return
             
             if self.current_op.lv != lv or self.current_op.effect != effect:
-                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching error. {effect}")
+                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching. {effect}")
 
             if self.current_op.subname != subname:
-                logging.error(f"MainWidget.end_history_effect_ctrl Unmatching error. {effect}")
+                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching. {effect}")
                 return
 
             current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id, lv=lv)

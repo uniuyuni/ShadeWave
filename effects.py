@@ -5,11 +5,6 @@ import jax.numpy as jnp
 import importlib
 from enum import Enum
 
-#import colorsys
-#import skimage
-#import DRBNet
-#import dehazing.dehaze
-
 import cores.core as core
 import cores.cubelut as cubelut
 import cores.subpixel_shift as subpixel_shift
@@ -76,7 +71,7 @@ class Effect():
     def get_param_dict(self, param):
         return {}
 
-    def get_param(self, param, key):
+    def _get_param(self, param, key):
         return param.get(key, self.get_param_dict(param)[key])
 
     def delete_default_param(self, param):
@@ -99,9 +94,9 @@ class LensModifierEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["checkbox_color_modification"].active = self.get_param(param, 'color_modification')
-        widget.ids["checkbox_subpixel_distortion"].active = self.get_param(param, 'subpixel_distortion')
-        widget.ids["checkbox_geometry_distortion"].active = self.get_param(param, 'geometry_distortion')
+        widget.ids["checkbox_color_modification"].active = self._get_param(param, 'color_modification')
+        widget.ids["checkbox_subpixel_distortion"].active = self._get_param(param, 'subpixel_distortion')
+        widget.ids["checkbox_geometry_distortion"].active = self._get_param(param, 'geometry_distortion')
 
     def set2param(self, param, widget):
         param['color_modification'] = widget.ids["checkbox_color_modification"].active
@@ -109,10 +104,10 @@ class LensModifierEffect(Effect):
         param['geometry_distortion'] = widget.ids["checkbox_geometry_distortion"].active
 
     def make_diff(self, img, param, efconfig):
-        lm = self.get_param(param, 'lens_modifier')
-        cd = self.get_param(param, 'color_modification')
-        sd = self.get_param(param, 'subpixel_distortion')
-        gd = self.get_param(param, 'geometry_distortion')
+        lm = self._get_param(param, 'lens_modifier')
+        cd = self._get_param(param, 'color_modification')
+        sd = self._get_param(param, 'subpixel_distortion')
+        gd = self._get_param(param, 'geometry_distortion')
         if lm == False or (cd == False and sd == False and gd == False):
             self.diff = None
             self.hash = None
@@ -134,13 +129,13 @@ class SubpixelShiftEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_subpixel_shift"].active = False if self.get_param(param, 'subpixel_shift') == 0 else True
+        widget.ids["switch_subpixel_shift"].active = False if self._get_param(param, 'subpixel_shift') == 0 else True
 
     def set2param(self, param, widget):
         param['subpixel_shift'] = 0 if widget.ids["switch_subpixel_shift"].active == False else 1
 
     def make_diff(self, img, param, efconfig):
-        ss = self.get_param(param, 'subpixel_shift')
+        ss = self._get_param(param, 'subpixel_shift')
         if ss <= 0:
             self.diff = None
             self.hash = None
@@ -187,13 +182,13 @@ class InpaintEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_inpaint"].active = False if self.get_param(param, 'inpaint') == 0 else True
-        widget.ids["button_inpaint_predict"].state = "normal" if self.get_param(param, 'inpaint_predict') == 0 else "down"
+        widget.ids["switch_inpaint"].active = False if self._get_param(param, 'inpaint') == 0 else True
+        widget.ids["button_inpaint_predict"].state = "normal" if self._get_param(param, 'inpaint_predict') == 0 else "down"
 
         # 履歴描画
         if self.mask_editor is not None:
             self.mask_editor.clear_mask()
-            self.inpaint_mask_list = self.get_param(param, 'inpaint_mask_list')
+            self.inpaint_mask_list = self._get_param(param, 'inpaint_mask_list')
             for inpaint_mask in self.inpaint_mask_list:
                 self.mask_editor.add_mask(inpaint_mask.disp_info, inpaint_mask.image)
             self.mask_editor.delay_update_canvas()
@@ -219,11 +214,11 @@ class InpaintEffect(Effect):
                 param['inpaint_mask_list'] = self.inpaint_mask_list = []
 
     def make_diff(self, img, param, efconfig):
-        self.inpaint_diff_list = self.get_param(param, 'inpaint_diff_list')
-        self.inpaint_mask_list = self.get_param(param, 'inpaint_mask_list')
+        self.inpaint_diff_list = self._get_param(param, 'inpaint_diff_list')
+        self.inpaint_mask_list = self._get_param(param, 'inpaint_mask_list')
 
-        ip = self.get_param(param, 'inpaint')
-        ipp = self.get_param(param, 'inpaint_predict')
+        ip = self._get_param(param, 'inpaint')
+        ipp = self._get_param(param, 'inpaint_predict')
         if (ip > 0 and ipp > 0) is True:
             import helpers.qwen_image_helper as qih
             
@@ -363,7 +358,7 @@ class DistortionEffect(Effect):
             self.diff = 0 if self.diff is None else self.diff + 1
         
         else:
-            dr = self.get_param(param, 'distortion_recorded')
+            dr = self._get_param(param, 'distortion_recorded')
             if len(dr) > 0:
                 param_hash = hash((len(dr)))
                 if self.hash != param_hash:
@@ -387,7 +382,7 @@ class DistortionEffect(Effect):
     def _open_distortion_painter(self, param, widget):
         if self.distortion_painter is None:
             self.distortion_painter = DistortionCanvas(image_widget=widget.ids["preview"],
-                    recorded=self.get_param(param, 'distortion_recorded'),
+                    recorded=self._get_param(param, 'distortion_recorded'),
                     callback=self._painter_callback,
                     effect_type=self.effect_type,
                     brush_size=widget.ids["slider_distortion_brush_size"].value,
@@ -420,26 +415,26 @@ class RotationEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_rotation"].set_slider_value(self.get_param(param, 'rotation'))
+        widget.ids["slider_rotation"].set_slider_value(self._get_param(param, 'rotation'))
 
     def set2param(self, param, widget):
         param['rotation'] = widget.ids["slider_rotation"].value
         
     def set2param2(self, param, arg):
         if arg == 'hflip':
-            param['flip_mode'] = self.get_param(param, 'flip_mode') ^ 1
+            param['flip_mode'] = self._get_param(param, 'flip_mode') ^ 1
 
         elif arg == 'vflip':
-            param['flip_mode'] = self.get_param(param, 'flip_mode') ^ 2
+            param['flip_mode'] = self._get_param(param, 'flip_mode') ^ 2
 
         elif arg == 90:
-            rot = self.get_param(param, 'rotation2') + 90.0
+            rot = self._get_param(param, 'rotation2') + 90.0
             if rot >= 90*4:
                 rot = 0
             param['rotation2'] = rot
 
         elif arg == -90:
-            rot = self.get_param(param, 'rotation2') - 90.0
+            rot = self._get_param(param, 'rotation2') - 90.0
             if rot < 0:
                 rot = 90*3
             param['rotation2'] = rot
@@ -448,10 +443,10 @@ class RotationEffect(Effect):
             pass
 
     def make_diff(self, img, param, efconfig):
-        ang = self.get_param(param, 'rotation')
-        ang2 = self.get_param(param, 'rotation2')
-        flp = self.get_param(param, 'flip_mode')
-        crop_enable = self.get_param(param, 'crop_enable')
+        ang = self._get_param(param, 'rotation')
+        ang2 = self._get_param(param, 'rotation2')
+        flp = self._get_param(param, 'flip_mode')
+        crop_enable = self._get_param(param, 'crop_enable')
 
         param_hash = hash((ang, ang2, flp, crop_enable))
         if self.hash != param_hash:
@@ -475,7 +470,7 @@ class CropEffect(Effect):
         self.crop_editor_callback = callback
 
     def _param_to_aspect_ratio(self, param):
-        ar = self.get_param(param, 'aspect_ratio')
+        ar = self._get_param(param, 'aspect_ratio')
         return eval(ar if ar != "None" else "0")
 
     def get_param_dict(self, param):
@@ -518,7 +513,7 @@ class CropEffect(Effect):
 
 
     def make_diff(self, img, param, efconfig):
-        ce = self.get_param(param, 'crop_enable')
+        ce = self._get_param(param, 'crop_enable')
         disp_info = params.get_disp_info(param)
 
         if ce == True or disp_info is None:
@@ -574,7 +569,7 @@ class CropEffect(Effect):
 
     def reset2_crop_editor(self, param):
         if self.crop_editor is not None:
-            self.crop_editor.input_angle = self.get_param(param, 'rotation') + self.get_param(param, 'rotation2')
+            self.crop_editor.input_angle = self._get_param(param, 'rotation') + self._get_param(param, 'rotation2')
             self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
 
     def finalize(self, param, widget):
@@ -591,13 +586,13 @@ class AINoiseReductonEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_ai_noise_reduction"].active = False if self.get_param(param, 'ai_noise_reduction') == 0 else True
+        widget.ids["switch_ai_noise_reduction"].active = False if self._get_param(param, 'ai_noise_reduction') == 0 else True
 
     def set2param(self, param, widget):
         param['ai_noise_reduction'] = 0 if widget.ids["switch_ai_noise_reduction"].active == False else 1
 
     def make_diff(self, img, param, efconfig):
-        nr = self.get_param(param, 'ai_noise_reduction')
+        nr = self._get_param(param, 'ai_noise_reduction')
         if nr <= 0: #or efconfig.mode == EffectMode.PREVIEW:
             self.diff = None
             self.hash = None
@@ -624,13 +619,13 @@ class BM3DNoiseReductionEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_bm3d_noise_reduction"].set_slider_value(self.get_param(param, 'bm3d_noise_reduction'))
+        widget.ids["slider_bm3d_noise_reduction"].set_slider_value(self._get_param(param, 'bm3d_noise_reduction'))
 
     def set2param(self, param, widget):
         param['bm3d_noise_reduction'] = widget.ids["slider_bm3d_noise_reduction"].value
 
     def make_diff(self, img, param, efconfig):
-        bm3d = int(self.get_param(param, 'bm3d_noise_reduction'))
+        bm3d = int(self._get_param(param, 'bm3d_noise_reduction'))
         if bm3d == 0 or efconfig.disp_info[4] < config.get_config('scale_threshold'):
             self.diff = None
             self.hash = None
@@ -654,16 +649,16 @@ class LightNoiseReductionEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_light_noise_reduction"].set_slider_value(self.get_param(param, 'light_noise_reduction'))
-        widget.ids["slider_light_color_noise_reduction"].set_slider_value(self.get_param(param, 'light_color_noise_reduction'))
+        widget.ids["slider_light_noise_reduction"].set_slider_value(self._get_param(param, 'light_noise_reduction'))
+        widget.ids["slider_light_color_noise_reduction"].set_slider_value(self._get_param(param, 'light_color_noise_reduction'))
 
     def set2param(self, param, widget):
         param['light_noise_reduction'] = widget.ids["slider_light_noise_reduction"].value
         param['light_color_noise_reduction'] = widget.ids["slider_light_color_noise_reduction"].value
 
     def make_diff(self, img, param, efconfig):
-        its = int(self.get_param(param, 'light_noise_reduction'))
-        col = int(self.get_param(param, 'light_color_noise_reduction'))
+        its = int(self._get_param(param, 'light_noise_reduction'))
+        col = int(self._get_param(param, 'light_color_noise_reduction'))
         if its == 0 and col == 0:
             self.diff = None
             self.hash = None
@@ -689,13 +684,13 @@ class DeblurFilterEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_deblur_filter"].set_slider_value(self.get_param(param, 'deblur_filter'))
+        widget.ids["slider_deblur_filter"].set_slider_value(self._get_param(param, 'deblur_filter'))
 
     def set2param(self, param, widget):
         param['deblur_filter'] = widget.ids["slider_deblur_filter"].value
 
     def make_diff(self, img, param, efconfig):
-        dbfr = int(self.get_param(param, 'deblur_filter'))
+        dbfr = int(self._get_param(param, 'deblur_filter'))
         if dbfr == 0:
             self.diff = None
             self.hash = None
@@ -722,13 +717,13 @@ class DefocusEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_defocus"].active = False if self.get_param(param, 'defocus') == 0 else True
+        widget.ids["switch_defocus"].active = False if self._get_param(param, 'defocus') == 0 else True
 
     def set2param(self, param, widget):
         param['defocus'] = 0 if widget.ids["switch_defocus"].active == False else 1
 
     def make_diff(self, img, param, efconfig):
-        df = self.get_param(param, 'defocus')
+        df = self._get_param(param, 'defocus')
         if df <= 0:
             self.diff = None
             self.hash = None
@@ -755,13 +750,13 @@ class LensblurFilterEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_lensblur_filter"].set_slider_value(self.get_param(param, 'lensblur_filter'))
+        widget.ids["slider_lensblur_filter"].set_slider_value(self._get_param(param, 'lensblur_filter'))
 
     def set2param(self, param, widget):
         param['lensblur_filter'] = widget.ids["slider_lensblur_filter"].value
 
     def make_diff(self, img, param, efconfig):
-        lpfr = int(self.get_param(param, 'lensblur_filter'))
+        lpfr = int(self._get_param(param, 'lensblur_filter'))
         if lpfr == 0:
             self.diff = None
             self.hash = None
@@ -782,13 +777,13 @@ class ScratchEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_scratch"].set_slider_value(self.get_param(param, 'scratch'))
+        widget.ids["slider_scratch"].set_slider_value(self._get_param(param, 'scratch'))
 
     def set2param(self, param, widget):
         param['scratch'] = widget.ids["slider_scratch"].value
 
     def make_diff(self, img, param, efconfig):
-        fr = int(self.get_param(param, 'scratch'))
+        fr = int(self._get_param(param, 'scratch'))
         if fr == 0:
             self.diff = None
             self.hash = None
@@ -809,13 +804,13 @@ class FrostedGlassEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_frosted_glass"].set_slider_value(self.get_param(param, 'frosted_glass'))
+        widget.ids["slider_frosted_glass"].set_slider_value(self._get_param(param, 'frosted_glass'))
 
     def set2param(self, param, widget):
         param['frosted_glass'] = widget.ids["slider_frosted_glass"].value
 
     def make_diff(self, img, param, efconfig):
-        fr = int(self.get_param(param, 'frosted_glass'))
+        fr = int(self._get_param(param, 'frosted_glass'))
         if fr == 0:
             self.diff = None
             self.hash = None
@@ -836,13 +831,13 @@ class MosaicEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_mosaic"].set_slider_value(self.get_param(param, 'mosaic'))
+        widget.ids["slider_mosaic"].set_slider_value(self._get_param(param, 'mosaic'))
 
     def set2param(self, param, widget):
         param['mosaic'] = widget.ids["slider_mosaic"].value
 
     def make_diff(self, img, param, efconfig):
-        fr = int(self.get_param(param, 'mosaic'))
+        fr = int(self._get_param(param, 'mosaic'))
         if fr == 0:
             self.diff = None
             self.hash = None
@@ -865,9 +860,9 @@ class GlowEffect(Effect):
         }    
 
     def set2widget(self, widget, param):
-        widget.ids["slider_glow_black"].set_slider_value(self.get_param(param, 'glow_black'))
-        widget.ids["slider_glow_gauss"].set_slider_value(self.get_param(param, 'glow_gauss'))
-        widget.ids["slider_glow_opacity"].set_slider_value(self.get_param(param, 'glow_opacity'))
+        widget.ids["slider_glow_black"].set_slider_value(self._get_param(param, 'glow_black'))
+        widget.ids["slider_glow_gauss"].set_slider_value(self._get_param(param, 'glow_gauss'))
+        widget.ids["slider_glow_opacity"].set_slider_value(self._get_param(param, 'glow_opacity'))
 
     def set2param(self, param, widget):
         param['glow_black'] = widget.ids["slider_glow_black"].value
@@ -875,9 +870,9 @@ class GlowEffect(Effect):
         param['glow_opacity'] = widget.ids["slider_glow_opacity"].value
 
     def make_diff(self, rgb, param, efconfig):
-        gb = self.get_param(param, 'glow_black')
-        gg = int(self.get_param(param, 'glow_gauss'))
-        go = self.get_param(param, 'glow_opacity')
+        gb = self._get_param(param, 'glow_black')
+        gg = int(self._get_param(param, 'glow_gauss'))
+        go = self._get_param(param, 'glow_opacity')
         if gb == 0 and gg == 0 and go == 0:
             self.diff = None
             self.hash = None
@@ -909,11 +904,11 @@ class FaceEffect(Effect):
         }    
 
     def set2widget(self, widget, param):
-        widget.ids["slider_jawline_scale"].set_slider_value(self.get_param(param, 'jawline_scale'))
-        widget.ids["slider_jaw_scale"].set_slider_value(self.get_param(param, 'jaw_scale'))
-        widget.ids["slider_left_eye_scale"].set_slider_value(self.get_param(param, 'left_eye_scale'))
-        widget.ids["slider_right_eye_scale"].set_slider_value(self.get_param(param, 'right_eye_scale'))
-        widget.ids["slider_lips_scale"].set_slider_value(self.get_param(param, 'lips_scale'))
+        widget.ids["slider_jawline_scale"].set_slider_value(self._get_param(param, 'jawline_scale'))
+        widget.ids["slider_jaw_scale"].set_slider_value(self._get_param(param, 'jaw_scale'))
+        widget.ids["slider_left_eye_scale"].set_slider_value(self._get_param(param, 'left_eye_scale'))
+        widget.ids["slider_right_eye_scale"].set_slider_value(self._get_param(param, 'right_eye_scale'))
+        widget.ids["slider_lips_scale"].set_slider_value(self._get_param(param, 'lips_scale'))
 
     def set2param(self, param, widget):
         param['jawline_scale'] = widget.ids["slider_jawline_scale"].value
@@ -923,11 +918,11 @@ class FaceEffect(Effect):
         param['lips_scale'] = widget.ids["slider_lips_scale"].value
 
     def make_diff(self, rgb, param, efconfig):
-        jls = self.get_param(param, 'jawline_scale')
-        js = self.get_param(param, 'jaw_scale')
-        ls = self.get_param(param, 'left_eye_scale')
-        rs = self.get_param(param, 'right_eye_scale')
-        lipss = self.get_param(param, 'lips_scale')
+        jls = self._get_param(param, 'jawline_scale')
+        js = self._get_param(param, 'jaw_scale')
+        ls = self._get_param(param, 'left_eye_scale')
+        rs = self._get_param(param, 'right_eye_scale')
+        lipss = self._get_param(param, 'lips_scale')
         if ls == 0 and rs == 0 and jls == 0 and js == 0 and lipss == 0:
             self.diff = None
             self.hash = None
@@ -960,10 +955,10 @@ class ColorTemperatureEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_color_temperature"].set_slider_value(self.get_param(param, 'color_temperature'))
-        widget.ids["slider_color_tint"].set_slider_value(self.get_param(param, 'color_tint'))
-        widget.ids["slider_color_temperature"].set_slider_reset(self.get_param(param, 'color_temperature_reset'))
-        widget.ids["slider_color_tint"].set_slider_reset(self.get_param(param, 'color_tint_reset'))
+        widget.ids["slider_color_temperature"].set_slider_value(self._get_param(param, 'color_temperature'))
+        widget.ids["slider_color_tint"].set_slider_value(self._get_param(param, 'color_tint'))
+        widget.ids["slider_color_temperature"].set_slider_reset(self._get_param(param, 'color_temperature_reset'))
+        widget.ids["slider_color_tint"].set_slider_reset(self._get_param(param, 'color_tint_reset'))
  
     def set2param(self, param, widget):
         param['color_temperature'] = widget.ids["slider_color_temperature"].value
@@ -977,16 +972,16 @@ class ColorTemperatureEffect(Effect):
         return rgb * core.invert_TempTint2RGB(temp, tint, Y, 5000)
 
     def make_diff(self, rgb, param, efconfig):
-        temp = self.get_param(param, 'color_temperature')
-        tint = self.get_param(param, 'color_tint')
-        Y = self.get_param(param, 'color_Y')
+        temp = self._get_param(param, 'color_temperature')
+        tint = self._get_param(param, 'color_tint')
+        Y = self._get_param(param, 'color_Y')
         if False:
             self.diff = None
             self.hash = None
         else:
             param_hash = hash((temp, tint))
             if self.hash != param_hash:
-                trgb = core.convert_TempTint2RGB(param['color_temperature_reset'], param['color_tint_reset'], self.get_param(param, 'color_Y'))
+                trgb = core.convert_TempTint2RGB(param['color_temperature_reset'], param['color_tint_reset'], self._get_param(param, 'color_Y'))
                 self.diff = rgb * (trgb / core.convert_TempTint2RGB(temp, tint, Y))
                 #self.diff = rgb * np.array(core.invert_TempTint2RGB(temp, tint, Y, 5000), dtype=np.float32)
                 self.hash = param_hash
@@ -1001,13 +996,13 @@ class DehazeEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_dehaze"].set_slider_value(self.get_param(param, 'dehaze'))
+        widget.ids["slider_dehaze"].set_slider_value(self._get_param(param, 'dehaze'))
 
     def set2param(self, param, widget):
         param['dehaze'] = widget.ids["slider_dehaze"].value
 
     def make_diff(self, rgb, param, efconfig):
-        de = self.get_param(param, 'dehaze')
+        de = self._get_param(param, 'dehaze')
         if de == 0:
             self.diff = None
             self.hash = None
@@ -1092,9 +1087,9 @@ class HLSColorEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_hls_" + self.color_name + "_hue"].set_slider_value(self.get_param(param, "hls_" + self.color_name + "_hue"))
-        widget.ids["slider_hls_" + self.color_name + "_lum"].set_slider_value(self.get_param(param, "hls_" + self.color_name + "_lum"))
-        widget.ids["slider_hls_" + self.color_name + "_sat"].set_slider_value(self.get_param(param, "hls_" + self.color_name + "_sat"))
+        widget.ids["slider_hls_" + self.color_name + "_hue"].set_slider_value(self._get_param(param, "hls_" + self.color_name + "_hue"))
+        widget.ids["slider_hls_" + self.color_name + "_lum"].set_slider_value(self._get_param(param, "hls_" + self.color_name + "_lum"))
+        widget.ids["slider_hls_" + self.color_name + "_sat"].set_slider_value(self._get_param(param, "hls_" + self.color_name + "_sat"))
 
     def set2param(self, param, widget):
         param["hls_" + self.color_name + "_hue"] = widget.ids["slider_hls_" + self.color_name + "_hue"].value
@@ -1102,9 +1097,9 @@ class HLSColorEffect(Effect):
         param["hls_" + self.color_name + "_sat"] = widget.ids["slider_hls_" + self.color_name + "_sat"].value
 
     def make_diff(self, hls, param, efconfig):
-        hue = self.get_param(param, "hls_" + self.color_name + "_hue")
-        lum = self.get_param(param, "hls_" + self.color_name + "_lum")
-        sat = self.get_param(param, "hls_" + self.color_name + "_sat")
+        hue = self._get_param(param, "hls_" + self.color_name + "_hue")
+        lum = self._get_param(param, "hls_" + self.color_name + "_lum")
+        sat = self._get_param(param, "hls_" + self.color_name + "_sat")
         param_hash = hash((hue, lum, sat))
         if hue == 0 and lum == 0 and sat == 0:
             self.diff = None
@@ -1127,13 +1122,13 @@ class ExposureEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_exposure"].set_slider_value(self.get_param(param, 'exposure'))
+        widget.ids["slider_exposure"].set_slider_value(self._get_param(param, 'exposure'))
 
     def set2param(self, param, widget):
         param['exposure'] = widget.ids["slider_exposure"].value
 
     def make_diff(self, rgb, param, efconfig):
-        ev = self.get_param(param, 'exposure')
+        ev = self._get_param(param, 'exposure')
         param_hash = hash((ev))
         if ev == 0:
             self.diff = None
@@ -1154,13 +1149,13 @@ class ContrastEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_contrast"].set_slider_value(self.get_param(param, 'contrast'))
+        widget.ids["slider_contrast"].set_slider_value(self._get_param(param, 'contrast'))
 
     def set2param(self, param, widget):
         param['contrast'] = widget.ids["slider_contrast"].value
 
     def make_diff(self, rgb, param, efconfig):
-        con = self.get_param(param, 'contrast')
+        con = self._get_param(param, 'contrast')
         param_hash = hash((con))
         if con == 0:
             self.diff = None
@@ -1181,13 +1176,13 @@ class ClarityEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_clarity"].set_slider_value(self.get_param(param, 'clarity'))
+        widget.ids["slider_clarity"].set_slider_value(self._get_param(param, 'clarity'))
 
     def set2param(self, param, widget):
         param['clarity'] = widget.ids["slider_clarity"].value
 
     def make_diff(self, rgb, param, efconfig):
-        con = self.get_param(param, 'clarity')
+        con = self._get_param(param, 'clarity')
         param_hash = hash((con))
         if con == 0:
             self.diff = None
@@ -1208,13 +1203,13 @@ class TextureEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_texture"].set_slider_value(self.get_param(param, 'texture'))
+        widget.ids["slider_texture"].set_slider_value(self._get_param(param, 'texture'))
 
     def set2param(self, param, widget):
         param['texture'] = widget.ids["slider_texture"].value
 
     def make_diff(self, rgb, param, efconfig):
-        con = self.get_param(param, 'texture')
+        con = self._get_param(param, 'texture')
         param_hash = hash((con))
         if con == 0:
             self.diff = None
@@ -1235,13 +1230,13 @@ class MicroContrastEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_microcontrast"].set_slider_value(self.get_param(param, 'microcontrast'))
+        widget.ids["slider_microcontrast"].set_slider_value(self._get_param(param, 'microcontrast'))
 
     def set2param(self, param, widget):
         param['microcontrast'] = widget.ids["slider_microcontrast"].value
 
     def make_diff(self, rgb, param, efconfig):
-        con = self.get_param(param, 'microcontrast')
+        con = self._get_param(param, 'microcontrast')
         param_hash = hash((con))
         if con == 0:
             self.diff = None
@@ -1264,9 +1259,9 @@ class ToneEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_shadow"].set_slider_value(self.get_param(param, 'shadow'))
-        widget.ids["slider_highlight"].set_slider_value(self.get_param(param, 'highlight'))
-        widget.ids["slider_midtone"].set_slider_value(self.get_param(param, 'midtone'))
+        widget.ids["slider_shadow"].set_slider_value(self._get_param(param, 'shadow'))
+        widget.ids["slider_highlight"].set_slider_value(self._get_param(param, 'highlight'))
+        widget.ids["slider_midtone"].set_slider_value(self._get_param(param, 'midtone'))
 
     def set2param(self, param, widget):
         param['shadow'] = widget.ids["slider_shadow"].value
@@ -1274,9 +1269,9 @@ class ToneEffect(Effect):
         param['midtone'] = widget.ids["slider_midtone"].value
 
     def make_diff(self, rgb, param, efconfig):
-        shadow = self.get_param(param, 'shadow')
-        highlight = self.get_param(param, 'highlight')
-        mt = self.get_param(param, 'midtone')
+        shadow = self._get_param(param, 'shadow')
+        highlight = self._get_param(param, 'highlight')
+        mt = self._get_param(param, 'midtone')
         param_hash = hash((shadow, highlight, mt))
         if shadow == 0 and highlight == 0 and mt == 0:
             self.diff = None
@@ -1307,13 +1302,13 @@ class HighlightCompressEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_highlight_compress"].active = True if self.get_param(param, 'highlight_compress') == 1 else False
+        widget.ids["switch_highlight_compress"].active = True if self._get_param(param, 'highlight_compress') == 1 else False
 
     def set2param(self, param, widget):
         param['highlight_compress'] = 1 if widget.ids["switch_highlight_compress"].active == True else 0
 
     def make_diff(self, rgb, param, efconfig):
-        hc = self.get_param(param, 'highlight_compress')
+        hc = self._get_param(param, 'highlight_compress')
         if hc <= 0:
             self.diff = None
             self.hash = None
@@ -1336,9 +1331,9 @@ class LevelEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_black_level"].set_slider_value(self.get_param(param, 'black_level'))
-        widget.ids["slider_white_level"].set_slider_value(self.get_param(param, 'white_level'))
-        widget.ids["slider_mid_level"].set_slider_value(self.get_param(param, 'mid_level'))
+        widget.ids["slider_black_level"].set_slider_value(self._get_param(param, 'black_level'))
+        widget.ids["slider_white_level"].set_slider_value(self._get_param(param, 'white_level'))
+        widget.ids["slider_mid_level"].set_slider_value(self._get_param(param, 'mid_level'))
 
     def set2param(self, param, widget):
         bl = widget.ids["slider_black_level"].value
@@ -1349,9 +1344,9 @@ class LevelEffect(Effect):
         param['mid_level'] = ml
 
     def make_diff(self, rgb, param, efconfig):
-        bl = self.get_param(param, 'black_level')
-        wl = self.get_param(param, 'white_level')
-        ml = self.get_param(param, 'mid_level')
+        bl = self._get_param(param, 'black_level')
+        wl = self._get_param(param, 'white_level')
+        ml = self._get_param(param, 'mid_level')
         param_hash = hash((bl, wl, ml))
         if bl == 0 and wl == 255 and ml == 127:
             self.diff = None
@@ -1372,13 +1367,13 @@ class CLAHEEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_clahe_intensity"].set_slider_value(self.get_param(param, 'clahe_intensity'))
+        widget.ids["slider_clahe_intensity"].set_slider_value(self._get_param(param, 'clahe_intensity'))
 
     def set2param(self, param, widget):
         param['clahe_intensity'] = widget.ids["slider_clahe_intensity"].value
 
     def make_diff(self, img, param, efconfig):
-        ci = self.get_param(param, 'clahe_intensity')
+        ci = self._get_param(param, 'clahe_intensity')
         if ci <= 0:
             self.diff = None
             self.hash = None
@@ -1447,13 +1442,13 @@ class TonecurveEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["tonecurve"].set_point_list(self.get_param(param, 'tonecurve'))
+        widget.ids["tonecurve"].set_point_list(self._get_param(param, 'tonecurve'))
 
     def set2param(self, param, widget):
         param['tonecurve'] = widget.ids["tonecurve"].get_point_list()
 
     def make_diff(self, rgb, param, efconfig):
-        pl = self.get_param(param, 'tonecurve')
+        pl = self._get_param(param, 'tonecurve')
         if pl is None:
             self.diff = None
             self.hash = None
@@ -1477,13 +1472,13 @@ class TonecurveRedEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["tonecurve_red"].set_point_list(self.get_param(param, 'tonecurve_red'))
+        widget.ids["tonecurve_red"].set_point_list(self._get_param(param, 'tonecurve_red'))
 
     def set2param(self, param, widget):
         param['tonecurve_red'] = widget.ids["tonecurve_red"].get_point_list()
 
     def make_diff(self, rgb_r, param, efconfig):
-        pl = self.get_param(param, 'tonecurve_red')
+        pl = self._get_param(param, 'tonecurve_red')
         if pl is None:
             self.diff = None
             self.hash = None
@@ -1507,13 +1502,13 @@ class TonecurveGreenEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["tonecurve_green"].set_point_list(self.get_param(param, 'tonecurve_green'))
+        widget.ids["tonecurve_green"].set_point_list(self._get_param(param, 'tonecurve_green'))
 
     def set2param(self, param, widget):
         param['tonecurve_green'] = widget.ids["tonecurve_green"].get_point_list()
 
     def make_diff(self, rgb_g, param, efconfig):   
-        pl = self.get_param(param, 'tonecurve_green')
+        pl = self._get_param(param, 'tonecurve_green')
         if pl is None:
             self.diff = None
             self.hash = None
@@ -1537,13 +1532,13 @@ class TonecurveBlueEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["tonecurve_blue"].set_point_list(self.get_param(param, 'tonecurve_blue'))
+        widget.ids["tonecurve_blue"].set_point_list(self._get_param(param, 'tonecurve_blue'))
 
     def set2param(self, param, widget):
         param['tonecurve_blue'] = widget.ids["tonecurve_blue"].get_point_list()
 
     def make_diff(self, rgb_b, param, efconfig):
-        pl = self.get_param(param, 'tonecurve_blue')
+        pl = self._get_param(param, 'tonecurve_blue')
         if pl is None:
             self.diff = None
             self.hash = None
@@ -1577,11 +1572,11 @@ class GradingEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["grading" + self.numstr].set_point_list(self.get_param(param, 'grading' + self.numstr))
+        widget.ids["grading" + self.numstr].set_point_list(self._get_param(param, 'grading' + self.numstr))
         widget.ids["grading" + self.numstr + "_color_picker"].set_slider_value(
-            [self.get_param(param, 'grading' + self.numstr + '_hue'),
-             self.get_param(param, 'grading' + self.numstr + '_lum'),
-             self.get_param(param, 'grading' + self.numstr + '_sat')]
+            [self._get_param(param, 'grading' + self.numstr + '_hue'),
+             self._get_param(param, 'grading' + self.numstr + '_lum'),
+             self._get_param(param, 'grading' + self.numstr + '_sat')]
         )
 
     def set2param(self, param, widget):
@@ -1591,10 +1586,10 @@ class GradingEffect(Effect):
         param["grading" + self.numstr + "_sat"] = widget.ids["grading" + self.numstr + "_color_picker"].ids['slider_sat'].value
 
     def make_diff(self, rgb, param, efconfig):
-        pl = self.get_param(param, "grading" + self.numstr)
-        gh = self.get_param(param, "grading" + self.numstr + "_hue")
-        gl = self.get_param(param, "grading" + self.numstr + "_lum")
-        gs = self.get_param(param, "grading" + self.numstr + "_sat")
+        pl = self._get_param(param, "grading" + self.numstr)
+        gh = self._get_param(param, "grading" + self.numstr + "_hue")
+        gl = self._get_param(param, "grading" + self.numstr + "_lum")
+        gs = self._get_param(param, "grading" + self.numstr + "_sat")
         if gh == 0 and gl == 50 and gs == 0:
             self.diff = None
             self.hash = None
@@ -1667,13 +1662,13 @@ class HuevsHueEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["HuevsHue"].set_point_list(self.get_param(param, 'HuevsHue'))
+        widget.ids["HuevsHue"].set_point_list(self._get_param(param, 'HuevsHue'))
 
     def set2param(self, param, widget):
         param['HuevsHue'] = widget.ids["HuevsHue"].get_point_list()
 
     def make_diff(self, hls_h, param, efconfig):
-        hh = self.get_param(param, "HuevsHue")
+        hh = self._get_param(param, "HuevsHue")
         if hh is None:
             self.diff = None
             self.hash = None
@@ -1698,13 +1693,13 @@ class HuevsLumEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["HuevsLum"].set_point_list(self.get_param(param, 'HuevsLum'))
+        widget.ids["HuevsLum"].set_point_list(self._get_param(param, 'HuevsLum'))
 
     def set2param(self, param, widget):
         param['HuevsLum'] = widget.ids["HuevsLum"].get_point_list()
 
     def make_diff(self, hls_l, param, efconfig):
-        hl = self.get_param(param, "HuevsLum")
+        hl = self._get_param(param, "HuevsLum")
         if hl is None:
             self.diff = None
             self.hash = None
@@ -1729,13 +1724,13 @@ class HuevsSatEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["HuevsSat"].set_point_list(self.get_param(param, 'HuevsSat'))
+        widget.ids["HuevsSat"].set_point_list(self._get_param(param, 'HuevsSat'))
 
     def set2param(self, param, widget):
         param['HuevsSat'] = widget.ids["HuevsSat"].get_point_list()
 
     def make_diff(self, hls_s, param, efconfig):
-        hs = self.get_param(param, "HuevsSat")
+        hs = self._get_param(param, "HuevsSat")
         if hs is None:
             self.diff = None
             self.hash = None
@@ -1760,13 +1755,13 @@ class LumvsLumEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["LumvsLum"].set_point_list(self.get_param(param, 'LumvsLum'))
+        widget.ids["LumvsLum"].set_point_list(self._get_param(param, 'LumvsLum'))
 
     def set2param(self, param, widget):
         param['LumvsLum'] = widget.ids["LumvsLum"].get_point_list()
 
     def make_diff(self, hls_l, param, efconfig):
-        ll = self.get_param(param, "LumvsLum")
+        ll = self._get_param(param, "LumvsLum")
         if ll is None:
             self.diff = None
             self.hash = None
@@ -1791,13 +1786,13 @@ class LumvsSatEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["LumvsSat"].set_point_list(self.get_param(param, 'LumvsSat'))
+        widget.ids["LumvsSat"].set_point_list(self._get_param(param, 'LumvsSat'))
 
     def set2param(self, param, widget):
         param['LumvsSat'] = widget.ids["LumvsSat"].get_point_list()
 
     def make_diff(self, hls_l, param, efconfig):
-        ls = self.get_param(param, "LumvsSat")
+        ls = self._get_param(param, "LumvsSat")
         if ls is None:
             self.diff = None
             self.hash = None
@@ -1822,13 +1817,13 @@ class SatvsLumEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["SatvsLum"].set_point_list(self.get_param(param, 'SatvsLum'))
+        widget.ids["SatvsLum"].set_point_list(self._get_param(param, 'SatvsLum'))
 
     def set2param(self, param, widget):
         param['SatvsLum'] = widget.ids["SatvsLum"].get_point_list()
 
     def make_diff(self, hls_s, param, efconfig):
-        sl = self.get_param(param, "SatvsLum")
+        sl = self._get_param(param, "SatvsLum")
         if sl is None:
             self.diff = None
             self.hash = None
@@ -1853,13 +1848,13 @@ class SatvsSatEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["SatvsSat"].set_point_list(self.get_param(param, 'SatvsSat'))
+        widget.ids["SatvsSat"].set_point_list(self._get_param(param, 'SatvsSat'))
 
     def set2param(self, param, widget):
         param['SatvsSat'] = widget.ids["SatvsSat"].get_point_list()
 
     def make_diff(self, hls_s, param, efconfig):
-        ss = self.get_param(param, "SatvsSat")
+        ss = self._get_param(param, "SatvsSat")
         if ss is None:
             self.diff = None
             self.hash = None
@@ -1885,16 +1880,16 @@ class SaturationEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_saturation"].set_slider_value(self.get_param(param, 'saturation'))
-        widget.ids["slider_vibrance"].set_slider_value(self.get_param(param, 'vibrance'))
+        widget.ids["slider_saturation"].set_slider_value(self._get_param(param, 'saturation'))
+        widget.ids["slider_vibrance"].set_slider_value(self._get_param(param, 'vibrance'))
 
     def set2param(self, param, widget):
         param['saturation'] = widget.ids["slider_saturation"].value
         param['vibrance'] = widget.ids["slider_vibrance"].value
 
     def make_diff(self, hls_s, param, efconfig):
-        sat = self.get_param(param, 'saturation')
-        vib = self.get_param(param, 'vibrance')
+        sat = self._get_param(param, 'saturation')
+        vib = self._get_param(param, 'vibrance')
         param_hash = hash((sat, vib))
         if sat == 0 and vib == 0:
             self.diff = None
@@ -1928,14 +1923,14 @@ class LUTEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["lut_spinner"].text = self.get_param(param, 'lut_name')
-        widget.ids["lut_to_log_spinner"].text = self.get_param(param, 'lut_to_log')
-        widget.ids["slider_lut_intensity"].set_slider_value(self.get_param(param, 'lut_intensity'))
+        widget.ids["lut_spinner"].text = self._get_param(param, 'lut_name')
+        widget.ids["lut_to_log_spinner"].text = self._get_param(param, 'lut_to_log')
+        widget.ids["slider_lut_intensity"].set_slider_value(self._get_param(param, 'lut_intensity'))
 
     def set2param(self, param, widget):
         spinner = widget.ids["lut_spinner"]
         name = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
-        if self.get_param(param, 'lut_name') != name:
+        if self._get_param(param, 'lut_name') != name:
             self.lut = None
         param['lut_name'] = name
         param['lut_path'] = LUTEffect.file_pathes.get(param['lut_name'], None)
@@ -1943,9 +1938,9 @@ class LUTEffect(Effect):
         param['lut_to_log'] = widget.ids["lut_to_log_spinner"].text
 
     def make_diff(self, rgb, param, efconfig):
-        lut_path = self.get_param(param, 'lut_path')
-        lut_to_log = self.get_param(param, 'lut_to_log')
-        lut_intensity = self.get_param(param, 'lut_intensity')
+        lut_path = self._get_param(param, 'lut_path')
+        lut_to_log = self._get_param(param, 'lut_to_log')
+        lut_intensity = self._get_param(param, 'lut_intensity')
         if lut_path is None or lut_intensity == 0:
             self.diff = None
             self.hash = None
@@ -1975,8 +1970,8 @@ class LensSimulatorEffect(Effect):
         }
  
     def set2widget(self, widget, param):
-        widget.ids["spinner_lens_preset"].text = self.get_param(param, 'lens_preset')
-        widget.ids["slider_lens_intensity"].set_slider_value(self.get_param(param, 'lens_intensity'))
+        widget.ids["spinner_lens_preset"].text = self._get_param(param, 'lens_preset')
+        widget.ids["slider_lens_intensity"].set_slider_value(self._get_param(param, 'lens_intensity'))
 
     def set2param(self, param, widget):
         spinner = widget.ids["spinner_lens_preset"]
@@ -1984,8 +1979,8 @@ class LensSimulatorEffect(Effect):
         param['lens_intensity'] = widget.ids["slider_lens_intensity"].value
 
     def make_diff(self, rgb, param, efconfig):
-        preset = self.get_param(param, 'lens_preset')
-        intensity = self.get_param(param, 'lens_intensity')
+        preset = self._get_param(param, 'lens_preset')
+        intensity = self._get_param(param, 'lens_intensity')
         if preset == 'None' or intensity <= 0:
             self.diff = None
             self.hash = None
@@ -2014,9 +2009,9 @@ class FilmSimulationEffect(Effect):
         }
  
     def set2widget(self, widget, param):
-        widget.ids["spinner_film_preset"].text = self.get_param(param, 'film_preset')
-        widget.ids["slider_film_intensity"].set_slider_value(self.get_param(param, 'film_intensity'))
-        widget.ids["slider_film_expired"].set_slider_value(self.get_param(param, 'film_expired'))
+        widget.ids["spinner_film_preset"].text = self._get_param(param, 'film_preset')
+        widget.ids["slider_film_intensity"].set_slider_value(self._get_param(param, 'film_intensity'))
+        widget.ids["slider_film_expired"].set_slider_value(self._get_param(param, 'film_expired'))
 
     def set2param(self, param, widget):
         spinner = widget.ids["spinner_film_preset"]
@@ -2025,9 +2020,9 @@ class FilmSimulationEffect(Effect):
         param['film_expired'] = widget.ids["slider_film_expired"].value
 
     def make_diff(self, rgb, param, efconfig):
-        preset = self.get_param(param, 'film_preset')
-        intensity = self.get_param(param, 'film_intensity')
-        expired = self.get_param(param, 'film_expired')
+        preset = self._get_param(param, 'film_preset')
+        intensity = self._get_param(param, 'film_intensity')
+        expired = self._get_param(param, 'film_expired')
         if preset == 'None' or intensity <= 0:
             self.diff = None
             self.hash = None
@@ -2058,11 +2053,11 @@ class SolidColorEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_solid_color"].active = False if self.get_param(param, 'solid_color') == 0 else True
-        widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(self.get_param(param, 'solid_color_red'))
-        widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(self.get_param(param, 'solid_color_green'))
-        widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(self.get_param(param, 'solid_color_blue'))
-        widget.ids["slider_solid_color"].set_slider_value(self.get_param(param, 'solid_opacity'))
+        widget.ids["switch_solid_color"].active = False if self._get_param(param, 'solid_color') == 0 else True
+        widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(self._get_param(param, 'solid_color_red'))
+        widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(self._get_param(param, 'solid_color_green'))
+        widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(self._get_param(param, 'solid_color_blue'))
+        widget.ids["slider_solid_color"].set_slider_value(self._get_param(param, 'solid_opacity'))
 
     def set2param(self, param, widget):
         param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
@@ -2072,11 +2067,11 @@ class SolidColorEffect(Effect):
         param["solid_opacity"] = widget.ids["slider_solid_color"].value
 
     def make_diff(self, rgb, param, efconfig):
-        coa = self.get_param(param, 'solid_color')
-        coar = self.get_param(param, "solid_color_red")
-        coag = self.get_param(param, "solid_color_green")
-        coab = self.get_param(param, "solid_color_blue")
-        coao = self.get_param(param, "solid_opacity")
+        coa = self._get_param(param, 'solid_color')
+        coar = self._get_param(param, "solid_color_red")
+        coag = self._get_param(param, "solid_color_green")
+        coab = self._get_param(param, "solid_color_blue")
+        coao = self._get_param(param, "solid_opacity")
         if coa <= 0 or coao <= 0:
             self.diff = None
             self.hash = None
@@ -2098,16 +2093,16 @@ class UnsharpMaskEffect(Effect):
         }
  
     def set2widget(self, widget, param):
-        widget.ids["slider_unsharp_mask_amount"].set_slider_value(self.get_param(param, 'unsharp_mask_amount'))
-        widget.ids["slider_unsharp_mask_sigma"].set_slider_value(self.get_param(param, 'unsharp_mask_sigma'))
+        widget.ids["slider_unsharp_mask_amount"].set_slider_value(self._get_param(param, 'unsharp_mask_amount'))
+        widget.ids["slider_unsharp_mask_sigma"].set_slider_value(self._get_param(param, 'unsharp_mask_sigma'))
 
     def set2param(self, param, widget):
         param['unsharp_mask_amount'] = widget.ids["slider_unsharp_mask_amount"].value
         param['unsharp_mask_sigma'] = widget.ids["slider_unsharp_mask_sigma"].value
 
     def make_diff(self, rgb, param, efconfig):
-        amount = self.get_param(param, 'unsharp_mask_amount')
-        sigma = self.get_param(param, 'unsharp_mask_sigma')
+        amount = self._get_param(param, 'unsharp_mask_amount')
+        sigma = self._get_param(param, 'unsharp_mask_sigma')
         if amount <= 0:
             self.diff = None
             self.hash = None
@@ -2125,7 +2120,15 @@ class UnsharpMaskEffect(Effect):
 
 class Mask2Effect(Effect):
 
-    def get_param_dict(self, param):
+    @staticmethod
+    def get_param(param, key, default=None):
+        if default is not None:
+            return param.get(key, default)
+        
+        return param.get(key, Mask2Effect.get_param_dict(param)[key])
+
+    @staticmethod
+    def get_param_dict(param):
         return {
             'mask2_invert': False,
             'mask2_depth_min': 0,
@@ -2151,27 +2154,27 @@ class Mask2Effect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["checkbox_mask2_invert"].active = self.get_param(param, 'mask2_invert')
-        widget.ids["slider_mask2_depth_min"].set_slider_value(self.get_param(param, 'mask2_depth_min'))
-        widget.ids["slider_mask2_depth_max"].set_slider_value(self.get_param(param, 'mask2_depth_max'))
-        widget.ids["slider_mask2_hue_distance"].set_slider_value(self.get_param(param, 'mask2_hue_distance'))
-        widget.ids["slider_mask2_hue_min"].set_slider_value(self.get_param(param, 'mask2_hue_min'))
-        widget.ids["slider_mask2_hue_max"].set_slider_value(self.get_param(param, 'mask2_hue_max'))
-        widget.ids["slider_mask2_lum_distance"].set_slider_value(self.get_param(param, 'mask2_lum_distance'))
-        widget.ids["slider_mask2_lum_min"].set_slider_value(self.get_param(param, 'mask2_lum_min'))
-        widget.ids["slider_mask2_lum_max"].set_slider_value(self.get_param(param, 'mask2_lum_max'))
-        widget.ids["slider_mask2_sat_distance"].set_slider_value(self.get_param(param, 'mask2_sat_distance'))
-        widget.ids["slider_mask2_sat_min"].set_slider_value(self.get_param(param, 'mask2_sat_min'))
-        widget.ids["slider_mask2_sat_max"].set_slider_value(self.get_param(param, 'mask2_sat_max'))
-        widget.ids["slider_mask2_blur"].set_slider_value(self.get_param(param, 'mask2_blur'))
-        widget.ids["checkbox_mask2_face_face"].active = self.get_param(param, 'mask2_face_face')
-        widget.ids["checkbox_mask2_face_brows"].active = self.get_param(param, 'mask2_face_brows')
-        widget.ids["checkbox_mask2_face_eyes"].active = self.get_param(param, 'mask2_face_eyes')
-        widget.ids["checkbox_mask2_face_nose"].active = self.get_param(param, 'mask2_face_nose')
-        widget.ids["checkbox_mask2_face_mouth"].active = self.get_param(param, 'mask2_face_mouth')
-        widget.ids["checkbox_mask2_face_lips"].active = self.get_param(param, 'mask2_face_lips')
-        widget.ids["slider_mask2_open_space"].set_slider_value(self.get_param(param, 'mask2_open_space'))
-        widget.ids["slider_mask2_close_space"].set_slider_value(self.get_param(param, 'mask2_close_space'))
+        widget.ids["checkbox_mask2_invert"].active = self._get_param(param, 'mask2_invert')
+        widget.ids["slider_mask2_depth_min"].set_slider_value(self._get_param(param, 'mask2_depth_min'))
+        widget.ids["slider_mask2_depth_max"].set_slider_value(self._get_param(param, 'mask2_depth_max'))
+        widget.ids["slider_mask2_hue_distance"].set_slider_value(self._get_param(param, 'mask2_hue_distance'))
+        widget.ids["slider_mask2_hue_min"].set_slider_value(self._get_param(param, 'mask2_hue_min'))
+        widget.ids["slider_mask2_hue_max"].set_slider_value(self._get_param(param, 'mask2_hue_max'))
+        widget.ids["slider_mask2_lum_distance"].set_slider_value(self._get_param(param, 'mask2_lum_distance'))
+        widget.ids["slider_mask2_lum_min"].set_slider_value(self._get_param(param, 'mask2_lum_min'))
+        widget.ids["slider_mask2_lum_max"].set_slider_value(self._get_param(param, 'mask2_lum_max'))
+        widget.ids["slider_mask2_sat_distance"].set_slider_value(self._get_param(param, 'mask2_sat_distance'))
+        widget.ids["slider_mask2_sat_min"].set_slider_value(self._get_param(param, 'mask2_sat_min'))
+        widget.ids["slider_mask2_sat_max"].set_slider_value(self._get_param(param, 'mask2_sat_max'))
+        widget.ids["slider_mask2_blur"].set_slider_value(self._get_param(param, 'mask2_blur'))
+        widget.ids["checkbox_mask2_face_face"].active = self._get_param(param, 'mask2_face_face')
+        widget.ids["checkbox_mask2_face_brows"].active = self._get_param(param, 'mask2_face_brows')
+        widget.ids["checkbox_mask2_face_eyes"].active = self._get_param(param, 'mask2_face_eyes')
+        widget.ids["checkbox_mask2_face_nose"].active = self._get_param(param, 'mask2_face_nose')
+        widget.ids["checkbox_mask2_face_mouth"].active = self._get_param(param, 'mask2_face_mouth')
+        widget.ids["checkbox_mask2_face_lips"].active = self._get_param(param, 'mask2_face_lips')
+        widget.ids["slider_mask2_open_space"].set_slider_value(self._get_param(param, 'mask2_open_space'))
+        widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
 
     def set2param(self, param, widget):
         param['mask2_invert'] = widget.ids["checkbox_mask2_invert"].active
@@ -2197,27 +2200,27 @@ class Mask2Effect(Effect):
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
 
     def make_diff(self, rgb, param, efconfig):
-        invert = self.get_param(param, 'mask2_invert')
-        dmin = self.get_param(param, 'mask2_depth_min')
-        dmax = self.get_param(param, 'mask2_depth_max')
-        hdis = self.get_param(param, 'mask2_hue_distance')
-        hmin = self.get_param(param, 'mask2_hue_min')
-        hmax = self.get_param(param, 'mask2_hue_max')
-        ldis = self.get_param(param, 'mask2_lum_distance')
-        lmin = self.get_param(param, 'mask2_lum_min')
-        lmax = self.get_param(param, 'mask2_lum_max')
-        sdis = self.get_param(param, 'mask2_sat_distance')
-        smin = self.get_param(param, 'mask2_sat_min')
-        smax = self.get_param(param, 'mask2_sat_max')
-        blur = self.get_param(param, 'mask2_blur')
-        face_face = self.get_param(param, 'mask2_face_face')
-        face_brows = self.get_param(param, 'mask2_face_brows')
-        face_eyes = self.get_param(param, 'mask2_face_eyes')
-        face_nose = self.get_param(param, 'mask2_face_nose')
-        face_mouth = self.get_param(param, 'mask2_face_mouth')
-        face_lips = self.get_param(param, 'mask2_face_lips')
-        open_space = self.get_param(param, 'mask2_open_space')
-        close_space = self.get_param(param, 'mask2_close_space')
+        invert = self._get_param(param, 'mask2_invert')
+        dmin = self._get_param(param, 'mask2_depth_min')
+        dmax = self._get_param(param, 'mask2_depth_max')
+        hdis = self._get_param(param, 'mask2_hue_distance')
+        hmin = self._get_param(param, 'mask2_hue_min')
+        hmax = self._get_param(param, 'mask2_hue_max')
+        ldis = self._get_param(param, 'mask2_lum_distance')
+        lmin = self._get_param(param, 'mask2_lum_min')
+        lmax = self._get_param(param, 'mask2_lum_max')
+        sdis = self._get_param(param, 'mask2_sat_distance')
+        smin = self._get_param(param, 'mask2_sat_min')
+        smax = self._get_param(param, 'mask2_sat_max')
+        blur = self._get_param(param, 'mask2_blur')
+        face_face = self._get_param(param, 'mask2_face_face')
+        face_brows = self._get_param(param, 'mask2_face_brows')
+        face_eyes = self._get_param(param, 'mask2_face_eyes')
+        face_nose = self._get_param(param, 'mask2_face_nose')
+        face_mouth = self._get_param(param, 'mask2_face_mouth')
+        face_lips = self._get_param(param, 'mask2_face_lips')
+        open_space = self._get_param(param, 'mask2_open_space')
+        close_space = self._get_param(param, 'mask2_close_space')
         if  (invert == False and dmin == 0 and dmax == 255 and
              hdis == 179 and hmin == 0 and hmax == 359 and
              ldis == 127 and lmin == 0 and lmax == 255 and
@@ -2245,11 +2248,11 @@ class GrainEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_grain_intensity"].set_slider_value(self.get_param(param, 'grain_intensity'))
-        widget.ids["slider_grain_size"].set_slider_value(self.get_param(param, 'grain_size'))
-        widget.ids["slider_grain_blue_bias"].set_slider_value(self.get_param(param, 'grain_blue_bias'))
-        widget.ids["slider_grain_shadow_boost"].set_slider_value(self.get_param(param, 'grain_shadow_boost'))
-        widget.ids["slider_grain_color_noise_ratio"].set_slider_value(self.get_param(param, 'grain_color_noise_ratio'))
+        widget.ids["slider_grain_intensity"].set_slider_value(self._get_param(param, 'grain_intensity'))
+        widget.ids["slider_grain_size"].set_slider_value(self._get_param(param, 'grain_size'))
+        widget.ids["slider_grain_blue_bias"].set_slider_value(self._get_param(param, 'grain_blue_bias'))
+        widget.ids["slider_grain_shadow_boost"].set_slider_value(self._get_param(param, 'grain_shadow_boost'))
+        widget.ids["slider_grain_color_noise_ratio"].set_slider_value(self._get_param(param, 'grain_color_noise_ratio'))
 
     def set2param(self, param, widget):
         param['grain_intensity'] = widget.ids["slider_grain_intensity"].value
@@ -2259,11 +2262,11 @@ class GrainEffect(Effect):
         param['grain_color_noise_ratio'] = widget.ids["slider_grain_color_noise_ratio"].value
 
     def make_diff(self, rgb, param, efconfig):
-        gi = self.get_param(param, 'grain_intensity')
-        gs = self.get_param(param, 'grain_size')
-        gbb = self.get_param(param, 'grain_blue_bias')
-        gsb = self.get_param(param, 'grain_shadow_boost')
-        gcnr = self.get_param(param, 'grain_color_noise_ratio')
+        gi = self._get_param(param, 'grain_intensity')
+        gs = self._get_param(param, 'grain_size')
+        gbb = self._get_param(param, 'grain_blue_bias')
+        gsb = self._get_param(param, 'grain_shadow_boost')
+        gcnr = self._get_param(param, 'grain_color_noise_ratio')
         if gi == 0:
             self.diff = None
             self.hash = None
@@ -2293,9 +2296,9 @@ class VignetteEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["slider_vignette_intensity"].set_slider_value(self.get_param(param, 'vignette_intensity'))
-        widget.ids["slider_vignette_radius_percent"].set_slider_value(self.get_param(param, 'vignette_radius_percent'))
-        widget.ids["slider_vignette_softness"].set_slider_value(self.get_param(param, 'vignette_softness'))
+        widget.ids["slider_vignette_intensity"].set_slider_value(self._get_param(param, 'vignette_intensity'))
+        widget.ids["slider_vignette_radius_percent"].set_slider_value(self._get_param(param, 'vignette_radius_percent'))
+        widget.ids["slider_vignette_softness"].set_slider_value(self._get_param(param, 'vignette_softness'))
 
     def set2param(self, param, widget):
         param['vignette_intensity'] = widget.ids["slider_vignette_intensity"].value
@@ -2303,10 +2306,10 @@ class VignetteEffect(Effect):
         param['vignette_softness'] = widget.ids["slider_vignette_softness"].value
 
     def make_diff(self, rgb, param, efconfig):
-        vi = self.get_param(param, 'vignette_intensity')
-        vr = self.get_param(param, 'vignette_radius_percent')
-        vs = self.get_param(param, 'vignette_softness')
-        pce = self.get_param(param, 'crop_enable')
+        vi = self._get_param(param, 'vignette_intensity')
+        vr = self._get_param(param, 'vignette_radius_percent')
+        vs = self._get_param(param, 'vignette_softness')
+        pce = self._get_param(param, 'crop_enable')
         if (vi == 0 and vr == 0) or pce == True:
             self.diff = None
             self.hash = None

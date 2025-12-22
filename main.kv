@@ -1151,9 +1151,9 @@
                                     id: switch_ai_noise_reduction
                                     size_hint_x: None
                                     ref_width: 40
+                                    on_active: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
                                     on_active: root.apply_effects_lv(0, 'ai_noise_reduction')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
-                                    on_touch_up: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
+                                    on_release: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
                                     ParamChipText:
                                         text: "AI"
 
@@ -1193,9 +1193,9 @@
                                     id: switch_inpaint
                                     size_hint_x: None
                                     ref_width: 60
+                                    on_active: root.begin_history_effect_ctrl(0, 'inpaint')
                                     on_active: root.apply_effects_lv(0, 'inpaint')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'inpaint')
-                                    on_touch_up: root.end_history_effect_ctrl(0, 'inpaint')
+                                    on_release: root.end_history_effect_ctrl(0, 'inpaint')
                                     ParamChipText:
                                         text: "Mask"
                                 ParamChip:
@@ -1203,10 +1203,10 @@
                                     id: button_inpaint_predict
                                     size_hint_x: None
                                     ref_width: 60
+                                    on_press: root.begin_history_effect_ctrl(0, 'inpaint')
                                     on_press: root.apply_effects_lv(0, 'inpaint')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'inpaint')
-                                    on_touch_up: root._set_diff_list_to_inpaint_edit()
-                                    on_touch_up: root.end_history_effect_ctrl(0, 'inpaint')
+                                    on_release: root._set_diff_list_to_inpaint_edit()
+                                    on_release: root.end_history_effect_ctrl(0, 'inpaint')
                                     ParamChipText:
                                         text: "Erase"
                                 ToggleButton:
@@ -1226,9 +1226,9 @@
                                     id: switch_defocus
                                     size_hint_x: None
                                     ref_width: 40
+                                    on_active: root.begin_history_effect_ctrl(1, 'defocus')
                                     on_active: root.apply_effects_lv(1, 'defocus')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(1, 'defocus')
-                                    on_touch_up: root.end_history_effect_ctrl(1, 'defocus')
+                                    on_release: root.end_history_effect_ctrl(1, 'defocus')
                                     ParamChipText:
                                         text: "AI"
 
@@ -1241,9 +1241,9 @@
                                     id: switch_subpixel_shift
                                     size_hint_x: None
                                     ref_width: 40
+                                    on_active: root.begin_history_effect_ctrl(0, 'subpixel_shift')
                                     on_active: root.apply_effects_lv(0, 'subpixel_shift')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'subpixel_shift')
-                                    on_touch_up: root.end_history_effect_ctrl(0, 'subpixel_shift')
+                                    on_release: root.end_history_effect_ctrl(0, 'subpixel_shift')
                                     ParamChipText:
                                         text: "AI"
 
@@ -1525,9 +1525,9 @@
                                     id: switch_solid_color
                                     size_hint_x: None
                                     ref_width: 60
+                                    on_active: root.begin_history_effect_ctrl(2, 'solid_color')
                                     on_active: root.apply_effects_lv(2, 'solid_color')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'solid_color')
-                                    on_touch_up: root.end_history_effect_ctrl(2, 'solid_color')
+                                    on_release: root.end_history_effect_ctrl(2, 'solid_color')
                                     ParamChipText:
                                         text: "Apply"
                             ParamSlider:
@@ -1565,9 +1565,9 @@
                                     size_hint_x: None
                                     ref_width: 60
                                     active: False
+                                    on_active: root.begin_history_effect_ctrl(2, 'highlight_compress')
                                     on_active: root.apply_effects_lv(2, 'highlight_compress')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'highlight_compress')
-                                    on_touch_up: root.end_history_effect_ctrl(2, 'highlight_compress')
+                                    on_release: root.end_history_effect_ctrl(2, 'highlight_compress')
                                     ParamChipText:
                                         text: "Apply"
                             
@@ -1646,9 +1646,9 @@
                                     id: button_crop_reset
                                     size_hint_x: None
                                     ref_width: 60
+                                    on_press: root.begin_history_effect_ctrl(0, 'crop')
                                     on_press: root.apply_effects_lv(0, 'crop')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'crop')
-                                    on_touch_up: root.end_history_effect_ctrl(0, 'crop')
+                                    on_release: root.end_history_effect_ctrl(0, 'crop')
                                     ParamChipText:
                                         text: "Reset"
                                     
@@ -2040,9 +2040,9 @@
                                     id: button_distortion_reset
                                     size_hint_x: None
                                     ref_width: 60
+                                    on_press: root.begin_history_effect_ctrl(0, 'distortion')
                                     on_press: root.apply_effects_lv(0, 'distortion')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(0, 'distortion')
-                                    on_touch_up: root.end_history_effect_ctrl(0, 'distortion')
+                                    on_release: root.end_history_effect_ctrl(0, 'distortion')
                                     ParamChipText:
                                         text: "Reset"
 
