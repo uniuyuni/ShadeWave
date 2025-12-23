@@ -33,3 +33,4 @@ huggingface_hub
 color-matcher
 git+https://github.com/facebookresearch/sam3.git
 numpy==1.26.4
+pyvips

@@ -415,7 +415,6 @@ if __name__ == '__main__':
                     params.load_json(file_path, param, self.ids['mask_editor2'])
 
                 # １回目の時だけパラメータを反映して、編集できる様にする
-                # １回目の時だけパラメータを反映して、編集できる様にする
                 self.primary_param.clear()
                 self.primary_param.update(param)
                 self.set2widget_all(self.primary_effects, self.primary_param)
@@ -439,7 +438,7 @@ if __name__ == '__main__':
             self.start_draw_image_and_crop(imgset)
 
         def on_image_touch_down(self, touch):
-            if self.collide_point(*touch.pos):
+            if self.ids['preview'].collide_point(*touch.pos):
                 # ズーム操作
                 if touch.is_double_tap == True and self.ids["effects"].current_tab.text != "Ge":
                     self.is_zoomed = not self.is_zoomed
@@ -585,19 +584,18 @@ if __name__ == '__main__':
             # これでファイルが消えるはず
             self.save_current_sidecar()
 
-        #--------------------------------
+            # widget更新
+            self.set2widget_all(self.primary_effects, self.primary_param)
 
-        def _set_image_for_mask2(self, param):
-            #self.ids['mask_editor2'].set_orientation(param.get('rotation', 0), param.get('rotation2', 0), param.get('flip_mode', 0))
-            self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
-            self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
-            self.ids['mask_editor2'].update()
+        #--------------------------------
+        # Mask2関連
 
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1
             self.ids['mask_editor2'].disabled = False
-            self._set_image_for_mask2(self.primary_param)
-            #Clock.schedule_once(self._delay_set_image, -1)   # editor2のサイズが未決定なので遅らせる
+            self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
+            self.ids['mask_editor2'].set_primary_param(self.primary_param, params.get_disp_info(self.primary_param))
+            self.ids['mask_editor2'].update()
 
         def _disable_mask2(self):
             self.ids['mask_editor2'].opacity = 0
@@ -608,10 +606,10 @@ if __name__ == '__main__':
         def on_mask2_press(self, value):
             if value == "down":
                 self._enable_mask2()
-                kvutils.find_adaptive_widget(self, 'mask2_content_panel').disabled = False
+                kvutils.find_widget(self, 'mask2_content_panel').disabled = False
             else:
+                kvutils.find_widget(self, 'mask2_content_panel').disabled = True
                 self._disable_mask2()
-                kvutils.find_adaptive_widget(self, 'mask2_content_panel').disabled = True
 
         #--------------------------------
 

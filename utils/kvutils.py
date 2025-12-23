@@ -58,7 +58,7 @@ def get_entire_widget_tree(root, delay=0.1):
 
     return results
 
-def find_adaptive_widget(p, id):
+def find_widget(p, id):
     # 動的追加Widgetでも探し出す
     for child in get_entire_widget_tree(p):
         if hasattr(child, 'id') and child.id == id:

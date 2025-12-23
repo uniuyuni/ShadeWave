@@ -4,6 +4,7 @@ import numpy as np
 import jax.numpy as jnp
 import importlib
 from enum import Enum
+from colorsys import rgb_to_hls, hls_to_rgb
 
 import cores.core as core
 import cores.cubelut as cubelut
@@ -2046,40 +2047,44 @@ class SolidColorEffect(Effect):
     def get_param_dict(self, param):
         return {
             'solid_color': 0,
-            'solid_color_red': 0,
-            'solid_color_green': 0,
-            'solid_color_blue': 0,
+            'solid_color_hue': 0,
+            'solid_color_lum': 50,
+            'solid_color_sat': 0,
             'solid_opacity': 50,
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_solid_color"].active = False if self._get_param(param, 'solid_color') == 0 else True
-        widget.ids["cp_solid_color"].ids['slider_red'].set_slider_value(self._get_param(param, 'solid_color_red'))
-        widget.ids["cp_solid_color"].ids['slider_green'].set_slider_value(self._get_param(param, 'solid_color_green'))
-        widget.ids["cp_solid_color"].ids['slider_blue'].set_slider_value(self._get_param(param, 'solid_color_blue'))
+        h, l, s = self._get_param(param, 'solid_color_hue'), self._get_param(param, 'solid_color_lum'), self._get_param(param, 'solid_color_sat')
+        widget.ids["cp_solid_color"].ids['slider_hue'].set_slider_value(h)
+        widget.ids["cp_solid_color"].ids['slider_lum'].set_slider_value(l)
+        widget.ids["cp_solid_color"].ids['slider_sat'].set_slider_value(s)
         widget.ids["slider_solid_color"].set_slider_value(self._get_param(param, 'solid_opacity'))
+        # これを後にしないと値が上書きされる
+        widget.ids["switch_solid_color"].active = False if self._get_param(param, 'solid_color') == 0 else True
+        widget.ids["cp_solid_color"].set_slider_value((h, l, s))
 
     def set2param(self, param, widget):
         param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
-        param["solid_color_red"] = widget.ids["cp_solid_color"].ids['slider_red'].value
-        param["solid_color_green"] = widget.ids["cp_solid_color"].ids['slider_green'].value
-        param["solid_color_blue"] = widget.ids["cp_solid_color"].ids['slider_blue'].value
+        param["solid_color_hue"] = widget.ids["cp_solid_color"].ids['slider_hue'].value
+        param["solid_color_lum"] = widget.ids["cp_solid_color"].ids['slider_lum'].value
+        param["solid_color_sat"] = widget.ids["cp_solid_color"].ids['slider_sat'].value
         param["solid_opacity"] = widget.ids["slider_solid_color"].value
 
     def make_diff(self, rgb, param, efconfig):
         coa = self._get_param(param, 'solid_color')
-        coar = self._get_param(param, "solid_color_red")
-        coag = self._get_param(param, "solid_color_green")
-        coab = self._get_param(param, "solid_color_blue")
+        coh = self._get_param(param, "solid_color_hue")
+        col = self._get_param(param, "solid_color_lum")
+        cos = self._get_param(param, "solid_color_sat")
         coao = self._get_param(param, "solid_opacity")
         if coa <= 0 or coao <= 0:
             self.diff = None
             self.hash = None
         else:        
-            param_hash = hash((coa, coar, coag, coab, coao))
+            param_hash = hash((coa, coh, cos, col, coao))
             if self.hash != param_hash:
+                r, g, b = hls_to_rgb(coh/360, col/100, cos/100)
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = core.apply_solid_color(rgb, solid_color=(coar/255, coag/255, coab/255), opacity=coao/100)
+                self.diff = core.apply_solid_color(rgb, solid_color=(r, g, b), opacity=coao/100)
                 self.hash = param_hash
 
         return self.diff

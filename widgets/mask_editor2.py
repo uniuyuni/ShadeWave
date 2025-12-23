@@ -48,15 +48,18 @@ from history import LayerCtrl, get_history_ctrl
 class TextInputDialog(Popup):
     def __init__(self, callback, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Input Target Text"
+        self.title = "Input Target Text in English"
         self.size_hint = (0.4, None)
-        self.height = 200
+        self.height = 240
+        self.ref_height = 240
         
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        self.text_input = TextInput(multiline=False, size_hint_y=None, height=30)
+        self.text_input = TextInput(multiline=False, size_hint_y=None, height=50)
+        self.ref_height = 50
         self.text_input.bind(on_text_validate=lambda x: self.save(callback))
         
         btn_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
+        btn_layout.ref_height = 40
         save_button = Button(text='OK')
         save_button.bind(on_press=lambda x: self.save(callback))
         btn_layout.add_widget(save_button)
@@ -288,14 +291,15 @@ class BaseMask(Widget):
             # イメージを描画してもらう
             self.editor.draw_mask_image(mask_image)
 
-    def draw_hls_mask(self, image):
-        simg = self.apply_mask_space(image)
-        dimg = self.apply_depth_mask(simg)
-        himg = self.draw_hue_mask(dimg)
-        limg = self.draw_lum_mask(himg)
-        result = self.draw_sat_mask(limg)
+    def _apply_extened_params(self, image):
+        simg = self._apply_mask_space(image)
+        dimg = self._apply_depth_mask(simg)
+        himg = self._draw_hue_mask(dimg)
+        limg = self._draw_lum_mask(himg)
+        simg = self._draw_sat_mask(limg)
+        bimg = self._apply_mask_blur(simg)
         
-        return result
+        return bimg
 
     def get_hash_items(self):
         return (effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
@@ -314,7 +318,7 @@ class BaseMask(Widget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_min'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_max'))
 
-    def apply_mask_space(self, image):
+    def _apply_mask_space(self, image):
         open_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space')
         image = expand_mask.adjust_foreground_only(image, open_space * self.editor.disp_info[4], False)
 
@@ -323,7 +327,7 @@ class BaseMask(Widget):
         
         return image
 
-    def apply_depth_mask(self, image):
+    def _apply_depth_mask(self, image):
         dmin = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min') / 255
         dmax = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max') / 255
         if (dmin != 0) or (1 != dmax):
@@ -333,10 +337,12 @@ class BaseMask(Widget):
 
         return dimg
     
-    def apply_mask_blur(self, image):
-        ksize = int(max(0, effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur')*2-1))
-        img2 = core.gaussian_blur_cv(image, (ksize, ksize))
-        return img2
+    def _apply_mask_blur(self, image):
+        blur = effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur')
+        if blur != 0:
+            ksize = int(max(0, blur*2-1))
+            image = core.gaussian_blur_cv(image, (ksize, ksize))
+        return image
 
     def _draw_hls_mask(self, mask, hls_str):
         HLS_NUM = {
@@ -405,17 +411,18 @@ class BaseMask(Widget):
         
         return mask
 
-    def draw_hue_mask(self, mask):
+    def _draw_hue_mask(self, mask):
         return self._draw_hls_mask(mask, 'hue')
 
-    def draw_lum_mask(self, mask):
+    def _draw_lum_mask(self, mask):
         return self._draw_hls_mask(mask, 'lum')
 
-    def draw_sat_mask(self, mask):
+    def _draw_sat_mask(self, mask):
         return self._draw_hls_mask(mask, 'sat')
 
 # マスクの合成マスク
 class CompositMask(BaseMask):
+
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
         self.name = "Composit"
@@ -440,16 +447,16 @@ class CompositMask(BaseMask):
         # 子マスクのリスト
         return self.mask_list
 
+    def get_mask(self, index):
+        # 子マスクの取得
+        return self.mask_list[index]
+
     def find_mask_op(self, mask):
         # 登録されている子マスクのタイプを取得
         for cmask, maskop in self.mask_list:
             if cmask is mask:
                 return maskop
         return None
-
-    def get_mask(self, index):
-        # 子マスクの取得
-        return self.mask_list[index]
 
     def clear(self):
         # 子マスクのクリア
@@ -543,6 +550,7 @@ class CompositMask(BaseMask):
                     composit = np.clip(composit - mimage, 0, 1)
                 case _:
                     logger.error(f"Unknown mask operation: {maskop}")
+                    assert False
                     
         return composit
 
@@ -802,10 +810,7 @@ class CircularGradientMask(BaseMask):
             gradient_image = self.draw_elliptical_gradient(image_size, center, inner_axes, outer_axes, rotate_rad, invert, 1.5)
 
             # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
-
-            # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
+            gradient_image = self._apply_extened_params(gradient_image)
 
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -1235,10 +1240,7 @@ class GradientMask(BaseMask):
             gradient_image = self.draw_gradient(image_size, center, start_point, end_point, 1)
             
             # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
-
-            # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
+            gradient_image = self._apply_extened_params(gradient_image)
 
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -1431,10 +1433,7 @@ class FullMask(BaseMask):
             gradient_image = self.draw_full(image_size, center)
 
             # ルミノシティマスクを作成
-            gradient_image = self.draw_hls_mask(gradient_image)
-
-            # マスクぼかし
-            gradient_image = self.apply_mask_blur(gradient_image)
+            gradient_image = self._apply_extened_params(gradient_image)
 
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -1627,10 +1626,7 @@ class FreeDrawMask(BaseMask):
             mask = self.draw_line(image_size, self.lines)
 
             # ルミナンスとマスクを作成
-            mask = self.draw_hls_mask(mask)
-
-            # マスクぼかし
-            mask = self.apply_mask_blur(mask)
+            mask = self._apply_extened_params(mask)
 
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -2051,10 +2047,7 @@ class SegmentMask(BaseMask):
             segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
-            segment_mask = self.draw_hls_mask(segment_mask)
-
-            # マスクぼかし
-            segment_mask = self.apply_mask_blur(segment_mask)
+            segment_mask = self._apply_extened_params(segment_mask)
 
             self.segment_mask_cache = segment_mask
 
@@ -2232,10 +2225,7 @@ class DepthMapMask(BaseMask):
             depth_map_mask = np.pad(depth_map_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
-            depth_map_mask = self.draw_hls_mask(depth_map_mask)
-
-            # マスクぼかし
-            depth_map_mask = self.apply_mask_blur(depth_map_mask)
+            depth_map_mask = self._apply_extened_params(depth_map_mask)
 
             self.depth_map_mask_cache = depth_map_mask
 
@@ -2418,10 +2408,7 @@ class FaceMask(BaseMask):
             faces_mask = np.pad(faces_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
-            faces_mask = self.draw_hls_mask(faces_mask)
-
-            # マスクぼかし
-            faces_mask = self.apply_mask_blur(faces_mask)
+            faces_mask = self._apply_extened_params(faces_mask)
 
             self.faces_mask_cache = faces_mask
 
@@ -2623,10 +2610,7 @@ class TargetTextMask(BaseMask):
             segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
-            segment_mask = self.draw_hls_mask(segment_mask)
-
-            # マスクぼかし
-            segment_mask = self.apply_mask_blur(segment_mask)
+            segment_mask = self._apply_extened_params(segment_mask)
 
             self.segment_mask_cache = segment_mask
 

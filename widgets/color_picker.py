@@ -105,20 +105,25 @@ class CWColorWheel(MDBoxLayout):
     
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
-            self.before_edit += 1
-            if touch.is_double_tap:
-                if self._single_tap_event:
-                    self._single_tap_event.cancel()
-                self._ignore_next_up = True
-                self._reset_color()
-            else:
-                self._ignore_next_up = True
-                touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
-                self._single_tap_event = Clock.schedule_once(
-                    lambda dt: self.on_single_tap(touch_info),
-                    KVConfig.getint('postproc', 'double_tap_time') * 0.001 + 0.1
-                )
-            return True
+            # Check if touch is inside the wheel radius
+            dx = touch.pos[0] - self.center_x
+            dy = touch.pos[1] - self.center_y
+            if math.sqrt(dx*dx + dy*dy) <= self.wheel_radius:
+                touch.ud['cw_active'] = True
+                self.before_edit += 1
+                if touch.is_double_tap:
+                    if self._single_tap_event:
+                        self._single_tap_event.cancel()
+                    self._ignore_next_up = True
+                    self._reset_color()
+                else:
+                    self._ignore_next_up = True
+                    touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
+                    self._single_tap_event = Clock.schedule_once(
+                        lambda dt: self.on_single_tap(touch_info),
+                        KVConfig.getint('postproc', 'double_tap_time') * 0.001 + 0.1
+                    )
+                return True
         return super().on_touch_down(touch)
     
     def on_single_tap(self, touch_info):
@@ -126,16 +131,26 @@ class CWColorWheel(MDBoxLayout):
         self.after_edit += 1
     
     def on_touch_move(self, touch):
-        #if self.collide_point(*touch.pos):
-        touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
-        self._update_color_from_touch(touch_info)
+        if touch.ud.get('cw_active'):
+            touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
+            self._update_color_from_touch(touch_info)
+            # return True  # Consume the event if desired, but updating color is key.
+            # Original didn't prevent propagation, but we grabbed it in down?
+            # If we returned True in down, we grabbed it. 
+            # Kivy docs: "When a widget grabs a touch, it will receive the touch move/up events...".
+            # It doesn't strictly stop others unless we return True here too? 
+            # Actually return value of move stops propagation to other widgets? 
+            # Let's keep consistent with valid behavior: return True if we handled it.
+            return True 
         return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
-        if self._ignore_next_up:
-            self._ignore_next_up = False
+        if touch.ud.get('cw_active'):
+            if self._ignore_next_up:
+                self._ignore_next_up = False
+                return True
+            self.after_edit += 1
             return True
-        self.after_edit += 1
         return super().on_touch_up(touch)
 
     def _reset_color(self):
