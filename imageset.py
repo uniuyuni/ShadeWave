@@ -17,7 +17,6 @@ import file_cache_system
 import params
 from cores.dcp_profile import DCPReader, DCPProcessor
 import cores.bit_depth_expansion as bit_depth_expansion
-#import cores.highlight_recovery as highlight_recovery
 import cores.core as core
 
 print(f"libraw version:{rawpy.libraw_version}")
@@ -129,6 +128,10 @@ class ImageSet:
             # RAW画像のサイズに合わせてリサイズ
             img_array = cv2.resize(img_array, (width, height))
 
+            # 自動露出調整値を適当に設定する
+            param['rgb_or_raw'] = 'rgb'
+            param['auto_exposure'] = -2.5
+
             # 情報の設定
             params.set_image_param(param, img_array)
             param['lens_modifier'] = False
@@ -224,34 +227,28 @@ class ImageSet:
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
             # 明るさ補正
+            Ev = 0
             if config.get_config('raw_auto_exposure') == True:
                 
                 # RAWの明るさをとってくる
-                source_ev = exif_data.get('LightValue', None)
+                #source_ev = exif_data.get('LightValue', None)
+                source_ev = None
 
                 # とってこれなかったら計算する
                 if source_ev is None:
                     source_ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
-                    source_ev = float(source_ev)
                 
                 # 設定値から目標Evを計算
-                Ev = core.calc_ev_from_exif(exif_data)
+                #target_ev = core.calc_ev_from_exif(exif_data)
 
-                # 自動コントラスト補正
-                img_array = core.auto_contrast_tonemap(img_array)
+                # 調整
+                #Ev = core.calculate_correction_value(source_ev, target_ev, 4)
 
-                # 明るさ補正適用
-                img_array = core.adjust_exposure(img_array, core.calculate_correction_value(source_ev, Ev, 4))
+                # AIによるとソースをそのまま使えとのこと
+                Ev = source_ev
 
-                # ヒストグラム均等化
-                #img_array = core.process_color_image_lab(img_array, core.histeq_16bit)
-                
-                # 超ハイライト領域のコントラストを上げてディティールをはっきりさせ、ついでにトーンマッピング
-                #img_array = highlight_recovery.reconstruct_highlight_details(img_array, True)
-
-                #hls = cv2.cvtColor(img_array, cv2.COLOR_RGB2HLS_FULL)
-                #hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
-                #img_array = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
+            param['rgb_or_raw'] = 'raw'
+            param['auto_exposure'] = Ev
             
             # サイズを合わせる
             #if img_array.shape[1] != width or img_array.shape[0] != height:
@@ -304,6 +301,10 @@ class ImageSet:
             
             # クロップとexifデータの回転
             self._delete_exif_orientation(exif_data)
+
+            # 自動露出調整値を適当に設定する
+            param['rgb_or_raw'] = 'rgb'
+            param['auto_exposure'] = -2.5
 
             # 情報の設定
             params.set_image_param(param, img_array)

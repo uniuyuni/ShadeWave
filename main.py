@@ -432,6 +432,8 @@ if __name__ == '__main__':
             # 暫定処置
             if imgset.flag == False:
                 self.primary_param['lens_modifier'] = True
+                self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
+                self.primary_param['auto_exposure'] = param['auto_exposure']
 
             self.imgset = imgset
             effects.reeffect_all(self.primary_effects)
@@ -558,6 +560,7 @@ if __name__ == '__main__':
             return path
 
         #--------------------------------
+        # パラメータの全消去
 
         def on_reset_press(self):
             # パラメータバックアップ

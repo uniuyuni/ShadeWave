@@ -47,7 +47,7 @@ def normalize_image(image_data):
     return normalized_image
 
 @dispatch(np.ndarray)
-def calculate_ev_from_image(image_data):
+def calc_ev_from_image(image_data):
 
     average_value = np.mean(image_data)
 
@@ -55,7 +55,7 @@ def calculate_ev_from_image(image_data):
     # 例えば、EV0が0.5に相当する場合
     ev = np.log2(0.5 / average_value)  # 0.5を基準
 
-    return ev, average_value
+    return float(ev), float(average_value)
 
 @dispatch(jnp.ndarray)
 @jit
@@ -67,7 +67,7 @@ def calc_ev_from_image(image_data):
     # 例えば、EV0が0.5に相当する場合
     ev = jnp.log2(0.5 / average_value)  # 0.5を基準
 
-    return ev, average_value
+    return float(ev), float(average_value)
 
 def calculate_correction_value(ev_histogram, ev_setting, maxvalue=4):
     correction_value = ev_setting - ev_histogram
@@ -968,7 +968,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
     Lightroom風のシャドウ、ハイライト、白レベル、黒レベル調整を行う関数。
     
     Parameters:
-        img (np.ndarray): 入力画像 (float32, RGB)
+        img (jnp.ndarray): 入力画像 (float32, RGB)
         shadows (float): シャドウの調整 (-100～100)
         highlights (float): ハイライトの調整 (-100～100)
         midtone (float): 中間調の調整 (-100～100)

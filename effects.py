@@ -14,6 +14,7 @@ import cores.lens_simulator as lens_simulator
 import linear_to_log.linear_to_log_lut as linear_to_log
 import cores.filters as filters
 import cores.local_contrast as local_contrast
+import cores.highlight_recovery as highlight_recovery
 import config
 import pipeline
 import params
@@ -1907,6 +1908,52 @@ class SaturationEffect(Effect):
     def apply_diff(self, hls_s):
         return hls_s * self.diff
 
+class AutoExposureEffect(Effect):
+    # rgb_or_rawがrawの場合
+    #   lut_to_logが設定されていたら、auto_exposureは適用しない
+    # rgb_or_rawがrgbの場合
+    #   lut_to_logが設定されていたら、auto_exposureは適用する
+
+    def get_param_dict(self, param):
+        return {
+            'rgb_or_raw': 'raw',
+            'auto_exposure': 0,
+            'lut_name': 'None',
+            'lut_to_log': 'None'
+        }
+
+    def make_diff(self, rgb, param, efconfig):
+        rgb_or_raw = self._get_param(param, 'rgb_or_raw')
+        ae = self._get_param(param, 'auto_exposure')
+        lut_to_log = self._get_param(param, 'lut_to_log')
+        lut_name = self._get_param(param, 'lut_name')
+        if (rgb_or_raw == 'raw' and lut_to_log != 'None') or (rgb_or_raw == 'rgb' and lut_to_log == 'None'):
+            self.diff = None
+            self.hash = None
+        
+        else:
+            param_hash = hash((rgb_or_raw, ae, lut_to_log, lut_name))
+            if self.hash != param_hash:
+                # 自動コントラスト補正
+                #rgb = core.auto_contrast_tonemap(rgb)
+
+                # 明るさ補正適用
+                rgb = core.adjust_exposure(rgb, ae)
+
+                # ヒストグラム均等化
+                #rgb = core.process_color_image_lab(rgb, core.histeq_16bit)
+                
+                # 超ハイライト領域のコントラストを上げてディティールをはっきりさせるなどする
+                rgb = highlight_recovery.reconstruct_highlight_details(rgb, False)
+
+                #hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
+                #hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
+                #rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
+                self.diff = rgb
+                self.hash = param_hash
+
+        return self.diff
+
 class LUTEffect(Effect):
     file_pathes = { '---': None }
 
@@ -2381,6 +2428,7 @@ def create_effects(distortion_callback=None):
 
     lv2['curve'] = CurveEffect()
 
+    lv2['auto_exposure'] = AutoExposureEffect()
     lv2['lut'] = LUTEffect()
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()

@@ -34,33 +34,17 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
             (mask - threshold) / (M - threshold)  # しきい値〜Mの間を0.0〜1.0に線形補間
         )
     )
-    
-    #mask = mask > (1.0 + (np.max(mask) - 1.0) / 2.0)
-    #mask = cv2.GaussianBlur(mask.astype(np.float32), (127, 127), sigmaX=0)
-    #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
 
     # 超ハイライト領域を広げてコントラストをつける
     contrast = np.where(hdr_img > 1.0, hdr_img ** 1.5, hdr_img)
 
-    # 適応的トーンマッピング
-    tonemapped = cv2.createTonemapReinhard(
-        gamma=1.0, 
-        intensity=0.2,
-        light_adapt=0.6, #0.8, 
-        color_adapt=0.0
-    ).process(contrast)
-
-    # 全体にマイクロコントラストをかけてはっきりさせる
-    #micro_contrast = local_contrast.apply_microcontrast(tonemapped, 60)
-    micro_contrast = tonemapped
-    
     # 赤のカラーバランスが崩れているので補正、ついでにディティールをはっきりさせる
-    rgb = micro_contrast
+    rgb = contrast
     if is_enhance_red:
         hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
         hls = core.adjust_hls_color_one(hls, 'enhance_red', 0, 80/100, 0)
         rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-    rgb = local_contrast.apply_microcontrast(rgb, 100)
-    result = core.apply_mask(micro_contrast, mask, rgb) # ハイライトにのみ適用
+    #rgb = local_contrast.apply_microcontrast(rgb, 100)
+    result = core.apply_mask(contrast, mask, rgb) # ハイライトにのみ適用
 
     return result
