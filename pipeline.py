@@ -1,12 +1,13 @@
 
 import numpy as np
+import time
 
 import cores.core as core
 import config
 import params
 import effects
-import time
 import splitimage
+import utils.utils as utils
 
 def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version):
     
@@ -162,6 +163,7 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False):
         diff = lv1[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = diff
+        utils.print_nan_inf(rgb, f"lv1-{n}")
 
         if pre_diff is not diff:
             lv2reset = True
@@ -175,16 +177,12 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False):
     for i, n in enumerate(lv2):
         if lv3reset == True:
             lv2[n].reeffect()
-        """
-        f1 = rgb[..., 0] < 0.0
-        f2 = rgb[..., 1] < 0.0
-        f3 = rgb[..., 2] < 0.0
-        jax.debug.print("{nn} minus = {x1}, {x2}, {x3}", nn=n, x1=jnp.sum(f1), x2=jnp.sum(f2), x3=jnp.sum(f3))
-        """    
+
         pre_diff = lv2[n].diff
         diff = lv2[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv2[n].apply_diff(rgb)
+        utils.print_nan_inf(rgb, f"lv2-{n}")
 
         if pre_diff is not diff:
             lv3reset = True
@@ -202,6 +200,7 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False):
         diff = lv3[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv3[n].apply_diff(rgb)
+        utils.print_nan_inf(rgb, f"lv3-{n}")
 
     return rgb, lv4reset
 

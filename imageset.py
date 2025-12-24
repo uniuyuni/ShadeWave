@@ -18,6 +18,7 @@ import params
 from cores.dcp_profile import DCPReader, DCPProcessor
 import cores.bit_depth_expansion as bit_depth_expansion
 import cores.core as core
+import cores.highlight_recovery as highlight_recovery
 
 print(f"libraw version:{rawpy.libraw_version}")
 
@@ -246,6 +247,11 @@ class ImageSet:
 
                 # AIによるとソースをそのまま使えとのこと
                 Ev = source_ev
+
+                # ここで補正
+                img_array = core.adjust_exposure(img_array, Ev)
+                img_array = highlight_recovery.reconstruct_highlight_details(img_array, False)
+                Ev = -Ev # 補正は逆方向
 
             param['rgb_or_raw'] = 'raw'
             param['auto_exposure'] = Ev

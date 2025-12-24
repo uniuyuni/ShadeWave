@@ -135,7 +135,12 @@ if __name__ == '__main__':
             self.history = history.History()
             self.current_op = None
 
+            self.run_set2widget_all = False
+
+            self.is_press_space = False
+
             KVWindow.bind(on_key_down=self.on_key_down)
+            KVWindow.bind(on_key_up=self.on_key_up)
 
         def on_kv_post(self, *args, **kwargs):
             super(MainWidget, self).on_kv_post(*args, **kwargs)
@@ -271,12 +276,18 @@ if __name__ == '__main__':
             return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
         def apply_effects_lv(self, lv, effect):
+            if self.run_set2widget_all == True:
+                return
+                
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             self.start_draw_image()
 
         def set_effect_param(self, lv, effect, arg):
+            if self.run_set2widget_all == True:
+                return
+
             current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
@@ -371,7 +382,9 @@ if __name__ == '__main__':
                 _effects = self.primary_effects
                 param = self.primary_param
 
+            self.run_set2widget_all = True
             effects.set2widget_all(self, _effects, param)
+            self.run_set2widget_all = False
 
         def save_current_sidecar(self):
             if self.imgset is not None:
@@ -446,7 +459,6 @@ if __name__ == '__main__':
                     self.is_zoomed = not self.is_zoomed
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
-                        #self.primary_param['disp_info'] = None
                         disp_info = core.convert_rect_to_info(params.get_crop_rect(self.primary_param), config.get_config('preview_size')/max(self.primary_param['original_img_size']))
                         params.set_disp_info(self.primary_param, disp_info)
 
@@ -466,7 +478,7 @@ if __name__ == '__main__':
         def on_image_touch_move(self, touch):
             if self.collide_point(*touch.pos):
                 if self.is_zoomed == True:
-                    if self.drag_start_point != None:
+                    if self.drag_start_point != None and self.is_press_space == True:
                         scale = max(self.primary_param['original_img_size'])/config.get_config('preview_size')
                         offset_x = -(touch.pos[0] - self.drag_start_point[0]) * scale
                         offset_y =  (touch.pos[1] - self.drag_start_point[1]) * scale
@@ -740,6 +752,10 @@ if __name__ == '__main__':
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
 
+            if key == 32:
+                self.is_press_space = True
+                return True
+
             if (key == 115 and ('ctrl' in modifier or 'meta' in modifier)):  # Sキー
                 self.save_current_sidecar()
                 return True
@@ -749,6 +765,11 @@ if __name__ == '__main__':
                     
             if (key == 122 and ('shift' in modifier) and ('ctrl' in modifier or 'meta' in modifier)):  # shift-Zキー
                 self._redo()
+
+        def on_key_up(self, window, key, *args):
+            if key == 32:
+                self.is_press_space = False
+                return True
         
     class MainApp(MDApp):
         def __init__(self, cache_system, **kwargs):

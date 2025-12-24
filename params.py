@@ -27,6 +27,9 @@ SPECIAL_PARAM = [
     'inpaint_predict',
     # for effects.LUTEffect
     'lut_path',
+    # for effects.AutoExposureEffect
+    'rgb_or_raw',
+    'auto_exposure',
 ]
 
 REMAIN_PARAM = [

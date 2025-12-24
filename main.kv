@@ -1164,9 +1164,9 @@
                                 max: 100
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(1, 'light_noise_reduction')
-                                on_before_edit: root.begin_history_effect_ctrl(1, 'light_noise_reduction')
-                                on_after_edit: root.end_history_effect_ctrl(1, 'light_noise_reduction')
+                                on_slider: root.apply_effects_lv(2, 'light_noise_reduction')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'light_noise_reduction')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'light_noise_reduction')
 
                             ParamSlider:
                                 id: slider_light_color_noise_reduction
@@ -1175,9 +1175,9 @@
                                 max: 100
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(1, 'light_noise_reduction')
-                                on_before_edit: root.begin_history_effect_ctrl(1, 'light_noise_reduction')
-                                on_after_edit: root.end_history_effect_ctrl(1, 'light_noise_reduction')
+                                on_slider: root.apply_effects_lv(2, 'light_noise_reduction')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'light_noise_reduction')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'light_noise_reduction')
 
                             VSeparator:
 
@@ -1271,9 +1271,10 @@
                                 ParamSpinner:
                                     id: lut_spinner
                                     values: [ 'None', ]
-                                    on_hovered_item: root.apply_effects_lv(2, 'lut')
+                                    #on_hovered_item: root.apply_effects_lv(2, 'lut')
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lut')
-                                    on_text:  root.end_history_effect_ctrl(2, 'lut')
+                                    on_text: root.apply_effects_lv(2, 'lut')
+                                    on_text: root.end_history_effect_ctrl(2, 'lut')
                                 Button:
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     size_hint: 0.08, None
@@ -1300,8 +1301,8 @@
                                     id: lut_to_log_spinner
                                     values: [ 'None', 'slog3', 'logc4', 'clog3', 'redlog3g10', 'vlog', 'nlog', 'flog2', 'omlog400' ]
                                     on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lut')
-                                    on_text: root.end_history_effect_ctrl(2, 'lut')
                                     on_text: root.apply_effects_lv(2, 'lut')
+                                    on_text: root.end_history_effect_ctrl(2, 'lut')
 
                             VSeparator:
 
@@ -1429,9 +1430,9 @@
                                 max: 126
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(1, 'glow')
-                                on_before_edit: root.begin_history_effect_ctrl(1, 'glow')
-                                on_after_edit: root.end_history_effect_ctrl(1, 'glow')
+                                on_slider: root.apply_effects_lv(2, 'glow')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'glow')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'glow')
 
                             ParamSlider:
                                 id: slider_glow_gauss
@@ -1440,9 +1441,9 @@
                                 max: 100
                                 value: 0
                                 step: 2
-                                on_slider: root.apply_effects_lv(1, 'glow')
-                                on_before_edit: root.begin_history_effect_ctrl(1, 'glow')
-                                on_after_edit: root.end_history_effect_ctrl(1, 'glow')
+                                on_slider: root.apply_effects_lv(2, 'glow')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'glow')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'glow')
 
                             ParamSlider:
                                 id: slider_glow_opacity
@@ -1451,9 +1452,9 @@
                                 max: 100
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(1, 'glow')
-                                on_before_edit: root.begin_history_effect_ctrl(1, 'glow')
-                                on_after_edit: root.end_history_effect_ctrl(1, 'glow')
+                                on_slider: root.apply_effects_lv(2, 'glow')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'glow')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'glow')
 
                             VSeparator:
  

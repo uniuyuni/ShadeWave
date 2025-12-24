@@ -22,6 +22,8 @@ class Operation:
         self.name = ""
         self.lv = lv
         self.effect = effect
+        self.effects = None
+        self.effects_param = None
         self.subname = subname
         self.mask_id = mask_id
         self.update = {}    # 更新パラメータ
@@ -71,8 +73,13 @@ class Operation:
         return (self.lv, self.effect)
     
     def set_update(self, effects, param, subname=None):
+        if self.effect is None:
+            logging.warning("Operation.set_update effect is None.")
+            return None
+            
         if self.effects_param is not param:
-            logging.error("Operation.set_update param is not match error.")
+            logging.warning("Operation.set_update param is not match.")
+            return None
 
         # パラメータ辞書を取得
         if subname is not None:

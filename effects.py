@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import importlib
 from enum import Enum
 from colorsys import rgb_to_hls, hls_to_rgb
+import os
 
 import cores.core as core
 import cores.cubelut as cubelut
@@ -127,18 +128,18 @@ class SubpixelShiftEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'subpixel_shift': 0,
+            'subpixel_shift': False,
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_subpixel_shift"].active = False if self._get_param(param, 'subpixel_shift') == 0 else True
+        widget.ids["switch_subpixel_shift"].active = self._get_param(param, 'subpixel_shift')
 
     def set2param(self, param, widget):
-        param['subpixel_shift'] = 0 if widget.ids["switch_subpixel_shift"].active == False else 1
+        param['subpixel_shift'] = widget.ids["switch_subpixel_shift"].active
 
     def make_diff(self, img, param, efconfig):
         ss = self._get_param(param, 'subpixel_shift')
-        if ss <= 0:
+        if ss == False:
             self.diff = None
             self.hash = None
         else:
@@ -159,12 +160,10 @@ class InpaintDiff:
     def image2list(self):
         if type(self.image) is np.ndarray:
             self.image = utils.convert_image_to_list(self.image)
-            #self.image = (self.image.shape, list(bz2.compress(self.image.tobytes(), 1)))
 
     def list2image(self):
         if type(self.image) is list or type(self.image) is tuple:
             self.image = utils.convert_image_from_list(self.image)
-            #self.image = np.reshape(np.frombuffer(bz2.decompress(bytearray(self.image[1])), dtype=np.float32), self.image[0])
 
 class InpaintEffect(Effect):
 
@@ -177,15 +176,15 @@ class InpaintEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'inpaint': 0,
-            'inpaint_predict': 0,
+            'inpaint': False,
+            'inpaint_predict': False,
             'inpaint_diff_list': [],
             'inpaint_mask_list': [],
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_inpaint"].active = False if self._get_param(param, 'inpaint') == 0 else True
-        widget.ids["button_inpaint_predict"].state = "normal" if self._get_param(param, 'inpaint_predict') == 0 else "down"
+        widget.ids["switch_inpaint"].active = self._get_param(param, 'inpaint')
+        widget.ids["button_inpaint_predict"].state = "normal" if self._get_param(param, 'inpaint_predict') == False else "down"
 
         # 履歴描画
         if self.mask_editor is not None:
@@ -196,10 +195,10 @@ class InpaintEffect(Effect):
             self.mask_editor.delay_update_canvas()
 
     def set2param(self, param, widget):
-        param['inpaint'] = 0 if widget.ids["switch_inpaint"].active == False else 1
-        param['inpaint_predict'] = 0 if widget.ids["button_inpaint_predict"].state == "normal" else 1
+        param['inpaint'] = widget.ids["switch_inpaint"].active
+        param['inpaint_predict'] = widget.ids["button_inpaint_predict"].state == "down"
 
-        if param['inpaint'] > 0:
+        if param['inpaint'] == True:
             if self.mask_editor is None:
                 self.mask_editor = MaskEditor(param,
                                               effect_ctrl_param=(0, 'inpaint'),
@@ -209,7 +208,7 @@ class InpaintEffect(Effect):
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
                 param['inpaint_mask_list'] = self.inpaint_mask_list = []
             
-        if param['inpaint'] <= 0:
+        if param['inpaint'] == False:
             if self.mask_editor is not None:
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
                 self.mask_editor = None
@@ -221,10 +220,10 @@ class InpaintEffect(Effect):
 
         ip = self._get_param(param, 'inpaint')
         ipp = self._get_param(param, 'inpaint_predict')
-        if (ip > 0 and ipp > 0) is True:
+        if (ip == True and ipp == True):
             import helpers.qwen_image_helper as qih
             
-            param['inpaint_predict'] = 0 # なぜか二重起動するときがあるので予防
+            param['inpaint_predict'] = False # なぜか二重起動するときがあるので予防
 
             mask = self.mask_editor.get_mask().astype(np.float32) / 255.0
 
@@ -484,7 +483,6 @@ class CropEffect(Effect):
             'rotation2': 0,
             'crop_enable': False,
             'crop_rect': param2['crop_rect'],
-            #'disp_info': param2['disp_info'],
             'aspect_ratio': "None",
         }
 
@@ -584,18 +582,19 @@ class AINoiseReductonEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'ai_noise_reduction': 0,
+            'ai_noise_reduction': False,
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_ai_noise_reduction"].active = False if self._get_param(param, 'ai_noise_reduction') == 0 else True
+        widget.ids["switch_ai_noise_reduction"].active = self._get_param(param, 'ai_noise_reduction')
 
     def set2param(self, param, widget):
-        param['ai_noise_reduction'] = 0 if widget.ids["switch_ai_noise_reduction"].active == False else 1
+        param['ai_noise_reduction'] = widget.ids["switch_ai_noise_reduction"].active
 
     def make_diff(self, img, param, efconfig):
         nr = self._get_param(param, 'ai_noise_reduction')
-        if nr <= 0: #or efconfig.mode == EffectMode.PREVIEW:
+
+        if nr == False: #or efconfig.mode == EffectMode.PREVIEW:
             self.diff = None
             self.hash = None
         else:
@@ -670,9 +669,6 @@ class LightNoiseReductionEffect(Effect):
                 its = its * efconfig.disp_info[4]
                 col = col * efconfig.disp_info[4]
                 self.diff = core.light_denoise(img, its, col)
-                #color_denise = core.denoise_like_lightroom(img, its, col)
-                #denoise_img = core.lab_multiscale_denoise(color_denise, "bilateral")
-                #self.diff = img * (1.0 - its) + denoise_img * its
                 self.hash = param_hash
 
         return self.diff
@@ -708,37 +704,35 @@ class DeblurFilterEffect(Effect):
 
 class DefocusEffect(Effect):
     __net = None
-    __DRBNet = None
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     def get_param_dict(self, param):
         return {
-            'defocus': 0,
+            'defocus': False,
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_defocus"].active = False if self._get_param(param, 'defocus') == 0 else True
+        widget.ids["switch_defocus"].active = self._get_param(param, 'defocus')
 
     def set2param(self, param, widget):
-        param['defocus'] = 0 if widget.ids["switch_defocus"].active == False else 1
+        param['defocus'] = widget.ids["switch_defocus"].active
 
     def make_diff(self, img, param, efconfig):
         df = self._get_param(param, 'defocus')
-        if df <= 0:
+        if df == False:
             self.diff = None
             self.hash = None
         else:
             param_hash = hash((df))
             if self.hash != param_hash:
-                if DefocusEffect.__DRBNet is None:
-                    DefocusEffect.__DRBNet = importlib.import_module('DRBNet')
+                import DRBNet
 
                 if DefocusEffect.__net is None:
-                    DefocusEffect.__net = DefocusEffect.__DRBNet.setup_predict()
+                    DefocusEffect.__net = DRBNet.setup_predict()
 
-                self.diff = DefocusEffect.__DRBNet.predict(img, DefocusEffect.__net, config.get_config('gpu_device'))
+                self.diff = DRBNet.predict(img, DefocusEffect.__net, config.get_config('gpu_device'))
                 self.hash = param_hash
 
         return self.diff
@@ -882,6 +876,7 @@ class GlowEffect(Effect):
         else:
             param_hash = hash((gb, gg, go))
             if self.hash != param_hash:
+                rgb = core.type_convert(rgb, np.ndarray)
                 hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
                 hls[:,:,1] = core.apply_level_adjustment(hls[:,:,1], gb, 127+gg/2, 255)
                 rgb2 = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
@@ -985,7 +980,6 @@ class ColorTemperatureEffect(Effect):
             if self.hash != param_hash:
                 trgb = core.convert_TempTint2RGB(param['color_temperature_reset'], param['color_tint_reset'], self._get_param(param, 'color_Y'))
                 self.diff = rgb * (trgb / core.convert_TempTint2RGB(temp, tint, Y))
-                #self.diff = rgb * np.array(core.invert_TempTint2RGB(temp, tint, Y, 5000), dtype=np.float32)
                 self.hash = param_hash
 
         return self.diff
@@ -1022,7 +1016,6 @@ class RGB2HLSEffect(Effect):
         if self.diff is None:
             rgb = core.type_convert(rgb, np.ndarray)
             self.diff = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
-            #self.diff = hlsrgb.rgb_to_hls(np.array(rgb))
         return self.diff
 
 class HLS2RGBEffect(Effect):
@@ -1031,7 +1024,6 @@ class HLS2RGBEffect(Effect):
         if self.diff is None:
             hls = core.type_convert(hls, np.ndarray)
             self.diff = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-            #self.diff = hlsrgb.hls_to_rgb(np.array(hls))
         return self.diff
 
 class HLSEffect(Effect):
@@ -1281,18 +1273,18 @@ class ToneEffect(Effect):
 
         elif self.hash != param_hash:
             rgb = core.type_convert(rgb, jnp.ndarray)
-            self.diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)            
+            diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)  
             if masks[1] is not None:
-                mask = np.array(masks[1])
+                mask = core.type_convert(masks[1], np.ndarray)
                 mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
-                threshold = np.max(mask)
-                mask[mask < threshold * 3 / 4] = 0.0
-                source = np.array(self.diff)
-                #cv2.imwrite("mask.jpg", cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
-                #cv2.imwrite("mask.jpg", (mask * 255).astype(np.uint8))
+                threshold = float(np.max(mask)) * 3 / 4
+                mask[mask < threshold] = 0.0
+                source = core.type_convert(diff, np.ndarray)
                 target = local_contrast.apply_microcontrast(source, 200 * efconfig.resolution_scale)
                 mask = mask[..., np.newaxis]
                 self.diff = source * (1-mask) + target * mask
+            else:
+                self.diff = diff
             self.hash = param_hash
         return self.diff
     
@@ -1910,9 +1902,9 @@ class SaturationEffect(Effect):
 
 class AutoExposureEffect(Effect):
     # rgb_or_rawがrawの場合
-    #   lut_to_logが設定されていたら、auto_exposureは適用しない
+    #   lut_to_logが設定されていたら、auto_exposureを適用する
     # rgb_or_rawがrgbの場合
-    #   lut_to_logが設定されていたら、auto_exposureは適用する
+    #   lut_to_logが設定されていたら、auto_exposureを適用する
 
     def get_param_dict(self, param):
         return {
@@ -1927,7 +1919,7 @@ class AutoExposureEffect(Effect):
         ae = self._get_param(param, 'auto_exposure')
         lut_to_log = self._get_param(param, 'lut_to_log')
         lut_name = self._get_param(param, 'lut_name')
-        if (rgb_or_raw == 'raw' and lut_to_log != 'None') or (rgb_or_raw == 'rgb' and lut_to_log == 'None'):
+        if (rgb_or_raw == 'raw' and lut_to_log == 'None') or (rgb_or_raw == 'rgb' and lut_to_log == 'None'):
             self.diff = None
             self.hash = None
         
@@ -1944,7 +1936,7 @@ class AutoExposureEffect(Effect):
                 #rgb = core.process_color_image_lab(rgb, core.histeq_16bit)
                 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせるなどする
-                rgb = highlight_recovery.reconstruct_highlight_details(rgb, False)
+                #rgb = highlight_recovery.reconstruct_highlight_details(rgb, False)
 
                 #hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
                 #hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
@@ -1955,7 +1947,6 @@ class AutoExposureEffect(Effect):
         return self.diff
 
 class LUTEffect(Effect):
-    file_pathes = { '---': None }
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1965,7 +1956,6 @@ class LUTEffect(Effect):
     def get_param_dict(self, param):
         return {
             'lut_name': 'None',
-            'lut_path': None,
             'lut_intensity': 100,
             'lut_to_log': 'None',
         }
@@ -1981,31 +1971,35 @@ class LUTEffect(Effect):
         if self._get_param(param, 'lut_name') != name:
             self.lut = None
         param['lut_name'] = name
-        param['lut_path'] = LUTEffect.file_pathes.get(param['lut_name'], None)
         param['lut_intensity'] = widget.ids["slider_lut_intensity"].value
         param['lut_to_log'] = widget.ids["lut_to_log_spinner"].text
 
     def make_diff(self, rgb, param, efconfig):
-        lut_path = self._get_param(param, 'lut_path')
+        lut_name = self._get_param(param, 'lut_name')
         lut_to_log = self._get_param(param, 'lut_to_log')
         lut_intensity = self._get_param(param, 'lut_intensity')
-        if lut_path is None or lut_intensity == 0:
+        lut_path = config.get_config('lut_path')
+        if lut_path is None or lut_name == 'None' or lut_intensity == 0:
             self.diff = None
             self.hash = None
         
         else:
-            param_hash = hash((lut_path, lut_to_log, lut_intensity))
+            param_hash = hash((lut_name, lut_path, lut_to_log, lut_intensity))
             if self.hash != param_hash:
                 if self.lut is None:
-                    self.lut = cubelut.read_lut(lut_path)
+                    path = os.path.join(lut_path, lut_name)
+                    self.lut = cubelut.read_lut(path)
+                if self.lut is not None:
+                    rgb = core.type_convert(rgb, np.ndarray)
+                    if lut_to_log != 'None':
+                        rgb = linear_to_log.process_image(rgb, lut_to_log)
 
-                rgb = core.type_convert(rgb, np.ndarray)
-                if lut_to_log != 'None':
-                    rgb = linear_to_log.process_image(rgb, lut_to_log)
-
-                apply_rgb = cubelut.process_image(rgb, self.lut)
-                self.diff = rgb * (1-lut_intensity/100) + apply_rgb * lut_intensity/100
-                self.hash = param_hash
+                    apply_rgb = cubelut.process_image(rgb, self.lut)
+                    self.diff = rgb * (1-lut_intensity/100) + apply_rgb * lut_intensity/100
+                    self.hash = param_hash
+                else:
+                    self.diff = None
+                    self.hash = None
 
         return self.diff
 
@@ -2391,27 +2385,31 @@ def create_effects(distortion_callback=None):
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]
-    lv1['light_noise_reduction'] = LightNoiseReductionEffect()
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
     lv1['scratch'] = ScratchEffect()
     lv1['frosted_glass'] = FrostedGlassEffect()
     lv1['mosaic'] = MosaicEffect()
-    lv1['glow'] = GlowEffect()
     lv1['face'] = FaceEffect()
     
     lv2 = effects[2]
     lv2['color_temperature'] = ColorTemperatureEffect()
+    
+    lv2['auto_exposure'] = AutoExposureEffect()
+    lv2['lut'] = LUTEffect()
+
     lv2['dehaze'] = DehazeEffect()
- 
+
     lv2['exposure'] = ExposureEffect()
     lv2['contrast'] = ContrastEffect()
     lv2['clarity'] = ClarityEffect()
     lv2['texture'] = TextureEffect()
     lv2['microcontrast'] = MicroContrastEffect()
     lv2['tone'] = ToneEffect()
+    lv2['level'] = LevelEffect()
 
+    lv2['glow'] = GlowEffect()
     lv2['highlight_compress'] = HighlightCompressEffect()
 
     # ここでクリッピング
@@ -2428,11 +2426,10 @@ def create_effects(distortion_callback=None):
 
     lv2['curve'] = CurveEffect()
 
-    lv2['auto_exposure'] = AutoExposureEffect()
-    lv2['lut'] = LUTEffect()
+    lv2['light_noise_reduction'] = LightNoiseReductionEffect()
+
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()
-    lv2['level'] = LevelEffect()
     lv2['solid_color'] = SolidColorEffect()
     lv2['unsharp_mask'] = UnsharpMaskEffect()
 
