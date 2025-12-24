@@ -48,3 +48,12 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
     result = core.apply_mask(contrast, mask, rgb) # ハイライトにのみ適用
 
     return result
+
+def reconstruct_highlight_details2(source, mask):
+    mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+    threshold = float(np.max(mask)) * 3 / 5
+    mask[mask < threshold] = 0.0
+    target = local_contrast.apply_microcontrast(source, 200)
+    mask = mask[..., np.newaxis]
+    img_array = source * (1-mask) + target * mask
+    return img_array

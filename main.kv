@@ -363,6 +363,28 @@
                                 on_before_edit: root.begin_history_effect_ctrl(2, 'tone')
                                 on_after_edit: root.end_history_effect_ctrl(2, 'tone')
 
+                            ParamSlider:
+                                id: slider_white
+                                text: "White"
+                                min: -100
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'tone')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'tone')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'tone')
+
+                            ParamSlider:
+                                id: slider_black
+                                text: "Black"
+                                min: -100
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(2, 'tone')
+                                on_before_edit: root.begin_history_effect_ctrl(2, 'tone')
+                                on_after_edit: root.end_history_effect_ctrl(2, 'tone')
+
                             VSeparator:
 
                             HeadLabel:

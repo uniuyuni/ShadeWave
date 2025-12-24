@@ -1046,66 +1046,45 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
 
     highlight_scale = 6.0
     img, highlight_mask = _conditional_operation(highlights, img, enhance_highlight_positive, enhance_highlight_negative)
-
-    """
-    # 黒レベル（全体の暗い部分の引き下げ）
+    
+    # 黒レベル - Gamma Correction (Filmic Shadow Control)
     def enhance_black_positive(img, black_level):
-        factor = black_level / 100
-        influence = jnp.exp(black_level_const * img)
-        return img * (1 + factor * influence)
+        # Lift shadows (Gamma < 1.0)
+        # Pins 0 and 1, lifts mid-shadows naturally
+        val = black_level / 100.0
+        # exp(-0.7) ~ 0.5 (Sqrt) at max
+        gamma = jnp.exp(-val * 0.7) 
+        res = jnp.power(jnp.maximum(img, 0), gamma)
+        return res, None
     
     def enhance_black_negative(img, black_level):
-        factor = black_level / 100
-        influence = jnp.exp(black_level_const * img)
-        min_val = img * 0.05;  # 最小でも元の値の5%は維持
-        raw_result = img * (1 + factor * influence)
-        return jnp.maximum(raw_result, min_val)
+        # Crush shadows (Gamma > 1.0)
+        val = -black_level / 100.0
+        # exp(0.7) ~ 2.0 (Square) at max
+        gamma = jnp.exp(val * 0.7) 
+        res = jnp.power(jnp.maximum(img, 0), gamma)
+        return res, None
+        
+    # black_level_const = -1 # Not used
+    img, _ = _conditional_operation(black_level, img, enhance_black_positive, enhance_black_negative)
 
-    black_level_const = -1
-    img = _conditional_operation(black_level, img, enhance_white_positive, enhance_black_negative) # Note: this line seemed to have a typo in original view, wait, line 1063 uses enhance_black_negative. 
-    # Wait, line 1063 in original: img = _conditional_operation(black_level, img, enhance_black_positive, enhance_black_negative)
-    # I should be careful not to change surrounding logic if not needed.
-    # The REPLACE block below targets enhance_white_negative mainly.
-    
-    # ... actually I will split the chunks.
-
-    # Chunk 1: enhance_highlight_negative
-    # Chunk 2: enhance_white_negative
-
-    def enhance_black_positive(img, black_level):
-        factor = black_level / 100
-        influence = jnp.exp(black_level_const * img)
-        return img * (1 + factor * influence)
-    
-    def enhance_black_negative(img, black_level):
-        factor = black_level / 100
-        influence = jnp.exp(black_level_const * img)
-        min_val = img * 0.05;  # 最小でも元の値の5%は維持
-        raw_result = img * (1 + factor * influence)
-        return jnp.maximum(raw_result, min_val)
-
-    black_level_const = -1
-    img = _conditional_operation(black_level, img, enhance_black_positive, enhance_black_negative)
-
-    # 白レベル（全体の明るい部分の引き上げ）
+    # 白レベル - Reinhard Tone Mapping / Gain
     def enhance_white_positive(img, white_level):
-        factor = white_level / 100 * white_level_scale
-        max_val = jnp.max(img)
-        base = img / max_val  # 0-1に正規化
-        expansion = 1 + factor * (jnp.log1p(jnp.log1p(jnp.log1p(base))) / jax.lax.log1p(jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))))
-        return img * expansion
+        # Boost Highlights (Gain)
+        strength = white_level / 100.0 * 2.0 
+        return img * (1.0 + strength), None
     
     def enhance_white_negative(img, white_level):
-        factor = -white_level / 100
-        max_val = jnp.maximum(jnp.max(img), 1e-6)
-        safe_img = jnp.maximum(img, 0)
-        target = jnp.log1p(jnp.log1p(jnp.log1p(safe_img))) / jax.lax.log1p(jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
-        return img * (1-factor) + target * factor
+        # Compress Highlights (Reinhard)
+        # Smoothly rolls off highlights, preserving details > 1.0
+        strength = -white_level / 100.0 * 1.0 # Max Strength 1.0 (Standard Reinhard)
+        # x / (1 + kx)
+        denominator = 1.0 + strength * jnp.maximum(img, 0)
+        return img / denominator, None
 
-    white_level_scale = 4
-    img = _conditional_operation(white_level, img, enhance_white_positive, enhance_white_negative)
-    """
-
+    # white_level_scale = 4 # Not used
+    img, _ = _conditional_operation(white_level, img, enhance_white_positive, enhance_white_negative)
+    
     return img, (shadows_mask, highlight_mask)
 
 

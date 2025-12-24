@@ -1250,39 +1250,43 @@ class ToneEffect(Effect):
             'shadow': 0,
             'highlight': 0,
             'midtone': 0,
+            'white': 0,
+            'black': 0,
         }
 
     def set2widget(self, widget, param):
         widget.ids["slider_shadow"].set_slider_value(self._get_param(param, 'shadow'))
         widget.ids["slider_highlight"].set_slider_value(self._get_param(param, 'highlight'))
         widget.ids["slider_midtone"].set_slider_value(self._get_param(param, 'midtone'))
+        widget.ids["slider_white"].set_slider_value(self._get_param(param, 'white'))
+        widget.ids["slider_black"].set_slider_value(self._get_param(param, 'black'))
+        
 
     def set2param(self, param, widget):
         param['shadow'] = widget.ids["slider_shadow"].value
         param['highlight'] = widget.ids["slider_highlight"].value
         param['midtone'] = widget.ids["slider_midtone"].value
+        param['white'] = widget.ids["slider_white"].value
+        param['black'] = widget.ids["slider_black"].value
 
     def make_diff(self, rgb, param, efconfig):
         shadow = self._get_param(param, 'shadow')
         highlight = self._get_param(param, 'highlight')
         mt = self._get_param(param, 'midtone')
-        param_hash = hash((shadow, highlight, mt))
-        if shadow == 0 and highlight == 0 and mt == 0:
+        white = self._get_param(param, 'white')
+        black = self._get_param(param, 'black')
+        param_hash = hash((shadow, highlight, mt, white, black))
+        if shadow == 0 and highlight == 0 and mt == 0 and white == 0 and black == 0:
             self.diff = None
             self.hash = None
 
         elif self.hash != param_hash:
             rgb = core.type_convert(rgb, jnp.ndarray)
-            diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, 0, 0)  
+            diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, white, black)  
             if masks[1] is not None:
-                mask = core.type_convert(masks[1], np.ndarray)
-                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
-                threshold = float(np.max(mask)) * 3 / 4
-                mask[mask < threshold] = 0.0
                 source = core.type_convert(diff, np.ndarray)
-                target = local_contrast.apply_microcontrast(source, 200 * efconfig.resolution_scale)
-                mask = mask[..., np.newaxis]
-                self.diff = source * (1-mask) + target * mask
+                mask = core.type_convert(masks[1], np.ndarray)
+                self.diff = highlight_recovery.reconstruct_highlight_details2(source, mask)
             else:
                 self.diff = diff
             self.hash = param_hash
