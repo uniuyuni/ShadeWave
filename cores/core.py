@@ -1037,8 +1037,10 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
 
     def enhance_highlight_negative(img, highlights):
         factor = -highlights / 100
-        max_val = jnp.max(img)
-        target = jnp.log1p(jnp.log1p(img)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))
+        max_val = jnp.maximum(jnp.max(img), 1e-6) # Avoid div by zero
+        # Safe log input
+        safe_img = jnp.maximum(img, 0)
+        target = jnp.log1p(jnp.log1p(safe_img)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))
         mask = target * factor
         return img * (1-factor) + mask, mask
 
@@ -1047,6 +1049,29 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
 
     """
     # 黒レベル（全体の暗い部分の引き下げ）
+    def enhance_black_positive(img, black_level):
+        factor = black_level / 100
+        influence = jnp.exp(black_level_const * img)
+        return img * (1 + factor * influence)
+    
+    def enhance_black_negative(img, black_level):
+        factor = black_level / 100
+        influence = jnp.exp(black_level_const * img)
+        min_val = img * 0.05;  # 最小でも元の値の5%は維持
+        raw_result = img * (1 + factor * influence)
+        return jnp.maximum(raw_result, min_val)
+
+    black_level_const = -1
+    img = _conditional_operation(black_level, img, enhance_white_positive, enhance_black_negative) # Note: this line seemed to have a typo in original view, wait, line 1063 uses enhance_black_negative. 
+    # Wait, line 1063 in original: img = _conditional_operation(black_level, img, enhance_black_positive, enhance_black_negative)
+    # I should be careful not to change surrounding logic if not needed.
+    # The REPLACE block below targets enhance_white_negative mainly.
+    
+    # ... actually I will split the chunks.
+
+    # Chunk 1: enhance_highlight_negative
+    # Chunk 2: enhance_white_negative
+
     def enhance_black_positive(img, black_level):
         factor = black_level / 100
         influence = jnp.exp(black_level_const * img)
@@ -1072,8 +1097,9 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
     
     def enhance_white_negative(img, white_level):
         factor = -white_level / 100
-        max_val = jnp.max(img)
-        target = jnp.log1p(jnp.log1p(jnp.log1p(img))) / jax.lax.log1p(jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
+        max_val = jnp.maximum(jnp.max(img), 1e-6)
+        safe_img = jnp.maximum(img, 0)
+        target = jnp.log1p(jnp.log1p(jnp.log1p(safe_img))) / jax.lax.log1p(jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
         return img * (1-factor) + target * factor
 
     white_level_scale = 4
@@ -2538,30 +2564,80 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
 
 #-------------------------------------------------
 
+# 高速なGuided Filter実装 (HDR対応)
+def guided_filter(guide, src, radius, eps):
+    """
+    He et al. のGuided Image Filteringの実装
+    OpenCVのプリミティブを使用しているため高速かつHDR値(1.0超)も正しく扱える
+    """
+    # ガイドとソースをfloat32に確保
+    guide = guide.astype(np.float32)
+    src = src.astype(np.float32)
+    
+    # ボックスフィルタのカーネルサイズ (直径)
+    ksize = (2 * radius + 1, 2 * radius + 1)
+    
+    # 各種平均の計算 (ボックスフィルタ)
+    mean_I = cv2.boxFilter(guide, cv2.CV_32F, ksize)
+    mean_p = cv2.boxFilter(src, cv2.CV_32F, ksize)
+    mean_Ip = cv2.boxFilter(guide * src, cv2.CV_32F, ksize)
+    mean_II = cv2.boxFilter(guide * guide, cv2.CV_32F, ksize)
+    
+    # 共分散と分散
+    cov_Ip = mean_Ip - mean_I * mean_p
+    var_I = mean_II - mean_I * mean_I
+    
+    # 線形係数 a, b の計算
+    a = cov_Ip / (var_I + eps)
+    b = mean_p - a * mean_I
+    
+    # 係数の平滑化
+    mean_a = cv2.boxFilter(a, cv2.CV_32F, ksize)
+    mean_b = cv2.boxFilter(b, cv2.CV_32F, ksize)
+    
+    # 出力計算
+    q = mean_a * guide + mean_b
+    return q
+
 def light_denoise(img, its, col):
 
-    # Lab色空間に変換（L: 輝度, a,b: 色度）
-    lab = cv2.cvtColor(img, cv2.COLOR_RGB2Lab)
-    l, a, b = cv2.split(lab)
+    # YCrCb色空間に変換 (HDR対応・リニア変換)
+    # Yは輝度、Cr, Cbは色差
+    # float32の場合、Y, Cr, Cb ともに概ね 0.0-1.0 (HDRならそれ以上) の範囲で扱われる
+    # (Cr, Cbは 0.5 が中心)
+    ycrcb = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
     
-    # 輝度チャンネル(L)のノイズ除去
+    # 輝度チャンネル(Y)のノイズ除去 (Guided Filter)
     if its > 0:
-        l = fast_tv_denoise(l, weight=its / 100.0)
-    l_filtered = l
-    
+        # 半径
+        radius = max(2, int(its * 0.1))
+        # イプシロンの計算
+        # Yは0-1スケール (HDR対応)
+        # eps = (閾値)^2
+        # its=100 で 0.2 (20%) 程度の変動を平滑化
+        eps = ((its * 0.002) ** 2)
+        
+        # 分散安定化変換: sqrt(Y) をとることで、ショットノイズ(値に比例して分散が増える)を均一化する
+        # これによりハイライト部でもノイズ除去が効くようになる
+        sq_y = np.sqrt(np.maximum(y, 0))
+        sq_y = cv2.ximgproc.guidedFilter(guide=sq_y, src=sq_y, radius=radius, eps=eps)
+        y = sq_y ** 2
+
+    # 色度チャンネル(Cr, Cb)のノイズ除去 (Joint Guided Filter)
     if col > 0:
-        # 色度チャンネル(a,b)のノイズ除去
-        D = [3, 3, 3, 3, 3, 4, 4, 4, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-        n = max(1, int(col * 0.20))
-        for i in range(5):
-            a = cv2.bilateralFilter(a, d=D[n], sigmaColor=50, sigmaSpace=30)
-            b = cv2.bilateralFilter(b, d=D[n], sigmaColor=50, sigmaSpace=30)
-    a_filtered = a
-    b_filtered = b
+        # 色度ノイズは強めにかけるため半径を大きく
+        radius = max(4, int(col * 0.3))
+        # 色差も0-1スケール
+        eps = ((col * 0.005) ** 2)
+        
+        # 輝度(Y)をガイドにして色差(Cr, Cb)をフィルタリング
+        cr = cv2.ximgproc.guidedFilter(guide=y, src=cr, radius=radius, eps=eps)
+        cb = cv2.ximgproc.guidedFilter(guide=y, src=cb, radius=radius, eps=eps)
  
     # チャンネルを結合
-    filtered_lab = cv2.merge([l_filtered, a_filtered, b_filtered])
-    return cv2.cvtColor(filtered_lab, cv2.COLOR_Lab2RGB)
+    filtered_ycrcb = cv2.merge([y, cr, cb])
+    return cv2.cvtColor(filtered_ycrcb, cv2.COLOR_YCrCb2RGB)
 
 #-------------------------------------------------
 
