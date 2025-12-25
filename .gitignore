@@ -8,6 +8,7 @@ icc/
 dcp/
 luts/
 metal/
+splitimage/**build/**
+splitimage/*.egg*/**
 **/__pycache__/**
 **/venv3.11.9/**
-**/picture/**

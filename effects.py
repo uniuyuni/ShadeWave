@@ -599,12 +599,19 @@ class AINoiseReductonEffect(Effect):
             self.hash = None
         else:
             param_hash = hash((nr))
-            if self.hash != param_hash:                
-                import SCUNet
-                if AINoiseReductonEffect.__net is None:
-                    AINoiseReductonEffect.__net = SCUNet.setup_model(device=config.get_config('gpu_device'))
+            if self.hash != param_hash:
+                if True:
+                    import helpers.restormer_helper as restormer_helper
+                    if AINoiseReductonEffect.__net is None:
+                        AINoiseReductonEffect.__net = restormer_helper.setup_restormer(task='Real_Denoising', device=config.get_config('gpu_device'))
 
-                self.diff = wait_prosessing(SCUNet.denoise_image_helper, AINoiseReductonEffect.__net, img, config.get_config('gpu_device'))
+                    self.diff = wait_prosessing(restormer_helper.predict_restormer_helper, AINoiseReductonEffect.__net, img)
+                else:
+                    import helpers.dpir_helper as dpir_helper
+                    if AINoiseReductonEffect.__net is None:
+                        AINoiseReductonEffect.__net = dpir_helper.setup_dpir(device=config.get_config('gpu_device'))
+
+                    self.diff = wait_prosessing(dpir_helper.predict_dpir_helper, AINoiseReductonEffect.__net, img)
                 self.hash = param_hash
         
         return self.diff
@@ -1896,7 +1903,7 @@ class SaturationEffect(Effect):
         elif self.hash != param_hash:
             hls_s = core.type_convert(hls_s, np.ndarray)
             hls2_s = core.calc_saturation(hls_s, sat, vib)
-            self.diff = np.divide(hls2_s, hls_s, where=hls_s!=0.0)    # Sのみ保存
+            self.diff = np.divide(hls2_s, hls_s, where=hls_s!=0.0, dtype=np.float32)    # Sのみ保存
             self.hash = param_hash
         
         return self.diff

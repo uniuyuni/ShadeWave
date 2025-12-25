@@ -23,6 +23,17 @@ class _ProcessingDialog():
         self.gif_path = gif_path
         self.gif_frames = self._load_gif_frames()
         self.current_frame = 0
+        # 任意テキスト表示用ラベル (右下に表示) - placeを使用して絶対配置
+        self.sub_text_label = tk.Label(
+            self.parent,
+            text="",
+            font=("Arial", 10),
+            padx=10,
+            pady=5
+        )
+        self.sub_text_label.place(relx=1.0, rely=1.0, anchor=tk.SE, x=-5, y=-5)
+        self.pending_text = None
+
         self.animation_label = tk.Label(self.parent)
         self.animation_label.pack(side=tk.LEFT, padx=10, pady=10)
         
@@ -67,6 +78,10 @@ class _ProcessingDialog():
             self.animation_label.configure(image=self.gif_frames[self.current_frame])
             self.current_frame = (self.current_frame + 1) % len(self.gif_frames)
 
+    def set_text(self, text):
+        """右下のテキストを設定（スレッドセーフにするため変数を更新するだけにする）"""
+        self.pending_text = text
+
     def _center_dialog(self):
         """ダイアログを画面中央に配置"""
         self.parent.update_idletasks()
@@ -94,6 +109,12 @@ class _ProcessingDialog():
     def update(self):
         self.parent.lift()
         self._animate()
+        
+        # テキストの更新があれば適用（メインスレッドで実行される）
+        if self.pending_text is not None:
+            self.sub_text_label.configure(text=self.pending_text)
+            self.pending_text = None
+            
         self.parent.update()
     
     def hide(self):
@@ -110,15 +131,23 @@ def create_processing_dialog():
     
 def show_processing_dialog(dt=0):
     global __dialog
-    __dialog.show()
+    if __dialog:
+        __dialog.show()
 
 def update_processing_dialog(dt=0):
     global __dialog
-    __dialog.update()
+    if __dialog:
+        __dialog.update()
 
 def hide_processing_dialog(dt=0):
     global __dialog
-    __dialog.hide()
+    if __dialog:
+        __dialog.hide()
+
+def set_processing_text(text):
+    global __dialog
+    if __dialog:
+        __dialog.set_text(text)
 
 def wait_threading(process, *args, **kwargs):
     show_processing_dialog()
