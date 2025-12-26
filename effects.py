@@ -310,13 +310,13 @@ class DistortionEffect(Effect):
         pass
 
     def set2param(self, param, widget):
-        distortion_enable = False if widget.ids["effects"].current_tab.text != "Liquify" else True
+        distortion_enable = False if widget.ids["effects"].current_tab.text != "Li" else True
 
-        # クロップエディタを開く
+        # エディタを開く
         if distortion_enable == True:
             self._open_distortion_painter(param, widget)
 
-        # クロップエディタを閉じる
+        # エディタを閉じる
         elif distortion_enable == False:
             self._close_distortion_painter(param, widget)
 
@@ -601,6 +601,12 @@ class AINoiseReductonEffect(Effect):
             param_hash = hash((nr))
             if self.hash != param_hash:
                 if True:
+                    import helpers.nafnet_helper as nafnet_helper
+                    if AINoiseReductonEffect.__net is None:
+                        AINoiseReductonEffect.__net = nafnet_helper.setup_nafnet(task='Image Denoising', device=config.get_config('gpu_device'))
+
+                    self.diff = wait_prosessing(nafnet_helper.predict_nafnet_helper, AINoiseReductonEffect.__net, img)
+                elif False:
                     import helpers.restormer_helper as restormer_helper
                     if AINoiseReductonEffect.__net is None:
                         AINoiseReductonEffect.__net = restormer_helper.setup_restormer(task='Real_Denoising', device=config.get_config('gpu_device'))
