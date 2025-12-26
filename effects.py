@@ -1029,6 +1029,7 @@ class RGB2HLSEffect(Effect):
         if self.diff is None:
             rgb = core.type_convert(rgb, np.ndarray)
             self.diff = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
+            self.diff = np.nan_to_num(self.diff) # Inf/NaNが含まれているとcvtColorでエラーになるため除去
         return self.diff
 
 class HLS2RGBEffect(Effect):

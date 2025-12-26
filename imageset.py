@@ -251,7 +251,7 @@ class ImageSet:
 
                 # ここで補正
                 img_array = core.adjust_exposure(img_array, Ev)
-                img_array, masks = core.adjust_tone(img_array, highlights=-100)
+                img_array, masks = core.adjust_tone(img_array, white_level=-100)
                 if masks[1] is not None:
                     source = core.type_convert(img_array, np.ndarray)
                     mask = core.type_convert(masks[1], np.ndarray)

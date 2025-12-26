@@ -50,8 +50,8 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
     return result
 
 def reconstruct_highlight_details2(source, mask):
-    mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
-    threshold = float(np.max(mask)) * 3 / 5
+    #mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+    threshold = float(np.max(mask)) * 3 / 4
     mask[mask < threshold] = 0.0
     target = local_contrast.apply_microcontrast(source, 200)
     mask = mask[..., np.newaxis]

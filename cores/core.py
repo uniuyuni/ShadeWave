@@ -979,113 +979,149 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         np.ndarray: 調整後の画像（クリッピングなし）
         mask(tuple): 効果マスクリスト（Noneあり）
     """
+    
+    # 輝度の計算 (Rec.709 coefficients)
+    y_orig = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
+    # 形状を保持 (H, W, 1) if needed, but here simple (H, W) is fine for curve.
+    current_y = y_orig
 
-    def _conditional_operation(x, img, pos_func, neg_func):
-        func = pos_func if x > 0 else neg_func if x < 0 else lambda img, x: (img, None)
-        
-        return func(img, x)
+    def _conditional_operation(x, val, pos_func, neg_func):
+        func = pos_func if x > 0 else neg_func if x < 0 else lambda val, x: (val, None)
+        return func(val, x)
 
     # 中間調の調整
-    def enhance_midtones_positive(img, midtone):
+    def enhance_midtones_positive(val, midtone):
         C = midtone / 100 * midtone_scale
-        return jnp.log(1 + img * C) / jax.lax.log(1 + C), None
+        return jnp.log(1 + val * C) / jax.lax.log(1 + C), None
 
-    def enhance_midtones_negative(img, midtone):
+    def enhance_midtones_negative(val, midtone):
         C = -midtone / 100 * midtone_scale
 
         # 通常の範囲(0〜1)の計算
-        normal_result = (jnp.exp(img * jax.lax.log(1 + C)) - 1) / C
+        normal_result = (jnp.exp(val * jax.lax.log(1 + C)) - 1) / C
         
         # 1.0の時の関数値と傾きを計算
         f_1 = ((1 + C) - 1) / C  # (np.exp(1.0 * math.log(1 + C)) - 1) / C を簡略化
         derivative_at_1 = (1 + C) * jax.lax.log(1 + C) / C
         
         # 1.0超の範囲 - 線形拡張する
-        extended_result = f_1 + derivative_at_1 * (img - 1.0)
+        extended_result = f_1 + derivative_at_1 * (val - 1.0)
         
         # 条件マスクを使って結果を組み合わせる
-        return jnp.where(img <= 1.0, normal_result, extended_result), None
+        return jnp.where(val <= 1.0, normal_result, extended_result), None
+
 
     midtone_scale = 4
-    img, _ = _conditional_operation(midtone, img, enhance_midtones_positive, enhance_midtones_negative)
+    current_y, _ = _conditional_operation(midtone, current_y, enhance_midtones_positive, enhance_midtones_negative)
 
     # シャドウ（暗部）の調整
-    def enhance_shadow_positive(img, shadows):
+    def enhance_shadow_positive(val, shadows):
         factor = shadows / 100 * shadow_scale
-        influence = jnp.exp(-5 * img)
+        influence = jnp.exp(-5 * val)
         mask = factor * influence
-        return img * (1 + mask), mask
+        return val * (1 + mask), mask
     
-    def enhance_shadow_negative(img, shadows):
+    def enhance_shadow_negative(val, shadows):
         factor = shadows / 100
-        influence = jnp.exp(-5 * img)
-        min_val = img * 0.1;  # 最小でも元の値の10%は維持
+        influence = jnp.exp(-5 * val)
+        min_val = val * 0.1
         mask = (1 + factor * influence)
-        raw_result = img * mask
+        raw_result = val * mask
         return jnp.maximum(raw_result, min_val), None
 
     shadow_scale = 6.0
-    img, shadows_mask = _conditional_operation(shadows, img, enhance_shadow_positive, enhance_shadow_negative)
+    current_y, shadows_mask = _conditional_operation(shadows, current_y, enhance_shadow_positive, enhance_shadow_negative)
     
-    # ハイライト（明部）の調整
-    def enhance_highlight_positive(img, highlights):
-        factor = highlights / 100 * highlight_scale
-        max_val = jnp.max(img)
-        base = img / max_val  # 0-1に正規化
-        expansion = 1 + factor * (jnp.log1p(jnp.log1p(base)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
-        return img * expansion, None
-
-    def enhance_highlight_negative(img, highlights):
-        factor = -highlights / 100
-        max_val = jnp.maximum(jnp.max(img), 1e-6) # Avoid div by zero
-        # Safe log input
-        safe_img = jnp.maximum(img, 0)
-        target = jnp.log1p(jnp.log1p(safe_img)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))
-        mask = target * factor
-        return img * (1-factor) + mask, mask
-
-    highlight_scale = 6.0
-    img, highlight_mask = _conditional_operation(highlights, img, enhance_highlight_positive, enhance_highlight_negative)
-    
-    # 黒レベル - Gamma Correction (Filmic Shadow Control)
-    def enhance_black_positive(img, black_level):
-        # Lift shadows (Gamma < 1.0)
-        # Pins 0 and 1, lifts mid-shadows naturally
-        val = black_level / 100.0
-        # exp(-0.7) ~ 0.5 (Sqrt) at max
-        gamma = jnp.exp(-val * 0.7) 
-        res = jnp.power(jnp.maximum(img, 0), gamma)
-        return res, None
-    
-    def enhance_black_negative(img, black_level):
-        # Crush shadows (Gamma > 1.0)
-        val = -black_level / 100.0
-        # exp(0.7) ~ 2.0 (Square) at max
-        gamma = jnp.exp(val * 0.7) 
-        res = jnp.power(jnp.maximum(img, 0), gamma)
-        return res, None
-        
-    # black_level_const = -1 # Not used
-    img, _ = _conditional_operation(black_level, img, enhance_black_positive, enhance_black_negative)
-
-    # 白レベル - Reinhard Tone Mapping / Gain
-    def enhance_white_positive(img, white_level):
+    # ハイライト（明部）の調整 - (Old White Logic: Reinhard / Gain)
+    def enhance_highlight_positive(val, highlights):
         # Boost Highlights (Gain)
-        strength = white_level / 100.0 * 2.0 
-        return img * (1.0 + strength), None
-    
-    def enhance_white_negative(img, white_level):
+        strength = highlights / 100.0 * 2.0 
+        return val * (1.0 + strength), None
+
+    def enhance_highlight_negative(val, highlights):
+        factor = -highlights / 100.0
         # Compress Highlights (Reinhard)
         # Smoothly rolls off highlights, preserving details > 1.0
-        strength = -white_level / 100.0 * 1.0 # Max Strength 1.0 (Standard Reinhard)
+        strength = factor * 1.0 # Max Strength 1.0 (Standard Reinhard)
         # x / (1 + kx)
-        denominator = 1.0 + strength * jnp.maximum(img, 0)
-        return img / denominator, None
+        denominator = 1.0 + strength * jnp.maximum(val, 0)
+        return val / denominator, denominator * factor * 0.4
 
-    # white_level_scale = 4 # Not used
-    img, _ = _conditional_operation(white_level, img, enhance_white_positive, enhance_white_negative)
+    # highlight_scale removed/unused for Reinhard logic
+    current_y, mask_h = _conditional_operation(highlights, current_y, enhance_highlight_positive, enhance_highlight_negative)
     
-    return img, (shadows_mask, highlight_mask)
+    # 黒レベル（省略せずに実装）
+    def enhance_black_positive(val, black_level):
+        value = black_level / 100.0
+        gamma = jnp.exp(-value * 0.7) 
+        res = jnp.power(jnp.maximum(val, 0), gamma)
+        return res, None
+    
+    def enhance_black_negative(val, black_level):
+        value = -black_level / 100.0
+        gamma = jnp.exp(value * 0.7) 
+        res = jnp.power(jnp.maximum(val, 0), gamma)
+        return res, None
+        
+    current_y, _ = _conditional_operation(black_level, current_y, enhance_black_positive, enhance_black_negative)
+    
+    # 白レベル - (Old Highlight Logic: Log-Log)
+    def enhance_white_positive(val, white_level):
+        scale = 6.0 # Was highlight_scale
+        factor = white_level / 100 * scale
+        max_val = jnp.max(val)
+        base = val / max_val  # 0-1に正規化
+        expansion = 1 + factor * (jnp.log1p(jnp.log1p(base)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
+        return val * expansion, None
+
+    def enhance_white_negative(val, white_level):
+        factor = -white_level / 100
+        max_val = jnp.maximum(jnp.max(val), 1e-6) # Avoid div by zero
+        # Safe log input
+        safe_img = jnp.maximum(val, 0)
+        target = jnp.log1p(jnp.log1p(safe_img)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))
+        mask = target * factor
+        return jnp.minimum(safe_img, val * (1-factor) + mask), mask
+
+    # white_level_scale = 4 # Dummy (Unused now)
+    current_y, mask_w = _conditional_operation(white_level, current_y, enhance_white_positive, enhance_white_negative)
+    
+    # Fix: Combine masks with Max
+    # mask_h, mask_w can be None
+    def safe_max_abs(m1, m2):
+        if m1 is None and m2 is None: return None
+        if m1 is None: return jnp.abs(m2)
+        if m2 is None: return jnp.abs(m1)
+        return jnp.maximum(jnp.abs(m1), jnp.abs(m2))
+    
+    final_highlight_mask = safe_max_abs(mask_h, mask_w)
+    
+    # 輝度のみ反映 (Apply to Luminance Only)
+    # RGB_new = RGB_old * (Y_new / Y_old)
+    eps = 1e-6
+    
+    # 1. Zero Safety: y_orig < eps -> Set divisor to eps (or handle separately)
+    # 2. Inf Safety: y_orig = Inf -> Gain becomes Inf/Inf = NaN.
+    #    We want Inf -> Inf (Identity). So set Gain = 1.0.
+    
+    safe_y_orig = jnp.where(y_orig < eps, eps, y_orig)
+    gain = current_y / safe_y_orig
+    
+    # Apply conditions
+    # If y_orig (original luminance) was effectively zero, Gain is huge.
+    # But if current_y is also small (shadow processing), it's fine.
+    # If y_orig was Inf (Blown), Gain is NaN. We force it to 1.0 (No change to blown color).
+    gain = jnp.where(jnp.isinf(y_orig) | (y_orig < eps), 1.0, gain)
+    
+    # Apply Gain to original RGB
+    # Ensure gain is broadcastable to (H, W, 3)
+    # Since we squeezed, gain is (H, W). We need (H, W, 1).
+    if gain.ndim == 2:
+        gain = gain[..., jnp.newaxis]
+        
+    img_out = img * gain
+    
+    return img_out, (shadows_mask, final_highlight_mask)
 
 
 # 画像のサイズを取得する関数
