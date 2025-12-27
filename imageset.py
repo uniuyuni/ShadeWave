@@ -20,6 +20,7 @@ import cores.bit_depth_expansion as bit_depth_expansion
 import cores.core as core
 import cores.highlight_recovery as highlight_recovery
 import cores.local_contrast as local_contrast
+from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
 
 #print(f"libraw version:{rawpy.libraw_version}")
 
@@ -265,6 +266,9 @@ class ImageSet:
             #if img_array.shape[1] != width or img_array.shape[0] != height:
             if half == True:
                 img_array = cv2.resize(img_array, (width, height))
+
+            # フリンジ除去
+            img_array = remove_chromatic_aberration(img_array)            
 
             # 情報の設定
             params.set_image_param(param, img_array)
