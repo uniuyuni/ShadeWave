@@ -40,7 +40,7 @@ if __name__ == '__main__':
     import config
     import export
     from processing_dialog import create_processing_dialog
-    from dynamic_image_processor import DynamicImageProcessor
+    from async_worker import AsyncWorker
     import history
 
     import widgets.metainfo
@@ -122,8 +122,10 @@ if __name__ == '__main__':
             self.cache_system = cache_system
             self.ids['viewer'].set_cache_system(self.cache_system)
 
-            self.processor = DynamicImageProcessor(num_workers=4)
-            #self.processor.start()
+            self.async_worker = AsyncWorker()
+            # self.async_worker.start() # Start explicitly after config init
+            self.processor = pipeline.AsyncPipelineManager(self.async_worker)
+            Clock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
             
             self.apply_draw_image_offset = None
@@ -141,6 +143,25 @@ if __name__ == '__main__':
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
+            
+        def update_async_results(self, dt):
+            if self.async_worker:
+                results = self.async_worker.poll_results()
+                dirty = False
+                for task_id, result_image, error_msg in results:
+                    if error_msg:
+                        logging.error(f"Async Task {task_id} failed: {error_msg}")
+                    elif result_image is not None:
+                        # Update cache in manager
+                        key = self.processor.update_result(task_id, result_image)
+                        if key:
+                            dirty = True
+                            logging.info(f"Async Task {task_id} ({key}) completed.")
+                
+                if dirty:
+                    # Trigger redraw
+                    # We need to make sure we don't spam redraws?
+                    self.start_draw_image()
 
         def on_kv_post(self, *args, **kwargs):
             super(MainWidget, self).on_kv_post(*args, **kwargs)
@@ -200,7 +221,7 @@ if __name__ == '__main__':
                     self.apply_draw_image_offset = None
 
                     if (self.imgset is not None) and (self.imgset.img is not None):
-                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version)
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, loading_flag=self.imgset.flag)
                         img = np.array(img)
                         utils.print_nan_inf(img, "output")
 
@@ -447,6 +468,11 @@ if __name__ == '__main__':
                 self.primary_param['lens_modifier'] = True
                 self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
                 self.primary_param['auto_exposure'] = param['auto_exposure']
+
+            # Cancel previous background tasks
+            if self.processor:
+                self.processor.cancel_all()
+                self.ids['histogram'].set_histogram_data(None) # Reset histogram? 
 
             self.imgset = imgset
             effects.reeffect_all(self.primary_effects)
@@ -742,7 +768,9 @@ if __name__ == '__main__':
             #self.ids['exif_'].value = exif_data.get("", "-")
         
         def shutdown(self):
-            self.processor.stop()
+            #self.processor.stop()
+            if self.async_worker:
+                self.async_worker.stop()
             
             if self.apply_thread is not None:
                 t = self.apply_thread
@@ -786,6 +814,9 @@ if __name__ == '__main__':
 
             config.init_config(self.main_widget)
             config.load_config()
+            
+            # Start worker after config is loaded
+            self.main_widget.async_worker.start()
 
             display = kvutils.get_current_display()
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)

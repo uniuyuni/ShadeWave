@@ -13,6 +13,12 @@ class HistogramWidget(KVImage):
         pixels = cv2.cvtColor(pixels, cv2.COLOR_BGR2RGB)
         pixels = pixels.astype(np.float32)/256.0
         self.draw_histogram(pixels)
+        
+    def set_histogram_data(self, pixels, blue_count=0, black_count=0):
+        if pixels is None:
+            self.canvas.clear()
+            return
+        self.draw_histogram(pixels, blue_count, black_count)
 
     def draw_histogram(self, pixels, blue_count, black_count):
 

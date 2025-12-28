@@ -16,6 +16,7 @@ import linear_to_log.linear_to_log_lut as linear_to_log
 import cores.filters as filters
 import cores.local_contrast as local_contrast
 import cores.highlight_recovery as highlight_recovery
+from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
 import config
 import pipeline
 import params
@@ -28,11 +29,17 @@ from processing_dialog import wait_prosessing
 from widgets.mask_editor import MaskEditor
 from widgets.crop_editor import CropEditor
 from widgets.distortion_painter import DistortionCanvas
+from enums import EffectMode, ExecutionMode
 
-class EffectMode(int, Enum):
-    PREVIEW = 0
-    LOUPE = 1
-    EXPORT = 2
+# class EffectMode(int, Enum):
+#     PREVIEW = 0
+#     LOUPE = 1
+#     EXPORT = 2
+# 
+# class ExecutionMode(int, Enum):
+#     SYNC = 0
+#     ASYNC = 1
+#     BLOCKING = 2
 
 class EffectConfig():
 
@@ -41,6 +48,11 @@ class EffectConfig():
         self.is_zoom = False
         self.mode = EffectMode.PREVIEW
         self.resolution_scale = 1.0
+        self.processor = None
+        self.upstream_status = None
+        self.layer_status = None
+        self.upstream_hash = 0
+        self.loading_flag = -1
 
 # 補正基底クラス
 class Effect():
@@ -48,6 +60,52 @@ class Effect():
     def __init__(self, **kwargs):
         self.diff = None
         self.hash = None
+        self.execution_mode = ExecutionMode.SYNC
+    
+    def try_async_execution(self, img, param, efconfig, param_hash):
+        """
+        Attempts to execute the effect asynchronously.
+        Returns:
+            (bool, object): 
+                - handled (bool): True if async handling logic was executed (cached returned or task submitted). 
+                  If True, the caller should return `result` immediately.
+                - result (object): The value to return if handled is True (usually self.diff).
+        """
+        if self.execution_mode == ExecutionMode.ASYNC and efconfig.processor is not None and efconfig.mode != EffectMode.EXPORT:
+            from enums import PipelineStatus
+            
+            # Check cache first
+            # We use ClassName + ParamHash as key
+            cached = efconfig.processor.get_result(self.__class__.__name__, param_hash)
+            
+            if cached and cached['status'] == 'COMPLETE':
+                self.diff = cached['result']
+                self.hash = param_hash
+                return True, self.diff
+            
+            # If upstream is not complete, skip heavy processing (return None or Preview)
+            if efconfig.upstream_status == PipelineStatus.PREVIEW:
+                # Upstream is dirty/preview, so we cannot trust input `img` for heavy calc.
+                # Use preview (None for now)
+                self.diff = None 
+                if efconfig.layer_status is not None:
+                        efconfig.layer_status = PipelineStatus.PREVIEW
+                return True, self.diff
+            
+            # Upstream complete, check if we are already running
+            if cached and cached['status'] == 'RUNNING':
+                if efconfig.layer_status is not None:
+                    efconfig.layer_status = PipelineStatus.PREVIEW
+                return True, None # Return None as preview while running
+                    
+            # Submit new task
+            efconfig.processor.submit_task(self.__class__.__name__, img, param, efconfig, param_hash)
+            if efconfig.layer_status is not None:
+                    efconfig.layer_status = PipelineStatus.PREVIEW
+            
+            return True, None # Submitted
+            
+        return False, None
 
     def reeffect(self):
         self.diff = None
@@ -84,6 +142,73 @@ class Effect():
                     del param[p[0]]
             except:
                 pass
+
+# ロード待ちエフェクト
+class LoadingWaitEffect(Effect):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
+
+    def make_diff(self, img, param, efconfig):
+        # Flag check: Wait until flag is -1
+        # If flag != -1, we are loading.
+        if efconfig.loading_flag != -1:
+            # We are waiting for load completion.
+            # Block downstream heavy effects.
+            if efconfig.layer_status is not None:
+                from enums import PipelineStatus
+                efconfig.layer_status = PipelineStatus.PREVIEW
+            
+            # Since this is an ASYNC effect (conceptually), we assume we return None (Preview/NoOp)
+            # while waiting.
+            # We DONT submit a task because the Worker cannot see the main thread's loading flag.
+            # We simply block here in the main thread pipeline logic.
+            # This satisfies "Prevent subsequent heavy processing from starting".
+            self.diff = None
+            self.hash = None
+            return None
+        
+        # If flag == -1, Loading Complete.
+        # Pass through.
+        self.diff = None
+        self.hash = None
+        return None
+
+class RemoveChromaticAberrationEffect(Effect):
+    def get_param_dict(self, param):
+        return {
+            'rca_enabled': True,
+        }
+        
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
+
+    def set2widget(self, widget, param):
+        pass
+
+    def set2param(self, param, widget):
+        param['rca_enabled'] = True
+        pass
+
+    def make_diff(self, img, param, efconfig):
+        rca_enabled = self._get_param(param, 'rca_enabled')
+        if rca_enabled == False or efconfig.loading_flag != -1:
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((rca_enabled))
+
+            # Async Processing Logic
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+            if handled:
+                return result
+
+            if self.hash != param_hash:
+                self.diff = remove_chromatic_aberration(img)
+                self.hash = param_hash
+        
+        return self.diff
 
 # レンズモディファイア
 class LensModifierEffect(Effect):
@@ -579,6 +704,10 @@ class CropEffect(Effect):
 # AI ノイズ除去
 class AINoiseReductonEffect(Effect):
     __net = None
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
 
     def get_param_dict(self, param):
         return {
@@ -593,19 +722,29 @@ class AINoiseReductonEffect(Effect):
 
     def make_diff(self, img, param, efconfig):
         nr = self._get_param(param, 'ai_noise_reduction')
+        # print(f"DEBUG: AINoise make_diff. Mode={self.execution_mode}, Processor={efconfig.processor is not None}, EfMode={efconfig.mode}")
 
         if nr == False: #or efconfig.mode == EffectMode.PREVIEW:
+            if efconfig.processor is not None:
+                efconfig.processor.cancel_effect(self.__class__.__name__)
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((nr))
+            param_hash = hash((nr, efconfig.upstream_hash))
+            
+            # Async Processing Logic
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+            if handled:
+                return result
+
             if self.hash != param_hash:
                 if True:
                     import helpers.nafnet_helper as nafnet_helper
                     if AINoiseReductonEffect.__net is None:
                         AINoiseReductonEffect.__net = nafnet_helper.setup_nafnet(task='Image Denoising', device=config.get_config('gpu_device'))
 
-                    self.diff = wait_prosessing(nafnet_helper.predict_nafnet_helper, AINoiseReductonEffect.__net, img)
+                    #self.diff = wait_prosessing(nafnet_helper.predict_nafnet_helper, AINoiseReductonEffect.__net, img)
+                    self.diff = nafnet_helper.predict_nafnet_helper(AINoiseReductonEffect.__net, img)
                 elif False:
                     import helpers.restormer_helper as restormer_helper
                     if AINoiseReductonEffect.__net is None:
@@ -2394,8 +2533,10 @@ def create_effects(distortion_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
-    lv0['lens_modifier'] = LensModifierEffect()
+    lv0['loading_wait'] = LoadingWaitEffect()
+    lv0['remove_chromatic_aberration'] = RemoveChromaticAberrationEffect()
     lv0['ai_noise_reduction'] = AINoiseReductonEffect()
+    lv0['lens_modifier'] = LensModifierEffect()
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
     lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
