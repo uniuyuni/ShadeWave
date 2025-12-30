@@ -38,6 +38,7 @@ from kivy.uix.textinput import TextInput
 
 import cores.core as core
 import cores.expand_mask as expand_mask
+import cores.hlsrgb as hlsrgb
 import params
 import effects
 import config
@@ -2727,12 +2728,12 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
     def get_crop_image_hls(self):
         if self.crop_image_hls is None:
-            self.crop_image_hls = cv2.cvtColor(self.crop_image_rgb, cv2.COLOR_RGB2HLS_FULL)
+            self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
         return self.crop_image_hls
 
     def get_full_image_hls(self):
         if self.full_image_hls is None:
-            self.full_image_hls = cv2.cvtColor(self.full_image_rgb, cv2.COLOR_RGB2HLS_FULL)
+            self.full_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
         return self.full_image_hls
 
     def set_texture_size(self, tx, ty):

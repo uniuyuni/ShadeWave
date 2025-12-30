@@ -252,10 +252,13 @@ class ImageSet:
                 # ここで補正
                 img_array = core.adjust_exposure(img_array, Ev)
                 img_array, masks = core.adjust_tone(img_array, white_level=-100)
+                """
+                # ハイライトの階調が崩れるので廃止
                 if masks[1] is not None:
                     source = core.type_convert(img_array, np.ndarray)
                     mask = core.type_convert(masks[1], np.ndarray)
                     img_array = highlight_recovery.reconstruct_highlight_details2(source, mask)
+                """
                 Ev = -Ev # 補正は逆方向
 
             param['rgb_or_raw'] = 'raw'

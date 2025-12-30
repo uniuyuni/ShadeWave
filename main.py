@@ -35,6 +35,7 @@ if __name__ == '__main__':
     import utils.utils as utils
     import utils.kvutils as kvutils
     import macos
+    import cores.hlsrgb as hlsrgb
     import cores.film_emulator as film_emulator
     import cores.lens_simulator as lens_simulator
     import config
@@ -95,7 +96,7 @@ if __name__ == '__main__':
         rgb = np.zeros((32, 32, 3), dtype=np.float32)
         msk = np.ones((32, 32), dtype=np.float32)
 
-        hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
+        hls = hlsrgb.rgb_to_hlc_gain(rgb)
         hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
 
         #core.fast_median_filter(rgb[..., 0])

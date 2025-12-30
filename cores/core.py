@@ -25,7 +25,7 @@ import base64
 
 import cores.highlight_recovery as highlight_recovery
 import cores.sigmoid as sigmoid
-import dng_sdk
+import dng_sdk.dng_temperature
 import utils.utils as utils
 import params
 import config
@@ -248,6 +248,7 @@ def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
     if ksize == (0, 0) and sigma == 0.0:
         return src
     return  cv2.GaussianBlur(src, ksize, sigma)
+
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
     return gaussian_blur_jax(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
@@ -1546,7 +1547,7 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
     output = np.empty_like(hls_img)
     
     h_adj = adjust[0]
-    l_factor = 2.0 ** adjust[1]
+    l_factor = 2.0 ** (adjust[1] * 2)
     s_factor = 1.0 + adjust[2]
     
     for i in prange(h):
@@ -1559,8 +1560,17 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
             # 明度調整
             new_l = hls_img[i, j, 1] * (l_factor ** w_val)
             
-            # 彩度調整
-            new_s = hls_img[i, j, 2] * (s_factor ** w_val)
+            # 彩度調整 (Vibrance logic)
+            s_adj = adjust[2]
+            if s_adj > 0.0:
+                # Vibrance Boost
+                w_adj = s_adj * w_val
+                new_s = hls_img[i, j, 2] + hls_img[i, j, 2] * (1.0 - hls_img[i, j, 2]) * w_adj * 2.0
+            else:
+                # Desaturation (Linear Interpolation)
+                # Power function (0.0 ** w) breaks at s_factor=0 (-100%), causing artifacts.
+                # Linear: S * (1 + adjust * w)
+                new_s = hls_img[i, j, 2] * (1.0 + adjust[2] * w_val)
 
             # クリッピング
             #new_l = manual_clip(new_l, 0.0, 1.0)
@@ -1569,33 +1579,70 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
             output[i, j, 0] = new_h
             output[i, j, 1] = new_l
             output[i, j, 2] = new_s
+            
+            # チャンネル数が4以上の場合（Gainマップ等）、残りのチャンネルをコピー
+            if c > 3:
+                for k in range(3, c):
+                     output[i, j, k] = hls_img[i, j, k]
     
     return output
 
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def calculate_ls_weight_numba(hls_img, l_range, s_range):
+@njit(parallel=True, fastmath=False, cache=True, boundscheck=False, error_model="numpy")
+def calculate_elliptical_weight_numba(hls_img, center_h, width_h, fade_h, l_range, s_range):
     h, w, _ = hls_img.shape
     weight_map = np.zeros((h, w), dtype=np.float32)
     
     l_min, l_max = l_range
     s_min, s_max = s_range
+    fade_ls = 0.15 # Fixed fade width for L/S
     
     for i in prange(h):
         for j in prange(w):
+            hue = hls_img[i, j, 0]
             l = hls_img[i, j, 1]
             s = hls_img[i, j, 2]
             
-            # 明度重み
-            l_fade_in = smooth_step_numba(l, l_min, l_min + 0.1)
-            l_fade_out = 1.0 - smooth_step_numba(l, l_max - 0.1, l_max)
-            l_weight = l_fade_in * l_fade_out
+            # 1. Hue Excess Distance
+            diff_h = abs(hue - center_h)
+            if diff_h > 180.0:
+                diff_h = 360.0 - diff_h
+                
+            excess_h = 0.0
+            if diff_h > width_h:
+                if fade_h > 1e-5:
+                    excess_h = (diff_h - width_h) / fade_h
+                else:
+                    excess_h = 100.0 # Sharp cutoff
             
-            # 彩度重み
-            s_fade_in = smooth_step_numba(s, s_min, s_min + 0.1)
-            s_fade_out = 1.0 - smooth_step_numba(s, s_max - 0.1, s_max)
-            s_weight = s_fade_in * s_fade_out
+            # 2. L Excess Distance
+            excess_l = 0.0
+            if l < l_min:
+                excess_l = (l_min - l) / fade_ls
+            elif l > l_max:
+                excess_l = (l - l_max) / fade_ls
+                
+            # 3. S Excess Distance
+            excess_s = 0.0
+            if s < s_min:
+                # STRICT FADE for Lower Bound (to exclude Gray/Noise)
+                # fade_ls (0.15) is too loose for s_min (0.02).
+                # Use a much sharper fade (e.g., 0.005 or s_min/2)
+                strict_fade = 0.005
+                excess_s = (s_min - s) / strict_fade
+            elif s > s_max:
+                excess_s = (s - s_max) / fade_ls
+                
+            # 4. Elliptical Combination (Euclidean Norm of Excess)
+            dist_sq = excess_h*excess_h + excess_l*excess_l + excess_s*excess_s
+            dist = np.sqrt(dist_sq)
             
-            weight_map[i, j] = l_weight * s_weight
+            # 5. Smooth Falloff
+            # Inside plateau (dist=0) -> 1.0
+            # At fade limit (dist=1) -> 0.0
+            # Using smooth_step for S-curve falloff
+            weight = 1.0 - smooth_step_numba(dist, 0.0, 1.0)
+            
+            weight_map[i, j] = weight
     
     return weight_map
 
@@ -1622,7 +1669,7 @@ class ColorSetting:
         self.kernel_size = 3
 
 # メイン処理関数
-def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
+def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0, mask_reference=None):
 
     # Numba設定に変換
     numba_settings = []
@@ -1641,120 +1688,135 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0):
     kernel_size = max(3, int(cs.kernel_size * resolution_scale))
     if kernel_size % 2 == 0: 
         kernel_size += 1
-    sigma = max(1.0, kernel_size / 6.0)
+    sigma = max(1.0, kernel_size / 2.0)
     kernel = gaussian_kernel(kernel_size, sigma)
     
+    current_hls = hls_img
+    
+    # 選択マスク計算用の画像 (Referenceがある場合はそちらを使う)
+    mask_source = mask_reference if mask_reference is not None else hls_img
+    
     for setting in numba_settings:
-        # 色相重み計算
+        # Elliptical Weighting (H, L, S combined Isotropically)
+        
+        final_weight = calculate_elliptical_weight_numba(
+            mask_source, 
+            setting.center, 
+            setting.width, 
+            setting.fade_width, 
+            setting.l_range, 
+            setting.s_range
+        )
+        """
         hue_map = hls_img[..., 0]
         hue_weight = vectorized_circular_smooth_step_numba(hue_map, setting.center, setting.width, setting.fade_width)
         
         # 輝度/彩度重み計算
-        #ls_weight = calculate_ls_weight_numba(hls_img, setting.l_range, setting.s_range)
+        ls_weight = calculate_ls_weight_numba(hls_img, setting.l_range, setting.s_range)
         
         # 最終重み
-        final_weight = hue_weight #* ls_weight
-        
+        final_weight = hue_weight * ls_weight
+        """
         # ガウシアンブラー適用
         if kernel_size > 1:
             final_weight = gaussian_blur_cv(final_weight, (kernel_size, kernel_size), 0)
-            #final_weight = separable_gaussian_blur(final_weight, kernel)
         
         # 重みを使って調整
-        result = adjust_hls_with_weight_numba(hls_img, final_weight, setting.adjust)
+        current_hls = adjust_hls_with_weight_numba(current_hls, final_weight, setting.adjust)
     
-    return result
+    return current_hls
 
-def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
+
+def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, reference_hls=None):
     # 色相の設定
     COLOR_SETTING = {
         'red': {
-            'center': 22.65,  # 赤の中心値
-            'width': 22.5,  # 完全適用幅 (±10度)
-            'fade_width': 22.5/2,  # フェード幅 (10-22.5度でフェード)
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
-            'adjust': [0.1, 0.05, 0.1],  # [色相, 明度, 彩度] の調整値
-            'kernel_size': 32,
+            'center': 105.11,
+            'width': 21.0,
+            'fade_width': 18.0,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
+            'adjust': [0.1, 0.05, 0.1],
+            'kernel_size': 64,
         },
         'orange': {
-            'center': 33.75,
-            'width': 11.25,
-            'fade_width': 11.25/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.1, 0.9),  # 彩度の有効範囲
+            'center': 142.99,
+            'width': 13.3,
+            'fade_width': 11.4,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [0.05, 0.1, 0.1],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'yellow': {
-            'center': 60,
-            'width': 15,
-            'fade_width': 15/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'center': 175.55,
+            'width': 17.5,
+            'fade_width': 15.0,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [0, 0.1, 0.05],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'green': {
-            'center': 112.5,
-            'width': 37.5,
-            'fade_width': 37.5/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'center': 225.0,
+            'width': 21.0,
+            'fade_width': 18.0/2,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [-0.05, 0, 0.1],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'cyan': {
-            'center': 180,
-            'width': 30,
-            'fade_width': 30/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'center': 285.11,
+            'width': 24.5,
+            'fade_width': 21.0,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [0, -0.05, 0],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'blue': {
-            'center': 240,
-            'width': 30,
-            'fade_width': 30/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'center': 355.55,
+            'width': 24.5,
+            'fade_width': 21.0,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [0.05, 0, 0.15],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'purple': {
-            'center': 285,
-            'width': 15,
-            'fade_width': 15/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'center': 21.37,
+            'width': 9.1,
+            'fade_width': 7.8,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [0.1, 0.05, 0],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'magenta': {
-            'center': 318.75,
-            'width': 18.75,
-            'fade_width': 18.75/2,
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
+            'center': 45.0,
+            'width': 21.0,
+            'fade_width': 18.0,
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [0.05, 0.1, 0.05],
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'sky': {
             'center': 210,
             'width': 30,
             'fade_width': 20,
-            'l_range': (0.3, 0.9),
-            's_range': (0.4, 1.0),
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [5, 0.2, 0.1],  # [色相, 輝度, 彩度]
-            'kernel_size': 32,
+            'kernel_size': 64,
         },
         'skin': {
             'center': 30,
             'width': 20,
             'fade_width': 15,
-            'l_range': (0.2, 0.8),
-            's_range': (0.3, 0.7),
+            'l_range': (0.01, 1.1),
+            's_range': (0.02, 2.0),
             'adjust': [-2, 0.1, -0.05],
             'kernel_size': 32,
         },
@@ -1771,12 +1833,12 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
 
     color_setting_one = [COLOR_SETTING[color_name]]
     color_setting_one[0]['adjust'] = [h, l, s]
-    adjusted_hls = adjust_hls_colors_numba(hls_img, color_setting_one, resolution_scale)
+    adjusted_hls = adjust_hls_colors_numba(hls_img, color_setting_one, resolution_scale, reference_hls)
 
     return np.array(adjusted_hls)
 
 
-#@njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
+@njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
 def jjn_dither_uint8(img_float):
     """
     float32画像(0.0-1.0)をJJN法でディザリングしてuint8に変換

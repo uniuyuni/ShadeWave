@@ -1,21 +1,13 @@
 
 import numpy as np
-import time
 import logging
-from enum import Enum
 
-import cores.core as core
 import config
 import params
 import effects
-from enums import EffectMode,ExecutionMode, PipelineStatus
-import splitimage
+import cores.core as core
 import utils.utils as utils
-
-# Status of upstream processing
-# class PipelineStatus(int, Enum):
-#     PREVIEW = 0   # Processing or Preview quality
-#     COMPLETE = 1  # High quality complete
+from enums import EffectMode, ExecutionMode, PipelineStatus
 
 class AsyncPipelineManager:
     def __init__(self, worker):
@@ -107,6 +99,7 @@ class AsyncPipelineManager:
         self.worker.cancel_all()
         self.cache.clear()
 
+
 def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, loading_flag=-1):
     
     # クロップ情報を得る、ない場合元のクロップ情報から展開
@@ -132,8 +125,6 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
 
     if crop_image is None or lv1reset == True:
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, offset, is_zoomed)
-        #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
-        #mask_editor2.set_texture_size(texture_width, texture_height)
         mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
         params.set_disp_info(primary_param, disp_info2)
@@ -171,8 +162,6 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     # Export ignores async, passes None as processor
     img0, lv1reset, pre_rotation_img, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig, processor=None)
     imgc = img0
-    #imgc, disp_info2 = core.crop_image(img0, disp_info, *primary_param['original_img_size'], 0, 0, (0, 0), False)
-    #mask_editor2.set_orientation(primary_param.get('rotation', 0), primary_param.get('rotation2', 0), primary_param.get('flip_mode', 0))
     imax = max(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_texture_size(imax, imax)
     mask_editor2.set_primary_param(primary_param, disp_info)
@@ -606,9 +595,9 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
     return rgb
 
 def pipeline_hls(hls, effects, param, efconfig):
-    hls2 = hls.copy()
+    efconfig.hls_reference = hls.copy()
     for i, n in enumerate(effects):
-        diff = effects[n].make_diff(hls2, param, efconfig)
+        diff = effects[n].make_diff(hls, param, efconfig)
         if diff is not None:
             hls = effects[n].apply_diff(hls)
 
@@ -665,5 +654,11 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
     if diff is not None: hls2_s = effects['SatvsSat'].apply_diff(hls2_s)
     diff = effects['saturation'].make_diff(hls_s, param, efconfig)
     if diff is not None: hls2_s = effects['saturation'].apply_diff(hls2_s)
+    
+    # チャンネル数が4以上の場合（Gainマップ等）、残りのチャンネルを結合
+    channels = [hls2_h, hls2_l, hls2_s]
+    if hls.shape[-1] > 3:
+        for i in range(3, hls.shape[-1]):
+            channels.append(hls[..., i])
 
-    return np.stack([hls2_h, hls2_l, hls2_s], axis=-1)
+    return np.stack(channels, axis=-1)

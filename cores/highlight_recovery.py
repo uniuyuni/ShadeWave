@@ -41,10 +41,10 @@ def reconstruct_highlight_details(hdr_img, is_enhance_red=True):
     # 赤のカラーバランスが崩れているので補正、ついでにディティールをはっきりさせる
     rgb = contrast
     if is_enhance_red:
-        hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
+        hls = hlsrgb.rgb_to_hlc_gain(rgb)
         hls = core.adjust_hls_color_one(hls, 'enhance_red', 0, 80/100, 0)
-        rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-    #rgb = local_contrast.apply_microcontrast(rgb, 100)
+        rgb = hlsrgb.hlc_gain_to_rgb(hls)
+    rgb = local_contrast.apply_microcontrast(rgb, 100)
     result = core.apply_mask(contrast, mask, rgb) # ハイライトにのみ適用
 
     return result
@@ -53,7 +53,7 @@ def reconstruct_highlight_details2(source, mask):
     #mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
     threshold = float(np.max(mask)) * 3 / 4
     mask[mask < threshold] = 0.0
-    target = local_contrast.apply_microcontrast(source, 200)
+    target = local_contrast.apply_microcontrast(source, 400)
     mask = mask[..., np.newaxis]
     img_array = source * (1-mask) + target * mask
     return img_array

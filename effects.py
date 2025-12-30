@@ -2,9 +2,7 @@
 import cv2
 import numpy as np
 import jax.numpy as jnp
-import importlib
 from enum import Enum
-from colorsys import rgb_to_hls, hls_to_rgb
 import os
 
 import cores.core as core
@@ -16,11 +14,13 @@ import linear_to_log.linear_to_log_lut as linear_to_log
 import cores.filters as filters
 import cores.local_contrast as local_contrast
 import cores.highlight_recovery as highlight_recovery
+import cores.hlsrgb as hlsrgb
 from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
 import config
 import pipeline
 import params
 import utils.utils as utils
+import logging
 #import helpers.mediapipe_helper
 #import helpers.qwen_image_helper as qih
 import utils.aiutils as aiutils
@@ -764,7 +764,6 @@ class AINoiseReductonEffect(Effect):
 
 # BM3Dノイズ除去
 class BM3DNoiseReductionEffect(Effect):
-    __bm3d = None
 
     def get_param_dict(self, param):
         return {
@@ -785,10 +784,8 @@ class BM3DNoiseReductionEffect(Effect):
         else:
             param_hash = hash((bm3d))
             if self.hash != param_hash:
-                if BM3DNoiseReductionEffect.__bm3d is None:
-                    BM3DNoiseReductionEffect.__bm3d = importlib.import_module('bm3dcl')
-                
-                self.diff = BM3DNoiseReductionEffect.__bm3d.bm3d_denoise(img, bm3d/100.0 * efconfig.disp_info[4])
+                import bm3dcl
+                self.diff = bm3dcl.bm3d_denoise(img, bm3d/100.0 * efconfig.disp_info[4])
                 self.hash = param_hash
 
         return self.diff
@@ -1029,9 +1026,9 @@ class GlowEffect(Effect):
             param_hash = hash((gb, gg, go))
             if self.hash != param_hash:
                 rgb = core.type_convert(rgb, np.ndarray)
-                hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
+                hls = hlsrgb.rgb_to_hlc_gain(rgb)
                 hls[:,:,1] = core.apply_level_adjustment(hls[:,:,1], gb, 127+gg/2, 255)
-                rgb2 = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
+                rgb2 = hlsrgb.hlc_gain_to_rgb(hls)
                 if gg > 0:
                     radius = gg * 10 * efconfig.resolution_scale
                     rgb2 = filters.lensblur_filter(rgb2, 1 if radius <= 0 else radius) 
@@ -1167,8 +1164,11 @@ class RGB2HLSEffect(Effect):
     def make_diff(self, rgb, param, efconfig):
         if self.diff is None:
             rgb = core.type_convert(rgb, np.ndarray)
-            self.diff = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
-            self.diff = np.nan_to_num(self.diff) # Inf/NaNが含まれているとcvtColorでエラーになるため除去
+            #rgb *= 1/1.6
+            self.diff = hlsrgb.rgb_to_hlc_gain(rgb)
+            logging.debug(f"H MAX {np.max(self.diff[:, :, 0])}")
+            logging.debug(f"L MAX {np.max(self.diff[:, :, 1])}")
+            logging.debug(f"S MAX {np.max(self.diff[:, :, 2])}")
         return self.diff
 
 class HLS2RGBEffect(Effect):
@@ -1176,7 +1176,9 @@ class HLS2RGBEffect(Effect):
     def make_diff(self, hls, param, efconfig):
         if self.diff is None:
             hls = core.type_convert(hls, np.ndarray)
-            self.diff = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
+            # Use HDR-safe Numba implementation
+            self.diff = hlsrgb.hlc_gain_to_rgb(hls)
+            #self.diff *= 1.6
         return self.diff
 
 class HLSEffect(Effect):
@@ -1247,19 +1249,18 @@ class HLSColorEffect(Effect):
         hue = self._get_param(param, "hls_" + self.color_name + "_hue")
         lum = self._get_param(param, "hls_" + self.color_name + "_lum")
         sat = self._get_param(param, "hls_" + self.color_name + "_sat")
-        param_hash = hash((hue, lum, sat))
         if hue == 0 and lum == 0 and sat == 0:
             self.diff = None
             self.hash = None
-
-        elif self.hash != param_hash:
-            self.diff = core.adjust_hls_color_one(hls, self.color_name, hue, lum/100, sat/100, efconfig.resolution_scale) - hls
-            self.hash = param_hash
+        
+        else:
+            param_hash = hash((hue, lum, sat))
+            if self.hash != param_hash:
+                ref_hls = getattr(efconfig, 'hls_reference', None)
+                self.diff = core.adjust_hls_color_one(hls, self.color_name, hue, lum/100, sat/100, efconfig.resolution_scale, ref_hls)
+                self.hash = param_hash
 
         return self.diff
-    
-    def apply_diff(self, hls):
-        return hls + self.diff
 
 class ExposureEffect(Effect):
 
@@ -1439,7 +1440,7 @@ class ToneEffect(Effect):
             if masks[1] is not None:
                 source = core.type_convert(diff, np.ndarray)
                 mask = core.type_convert(masks[1], np.ndarray)
-                self.diff = highlight_recovery.reconstruct_highlight_details2(source, mask)
+                self.diff = highlight_recovery.reconstruct_highlight_details(source, False)
             else:
                 self.diff = diff
             self.hash = param_hash
@@ -1707,7 +1708,6 @@ class TonecurveBlueEffect(Effect):
         return core.apply_lut(rgb_b, self.diff)
 
 class GradingEffect(Effect):
-    __colorsys = None
 
     def __init__(self, numstr, **kwargs):
         super().__init__(**kwargs)
@@ -1747,11 +1747,9 @@ class GradingEffect(Effect):
         else:
             param_hash = hash((np.sum(pl), gh, gl, gs))
             if self.hash != param_hash:
-                if GradingEffect.__colorsys is None:
-                    GradingEffect.__colorsys = importlib.import_module('colorsys')
-
+                import colorsys
                 lut = core.calc_point_list_to_lut(pl)
-                rgbs = np.array(GradingEffect.__colorsys.hls_to_rgb(gh/360.0, gl/100.0, gs/100.0), dtype=np.float32)
+                rgbs = np.array(colorsys.hls_to_rgb(gh/360.0, gl/100.0, gs/100.0), dtype=np.float32)
                 self.diff = (lut, rgbs)
                 self.hash = param_hash
 
@@ -2280,7 +2278,8 @@ class SolidColorEffect(Effect):
         else:        
             param_hash = hash((coa, coh, cos, col, coao))
             if self.hash != param_hash:
-                r, g, b = hls_to_rgb(coh/360, col/100, cos/100)
+                import colorsys
+                r, g, b = colorsys.hls_to_rgb(coh/360, col/100, cos/100)
                 rgb = core.type_convert(rgb, np.ndarray)
                 self.diff = core.apply_solid_color(rgb, solid_color=(r, g, b), opacity=coao/100)
                 self.hash = param_hash
