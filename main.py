@@ -4,6 +4,8 @@
 
 if __name__ == '__main__':
     import matplotlib
+    matplotlib.interactive(False)  # インタラクティブ完全OFF
+
     import tkinter as tk
     
     # tk.Tk()で落ちるのを回避するためのパッチ
@@ -58,6 +60,40 @@ if __name__ == '__main__':
     import widgets.mask2_content as mask2_content
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
 
+    from kivy.config import Config
+    Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
+    Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
+    #Config.set('graphics', 'width', 1200)
+    #Config.set('graphics', 'height', 800)
+    Config.set('kivy', 'kivy_clock', 'interrupt')
+
+if __name__ != '__main__':
+    class ImportBlocker:
+        """特定のモジュールのインポートをブロックする"""
+        def __init__(self, blocked_modules):
+            self.blocked_modules = set(blocked_modules)
+        
+        def find_module(self, fullname, path=None):
+            # ブロック対象のモジュールかチェック
+            for blocked in self.blocked_modules:
+                if fullname == blocked or fullname.startswith(blocked + '.'):
+                    return self
+            return None
+        
+        def load_module(self, fullname):
+            raise ImportError(f"Module '{fullname}' is blocked in child process")
+
+    def init_worker():
+        """子プロセス初期化時に実行される"""
+        import sys
+        import multiprocessing
+        # インポートフックを設定
+        blocker = ImportBlocker(['kivy', 'kivymd', 'matplotlib', 'tkinter'])
+        sys.meta_path.insert(0, blocker)
+        print(f"子プロセス {multiprocessing.current_process().name}: インポートブロッカー設定完了")
+    
+    init_worker()
+
 import os
 import numpy as np
 import jax
@@ -70,13 +106,6 @@ os.environ['JAX_LOG_VERBOSITY'] = '0'
 jax.config.update("jax_platform_name", "METAL")
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
-
-from kivy.config import Config
-Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
-Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
-#Config.set('graphics', 'width', 1200)
-#Config.set('graphics', 'height', 800)
-Config.set('kivy', 'kivy_clock', 'interrupt')
 
 if __name__ == '__main__':
 
@@ -99,7 +128,6 @@ if __name__ == '__main__':
         hls = hlsrgb.rgb_to_hlc_gain(rgb)
         hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
 
-        #core.fast_median_filter(rgb[..., 0])
         core.apply_mask(rgb, msk, rgb)
 
 

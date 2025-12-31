@@ -4,6 +4,7 @@ import numpy as np
 import jax.numpy as jnp
 from enum import Enum
 import os
+import logging
 
 import cores.core as core
 import cores.cubelut as cubelut
@@ -20,26 +21,8 @@ import config
 import pipeline
 import params
 import utils.utils as utils
-import logging
-#import helpers.mediapipe_helper
-#import helpers.qwen_image_helper as qih
 import utils.aiutils as aiutils
-from processing_dialog import wait_prosessing
-
-from widgets.mask_editor import MaskEditor
-from widgets.crop_editor import CropEditor
-from widgets.distortion_painter import DistortionCanvas
 from enums import EffectMode, ExecutionMode
-
-# class EffectMode(int, Enum):
-#     PREVIEW = 0
-#     LOUPE = 1
-#     EXPORT = 2
-# 
-# class ExecutionMode(int, Enum):
-#     SYNC = 0
-#     ASYNC = 1
-#     BLOCKING = 2
 
 class EffectConfig():
 
@@ -325,6 +308,8 @@ class InpaintEffect(Effect):
 
         if param['inpaint'] == True:
             if self.mask_editor is None:
+                from widgets.mask_editor import MaskEditor
+                
                 self.mask_editor = MaskEditor(param,
                                               effect_ctrl_param=(0, 'inpaint'),
                                               touch_up_callback=self.mask_editor_touch_up)
@@ -477,10 +462,10 @@ class DistortionEffect(Effect):
             self.is_initial_close -= 1
 
         if self.distortion_painter is not None:
-            if self.hash is not img:
-                self.distortion_painter.set_ref_image(img, False)
-                self.distortion_painter.remap_image()
-                self.hash = img
+            #if self.hash is not img:
+            self.distortion_painter.set_ref_image(img, False)
+            self.distortion_painter.remap_image()
+            #    self.hash = img
             self.diff = 0 if self.diff is None else self.diff + 1
         
         else:
@@ -488,6 +473,8 @@ class DistortionEffect(Effect):
             if len(dr) > 0:
                 param_hash = hash((len(dr)))
                 if self.hash != param_hash:
+                    from widgets.distortion_painter import DistortionCanvas
+
                     tcg_info = core.param_to_tcg_info(param)
                     self.diff = DistortionCanvas.replay_recorded(img, param['distortion_recorded'], tcg_info)
                     self.hash = param_hash
@@ -507,6 +494,8 @@ class DistortionEffect(Effect):
 
     def _open_distortion_painter(self, param, widget):
         if self.distortion_painter is None:
+            from widgets.distortion_painter import DistortionCanvas
+
             self.distortion_painter = DistortionCanvas(image_widget=widget.ids["preview"],
                     recorded=self._get_param(param, 'distortion_recorded'),
                     callback=self._painter_callback,
@@ -661,6 +650,8 @@ class CropEffect(Effect):
 
     def _open_crop_editor(self, param, widget):
         if self.crop_editor is None:
+            from widgets.crop_editor import CropEditor
+
             input_width, input_height = param['original_img_size']
             x1, y1, x2, y2 = params.get_crop_rect(param)
             scale = config.get_config('preview_size')/max(input_width, input_height)
@@ -738,6 +729,8 @@ class AINoiseReductonEffect(Effect):
                 return result
 
             if self.hash != param_hash:
+                from processing_dialog import wait_prosessing
+
                 if True:
                     import helpers.nafnet_helper as nafnet_helper
                     if AINoiseReductonEffect.__net is None:
@@ -1164,11 +1157,7 @@ class RGB2HLSEffect(Effect):
     def make_diff(self, rgb, param, efconfig):
         if self.diff is None:
             rgb = core.type_convert(rgb, np.ndarray)
-            #rgb *= 1/1.6
             self.diff = hlsrgb.rgb_to_hlc_gain(rgb)
-            logging.debug(f"H MAX {np.max(self.diff[:, :, 0])}")
-            logging.debug(f"L MAX {np.max(self.diff[:, :, 1])}")
-            logging.debug(f"S MAX {np.max(self.diff[:, :, 2])}")
         return self.diff
 
 class HLS2RGBEffect(Effect):
@@ -1176,9 +1165,7 @@ class HLS2RGBEffect(Effect):
     def make_diff(self, hls, param, efconfig):
         if self.diff is None:
             hls = core.type_convert(hls, np.ndarray)
-            # Use HDR-safe Numba implementation
             self.diff = hlsrgb.hlc_gain_to_rgb(hls)
-            #self.diff *= 1.6
         return self.diff
 
 class HLSEffect(Effect):
@@ -1338,7 +1325,7 @@ class ClarityEffect(Effect):
 
         elif self.hash != param_hash:
             rgb = core.type_convert(rgb, np.ndarray)
-            self.diff = local_contrast.apply_clarity_luminance(rgb, con * 2 * efconfig.resolution_scale)
+            self.diff = local_contrast.apply_clarity_luminance(rgb, (con * 2 * efconfig.resolution_scale) / 100)
             self.hash = param_hash
 
         return self.diff
@@ -1365,7 +1352,7 @@ class TextureEffect(Effect):
 
         elif self.hash != param_hash:
             rgb = core.type_convert(rgb, np.ndarray)
-            self.diff = local_contrast.apply_texture_advanced(rgb, con * 0.5 * efconfig.resolution_scale)
+            self.diff = local_contrast.apply_texture_advanced(rgb, (con * 0.5 * efconfig.resolution_scale) / 100)
             self.hash = param_hash
 
         return self.diff
@@ -1392,7 +1379,7 @@ class MicroContrastEffect(Effect):
 
         elif self.hash != param_hash:
             rgb = core.type_convert(rgb, np.ndarray)
-            self.diff = local_contrast.apply_microcontrast(rgb, con * 0.5 * efconfig.resolution_scale)
+            self.diff = local_contrast.apply_microcontrast(rgb, (con * 0.5 * efconfig.resolution_scale) / 100)
             self.hash = param_hash
 
         return self.diff
@@ -2086,9 +2073,6 @@ class AutoExposureEffect(Effect):
 
                 # 明るさ補正適用
                 rgb = core.adjust_exposure(rgb, ae)
-
-                # ヒストグラム均等化
-                #rgb = core.process_color_image_lab(rgb, core.histeq_16bit)
                 
                 # 超ハイライト領域のコントラストを上げてディティールをはっきりさせるなどする
                 #rgb = highlight_recovery.reconstruct_highlight_details(rgb, False)
@@ -2149,7 +2133,7 @@ class LUTEffect(Effect):
                     if lut_to_log != 'None':
                         rgb = linear_to_log.process_image(rgb, lut_to_log)
 
-                    apply_rgb = cubelut.process_image(rgb, self.lut)
+                    apply_rgb = cubelut.apply_lut(rgb, self.lut)
                     self.diff = rgb * (1-lut_intensity/100) + apply_rgb * lut_intensity/100
                     self.hash = param_hash
                 else:

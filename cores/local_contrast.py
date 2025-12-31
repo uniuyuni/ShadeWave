@@ -1,3 +1,4 @@
+
 import numpy as np
 import cv2
 
@@ -12,7 +13,7 @@ def apply_clarity(rgb_image, clarity_amount):
     rgb_image : numpy.ndarray
         RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
     clarity_amount : int
-        明瞭度の適用度 (-100 から 100)
+        明瞭度の適用度 (-1 から 1)
         負の値: ソフト効果（ぼかし寄り）
         0: 変化なし
         正の値: シャープ効果（明瞭度向上）
@@ -36,7 +37,7 @@ def apply_clarity(rgb_image, clarity_amount):
     if not isinstance(clarity_amount, (int, float)):
         raise TypeError("clarity_amount must be numeric")
     
-    if not -100 <= clarity_amount <= 100:
+    if not -1 <= clarity_amount <= 1:
         raise ValueError("clarity_amount must be between -100 and 100")
     
     # 効果なしの場合は元画像をそのまま返す
@@ -44,7 +45,7 @@ def apply_clarity(rgb_image, clarity_amount):
         return rgb_image.copy()
     
     # パラメータ計算
-    strength = clarity_amount / 100.0  # -1.0 to 1.0
+    strength = clarity_amount
     
     # カーネルサイズの設定（OpenCVのGaussianBlurはカーネルサイズを指定）
     if abs(strength) <= 0.3:
@@ -84,7 +85,7 @@ def apply_clarity_luminance(rgb_image, clarity_amount):
     rgb_image : numpy.ndarray
         RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
     clarity_amount : int
-        明瞭度の適用度 (-100 から 100)
+        明瞭度の適用度 (-1 から 1)
     
     Returns:
     --------
@@ -109,10 +110,10 @@ def apply_clarity_luminance(rgb_image, clarity_amount):
         return rgb_image.copy()
     
     # RGB to Grayscale (輝度) 変換 - OpenCVを使用
-    luminance = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
+    luminance = core.cvtColorRGB2Gray(rgb_image)
     
     # パラメータ計算
-    strength = clarity_amount / 100.0
+    strength = clarity_amount
     
     if abs(strength) <= 0.3:
         kernel_size = 5
@@ -155,7 +156,7 @@ def apply_clarity_advanced(rgb_image, clarity_amount, preserve_mask=None):
     rgb_image : numpy.ndarray
         RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
     clarity_amount : int
-        明瞭度の適用度 (-100 から 100)
+        明瞭度の適用度 (-1 から 1)
     preserve_mask : numpy.ndarray, optional
         保護マスク (H, W) shape, float32, 値域 [0.0, 1.0]
         1.0: 完全に処理適用, 0.0: 処理をスキップ
@@ -179,15 +180,14 @@ def apply_clarity_advanced(rgb_image, clarity_amount, preserve_mask=None):
     if not isinstance(clarity_amount, (int, float)):
         raise TypeError("clarity_amount must be numeric")
     
-    if not -100 <= clarity_amount <= 100:
+    if not -1 <= clarity_amount <= 1:
         raise ValueError("clarity_amount must be between -100 and 100")
     
     if clarity_amount == 0:
         return rgb_image.copy()
     
     # 輝度変換
-    bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-    luminance = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
+    luminance = core.cvtColorRGB2Gray(rgb_image)
     
     # エッジ検出によるマスク生成
     # Sobelフィルタでエッジを検出
@@ -208,7 +208,7 @@ def apply_clarity_advanced(rgb_image, clarity_amount, preserve_mask=None):
         final_mask = edge_mask
     
     # パラメータ設定
-    strength = clarity_amount / 100.0
+    strength = clarity_amount
     
     if abs(strength) <= 0.3:
         kernel_size = 5
@@ -247,7 +247,7 @@ def apply_texture(rgb_image, texture_amount):
     rgb_image : numpy.ndarray
         RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
     texture_amount : int
-        テクスチャの適用度 (-100 から 100)
+        テクスチャの適用度 (-1 から 1)
         負の値: スムース効果
         0: 変化なし
         正の値: テクスチャ強調
@@ -271,14 +271,14 @@ def apply_texture(rgb_image, texture_amount):
     if not isinstance(texture_amount, (int, float)):
         raise TypeError("texture_amount must be numeric")
     
-    if not -100 <= texture_amount <= 100:
+    if not -1 <= texture_amount <= 1:
         raise ValueError("texture_amount must be between -100 and 100")
     
     if texture_amount == 0:
         return rgb_image.copy()
     
     # パラメータ計算
-    strength = texture_amount / 100.0
+    strength = texture_amount
     
     # テクスチャ検出用のマルチスケール処理
     # 2つの異なるスケールでぼかしを作成
@@ -290,8 +290,7 @@ def apply_texture(rgb_image, texture_amount):
     medium_texture = small_blur - medium_blur  # 中程度のテクスチャ
     
     # 輝度でテクスチャマスクを作成
-    bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-    luminance = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
+    luminance = core.cvtColorRGB2Gray(rgb_image)
     
     # 局所標準偏差でテクスチャ領域を検出
     # 畳み込みで局所的な分散を計算
@@ -338,7 +337,7 @@ def apply_texture_advanced(rgb_image, texture_amount):
     rgb_image : numpy.ndarray
         RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
     texture_amount : int
-        テクスチャの適用度 (-100 から 100)
+        テクスチャの適用度 (-1 から 1)
     
     Returns:
     --------
@@ -363,7 +362,7 @@ def apply_texture_advanced(rgb_image, texture_amount):
         return rgb_image.copy()
     
     # パラメータ
-    strength = texture_amount / 100.0 * 10
+    strength = texture_amount * 10
     
     # 周波数分離（擬似ウェーブレット）
     # 複数のスケールでの分解
@@ -404,7 +403,7 @@ def apply_microcontrast(image, strength):
     
     Args:
         image: RGB画像 (float32, 0-1範囲)
-        strength: 適用度 (-100 to 100)
+        strength: 適用度 (-1 to 1)
     
     Returns:
         処理済み画像 (float32, 0-1範囲)
@@ -413,7 +412,7 @@ def apply_microcontrast(image, strength):
         return image.copy()
     
     # 強度を正規化 (-1.0 to 1.0)
-    normalized_strength = strength / 100.0
+    normalized_strength = strength
     
     # RGB→LAB変換（明度のみ処理）
     lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)

@@ -195,12 +195,6 @@ class ImageSet:
                 img_array = np.rot90(img_array)
                 img_array = img_array[-cheight:, :cwidth]
             
-            # 下位2bit補完
-            """
-            if half == False and config.get_config('raw_depth_expansion') == True:
-                img_array = img_array >> 2
-                img_array = bit_depth_expansion.process_rgb_image(img_array)
-            """
             # float32へ
             #img_array = core.convert_to_float32(img_array)
 
@@ -232,33 +226,11 @@ class ImageSet:
             Ev = 0
             if config.get_config('raw_auto_exposure') == True:
                 
-                # RAWの明るさをとってくる
-                #source_ev = exif_data.get('LightValue', None)
-                source_ev = None
-
-                # とってこれなかったら計算する
-                if source_ev is None:
-                    source_ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
+                Ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
                 
-                # 設定値から目標Evを計算
-                #target_ev = core.calc_ev_from_exif(exif_data)
-
-                # 調整
-                #Ev = core.calculate_correction_value(source_ev, target_ev, 4)
-
-                # AIによるとソースをそのまま使えとのこと
-                Ev = source_ev
-
                 # ここで補正
                 img_array = core.adjust_exposure(img_array, Ev)
                 img_array, masks = core.adjust_tone(img_array, white_level=-100)
-                """
-                # ハイライトの階調が崩れるので廃止
-                if masks[1] is not None:
-                    source = core.type_convert(img_array, np.ndarray)
-                    mask = core.type_convert(masks[1], np.ndarray)
-                    img_array = highlight_recovery.reconstruct_highlight_details2(source, mask)
-                """
                 Ev = -Ev # 補正は逆方向
 
             param['rgb_or_raw'] = 'raw'

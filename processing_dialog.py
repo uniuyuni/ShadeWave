@@ -4,6 +4,7 @@ from PIL import Image, ImageTk
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
+
 from kivy.clock import Clock
 
 class _ProcessingDialog():

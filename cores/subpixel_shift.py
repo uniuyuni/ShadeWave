@@ -96,7 +96,7 @@ def create_enhanced_image(img_array):
     return result / len(shifts)
 
 if __name__ == '__main__':
-    img = cv2.imread(os.getcwd() + "/picture/DSCF0002.jpg")
+    img = cv2.imread(os.getcwd() + "test_input.jpg")
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)/255
 
     img = create_enhanced_image(img)

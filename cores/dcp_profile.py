@@ -1,8 +1,8 @@
 
+import os
+import struct
 import numpy as np
 from typing import List, Tuple, Optional, Dict, BinaryIO
-import struct
-import os
 from dataclasses import dataclass
 from enum import IntEnum
 import cv2

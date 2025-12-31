@@ -135,7 +135,7 @@ def frosted_glass_effect(image, blur_radius=10, noise_scale=0.01):
 
 if __name__ == '__main__':
     # 入力画像の読み込み（0.0-1.0のfloat32に変換）
-    input_img = cv2.imread("your_image.jpg").astype(np.float32) / 255.0
+    input_img = cv2.imread("test_input.jpg").astype(np.float32) / 255.0
     input_img = cv2.cvtColor(input_img, cv2.COLOR_BGR2RGB)
 
     # 各効果の適用
@@ -145,8 +145,8 @@ if __name__ == '__main__':
 
     # 結果の保存
     scratch_img = cv2.cvtColor(scratch_img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite("scratch.jpg", (scratch_img*255).astype(np.uint8))
+    cv2.imwrite("test_scratch.jpg", (scratch_img*255).astype(np.uint8))
     mosaic_img = cv2.cvtColor(mosaic_img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite("mosaic.jpg", (mosaic_img*255).astype(np.uint8))
+    cv2.imwrite("test_mosaic.jpg", (mosaic_img*255).astype(np.uint8))
     frosted_img = cv2.cvtColor(frosted_img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite("frosted.jpg", (frosted_img*255).astype(np.uint8))
+    cv2.imwrite("test_frosted.jpg", (frosted_img*255).astype(np.uint8))

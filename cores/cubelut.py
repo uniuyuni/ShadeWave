@@ -1,19 +1,8 @@
-"""pycubelut v0.2
-=== Author ===
-Yoonsik Park
-park.yoonsik@icloud.com
-=== Description ===
-A library and standalone tool to apply Adobe Cube LUTs to common image
-formats. This supports applying multiple LUTs and batch image processing.
-"""
 
-import logging
+import os
 import numpy as np
 from colour.io.luts.iridas_cube import read_LUT_IridasCube, LUT3D, LUT3x1D
-import os
-from multiprocessing import Pool
 from typing import Union
-
 
 def read_lut(lut_path, clip=False):
     """
@@ -40,7 +29,7 @@ def read_lut(lut_path, clip=False):
     return lut
 
 
-def process_image(image, lut, log=False):
+def apply_lut(image, lut, log=False):
     """Opens the image at <image_path>, transforms it using the passed
     <lut> with trilinear interpolation, and saves the image at
     <output_path>, or if it is None, then the same folder as <image_path>.
@@ -52,7 +41,6 @@ def process_image(image, lut, log=False):
     <log>: if True, transform to log colorspace
     """
 
-    logging.debug("Applying LUT: " + lut.name)
     im_array = image
     is_non_default_domain = not np.array_equal(lut.domain, np.array([[0., 0., 0.], [1., 1., 1.]]))
     dom_scale = None

@@ -8,6 +8,9 @@ import jax.numpy as jnp
 import jax.scipy as jscipy
 from jax import jit
 from functools import partial
+import matplotlib
+matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
+matplotlib.interactive(False)
 import colour
 import math
 from scipy.interpolate import splprep, splev
@@ -31,24 +34,15 @@ import params
 import config
 import cores.aces_tonemapping as aces_tonemapping
 
-@dispatch(np.ndarray)
 def normalize_image(image_data):
+    # 画像データを正規化
     min_val = np.min(image_data)
     max_val = np.max(image_data)
     normalized_image = (image_data - min_val) / (max_val - min_val)
     return normalized_image
 
-@dispatch(jnp.ndarray)
-@jit
-def normalize_image(image_data):
-    min_val = jnp.min(image_data)
-    max_val = jnp.max(image_data)
-    normalized_image = (image_data - min_val) / (max_val - min_val)
-    return normalized_image
-
-@dispatch(np.ndarray)
 def calc_ev_from_image(image_data):
-
+    # EV値を計算
     average_value = np.mean(image_data)
 
     # ここで基準を明確に設定
@@ -56,29 +50,6 @@ def calc_ev_from_image(image_data):
     ev = np.log2(0.5 / average_value)  # 0.5を基準
 
     return float(ev), float(average_value)
-
-@dispatch(jnp.ndarray)
-@jit
-def calc_ev_from_image(image_data):
-
-    average_value = jnp.mean(image_data)
-
-    # ここで基準を明確に設定
-    # 例えば、EV0が0.5に相当する場合
-    ev = jnp.log2(0.5 / average_value)  # 0.5を基準
-
-    return float(ev), float(average_value)
-
-def calculate_correction_value(ev_histogram, ev_setting, maxvalue=4):
-    correction_value = ev_setting - ev_histogram
-    
-    # 補正値を適切にクリッピング
-    if correction_value > maxvalue:  # 過剰補正を避ける
-        correction_value = maxvalue
-    elif correction_value < -maxvalue:  # 過剰補正を避ける
-        correction_value = -maxvalue
-
-    return correction_value
 
 #--------------------------------------------------
 
@@ -275,26 +246,7 @@ def lucy_richardson_gauss(srcf, iteration):
     
     return destf
 
-@partial(jit, static_argnums=(1,))
-def tone_mapping(x, exposure=1.0):
-    # Reinhard トーンマッピング
-    return x / (x + exposure)
-
-def tone_mapping_sync(x, exposure=1.0):
-    array = tone_mapping(x, exposure)
-    array.block_until_ready()
-
-    return np.array(array)
-
-def tone_mapping_np(x, exposure=1.0):
-    # Reinhard トーンマッピング
-    return x / (x + exposure)
-
-def tone_mapping_cv(x, exposure=1.0):
-
-    return cv2.divide(x, cv2.add(x, exposure))
-
-def adjust_highlights(image, strength=0.8):
+def _adjust_highlights(image, strength=0.8):
     """ ハイライトのみを圧縮する補助関数 """
     highlights = np.clip(image - 0.75, 0, 1)  # ハイライト領域抽出
     adjusted = highlights * (1 - strength)
@@ -303,7 +255,7 @@ def adjust_highlights(image, strength=0.8):
 def highlight_compress(image):
 
     return aces_tonemapping.aces_tonemapping(image, 1.0, config.get_config('gpu_device'))
-    adjusted = adjust_highlights(aces, 0.8)
+    adjusted = _adjust_highlights(aces, 0.8)
 
     blurred = gaussian_blur_cv(adjusted, (0,0), 1.2)
     detail = np.clip(adjusted - blurred + 0.5, 0, 1)
@@ -372,15 +324,6 @@ def blend_screen(base, over):
 
     return result
 
-def log_transform(x, base=np.e):
-    """
-    対数関数を適用する。x は0以上の値。
-    出力は0-1の範囲に正規化されることを前提。
-    """
-    # x が0-1の範囲なら、出力も0-1に正規化
-    # max_val = 1.0 (入力の最大値)
-    return np.log(1 + x) / np.log(1 + 1.0)
-
 #--------------------------------------------------
 # 露出補正
 @dispatch(np.ndarray, (float, int))
@@ -428,9 +371,9 @@ def adjust_exposure(rgb, ev):
 
 #--------------------------------------------------
 
-# コントラスト補正
 #@partial(jit, static_argnums=(1,2,))
 def adjust_contrast(img, cf, c=0.5):
+    # コントラスト補正
     # img: 変換元画像
     # cf: コントラストファクター -100.0〜100.0
     # c: 中心値 0〜1.0
@@ -510,10 +453,7 @@ def apply_level_adjustment(image, black_level, midtone_level, white_level):
     #normalized = jnp.minimum(normalized, 1.0)
     
     # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
-    gamma_corrected = jnp.power(normalized, gamma)
-    
-    # 5. 出力範囲（0-1）にスケーリング
-    result = gamma_corrected
+    result = jnp.power(normalized, gamma)
     
     return result
 
@@ -657,12 +597,6 @@ def apply_lut(img, lut, max_value=1.0):
 
 #--------------------------------------------------
 # マスクイメージの適用
-def apply_mask_np(img1, msk, img2):
-    _msk = msk[:, :, np.newaxis]
-    img = img1 * (1.0 - _msk) + img2 * _msk
-
-    return img
-
 @dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
 @jit
 def apply_mask(img1, msk, img2):
@@ -694,7 +628,7 @@ def apply_mask(img1, msk, img2):
         result = np.empty_like(img1)
 
         for i in prange(h):
-            for j in prange(w):
+            for j in range(w):
                 mask_val = msk[i, j, 0]
                 inv_mask = 1.0 - mask_val
                 result[i, j, 0] = img1[i, j, 0] * (1.0 - msk[i, j, 0]) + img2[i, j, 0] * msk[i, j, 0]
@@ -708,7 +642,7 @@ def apply_mask(img1, msk, img2):
     result = np.empty_like(img1)
     
     for i in prange(h):
-        for j in prange(w):
+        for j in range(w):
             mask_val = msk[i, j]
             inv_mask = 1.0 - mask_val
             result[i, j, 0] = img1[i, j, 0] * inv_mask + img2[i, j, 0] * mask_val
@@ -1296,158 +1230,9 @@ def dehaze_image(img, strength=0.5):
 
     return result
 
-
-@jit
-def smooth_step(x, edge0, edge1):
-    """
-    エルミート補間を用いた滑らかなステップ関数
-    x が edge0 未満なら0、edge1 以上なら1、その間は滑らかな補間を行う
-    """
-    # クランプ
-    t = jnp.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
-    # エルミート補間
-    return t * t * (3.0 - 2.0 * t)
-
-@jit
-def circular_smooth_step(hue, center, width, fade_width):
-    """
-    円環上の色相空間で滑らかな重みを計算する
-    
-    Args:
-        hue: 入力色相 (0-360)
-        center: 中心色相
-        width: 完全に適用する幅 (半分)
-        fade_width: フェードする幅
-    
-    Returns:
-        0-1の重み
-    """
-    # 色相の円環性を考慮して距離を計算
-    dist = jnp.abs((((hue - center) % 360) + 180) % 360 - 180)
-    
-    # 完全適用領域なら1.0
-    full_region = dist <= width
-    
-    # フェード領域なら徐々に減衰
-    fade_region = jnp.logical_and(dist > width, dist <= width + fade_width)
-    
-    # フェード領域では滑らかなステップ関数を適用
-    fade_weight = smooth_step(dist, width + fade_width, width)
-    
-    # 条件に応じた重みを返す
-    return jnp.where(full_region, 1.0, jnp.where(fade_region, fade_weight, 0.0))
-
-@jit
-def adjust_hls_with_weight(hls_img, weight, adjust):
-    """
-    重み付きでHLS値を調整する
-    
-    Args:
-        hls_img: HLS形式の画像配列
-        weight: 各ピクセルの調整の重み (0-1)
-        adjust: 調整値の配列 [色相(-180〜180), 明度(-4〜4), 彩度(-1〜1)]
-    """
-    # 重みを適用した調整
-    # 色相: -180〜180度の範囲で直接適用
-    h_adj = weight[..., None] * adjust[0]
-    
-    # 明度: 露出係数として -4〜4 の範囲で適用 (2^adjust[1])
-    l_factor = 2.0 ** (weight[..., None] * adjust[1])
-    
-    # 彩度: -1.0なら彩度*0、0なら変化なし、1.0なら彩度*2
-    s_factor = 1.0 + weight[..., None] * adjust[2]
-    
-    # 各チャンネルに適用
-    h = (hls_img[..., 0:1] + h_adj) % 360
-    l = hls_img[..., 1:2] * l_factor
-    s = hls_img[..., 2:3] * s_factor
-    
-    # 結果を結合
-    return jnp.concatenate([h, l, s], axis=-1)
-
-@partial(jit, static_argnums=(1,2,))
-def calculate_ls_weight(hls_img, l_range=(0.0, 1.0), s_range=(0.0, 1.0)):
-    """
-    輝度と彩度に基づく重みを計算
-    
-    Args:
-        hls_img: HLS形式の画像配列
-        l_range: 明度の有効範囲 (min, max)
-        s_range: 彩度の有効範囲 (min, max)
-    
-    Returns:
-        輝度と彩度に基づく0-1の重み
-    """
-    l = hls_img[..., 1]
-    s = hls_img[..., 2]
-    
-    # 明度に基づく重み (フェードイン、フェードアウト)
-    l_min, l_max = l_range
-    l_fade_in = smooth_step(l, l_min, l_min + 0.1)
-    l_fade_out = 1.0 - smooth_step(l, l_max - 0.1, l_max)
-    l_weight = l_fade_in * l_fade_out
-    
-    # 彩度に基づく重み (フェードイン、フェードアウト)
-    s_min, s_max = s_range
-    s_fade_in = smooth_step(s, s_min, s_min + 0.1)
-    s_fade_out = 1.0 - smooth_step(s, s_max - 0.1, s_max)
-    s_weight = s_fade_in * s_fade_out
-    
-    # 明度と彩度の重みを組み合わせる
-    return l_weight * s_weight
-
-@partial(jit, static_argnums=(2,))
-def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
-    """
-    複数の色相範囲を一度に調整する
-    
-    Args:
-        hls_img: HLS形式の画像配列
-        color_settings: 色設定の辞書のリスト。各辞書には以下のキーが必要：
-            - name: 色の名前
-            - center: 中心色相
-            - width: 完全適用幅 (半径)
-            - fade_width: フェード幅
-            - adjust: [色相調整, 明度調整, 彩度調整]
-            - l_range: (オプション) 明度の有効範囲 (min, max)
-            - s_range: (オプション) 彩度の有効範囲 (min, max)
-    
-    Returns:
-        調整されたHLS画像
-    """
-    result = hls_img.copy()
-    
-    for setting in color_settings:
-        hue = result[..., 0]
-        center = setting['center']
-        width = setting['width']
-        fade_width = setting['fade_width']
-        adjust = setting['adjust']
-        
-        # 色相に基づく重みを計算
-        hue_weight = circular_smooth_step(hue, center, width, fade_width)
-        
-        # 輝度と彩度の範囲を取得（指定がなければデフォルト）
-        l_range = setting.get('l_range', (0.0, 1.0))
-        s_range = setting.get('s_range', (0.0, 1.0))
-        
-        # 輝度と彩度に基づく重みを計算
-        #ls_weight = calculate_ls_weight(result, l_range, s_range)
-        
-        # 最終的な重みを計算
-        final_weight = hue_weight# * ls_weight
-
-        # 重みをぼかす
-        final_weight = gaussian_blur_jax(final_weight, (127*resolution_scale, 127*resolution_scale), 0)
-        
-        # 重みを使って調整
-        result = adjust_hls_with_weight(result, final_weight, adjust)
-    
-    return result
-
 # ガウスカーネル生成関数
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def gaussian_kernel(size, sigma):
+def _gaussian_kernel(size, sigma):
     if size % 2 == 0:
         size += 1  # 奇数に保証
     kernel = np.zeros(size, dtype=np.float32)
@@ -1461,46 +1246,9 @@ def gaussian_kernel(size, sigma):
     
     return kernel / sum_val
 
-# 分離可能なガウシアンブラー
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def separable_gaussian_blur(image, kernel):
-    h, w = image.shape
-    ksize = len(kernel)
-    pad = ksize // 2
-    
-    # 水平方向
-    temp = np.zeros((h, w), dtype=np.float32)
-    for i in prange(h):
-        for j in prange(w):
-            sum_val = 0.0
-            for k in prange(ksize):
-                col = j + k - pad
-                if col < 0:
-                    col = 0
-                elif col >= w:
-                    col = w - 1
-                sum_val += image[i, col] * kernel[k]
-            temp[i, j] = sum_val
-    
-    # 垂直方向
-    result = np.zeros((h, w), dtype=np.float32)
-    for i in prange(h):
-        for j in prange(w):
-            sum_val = 0.0
-            for k in prange(ksize):
-                row = i + k - pad
-                if row < 0:
-                    row = 0
-                elif row >= h:
-                    row = h - 1
-                sum_val += temp[row, j] * kernel[k]
-            result[i, j] = sum_val
-    
-    return result
-
 # 手動クリッピング関数
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def manual_clip(x, min_val, max_val):
+def _manual_clip(x, min_val, max_val):
     if x < min_val:
         return min_val
     elif x > max_val:
@@ -1508,14 +1256,14 @@ def manual_clip(x, min_val, max_val):
     return x
 
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def smooth_step_numba(x, edge0, edge1):
+def _smooth_step(x, edge0, edge1):
     """手動クリッピングを使用した滑らかなステップ関数"""
     t = (x - edge0) / (edge1 - edge0)
-    t = manual_clip(t, 0.0, 1.0)
+    t = _manual_clip(t, 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
 
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def circular_smooth_step_numba(hue, center, width, fade_width):
+def _circular_smooth_step(hue, center, width, fade_width):
     """円環滑らかステップ関数"""
     # 円環距離計算
     diff = hue - center
@@ -1525,24 +1273,24 @@ def circular_smooth_step_numba(hue, center, width, fade_width):
         return 1.0
     elif dist <= width + fade_width:
         # 逆方向の補間: distが大きいほど値が小さい
-        return 1.0 - smooth_step_numba(dist, width, width + fade_width)
+        return 1.0 - _smooth_step(dist, width, width + fade_width)
     else:
         return 0.0
 
 # ベクトル化された円環ステップ関数
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def vectorized_circular_smooth_step_numba(hue_map, center, width, fade_width):
+def _vectorized_circular_smooth_step(hue_map, center, width, fade_width):
     h, w = hue_map.shape
     result = np.empty((h, w), dtype=np.float32)
     
     for i in prange(h):
         for j in prange(w):
-            result[i, j] = circular_smooth_step_numba(hue_map[i, j], center, width, fade_width)
+            result[i, j] = _circular_smooth_step(hue_map[i, j], center, width, fade_width)
     
     return result
 
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def adjust_hls_with_weight_numba(hls_img, weight, adjust):
+def _adjust_hls_with_weight(hls_img, weight, adjust):
     h, w, c = hls_img.shape
     output = np.empty_like(hls_img)
     
@@ -1573,8 +1321,8 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
                 new_s = hls_img[i, j, 2] * (1.0 + adjust[2] * w_val)
 
             # クリッピング
-            #new_l = manual_clip(new_l, 0.0, 1.0)
-            #new_s = manual_clip(new_s, 0.0, 1.0)
+            #new_l = _manual_clip(new_l, 0.0, 1.0)
+            #new_s = _manual_clip(new_s, 0.0, 1.0)
             
             output[i, j, 0] = new_h
             output[i, j, 1] = new_l
@@ -1588,7 +1336,7 @@ def adjust_hls_with_weight_numba(hls_img, weight, adjust):
     return output
 
 @njit(parallel=True, fastmath=False, cache=True, boundscheck=False, error_model="numpy")
-def calculate_elliptical_weight_numba(hls_img, center_h, width_h, fade_h, l_range, s_range):
+def _calculate_elliptical_weight(hls_img, center_h, width_h, fade_h, l_range, s_range):
     h, w, _ = hls_img.shape
     weight_map = np.zeros((h, w), dtype=np.float32)
     
@@ -1602,15 +1350,25 @@ def calculate_elliptical_weight_numba(hls_img, center_h, width_h, fade_h, l_rang
             l = hls_img[i, j, 1]
             s = hls_img[i, j, 2]
             
-            # 1. Hue Excess Distance
-            diff_h = abs(hue - center_h)
-            if diff_h > 180.0:
-                diff_h = 360.0 - diff_h
-                
+            # 1. Hue Excess Distance (Asymmetric)
+            signed_diff = hue - center_h
+            # Wrap around 180 degrees
+            if signed_diff > 180.0:
+                signed_diff -= 360.0
+            elif signed_diff < -180.0:
+                signed_diff += 360.0
+            
+            # Determine Side (Left=0, Right=1)
+            side_idx = 0 if signed_diff < 0 else 1
+            abs_diff = abs(signed_diff)
+            
+            w_h = width_h[side_idx]
+            f_h = fade_h[side_idx]
+            
             excess_h = 0.0
-            if diff_h > width_h:
-                if fade_h > 1e-5:
-                    excess_h = (diff_h - width_h) / fade_h
+            if abs_diff > w_h:
+                if f_h > 1e-5:
+                    excess_h = (abs_diff - w_h) / f_h
                 else:
                     excess_h = 100.0 # Sharp cutoff
             
@@ -1640,7 +1398,7 @@ def calculate_elliptical_weight_numba(hls_img, center_h, width_h, fade_h, l_rang
             # Inside plateau (dist=0) -> 1.0
             # At fade limit (dist=1) -> 0.0
             # Using smooth_step for S-curve falloff
-            weight = 1.0 - smooth_step_numba(dist, 0.0, 1.0)
+            weight = 1.0 - _smooth_step(dist, 0.0, 1.0)
             
             weight_map[i, j] = weight
     
@@ -1649,8 +1407,8 @@ def calculate_elliptical_weight_numba(hls_img, center_h, width_h, fade_h, l_rang
 # 色設定クラス
 color_setting_spec = [
     ('center', numba.float32),
-    ('width', numba.float32),
-    ('fade_width', numba.float32),
+    ('width', numba.float32[:]),      # [Left, Right]
+    ('fade_width', numba.float32[:]), # [Left, Right]
     ('adjust', numba.float32[:]),
     ('l_range', numba.float32[:]),
     ('s_range', numba.float32[:]),
@@ -1661,23 +1419,36 @@ color_setting_spec = [
 class ColorSetting:
     def __init__(self):
         self.center = 0.0
-        self.width = 0.0
-        self.fade_width = 0.0
+        self.width = np.zeros(2, dtype=np.float32)
+        self.fade_width = np.zeros(2, dtype=np.float32)
         self.adjust = np.zeros(3, dtype=np.float32)
         self.l_range = np.zeros(2, dtype=np.float32)
         self.s_range = np.zeros(2, dtype=np.float32)
         self.kernel_size = 3
 
 # メイン処理関数
-def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0, mask_reference=None):
+def _adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0, mask_reference=None):
 
     # Numba設定に変換
     numba_settings = []
     for s in color_settings:
         cs = ColorSetting()
         cs.center = np.float32(s['center'])
-        cs.width = np.float32(s['width'])
-        cs.fade_width = np.float32(s['fade_width'])
+        
+        # Handle Width (Scalar or List)
+        w_val = s['width']
+        if np.isscalar(w_val):
+            cs.width = np.array([w_val, w_val], dtype=np.float32)
+        else:
+            cs.width = np.array(w_val, dtype=np.float32)
+            
+        # Handle Fade Width (Scalar or List)
+        f_val = s['fade_width']
+        if np.isscalar(f_val):
+            cs.fade_width = np.array([f_val, f_val], dtype=np.float32)
+        else:
+            cs.fade_width = np.array(f_val, dtype=np.float32)
+
         cs.adjust = np.array(s['adjust'], dtype=np.float32)
         cs.l_range = np.array(s['l_range'], dtype=np.float32)
         cs.s_range = np.array(s['s_range'], dtype=np.float32)
@@ -1689,7 +1460,7 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0, mask_
     if kernel_size % 2 == 0: 
         kernel_size += 1
     sigma = max(1.0, kernel_size / 2.0)
-    kernel = gaussian_kernel(kernel_size, sigma)
+    kernel = _gaussian_kernel(kernel_size, sigma)
     
     current_hls = hls_img
     
@@ -1699,7 +1470,7 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0, mask_
     for setting in numba_settings:
         # Elliptical Weighting (H, L, S combined Isotropically)
         
-        final_weight = calculate_elliptical_weight_numba(
+        final_weight = _calculate_elliptical_weight(
             mask_source, 
             setting.center, 
             setting.width, 
@@ -1709,7 +1480,7 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0, mask_
         )
         """
         hue_map = hls_img[..., 0]
-        hue_weight = vectorized_circular_smooth_step_numba(hue_map, setting.center, setting.width, setting.fade_width)
+        hue_weight = _vectorized_circular_smooth_step(hue_map, setting.center, setting.width, setting.fade_width)
         
         # 輝度/彩度重み計算
         ls_weight = calculate_ls_weight_numba(hls_img, setting.l_range, setting.s_range)
@@ -1722,7 +1493,7 @@ def adjust_hls_colors_numba(hls_img, color_settings, resolution_scale=1.0, mask_
             final_weight = gaussian_blur_cv(final_weight, (kernel_size, kernel_size), 0)
         
         # 重みを使って調整
-        current_hls = adjust_hls_with_weight_numba(current_hls, final_weight, setting.adjust)
+        current_hls = _adjust_hls_with_weight(current_hls, final_weight, setting.adjust)
     
     return current_hls
 
@@ -1732,98 +1503,98 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, ref
     COLOR_SETTING = {
         'red': {
             'center': 105.11,
-            'width': 21.0,
-            'fade_width': 18.0,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [15.0, 9.5],
+            'fade_width': [30.0, 18.9],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0.1, 0.05, 0.1],
             'kernel_size': 64,
         },
         'orange': {
             'center': 142.99,
-            'width': 13.3,
-            'fade_width': 11.4,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [9.5, 8.1],
+            'fade_width': [18.9, 16.3],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0.05, 0.1, 0.1],
             'kernel_size': 64,
         },
         'yellow': {
             'center': 175.55,
-            'width': 17.5,
-            'fade_width': 15.0,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [8.1, 12.4],
+            'fade_width': [16.3, 24.7],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0, 0.1, 0.05],
             'kernel_size': 64,
         },
         'green': {
             'center': 225.0,
-            'width': 21.0,
-            'fade_width': 18.0/2,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [12.4, 15.0],
+            'fade_width': [24.7, 30.0],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [-0.05, 0, 0.1],
             'kernel_size': 64,
         },
         'cyan': {
             'center': 285.11,
-            'width': 24.5,
-            'fade_width': 21.0,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [15.0, 17.6],
+            'fade_width': [30.0, 35.2],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0, -0.05, 0],
             'kernel_size': 64,
         },
         'blue': {
             'center': 355.55,
-            'width': 24.5,
-            'fade_width': 21.0,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [17.6, 6.5],
+            'fade_width': [35.2, 12.9],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0.05, 0, 0.15],
             'kernel_size': 64,
         },
         'purple': {
             'center': 21.37,
-            'width': 9.1,
-            'fade_width': 7.8,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [6.5, 5.9],
+            'fade_width': [12.9, 11.8],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0.1, 0.05, 0],
             'kernel_size': 64,
         },
         'magenta': {
             'center': 45.0,
-            'width': 21.0,
-            'fade_width': 18.0,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'width': [5.9, 15.0],
+            'fade_width': [11.8, 30.0],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [0.05, 0.1, 0.05],
             'kernel_size': 64,
         },
         'sky': {
-            'center': 210,
-            'width': 30,
-            'fade_width': 20,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'center': 320.0,
+            'width': [20.0, 20.0],
+            'fade_width': [30.0, 30.0],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [5, 0.2, 0.1],  # [色相, 輝度, 彩度]
             'kernel_size': 64,
         },
         'skin': {
-            'center': 30,
-            'width': 20,
-            'fade_width': 15,
-            'l_range': (0.01, 1.1),
-            's_range': (0.02, 2.0),
+            'center': 135.0,
+            'width': [15.0, 8.0],
+            'fade_width': [20.0, 10.0],
+            'l_range': (0.01, 1.0),
+            's_range': (0.02, 1.0),
             'adjust': [-2, 0.1, -0.05],
             'kernel_size': 32,
         },
         'enhance_red': {
-            'center': 22.65,  # 赤の中心値
-            'width': 22.5,  # 完全適用幅 (±10度)
-            'fade_width': 22.5,  # フェード幅 (10-22.5度でフェード)
+            'center': 105.11,  # 赤の中心値
+            'width': [15.0, 9.5],  # 完全適用幅 (±10度)
+            'fade_width': [30.0, 18.9],  # フェード幅 (10-22.5度でフェード)
             'l_range': (0.1, 0.9),  # 明度の有効範囲
             's_range': (0.2, 1.0),  # 彩度の有効範囲
             'adjust': [0.1, 0.05, 0.1],  # [色相, 明度, 彩度] の調整値
@@ -1833,7 +1604,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, ref
 
     color_setting_one = [COLOR_SETTING[color_name]]
     color_setting_one[0]['adjust'] = [h, l, s]
-    adjusted_hls = adjust_hls_colors_numba(hls_img, color_setting_one, resolution_scale, reference_hls)
+    adjusted_hls = _adjust_hls_colors(hls_img, color_setting_one, resolution_scale, reference_hls)
 
     return np.array(adjusted_hls)
 
@@ -1868,7 +1639,7 @@ def jjn_dither_uint8(img_float):
                 current_val = img_float[y, x, c] + error[y, x]
                 
                 # 量子化（四捨五入）
-                quantized_val = manual_clip(round(current_val * 255.0), 0.0, 255.0)
+                quantized_val = _manual_clip(round(current_val * 255.0), 0.0, 255.0)
                 
                 # 出力値設定
                 output[y, x, c] = int(quantized_val)
@@ -1915,7 +1686,7 @@ def jjn_dither_uint16(img_float):
                 current_val = img_float[y, x, c] + error[y, x]
                 
                 # 量子化（四捨五入）
-                quantized_val = manual_clip(round(current_val * 65535.0), 0.0, 65535.0)
+                quantized_val = _manual_clip(round(current_val * 65535.0), 0.0, 65535.0)
                 
                 # 出力値設定
                 output[y, x, c] = int(quantized_val)
@@ -2286,134 +2057,6 @@ def compact_numpy_decoder(obj: Dict) -> Any:
     
     return obj
 
-
-def apply_quantization_error_reduction(
-    img_float: np.ndarray,  # float32 [0,1] 入力画像
-    target_func: callable,   # 画像処理関数 (uint8/uint16画像を受け取る)
-    bit_depth: int = 16,     # 量子化ビット深度 (8 or 16)
-    gamma: float = None,     # ガンマ補正値 (Noneなら適用しない)
-    use_dithering: bool = False,  # ディザリングを有効化
-    clip_output: bool = False # 出力を[0,1]にクリップ
-) -> np.ndarray:
-    """
-    量子化誤差を軽減しながら任意の画像処理関数を適用する汎用関数
-    
-    特徴:
-    - 8bit/16bit対応
-    - ガンマ補正オプション
-    - ディザリングオプション
-    - 量子化誤差の記録と復元
-    - 暗部領域の特別処理
-    """
-    
-    # 量子化パラメータ設定
-    max_val = (2 ** bit_depth) - 1
-    min_val = 0
-    quant_dtype = np.uint16 if bit_depth > 8 else np.uint8
-    
-    # ガンマ補正の適用 (オプション)
-    if gamma is not None:
-        # ガンマ補正: [0,1] -> [0,1]
-        img_processed = np.power(img_float, 1.0 / gamma)
-    else:
-        img_processed = img_float
-    
-    # 量子化前のfloat値をスケーリング
-    img_scaled = img_processed * max_val
-    
-    # ディザリングの適用 (オプション)
-    if use_dithering:
-        noise = np.random.uniform(low=-0.5, high=0.5, size=img_scaled.shape)
-        img_scaled = np.clip(img_scaled + noise, min_val, max_val)
-    
-    # 量子化誤差比率の記録
-    # 量子化: float -> integer
-    img_quantized = np.clip(img_scaled, min_val, max_val).astype(quant_dtype)
-    
-    # 比率 = 量子化後の値 / 量子化前の値 (0除算回避)
-    float_ratio = np.zeros_like(img_scaled)
-    non_zero_mask = img_scaled > 1e-6
-    float_ratio[non_zero_mask] = img_quantized[non_zero_mask] / img_scaled[non_zero_mask]
-    # ゼロ値の比率は1とする（後で0除算を避けるため）
-    float_ratio[~non_zero_mask] = 1.0
-    
-    # ターゲット関数で処理
-    processed_quantized = target_func(img_quantized)
-    
-    # 出力をfloatに変換
-    processed_float = processed_quantized.astype(np.float32)
-    
-    # 量子化誤差の補正: 処理後の値を記録した比率で割る
-    # 比率が0.5未満になる場合は0.5に制限（過補正防止）
-    restored_float = processed_float / np.maximum(float_ratio, 0.5)
-    
-    # 暗部領域の特別処理: 処理後に0になった画素で、元の値が0でない場合
-    # 元の値の一定比率（ここでは90%）を復元
-    zero_mask = (processed_quantized == 0) & (img_quantized != 0)
-    restored_float[zero_mask] = img_scaled[zero_mask] * 0.9
-    
-    # スケーリングを元に戻す
-    restored = restored_float / max_val
-    
-    # ガンマ逆補正 (オプション)
-    if gamma is not None:
-        restored = np.power(restored, gamma)
-    
-    # クリップ
-    if clip_output:
-        restored = np.clip(restored, 0, 1)
-    
-    return restored
-
-def process_color_image_lab(img_rgb_float, target_func, bit_depth=16, gamma=2.2, restore_color=True):
-    """カラー画像をLAB空間で処理"""
-    lab = cv2.cvtColor(img_rgb_float, cv2.COLOR_RGB2LAB)
-    l, a, b = cv2.split(lab)
-    
-    # 明度チャンネルのみ処理 (正規化: L*は[0,100] -> [0,1])
-    l_processed = apply_quantization_error_reduction(
-        l / 100.0,
-        target_func,
-        bit_depth=bit_depth,
-        gamma=gamma
-    ) * 100.0  # [0,100]に戻す
-    
-    lab_processed = cv2.merge((l_processed, a, b))
-    enhanced_image = cv2.cvtColor(lab_processed, cv2.COLOR_LAB2RGB)
-
-    if restore_color:
-        # 変換前画像と変換後画像をHSVに分解
-        old_hsv = cv2.cvtColor(img_rgb_float, cv2.COLOR_RGB2HSV_FULL)
-        _, old_s, old_v = cv2.split(old_hsv)
-        new_hsv = cv2.cvtColor(enhanced_image, cv2.COLOR_RGB2HSV_FULL)
-        new_h, new_s, new_v = cv2.split(new_hsv)
-        # 破綻リスクの計算
-        risk = np.clip((new_v - old_v) / (1 - old_v + 1e-6), 0.1, 0.9)
-        # 破綻リスクに応じて彩度の重み付け平均
-        merged_s = old_s * (1 - risk) + new_s * risk
-        # HSVに復元してからさらにRGBに復元
-        final_hsv = cv2.merge((new_h, merged_s, new_v))
-        enhanced_image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2RGB_FULL)
-    
-    return enhanced_image
-
-def clahe_16bit(img_uint16):
-    """16ビット画像用のCLAHE"""
-    clahe = cv2.createCLAHE(clipLimit=10.0, tileGridSize=(8, 8))
-    return clahe.apply(img_uint16)
-
-def histeq_16bit(img_uint16):
-    """16ビット画像用のヒストグラム均等化"""
-    # ヒストグラム計算
-    hist = np.histogram(img_uint16, bins=65536, range=(0, 65535))[0]
-    
-    # 累積分布関数(CDF)計算
-    cdf = hist.cumsum()
-    cdf_normalized = cdf * 65535 / cdf[-1]
-    
-    # ルックアップテーブルでマッピング
-    return np.interp(img_uint16.flatten(), np.arange(0, 65536), cdf_normalized).reshape(img_uint16.shape).astype(np.uint16)
-
 def auto_contrast_tonemap(image):
     """
     トーンカーブベースの自動コントラスト補正
@@ -2641,41 +2284,6 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
 
 #-------------------------------------------------
 
-# 高速なGuided Filter実装 (HDR対応)
-def guided_filter(guide, src, radius, eps):
-    """
-    He et al. のGuided Image Filteringの実装
-    OpenCVのプリミティブを使用しているため高速かつHDR値(1.0超)も正しく扱える
-    """
-    # ガイドとソースをfloat32に確保
-    guide = guide.astype(np.float32)
-    src = src.astype(np.float32)
-    
-    # ボックスフィルタのカーネルサイズ (直径)
-    ksize = (2 * radius + 1, 2 * radius + 1)
-    
-    # 各種平均の計算 (ボックスフィルタ)
-    mean_I = cv2.boxFilter(guide, cv2.CV_32F, ksize)
-    mean_p = cv2.boxFilter(src, cv2.CV_32F, ksize)
-    mean_Ip = cv2.boxFilter(guide * src, cv2.CV_32F, ksize)
-    mean_II = cv2.boxFilter(guide * guide, cv2.CV_32F, ksize)
-    
-    # 共分散と分散
-    cov_Ip = mean_Ip - mean_I * mean_p
-    var_I = mean_II - mean_I * mean_I
-    
-    # 線形係数 a, b の計算
-    a = cov_Ip / (var_I + eps)
-    b = mean_p - a * mean_I
-    
-    # 係数の平滑化
-    mean_a = cv2.boxFilter(a, cv2.CV_32F, ksize)
-    mean_b = cv2.boxFilter(b, cv2.CV_32F, ksize)
-    
-    # 出力計算
-    q = mean_a * guide + mean_b
-    return q
-
 def light_denoise(img, its, col):
 
     # YCrCb色空間に変換 (HDR対応・リニア変換)
@@ -2715,103 +2323,6 @@ def light_denoise(img, its, col):
     # チャンネルを結合
     filtered_ycrcb = cv2.merge([y, cr, cb])
     return cv2.cvtColor(filtered_ycrcb, cv2.COLOR_YCrCb2RGB)
-
-#-------------------------------------------------
-
-def fast_tv_denoise(img, weight=0.1, max_iter=100, tol=1e-4):
-    """
-    Total Variationノイズ除去の超高速実装 (Chambolleアルゴリズム)
-    
-    パラメータ:
-        image: 入力画像 (2D: グレースケール, 3D: RGB)
-        weight: ノイズ除去強度 (0.0-1.0)
-        max_iter: 最大反復回数
-        tol: 収束許容誤差
-        
-    戻り値:
-        ノイズ除去後の画像 (入力と同じshape)
-    """
-    weight *= 1.5
-    
-    # 次元数による分岐 (Numba外で処理)
-    if img.ndim == 2:
-        return _tv_chambolle_single(img, weight, max_iter, tol)
-
-    elif img.ndim == 3 and img.shape[2] == 3:
-        return _process_rgb(img, weight, max_iter, tol)
-
-    else:
-        raise ValueError("サポートされる形式: 2D(グレースケール) or 3D(RGB)")
-
-@njit(parallel=True, fastmath=True, cache=True)
-def _process_rgb(rgb_img, weight, max_iter, tol):
-    """ RGB画像のTVノイズ除去 """
-    denoised = np.empty_like(rgb_img)
-    for c in range(3):
-        denoised[..., c] = _tv_chambolle_single(rgb_img[..., c], weight, max_iter, tol)
-
-    return denoised
-
-@njit(parallel=True, fastmath=True, cache=True)
-def _tv_chambolle_single(img, weight, max_iter, tol):
-    """ 単一チャンネル用TVノイズ除去コア """
-    # 画像サイズを取得 (境界処理用)
-    H, W = img.shape
-    
-    # 初期設定
-    u = img
-    p = np.zeros((H, W, 2), dtype=np.float32)
-    g = np.zeros((H, W, 2), dtype=np.float32)
-    
-    # ステップサイズ計算
-    tau = 0.25 / weight
-    tol_val = tol * np.max(img)
-    
-    # 反復処理
-    for it in prange(max_iter):
-        # 各ピクセルの差分を配列に格納
-        delta_arr = np.zeros((H, W), dtype=np.float32)
-        
-        # 勾配計算と更新 (境界を除く内部ピクセルのみ処理)
-        for i in prange(1, H-1):
-            for j in prange(1, W-1):
-                # 勾配計算
-                g[i, j, 0] = p[i, j, 0] + tau * (u[i+1, j] - u[i, j])
-                g[i, j, 1] = p[i, j, 1] + tau * (u[i, j+1] - u[i, j])
-                
-                # ノルム計算
-                norm = np.sqrt(g[i, j, 0]**2 + g[i, j, 1]**2) + 1e-8
-                factor = 1.0 / (1.0 + tau * norm)
-                
-                # 差分計算
-                delta_arr[i, j] = np.abs(p[i, j, 0] - g[i, j, 0] * factor) + \
-                                  np.abs(p[i, j, 1] - g[i, j, 1] * factor)
-                
-                # 更新
-                p[i, j, 0] = g[i, j, 0] * factor
-                p[i, j, 1] = g[i, j, 1] * factor
-        
-        # 全ピクセルの差分を合計
-        delta = np.sum(delta_arr)
-        
-        # 収束チェック
-        if delta < tol_val:
-            break
-    
-    # 発散計算
-    div_p = np.zeros_like(u)
-    for i in prange(1, H-1):
-        for j in prange(1, W-1):
-            div_p[i, j] = p[i-1, j, 0] - p[i, j, 0] + p[i, j-1, 1] - p[i, j, 1]
-    
-    # 境界処理 (境界ピクセルは元の値を保持)
-    result = u - weight * div_p
-    result[0, :] = img[0, :]  # 上境界
-    result[-1, :] = img[-1, :]  # 下境界
-    result[:, 0] = img[:, 0]  # 左境界
-    result[:, -1] = img[:, -1]  # 右境界
-    
-    return result.astype(np.float32)
 
 #-------------------------------------------------
 

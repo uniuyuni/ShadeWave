@@ -106,7 +106,7 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
 class FileCacheSystem:
     def __init__(self, max_cache_size: int = 10, max_concurrent_loads: int = 4):
         # 共有リソースを初期化
-        self.ppe = ProcessPoolExecutor(max_workers=2)
+        self.ppe = ProcessPoolExecutor(max_workers=1)
         self.shared_resources = {
             'cache': {},
             'preload_registry': {},
@@ -115,7 +115,7 @@ class FileCacheSystem:
             'executor': self.ppe
         }
         # ダミーを走らせる
-        self.ppe.submit(lambda: None)
+        #self.ppe.submit(lambda: None)
         
         # 各共有リソースへの参照を設定
         self.cache = self.shared_resources['cache']

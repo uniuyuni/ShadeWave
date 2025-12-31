@@ -86,7 +86,7 @@ def edge_aware_expansion(image_14bit):
     
     return result
 
-def process_rgb_image(image_14bit_rgb):
+def process_image(image_14bit_rgb):
     """
     RGB画像の各チャンネルに対してビット深度拡張を適用
     
@@ -100,27 +100,3 @@ def process_rgb_image(image_14bit_rgb):
     for i in range(3):  # R, G, Bの各チャンネル
         result[:, :, i] = edge_aware_expansion(image_14bit_rgb[:, :, i])
     return result
-
-
-
-def linear_interpolation_8to16bit(img_8bit):
-    
-    # 16bit形式に変換
-    img_16bit = img_8bit.astype(np.uint16) << 8  # 上位8bitに配置
-    
-    # ガウシアンフィルタで補間値生成
-    kernel_size = (3, 3)  # カーネルサイズ
-    sigma = 1.0  # 標準偏差
-    interpolated = cv2.GaussianBlur(img_8bit, kernel_size, sigmaX=sigma)
-    
-    # 境界処理（鏡映境界）
-    interpolated = cv2.copyMakeBorder(
-        interpolated, 
-        1, 1, 1, 1, 
-        cv2.BORDER_REFLECT_101
-    )[1:-1, 1:-1]  # 不要な境界をトリミング
-    
-    # 下位8bitに補間値を追加
-    img_16bit |= interpolated.astype(np.uint16)
-    
-    return img_16bit

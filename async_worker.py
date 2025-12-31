@@ -6,20 +6,34 @@ import time
 from queue import Empty
 import logging
 import traceback
+import sys
+import copy
 
+import effects
 import config
-# import effects # Moved inside worker_process
 
-def worker_process(input_queue, result_queue, stop_event, config_dict, latest_tasks):
+def worker_process(input_queue, result_queue, stop_event, config_dict, latest_tasks):    
     """
     Background worker process.
     Continuously pulls tasks from input_queue and processes them.
-    """
+    """    
+    # 子プロセスで読み込まれているモジュールを確認
+    loaded_modules = list(sys.modules.keys())
+    print(f"子プロセス {multiprocessing.current_process().name} で読み込まれているモジュール:")
+    
+    # 特定のモジュールをチェック
+    check_modules = ['numpy', 'matplotlib', 'kivy', 'kivymd']
+    for module in check_modules:
+        if any(module in m for m in loaded_modules):
+            print(f"  ⚠️ {module} が読み込まれています")
+            # 具体的にどのサブモジュールか表示
+            related = [m for m in loaded_modules if module in m]
+            print(f"     {related[:5]}")  # 最初の5つを表示
+
     # Restore configuration in the worker process
     config._config = config_dict
     
     # Create independent effect instances for the worker
-    import effects
     worker_effects = effects.create_effects()
     
     while not stop_event.is_set():
@@ -153,14 +167,16 @@ class AsyncWorker:
         self.stop_event = Event()
         self.active_shms = set() # Track SHMs to unlink them if needed
         self.task_counter = 0
-        self.latest_tasks = multiprocessing.Manager().dict() # effect_name -> task_id
+        with multiprocessing.Manager() as mp_manager:
+            self.latest_tasks = mp_manager.dict() # effect_name -> task_id
 
     def start(self):
         if self.process is None or not self.process.is_alive():
             self.stop_event.clear()
             # Pass current config to worker
             self.process = Process(
-                target=worker_process, 
+                target=worker_process,
+                name="ASyncWorker", 
                 args=(self.input_queue, self.result_queue, self.stop_event, config._config, self.latest_tasks)
             )
             self.process.daemon = True
@@ -263,7 +279,6 @@ class AsyncWorker:
         # Assuming efconfig is a simple object, we can use copy.copy or create new.
         # But efconfig doesn't have clone method.
         # We can just manually copy key attributes we need.
-        import copy
         safe_efconfig = copy.copy(efconfig)
         safe_efconfig.processor = None
         

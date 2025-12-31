@@ -3,8 +3,7 @@ import numpy as np
 import cv2
 from scipy.ndimage import gaussian_filter
 from scipy.signal import medfilt2d
-import warnings
-warnings.filterwarnings('ignore')
+import logging
 
 class CMOSToCCDConverter:
     """
@@ -16,29 +15,21 @@ class CMOSToCCDConverter:
         Parameters:
         -----------
         img_rgb_float32 : numpy.ndarray
-            RGB色空間のfloat32画像 (値域: 0.0-1.0 or 0-255)
+            RGB色空間のfloat32画像 (値域: 0.0-1.0)
         """
-        # 入力値域の正規化（0-1に統一）
-        self.original = img_rgb_float32.copy()
-        if self.original.max() > 1.5:
-            self.original = self.original / 255.0
         
-        self.img = self.original.copy()
+        self.img = img_rgb_float32
         self.height, self.width = self.img.shape[:2]
         
     def convert_to_lab(self, img_rgb):
         """RGB画像をLab色空間に変換"""
-        img_uint8 = np.clip(img_rgb * 255, 0, 255).astype(np.uint8)
-        img_bgr = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR)
-        img_lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-        return img_lab / 255.0
+        img_lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2LAB)
+        return img_lab
     
     def convert_from_lab(self, img_lab):
         """Lab画像をRGB色空間に変換"""
-        img_lab_uint8 = np.clip(img_lab * 255, 0, 255).astype(np.uint8)
-        img_bgr = cv2.cvtColor(img_lab_uint8, cv2.COLOR_LAB2BGR)
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        return img_rgb.astype(np.float32) / 255.0
+        img_rgb = cv2.cvtColor(img_lab, cv2.COLOR_LAB2RGB)
+        return img_rgb
     
     def bilateral_filter(self, img, d, sigma_color, sigma_spatial):
         """バイラテラルフィルタを適用"""
@@ -50,7 +41,7 @@ class CMOSToCCDConverter:
         色情報（クロマ）のノイズを軽減する処理
         ルミナンス（明度）は保持
         """
-        print("Processing: Chroma Denoising...")
+        logging.info("Processing: Chroma Denoising...")
         
         # Lab色空間に変換（L: ルミナンス, a,b: クロマ）
         img_lab = self.convert_to_lab(self.img)
@@ -80,7 +71,7 @@ class CMOSToCCDConverter:
         ステップ2: ホットピクセル除去
         CMOS固有のホットピクセル（異常に明るいノイズ）を除去
         """
-        print("Processing: Hot Pixel Removal...")
+        logging.info("Processing: Hot Pixel Removal...")
         
         # 各チャンネルごと処理
         for c in range(3):
@@ -106,7 +97,7 @@ class CMOSToCCDConverter:
         ステップ3: 暗電流補正
         CMOSセンサーの暗電流（オフセット）を補正
         """
-        print("Processing: Dark Current Correction...")
+        logging.info("Processing: Dark Current Correction...")
         
         # 暗電流の推定（画像全体の最小値付近）
         min_val = np.percentile(self.img, 0.5)
@@ -125,7 +116,7 @@ class CMOSToCCDConverter:
         ステップ4: 色均一性補正
         CMOSの色ムラ（各画素のゲイン差）を補正
         """
-        print("Processing: Color Uniformity Correction...")
+        logging.info("Processing: Color Uniformity Correction...")
         
         # グリッド分割による局所的な色統計計算
         block_height = self.height // grid_size
@@ -177,7 +168,7 @@ class CMOSToCCDConverter:
         ステップ5: ダイナミックレンジ拡張
         見かけ上のダイナミックレンジを拡大し、暗部の階調を活かす
         """
-        print("Processing: Tone Mapping Expansion...")
+        logging.info("Processing: Tone Mapping Expansion...")
         
         # 非線形トーン曲線の適用
         # ガンマ補正をベースに、暗部を持ち上げる
@@ -199,7 +190,7 @@ class CMOSToCCDConverter:
         ステップ6: 色かぶり補正
         色温度を調整してCCDのような色再現を実現
         """
-        print("Processing: Color Cast Correction...")
+        logging.info("Processing: Color Cast Correction...")
         
         # ホワイトバランス統計（グレーの領域を参照）
         img_rgb = np.clip(self.img, 0, 1.0)
@@ -238,7 +229,7 @@ class CMOSToCCDConverter:
         ステップ7: 彩度調整
         CCDのようなナチュラルな彩度にする
         """
-        print("Processing: Saturation Adjustment...")
+        logging.info("Processing: Saturation Adjustment...")
         
         img_lab = self.convert_to_lab(self.img)
         
@@ -263,7 +254,7 @@ class CMOSToCCDConverter:
         ステップ8: ノイズプロファイル学習の模擬
         CMOSのノイズパターンを分析して除去
         """
-        print("Processing: Noise Profile Learning Simulation...")
+        logging.info("Processing: Noise Profile Learning Simulation...")
         
         # ラプラシアンフィルタでエッジを検出
         kernel_laplacian = np.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=np.float32)
@@ -294,7 +285,7 @@ class CMOSToCCDConverter:
         ステップ9: マイクロコントラスト強化
         細部のコントラストを自然に強化
         """
-        print("Processing: Micro Contrast Enhancement...")
+        logging.info("Processing: Micro Contrast Enhancement...")
         
         # 複数スケールでのアンシャープマスク
         original_img = self.img.copy()
@@ -317,7 +308,7 @@ class CMOSToCCDConverter:
         ステップ10: 最終的なカラーグレーディング
         CCDのような温かみのある色再現を実現
         """
-        print("Processing: Final Color Grading...")
+        logging.info("Processing: Final Color Grading...")
         
         img_lab = self.convert_to_lab(self.img)
         
@@ -360,7 +351,7 @@ class CMOSToCCDConverter:
         --------
         numpy.ndarray : 処理済みのRGB画像（float32, 0-1範囲）
         """
-        print("\n=== CMOS to CCD-like Conversion Pipeline ===\n")
+        logging.info("\n=== CMOSToCCDConverter Pipeline ===\n")
         
         (self.chroma_denoise(strength=chroma_strength)
 #             .hot_pixel_removal()
@@ -373,15 +364,18 @@ class CMOSToCCDConverter:
              .micro_contrast_enhancement(strength=0.15)
              .final_color_grading())
         
-        print("\n=== Processing Complete ===\n")
+        logging.info("\n=== CMOSToCCDConverter Complete ===\n")
         
         return np.clip(self.img, 0, 1.0)
 
+def process_image(img):
+    converter = CMOSToCCDConverter(img)
+    return converter.process()
 
 # 使用例
 if __name__ == "__main__":
     # テスト画像の生成または読み込み
-    test_img = cv2.imread("your_image.jpg")
+    test_img = cv2.imread("test_input.jpg")
     test_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB).astype(np.float32)/255
     
     # 変換処理の実行
@@ -394,4 +388,4 @@ if __name__ == "__main__":
     )
     
     test_img = cv2.cvtColor((test_img * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-    cv2.imwrite("your_image_out.jpg", test_img)
+    cv2.imwrite("test_output.jpg", test_img)

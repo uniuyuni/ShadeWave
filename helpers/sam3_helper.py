@@ -2,10 +2,10 @@
 import torch
 import numpy as np
 import cv2
-from sam3.model_builder import build_sam3_image_model
-from sam3.model.box_ops import box_xywh_to_cxcywh
-from sam3.model.sam3_image_processor import Sam3Processor
-from sam3.visualization_utils import normalize_bbox
+from SAM3.model_builder import build_sam3_image_model
+from SAM3.model.box_ops import box_xywh_to_cxcywh
+from SAM3.model.sam3_image_processor import Sam3Processor
+from SAM3.visualization_utils import normalize_bbox
 
 RESIZE_FACTOR = 1.0
 
@@ -14,7 +14,7 @@ __model = None
 def setup_sam3(device='cpu'):
     global __model
     if __model is None:
-        __model = build_sam3_image_model(bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", checkpoint_path="checkpoints/sam3.pt", device=device)
+        __model = build_sam3_image_model(bpe_path="SAM3/assets/bpe_simple_vocab_16e6.txt.gz", checkpoint_path="checkpoints/sam3.pt", device=device)
     processor = Sam3Processor(__model)
     sam3_dict = {"processor": processor, "image": None, "inference_state": None}
     return sam3_dict
