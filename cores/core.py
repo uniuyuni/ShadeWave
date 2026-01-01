@@ -160,17 +160,30 @@ def rotation(img, angle, flip_mode=0, inter_mode=0, border_mode="reflect"):
     trans[0, 2] += (size / 2) - center[0]
     trans[1, 2] += (size / 2) - center[1]
 
-    # フリップモードの処理
-    # bit0が1なら左右反転、bit1が1なら上下反転
-    img_affine = img
+    # フリップ処理をアフィン変換行列に統合
     if flip_mode & 1:  # 左右反転
-        img_affine = cv2.flip(img_affine, 1)
-    
+        # x -> width - 1 - x
+        # 行列操作: 3列目に (width-1)*1列目 を足し、1列目の符号反転
+        # M * [[-1, 0, w-1], [0, 1, 0], [0, 0, 1]]
+        m00, m01, m02 = trans[0]
+        m10, m11, m12 = trans[1]
+        trans[0, 0] = -m00
+        trans[0, 2] = m00*(width-1) + m02
+        trans[1, 0] = -m10
+        trans[1, 2] = m10*(width-1) + m12
+        
     if flip_mode & 2:  # 上下反転
-        img_affine = cv2.flip(img_affine, 0)
+        # y -> height - 1 - y
+        # M * [[1, 0, 0], [0, -1, h-1], [0, 0, 1]]
+        m00, m01, m02 = trans[0]
+        m10, m11, m12 = trans[1]
+        trans[0, 1] = -m01
+        trans[0, 2] = m01*(height-1) + m02
+        trans[1, 1] = -m11
+        trans[1, 2] = m11*(height-1) + m12
 
     # 回転と中心補正を同時に行う
-    img_affine = cv2.warpAffine(img_affine, trans, (size, size),
+    img_affine = cv2.warpAffine(img, trans, (size, size),
                                 flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
                                 borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
@@ -597,6 +610,7 @@ def apply_lut(img, lut, max_value=1.0):
 
 #--------------------------------------------------
 # マスクイメージの適用
+
 @dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
 @jit
 def apply_mask(img1, msk, img2):

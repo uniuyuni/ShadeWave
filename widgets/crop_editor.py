@@ -1,12 +1,14 @@
 
 import numpy as np
+
 from kivy.app import App as KVApp
 from kivy.graphics import Color as KVColor, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Translate as KVTranslate, Rotate as KVRotate
 from kivy.properties import NumericProperty as KVNumericProperty, ListProperty as KVListProperty
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.label import Label as KVLabel
 from kivy.metrics import dp
-from kivy.clock import Clock
+from kivy.clock import Clock, mainthread
+
 from enum import Enum
 from typing import List, Tuple
 import math
@@ -62,7 +64,7 @@ class CropEditor(KVFloatLayout):
         
         self.label = KVLabel(font_size=20, bold=True, halign='left')
         self.add_widget(self.label)
-
+    
         self.bind(crop_rect=self.update_rect,
                   input_width=self.update_crop_size,
                   input_height=self.update_crop_size,
@@ -70,7 +72,7 @@ class CropEditor(KVFloatLayout):
                   size=self.update_centering,
                   aspect_ratio=self.update_crop_size,
                   input_angle=self.update_crop_size)
-
+        
         Clock.schedule_once(self.create_ui, -1)
 
     def create_ui(self, dt):
@@ -155,6 +157,9 @@ class CropEditor(KVFloatLayout):
             self.callback()
 
     def update_centering(self, *args):
+        pass
+
+    def update_centering_socket(self, *args):
         # 中心に移動するためのトランスレーションを設定
         inwidth = self.input_width * self.scale
         inheight = self.input_height * self.scale

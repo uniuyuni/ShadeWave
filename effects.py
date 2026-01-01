@@ -567,7 +567,7 @@ class RotationEffect(Effect):
         if self.hash != param_hash:
             self.diff = core.rotation(img, ang + ang2, flp,
                                         inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
-                                        border_mode="refrect" if crop_enable == False else "constant")
+                                        border_mode="reflect" if crop_enable == False else "constant")
             self.hash = param_hash
         
         return self.diff
@@ -644,19 +644,21 @@ class CropEffect(Effect):
                 self.hash = param_hash
                 param['img_size'] = (disp_info[2], disp_info[3])
         return self.diff
-    
+
     def apply_diff(self, img):
         return img
 
     def _open_crop_editor(self, param, widget):
         if self.crop_editor is None:
             from widgets.crop_editor import CropEditor
+            import signals
 
             input_width, input_height = param['original_img_size']
             x1, y1, x2, y2 = params.get_crop_rect(param)
             scale = config.get_config('preview_size')/max(input_width, input_height)
             self.crop_editor = CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
             self.crop_editor.set_editing_callback(self._crop_editing)
+            signals.blit_image.connect(self.crop_editor.update_centering_socket)
             widget.ids["preview_widget"].add_widget(self.crop_editor)
 
             # 編集中は一時的に変更
@@ -667,9 +669,11 @@ class CropEffect(Effect):
 
     def _close_crop_editor(self, param, widget):
         if self.crop_editor is not None:
+            import signals
+
             params.set_crop_rect(param, self.crop_editor.get_crop_rect())
             params.set_disp_info(param, self.crop_editor.get_disp_info())
-
+            signals.blit_image.disconnect(self.crop_editor.update_centering_socket)
             widget.ids["preview_widget"].remove_widget(self.crop_editor)
             self.crop_editor = None
 

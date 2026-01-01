@@ -23,6 +23,9 @@ class AsyncPipelineManager:
             # For now, simplistic: we rely on param_hash.
             pass
 
+    def get_pipeline_version(self):
+        return self.current_pipeline_version
+
     def get_result(self, effect_name, param_hash):
         key = (effect_name, param_hash)
         return self.cache.get(key)
@@ -100,7 +103,7 @@ class AsyncPipelineManager:
         self.cache.clear()
 
 
-def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, loading_flag=-1):
+def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, loading_flag=-1, is_drag=False):
     
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
@@ -140,11 +143,20 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     # 並列処理
     # Async Manager update
     if processor is not None:
-        processor.set_pipeline_version(pipeline_version)
+        if processor.get_pipeline_version() - pipeline_version > 2:
+            pass
+            #return None, imgc        
 
-    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=processor)
-        
-    img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, processor=processor)
+    if not is_drag:
+        img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=processor)
+        img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, processor=processor)
+    else:
+        img2 = imgc
+
+    if processor is not None:
+        if processor.get_pipeline_version() - pipeline_version > 2:
+            pass
+            #return None, imgc        
 
     return img2, imgc
 
@@ -203,16 +215,16 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
             # But the mask *itself* generation might be heavy.
             # For now, let's pass current upstream_status.
             
-            m_img2, lv2reset, _ = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig, lv1reset, upstream_status, processor)
-            m_img2, lv1reset, _ = pipeline_lv2(m_img2, mask.effects, mask.effects_param, efconfig, lv2reset, upstream_status, processor)
+            img2, lv2reset, _ = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig, lv1reset, upstream_status, processor)
+            img2, lv1reset, _ = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig, lv2reset, upstream_status, processor)
 
-            m_img2 = core.type_convert(m_img2, np.ndarray)
+            img2 = core.type_convert(img2, np.ndarray)
             img3 = core.type_convert(img3, np.ndarray)
 
             if crop is None:
-                img3 = core.apply_mask(img3, mask.get_mask_image(), m_img2)
+                img3 = core.apply_mask(img3, mask.get_mask_image(), img2)
             else:
-                img3 = core.apply_mask(img3, mask.get_mask_image()[crop[1]:crop[3], crop[0]:crop[2], :], m_img2)
+                img3 = core.apply_mask(img3, mask.get_mask_image()[crop[1]:crop[3], crop[0]:crop[2], :], img2)
 
     return img3
 

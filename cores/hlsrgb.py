@@ -1,9 +1,9 @@
 
 import numpy as np
-from numba import jit as njit, prange
+from numba import njit, prange
 import time
 
-@njit(nopython=True, parallel=True)
+@njit(parallel=True)
 def rgb2hls(img):
     """
     Convert RGB image to HLS + Gain (HDR safe normalization).
@@ -97,7 +97,7 @@ KR = 0.2126
 KG = 0.7152
 KB = 0.0722
 
-@njit(nopython=True, parallel=True, fastmath=True)
+@njit(fastmath=True)
 def rgb_to_hlc_gain(rgb):
     """
     RGB(HDR) -> HLC+Gain変換 (線形YCbCr風、Gain = max(R,G,B))
@@ -118,7 +118,7 @@ def rgb_to_hlc_gain(rgb):
     H_img, W = rgb.shape[0], rgb.shape[1]
     hlcg = np.empty((H_img, W, 4), dtype=np.float32)
     
-    for i in prange(H_img):
+    for i in range(H_img): # なぜかクラッシュするからprangeが使えない
         for j in range(W):
             r, g, b = rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2]
             
@@ -172,7 +172,7 @@ def rgb_to_hlc_gain(rgb):
     return hlcg
 
 
-@njit(nopython=True, parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True)
 def hlc_gain_to_rgb(hlcg):
     """
     HLC+Gain -> RGB(HDR)変換

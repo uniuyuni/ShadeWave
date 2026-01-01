@@ -364,7 +364,7 @@ class BaseMask(Widget):
 
         full_image_hls = self.editor.get_full_image_hls()
         crop_image_hls = self.editor.get_crop_image_hls()
-        if self.editor.full_image_hls is not None:            
+        if full_image_hls is not None:            
             fimg = full_image_hls[..., HLS_NUM[hls_str]]
             cimg = crop_image_hls[..., HLS_NUM[hls_str]]
             dmax = HLS_DIS_MAX[hls_str]
@@ -374,7 +374,7 @@ class BaseMask(Widget):
             if ndis != dmax:
                 cx, cy = self.editor.tcg_to_full_image(*self.center)
                 print(f"point: {cx}, {cy}, {fimg[int(cy), int(cx)]}")
-                center_n = fimg[int(cy), int(cx)]
+                center_n = fimg[int(cy), int(cx)] 
                 
                 if hls_str == 'hue':
                     # 色相の範囲チェック（0-360の円状ループを考慮）
@@ -2670,6 +2670,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.full_image_hls = None
         self.crop_image_rgb = None
         self.crop_image_hls = None
+        self.original_image = None
 
         logging.info("MaskEditor: 初期化完了")
 
@@ -2716,11 +2717,11 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     def set_ref_image(self, crop_image, full_image, original_image=None):
         if self.crop_image_rgb is not crop_image:
             self.crop_image_rgb = crop_image
-            self.crop_image_hls = None
+            self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
 
         if self.full_image_rgb is not full_image:
             self.full_image_rgb = full_image
-            self.full_image_hls = None
+            self.full_image_hls = hlsrgb.rgb_to_hlc_gain(self.full_image_rgb)
 
         self.original_image = original_image
         if self.original_image is None:
@@ -2732,8 +2733,8 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return self.crop_image_hls
 
     def get_full_image_hls(self):
-        if self.full_image_hls is None:
-            self.full_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
+        if self.full_image_hls is None and self.full_image_rgb is not None:
+            self.full_image_hls = hlsrgb.rgb_to_hlc_gain(self.full_image_rgb)
         return self.full_image_hls
 
     def set_texture_size(self, tx, ty):
@@ -2770,9 +2771,9 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             effects.reeffect_all(mask.effects)
         
     def update(self):
-        Clock.schedule_once(self._update, -1)
+        Clock.schedule_once(self._update, 0)
 
-    def _update(self, dt):
+    def _update(self, dt=0):
         # 既存のマスクに対する更新を処理
         for mask in reversed(self.mask_list):
             #pass    # 無限ループ対策

@@ -225,10 +225,14 @@ if __name__ == '__main__':
         def start_draw_image_and_crop(self, imgset, offset=(0, 0)):
             if self.imgset == imgset:
                 self.crop_image = None
-                #effects.reeffect_all(self.primary_effects)
                 self.start_draw_image(offset)
 
-        # @mainthread
+        def sync_draw_image_and_crop(self, imgset, offset=(0, 0)):
+            if self.imgset == imgset:
+                self.crop_image = None
+                self.pipeline_version += 1
+                self.draw_image_core(offset)
+
         def blit_image(self, img, dt=0):
             if config.get_config('display_output_dither'):
                 img = core.jjn_dither_uint8(img)
@@ -238,9 +242,46 @@ if __name__ == '__main__':
             self.ids["preview"].texture = None # 更新のために必要
             self.ids["preview"].texture = self.texture
 
+            #Singnalを送る
+            import signals
+            signals.blit_image.emit()
+
         def draw_histogram(self, img, blue_count=0, black_count=0, dt=0):
             #logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
             self.ids["histogram"].draw_histogram(img, blue_count, black_count)
+
+        def draw_image_core(self, offset=(0, 0)):
+            if (self.imgset is not None) and (self.imgset.img is not None):
+                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, loading_flag=self.imgset.flag, is_drag=self.drag_start_point is not None)
+                if img is None:
+                    return
+
+                img = np.array(img)
+                utils.print_nan_inf(img, "output")
+
+                img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                                        apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+
+                # ヒストグラム表示
+                img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
+                #self.draw_histogram(img_hist, 0, exclude_count)
+                event = Clock.create_trigger(partial(self.draw_histogram, img_hist, 0, exclude_count))
+                if not event.is_triggered:
+                    event()  # スケジュール
+
+                # プレビュー表示
+                img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
+                img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
+                img_draw = np.clip(img_draw, 0, 1)
+
+                #描画をスケジューリング
+                #self.blit_image(img_draw)
+                try:
+                    if self.enabledelay is not None:
+                        self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
+                except:
+                    pass  # 未スケジュール時は無視
+                self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
 
         def draw_image(self):            
             while self.apply_thread is not None:
@@ -249,50 +290,14 @@ if __name__ == '__main__':
                     offset = self.apply_draw_image_offset
                     self.apply_draw_image_offset = None
 
-                    if (self.imgset is not None) and (self.imgset.img is not None):
-                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, loading_flag=self.imgset.flag)
-                        img = np.array(img)
-                        utils.print_nan_inf(img, "output")
+                    self.draw_image_core(offset)
 
-                        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
-                                                apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-
-                        # ヒストグラム表示
-                        img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
-                        #self.draw_histogram(img_hist, 0, exclude_count)
-                        #Clock.schedule_once(partial(self.draw_histogram, img_hist, 0, exclude_count), -1)
-                        event = Clock.create_trigger(partial(self.draw_histogram, img_hist, 0, exclude_count))
-                        if not event.is_triggered:
-                            event()  # スケジュール
-
-                        # プレビュー表示
-                        img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
-                        img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
-                        img_draw = np.clip(img_draw, 0, 1)
-        #                img_draw = colour.RGB_to_RGB(img_draw, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
-        #                                        apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-
-                        #描画をスケジューリング
-                        #self.blit_image(img_draw)
-                        """
-                        event = Clock.create_trigger(partial(self.blit_image, img_draw))
-                        if not event.is_triggered:
-                            event()  # スケジュール
-                        """
-                        try:
-                            if self.enabledelay is not None:
-                                self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
-                        except:
-                            pass  # 未スケジュール時は無視
-                        self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
-                        
-                #time.sleep(0.01)
                 self.draw_event.wait()
             
         def start_draw_image(self, offset=(0, 0)):
             self.pipeline_version += 1
             self.apply_draw_image_offset = offset
-            #time.sleep(0.01)
+            self.processor.set_pipeline_version(self.pipeline_version)
             self.draw_event.set()
         
         def crop_editing(self):
@@ -537,10 +542,10 @@ if __name__ == '__main__':
                         scale = max(self.primary_param['original_img_size'])/config.get_config('preview_size')
                         offset_x = -(touch.pos[0] - self.drag_start_point[0]) * scale
                         offset_y =  (touch.pos[1] - self.drag_start_point[1]) * scale
+                        self.drag_start_point = touch.pos
+
                         effects.reeffect_all(self.primary_effects, 1)
                         self.start_draw_image_and_crop(self.imgset, (offset_x, offset_y))
-
-                        self.drag_start_point = touch.pos
 
             return False
                     
