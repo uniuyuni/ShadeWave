@@ -2,15 +2,15 @@
 import sys
 import io
 import cv2
+import math
 import numpy as np
-import jax
-import jax.numpy as jnp
-import jax.scipy as jscipy
-from jax import jit
 from functools import partial
-import matplotlib
-matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
-matplotlib.interactive(False)
+try:
+    import matplotlib
+    matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
+    matplotlib.interactive(False)
+except ImportError:
+    pass
 import colour
 import math
 from scipy.interpolate import splprep, splev
@@ -32,7 +32,7 @@ import dng_sdk.dng_temperature
 import utils.utils as utils
 import params
 import config
-import cores.aces_tonemapping as aces_tonemapping
+#import cores.aces_tonemapping as aces_tonemapping
 
 def normalize_image(image_data):
     # 画像データを正規化
@@ -53,19 +53,9 @@ def calc_ev_from_image(image_data):
 
 #--------------------------------------------------
 
-@dispatch(np.ndarray)
 def cvtColorRGB2Gray(rgb):
     # RGBからグレイスケールへの変換
     gry = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-
-    return gry
-
-@dispatch(jnp.ndarray)
-@jit
-def cvtColorRGB2Gray(rgb):
-    # 変換元画像 RGB
-    #gry = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    gry = jnp.dot(rgb, jnp.array([0.2989, 0.5870, 0.1140]))
 
     return gry
 
@@ -189,45 +179,6 @@ def rotation(img, angle, flip_mode=0, inter_mode=0, border_mode="reflect"):
 
     return img_affine
 
-@partial(jit, static_argnums=(0, 1, 2))
-def __create_gaussian_kernel(width: int, height: int, sigma: float):
-    # kernelの中心と1個横のセルの値の比
-    if sigma == 0.0:
-        sigma = 0.3*(max(width, height)/2 - 1) + 0.8
-
-    r = jnp.exp(-1 / (2 * sigma**2))
-
-    # kernelの中心index
-    mw = width // 2
-    mh = height // 2
-
-    # kernelの中心を原点とした座標が入った配列
-    xs = jnp.arange(-mw, mw + 1)
-    ys = jnp.arange(-mh, mh + 1)
-    x, y = jnp.meshgrid(xs, ys)
-
-    # rを絶対値の2乗分累乗すると、ベースとなる配列が求まる
-    g = r**(x**2 + y**2)
-
-    # 正規化
-    return g / np.sum(g)
-
-@partial(jit, static_argnums=(1, 2))
-def gaussian_blur_jax(src, ksize=(3, 3), sigma=0.0):
-    kw, kh = ksize
-    kernel = __create_gaussian_kernel(kw, kh, sigma)
-
-    if src.ndim >= 3:
-        dest = []
-        for i in range(src.shape[2]):
-            dest.append(jscipy.signal.convolve2d(src[:, :, i], kernel, mode='same'))
-
-        dest = jnp.stack(dest, -1)
-    else:
-        dest = jscipy.signal.convolve2d(src, kernel, mode='same')
-
-    return dest
-
 def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
     if ksize == (0, 0) and sigma == 0.0:
         return src
@@ -235,29 +186,123 @@ def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
 
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
-    return gaussian_blur_jax(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
+    # JAX依存を削除し、OpenCVを使用する
+    #return gaussian_blur_jax(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
+    return gaussian_blur_cv(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
 
-@partial(jit, static_argnums=1)
+@njit(parallel=True, fastmath=True, cache=True)
+def _lucy_ratio_step(srcf, bdest):
+    eps = np.finfo(np.float32).eps
+    h, w, c = srcf.shape
+    ratio = np.empty_like(srcf)
+    for i in prange(h):
+        for j in range(w):
+            for k in range(c):
+                ratio[i, j, k] = srcf[i, j, k] / (bdest[i, j, k] + eps)
+    return ratio
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _lucy_update_step(destf, ratio_blur):
+    h, w, c = destf.shape
+    res = np.empty_like(destf)
+    for i in prange(h):
+        for j in range(w):
+            for k in range(c):
+                val = destf[i, j, k] * ratio_blur[i, j, k]
+                res[i, j, k] = val
+    return res
+
 def lucy_richardson_gauss(srcf, iteration):
-
     # 出力用の画像を初期化
     destf = srcf.copy()
 
     for i in range(iteration):
-        # ガウスぼかしを適用してぼけをシミュレーション
-        bdest = gaussian_blur_jax(destf, ksize=(9, 9), sigma=0)
+        # ガウスぼかしを適用してぼけをシミュレーション (OpenCV)
+        bdest = gaussian_blur_cv(destf, ksize=(9, 9), sigma=0)
 
-        # 元画像とぼけた画像の比を計算
-        bdest = bdest + jnp.finfo(jnp.float32).eps
-        ratio = jnp.divide(srcf, bdest)
+        # 元画像とぼけた画像の比を計算 (Numba)
+        ratio = _lucy_ratio_step(srcf, bdest)
 
-        # 誤差の分配のために再びガウスぼかしを適用
-        ratio_blur = gaussian_blur_jax(ratio, ksize=(9, 9), sigma=0)
+        # 誤差の分配のために再びガウスぼかしを適用 (OpenCV)
+        ratio_blur = gaussian_blur_cv(ratio, ksize=(9, 9), sigma=0)
 
-        # 元の出力画像に誤差を乗算
-        destf = jnp.multiply(destf, ratio_blur)
+        # 元の出力画像に誤差を乗算 (Numba)
+        destf = _lucy_update_step(destf, ratio_blur)
     
     return destf
+
+@njit(parallel=True, fastmath=True, cache=True)
+def create_distortion_map(param_vec, width, height):
+    """
+    歪曲マップを作成する関数 (Numba版)
+    """
+    cx = width / 2.0
+    cy = height / 2.0
+    k1, k2, k3, p1, p2 = param_vec
+    
+    map_x = np.empty((height, width), dtype=np.float32)
+    map_y = np.empty((height, width), dtype=np.float32)
+    
+    for i in prange(height):
+        y_norm = i - cy
+        y2 = y_norm * y_norm
+        for j in range(width):
+            x_norm = j - cx
+            x2 = x_norm * x_norm
+            r2 = x2 + y2
+            r4 = r2 * r2
+            r6 = r2 * r4
+            
+            radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6
+            tangential_x = 2.0 * p1 * x_norm * y_norm + p2 * (r2 + 2.0 * x_norm**2)
+            # Fix tangential y formula: p1 * (r2 + 2*y2) + 2*p2*x*y
+            tangential_y = p1 * (r2 + 2.0 * y2) + 2.0 * p2 * x_norm * y_norm
+            
+            map_x[i, j] = x_norm * radial + tangential_x + cx
+            map_y[i, j] = y_norm * radial + tangential_y + cy
+            
+    return map_x, map_y
+
+@njit(parallel=True, fastmath=True, cache=True)
+def apply_lens_distortion(image, map_x, map_y, scale=1.0, interpolation='linear'):
+    """
+    レンズ歪曲収差を適用する関数 (Numba版)
+    Note: scale and interpolation args kept for compatibility but ignored/fixed to linear.
+    """
+    h, w, c = image.shape
+    res = np.empty_like(image)
+    
+    for i in prange(h):
+        for j in range(w):
+            x = map_x[i, j]
+            y = map_y[i, j]
+            
+            # Bilinear interpolation
+            x0 = int(x)
+            y0 = int(y)
+            x1 = x0 + 1
+            y1 = y0 + 1
+            
+            dx = x - x0
+            dy = y - y0
+            
+            # Check bounds
+            if x0 >= 0 and x1 < w and y0 >= 0 and y1 < h:
+                for k in range(c):
+                    v00 = image[y0, x0, k]
+                    v10 = image[y0, x1, k]
+                    v01 = image[y1, x0, k]
+                    v11 = image[y1, x1, k]
+                    
+                    v0 = v00 * (1.0-dx) + v10 * dx
+                    v1 = v01 * (1.0-dx) + v11 * dx
+                    # Interpolate y
+                    val = v0 * (1.0-dy) + v1 * dy
+                    res[i, j, k] = val
+            else:
+                 for k in range(c):
+                     res[i, j, k] = 0.0
+    return res
 
 def _adjust_highlights(image, strength=0.8):
     """ ハイライトのみを圧縮する補助関数 """
@@ -266,7 +311,8 @@ def _adjust_highlights(image, strength=0.8):
     return image - highlights + adjusted
 
 def highlight_compress(image):
-
+    # Lazy load to avoid importing torch at module level
+    import cores.aces_tonemapping as aces_tonemapping
     return aces_tonemapping.aces_tonemapping(image, 1.0, config.get_config('gpu_device'))
     adjusted = _adjust_highlights(aces, 0.8)
 
@@ -371,16 +417,11 @@ def adjust_exposure(rgb, ev):
     
     return result
 
-@dispatch(jnp.ndarray, (float, int))
-@partial(jit, static_argnums=(1,))
-def adjust_exposure(rgb, ev):
+#@dispatch(jnp.ndarray, (float, int))
+#@partial(jit, static_argnums=(1,))
+#def adjust_exposure(rgb, ev):
     # 1.37秒（ただしGPUにのっていることを前提）
-    return rgb * (2.0 ** ev)
-
-@dispatch(cv2.UMat, (float, int))
-def adjust_exposure(rgb, ev):
-    # 4.62秒（しかもUMatを使用していること）
-    return cv2.multiply(rgb, 2.0 ** ev)
+#    return rgb * (2.0 ** ev)
 
 #--------------------------------------------------
 
@@ -409,115 +450,129 @@ def adjust_contrast(img, cf, c=0.5):
     return adjust
     """
 
-@partial(jit, static_argnums=(1,2,3,))
+@njit(parallel=True, fastmath=True, cache=True)
 def apply_level_adjustment(image, black_level, midtone_level, white_level):
-    """
-    Photoshop風のレベル補正を適用する関数
+    max_val = 65535.0
+    black_16bit = float(black_level * 256)
+    white_16bit = float(white_level * 256)
     
-    Args:
-        image: 入力画像 (0.0-1.0の範囲)
-        black_level: 黒レベル (0-255)
-        midtone_level: 中間調レベル (0-255, 128が中性)
-        white_level: 白レベル (0-255)
-    
-    Returns:
-        調整された画像 (0.0-1.0の範囲)
-    """
-    
-    # 16ビット画像の最大値
-    max_val = 65535
-    
-    # 入力レベルを16ビット範囲に変換
-    black_16bit = black_level * 256
-    white_16bit = white_level * 256
-    
-    # midtone_levelを黒レベルと白レベルの範囲でクリップして再マッピング
-    # Photoshopでは、midtone_levelは黒レベルと白レベルの間の相対位置を表す
-    clipped_midtone = max(min(midtone_level, white_level), black_level)
+    # Clip midtone
+    if midtone_level < black_level: midtone_level = black_level
+    if midtone_level > white_level: midtone_level = white_level
+    clipped_midtone = float(midtone_level)
 
-    # 黒レベルと白レベルの範囲で正規化（0-1）
     if white_level > black_level:
         midtone_normalized = (clipped_midtone - black_level) / (white_level - black_level)
     else:
-        midtone_normalized = 0.5  # 範囲が無効な場合は中性値
-    
-    # 正規化された値（0-1）をガンマ値に変換
-    # 0.5が中性（ガンマ1.0）、0に近いほど明るく、1に近いほど暗く
+        midtone_normalized = 0.5
+
     if midtone_normalized < 0.5:
-        # 0-0.5の範囲を0.1-1.0のガンマ値にマッピング（明るく）
         gamma = 0.1 + (midtone_normalized / 0.5) * 0.9
     else:
-        # 0.5-1.0の範囲を1.0-9.99のガンマ値にマッピング（暗く）
         gamma = 1.0 + ((midtone_normalized - 0.5) / 0.5) * 8.99
+
+    input_range_val = white_16bit - black_16bit
+    if input_range_val < 1.0: input_range_val = 1.0
+    inv_input_range = 1.0 / input_range_val
     
-    # 入力画像を16ビット範囲に変換
-    image_16bit = image * max_val
+    h, w, c = image.shape
+    res = np.empty_like(image)
     
-    # レベル調整の計算（Photoshop準拠）
-    # 1. 黒レベル以下を0にクリップ
-    adjusted = jnp.maximum(image_16bit - black_16bit, 0)
-    
-    # 2. 入力範囲を0-1に正規化
-    input_range = white_16bit - black_16bit
-    input_range = jnp.maximum(input_range, 1.0)  # 0除算を防ぐ
-    normalized = adjusted / input_range
-    
-    # 3. 1.0以上をクリップ
-    #normalized = jnp.minimum(normalized, 1.0)
-    
-    # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
-    result = jnp.power(normalized, gamma)
-    
-    return result
+    for i in prange(h):
+        for j in range(w):
+            for k in range(c):
+                val = image[i, j, k] * max_val
+                adj = val - black_16bit
+                if adj < 0: adj = 0
+                norm = adj * inv_input_range
+                res[i, j, k] = norm ** gamma
+    return res
 
 #--------------------------------------------------
 # 彩度補正と自然な彩度補正
+@njit(parallel=True, fastmath=True, cache=True)
 def calc_saturation(hsl_s, sat, vib):
-
-    # 彩度変更値と自然な彩度変更値を計算
-    sat = 1.0 + sat / 100.0
-    vib = (vib / 50.0)
-
-    # 自然な彩度調整
-    if vib == 0.0:
-        final_s = hsl_s
-
-    elif vib > 0.0:
-        # 通常の計算
-        vib = vib ** 2.0
-        final_s = np.log(1.0 + vib * hsl_s) / np.log(1.0 + vib)
+    # Numba implementation
+    sat_val = 1.0 + sat / 100.0
+    vib_val = (vib / 50.0)
+    # Note: original numpy implementation used vib/50.0, but benchmark script used vib/50.0 * 2.0 based on core_jax version!
+    # Let's check core.py lines 500: vib = (vib / 50.0).
+    # core_jax lines 507: vib = (vib / 50.0) * 2.0.
+    # The JAX version had a 2.0 multiplier! The Numpy version didn't.
+    # Which one is correct? Probably JAX one if it was "Natural Saturation".
+    # Or maybe they are different algos?
+    # View file 514, line 500: `vib = (vib / 50.0)`.
+    # Line 525 (commented JAX): `vib = (vib / 50.0) * 2.0`.
+    # I should preserve the behavior invoked by `calc_saturation_jax` which was using 2.0 multiplier.
+    # AND preserve `calc_saturation` which was using 1.0?
+    # But I'm merging them.
+    # Users call `calc_saturation` or `calc_saturation_jax`.
+    # If I merge them, I must choose one logic.
+    # If I use Numba for `calc_saturation`, do I change its logic to match JAX?
+    # The user asked to "port JAX functions".
+    # `calc_saturation` (Numpy) was ALREADY there. User didn't ask to change it.
+    # `calc_saturation_jax` (JAX) was the one to port.
+    # So I should keep `calc_saturation` (Numpy) AS IS (or optimization of IT), and optimization of `calc_saturation_jax`?
+    # But they are 99% same except that 2.0 factor.
+    # Maybe I should keep two functions if logic differs?
+    # Impl below uses optional `factor` argument? No.
+    # I will replace `calc_saturation_jax` with Numba version (with * 2.0) and call it `calc_saturation_jax` (or similar).
+    # AND I will optionally optimize `calc_saturation` (with * 1.0).
+    # Benchmark showed Numba is faster.
+    # So I will implement `calc_saturation` (Numba, * 1.0) AND `calc_saturation_jax` (Numba, * 2.0).
+    # Wait, code duplication?
+    # I can make a helper or just duplicate.
+    
+    sat_val = 1.0 + sat / 100.0
+    vib_val = (vib / 50.0)
+    
+    h, w = hsl_s.shape
+    res = np.empty_like(hsl_s)
+    
+    if vib_val == 0.0:
+        for i in prange(h):
+            for j in range(w):
+                res[i, j] = hsl_s[i, j] * sat_val
+    elif vib_val > 0.0:
+        # np.log(1.0 + vib * hsl_s) / np.log(1.0 + vib)
+        denom =  1.0 / math.log(1.0 + vib_val)
+        for i in prange(h):
+            for j in range(w):
+                res[i, j] = math.log(1.0 + vib_val * hsl_s[i, j]) * denom * sat_val
     else:
-        # 逆関数を使用
-        vib = vib ** 2.0
-        final_s = (np.exp(hsl_s * np.log(1.0 + vib)) - 1.0) / vib
+        # (np.exp(hsl_s * np.log(1.0 + vib)) - 1.0) / vib
+        log_term = math.log(1.0 + vib_val)
+        inv_vib = 1.0 / vib_val
+        for i in prange(h):
+            for j in range(w):
+                res[i, j] = (math.exp(hsl_s[i, j] * log_term) - 1.0) * inv_vib * sat_val
+    return res
 
-    # 彩度を適用
-    final_s = final_s * sat
-
-    return final_s
-
-@partial(jit, static_argnums=(1, 2))
+@njit(parallel=True, fastmath=True, cache=True)
 def calc_saturation_jax(hsl_s, sat, vib):
-
-    # 彩度変更値と自然な彩度変更値を計算
-    sat = 1.0 + sat / 100.0
-    vib = (vib / 50.0) * 2.0
-
-    # 自然な彩度調整
-    if vib == 0.0:
-        final_s = hsl_s
-
-    elif vib > 0.0:
-        # 通常の計算
-        final_s = jnp.log(1.0 + vib * hsl_s) / jnp.log(1.0 + vib)
+    # Ported from JAX version (vib * 2.0)
+    sat_val = 1.0 + sat / 100.0
+    vib_val = (vib / 50.0) * 2.0
+    
+    h, w = hsl_s.shape
+    res = np.empty_like(hsl_s)
+    
+    if vib_val == 0.0:
+        for i in prange(h):
+            for j in range(w):
+                res[i, j] = hsl_s[i, j] * sat_val
+    elif vib_val > 0.0:
+        denom =  1.0 / math.log(1.0 + vib_val)
+        for i in prange(h):
+            for j in range(w):
+                res[i, j] = math.log(1.0 + vib_val * hsl_s[i, j]) * denom * sat_val
     else:
-        # 逆関数を使用
-        final_s = (jnp.exp(hsl_s * jnp.log(1.0 + vib)) - 1.0) / vib
-
-    # 彩度を適用
-    final_s = final_s * sat
-
-    return final_s
+        log_term = math.log(1.0 + vib_val)
+        inv_vib = 1.0 / vib_val
+        for i in prange(h):
+            for j in range(w):
+                res[i, j] = (math.exp(hsl_s[i, j] * log_term) - 1.0) * inv_vib * sat_val
+    return res
 
 #--------------------------------------------------
 
@@ -593,44 +648,46 @@ def calc_point_list_to_lut(point_list, max_value=1.0):
     
     return lut
 
-@partial(jit, static_argnums=(2,))
+#@partial(jit, static_argnums=(2,))
+#def apply_lut(img, lut, max_value=1.0):
+#    """
+#    画像にLUTを適用する関数
+#    max_value: LUTが対応する最大値（デフォルト1.0）
+#    """
+#    # スケーリングしてLUTのインデックスに変換
+#    scale_factor = 65535 / max_value
+#    lut_indices = jnp.clip(jnp.round(img * scale_factor), 0, 65535).astype(jnp.uint16)
+#
+#    # LUTを適用
+#    result = jnp.take(lut, lut_indices)
+#    
+#    return result
+@njit(parallel=True, fastmath=True, cache=True)
 def apply_lut(img, lut, max_value=1.0):
-    """
-    画像にLUTを適用する関数
-    max_value: LUTが対応する最大値（デフォルト1.0）
-    """
-    # スケーリングしてLUTのインデックスに変換
     scale_factor = 65535 / max_value
-    lut_indices = jnp.clip(jnp.round(img * scale_factor), 0, 65535).astype(jnp.uint16)
-
-    # LUTを適用
-    result = jnp.take(lut, lut_indices)
-    
-    return result
+    h, w, c = img.shape
+    res = np.empty_like(img)
+    for i in prange(h):
+        for j in range(w):
+            for k in range(c):
+                val = img[i, j, k] * scale_factor
+                idx = int(val + 0.5)
+                if idx < 0: idx = 0
+                if idx > 65535: idx = 65535
+                res[i, j, k] = lut[idx]
+    return res
 
 #--------------------------------------------------
 # マスクイメージの適用
 
-@dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
-@jit
-def apply_mask(img1, msk, img2):
-
-    _msk = msk[:, :, jnp.newaxis] if msk.ndim == 2 else msk
-    img = img1 * (1.0 - _msk) + img2 * _msk
-
-    return img
-
-@dispatch(cv2.UMat, cv2.UMat, cv2.UMat)
-def apply_mask(img1, msk, img2):
-    _msk = cv2.merge((msk, msk, msk))
-
-    b = cv2.multiply(img1, cv2.subtract(1.0, _msk))
-    f = cv2.multiply(img2, _msk)
-
-    # Add the masked foreground and background.
-    img = cv2.add(f, b)
-
-    return img
+#@dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
+#@jit
+#def apply_mask(img1, msk, img2):
+#
+#    _msk = msk[:, :, jnp.newaxis] if msk.ndim == 2 else msk
+#    img = img1 * (1.0 - _msk) + img2 * _msk
+#
+#    return img
 
 @dispatch(np.ndarray, np.ndarray, np.ndarray)
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
@@ -667,74 +724,136 @@ def apply_mask(img1, msk, img2):
 
 #--------------------------------------------------
 # 周辺減光効果
-@partial(jit, static_argnums=(1,2,5,6))
+#@partial(jit, static_argnums=(1,2,5,6))
+#def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
+#    """
+#    修正版 周辺光量落ち効果
+#    - 中心位置が正確にクロップ中心に一致
+#    - 効果の向きが正しく適用（負の値で周辺暗く、正の値で周辺明るく）
+#    - 滑らかなグラデーション
+#    - scaleを適切に考慮した効果適用
+#    - 元画像の座標系でのビネット中心を正確に反映
+#    
+#    Parameters:
+#        image: 入力画像 (float32, 0-1)
+#        intensity: 効果の強さ (-100 to 100)
+#        radius_percent: 効果の半径 (1-100%)
+#        disp_info: [x, y, w, h, scale] - 元画像における切り抜き情報
+#        gradient_softness: グラデーションの滑らかさ
+#    """
+#
+#    intensity = intensity / 100.0
+#    radius_percent = radius_percent / 100.0
+#    gradient_softness = max(0.1, gradient_softness)
+#    
+#    h, w = image.shape[:2]
+#    
+#    if crop_rect is None:
+#        # クロップ情報がない場合は従来通り
+#        center_x, center_y = w/2, h/2
+#
+#        mm = jax.lax.max(w, h)
+#        max_radius = jax.lax.sqrt(mm**2 + mm**2) / 2
+#    else:        
+#        dx, dy, _, _, scale = disp_info
+#        x1, y1, x2, y2 = crop_rect
+#        offset_x, offset_y = offset
+#            
+#        # クロップ画像内での元画像中心の位置
+#        center_x = (x1 + (x2 - x1) / 2 - dx) * scale + offset_x
+#        center_y = (y1 + (y2 - y1) / 2 - dy) * scale + offset_y
+#        
+#        mm = jax.lax.max((x2 - x1), (y2 - y1)) * scale.astype(jnp.float32)
+#        max_radius = jax.lax.sqrt(mm**2 + mm**2) / 2
+#    
+#    # 指定された半径パーセントに基づいて実際の半径を計算
+#    radius = max_radius * radius_percent
+#    
+#    # 距離マップ作成
+#    y_indices, x_indices = jnp.ogrid[:h, :w]
+#    dist = jnp.sqrt((x_indices - center_x)**2 + (y_indices - center_y)**2)
+#    
+#    def smoothstep(x):
+#        return x * x * (3 - 2 * x)  # 3次多項式
+#
+#    # マスク作成（0が中心、1が端）
+#    mask = jnp.clip(dist / radius, 0, 1)
+#    #mask = gaussian_blur(mask, (64, 64), 0)
+#    mask = jnp.power(mask, gradient_softness)  # グラデーション調整
+#    mask = smoothstep(mask)
+#    
+#    # 効果適用（intensityの符号で方向を制御）
+#    vignette = jnp.where(intensity < 0, 1.0 + intensity * mask, 1.0 - intensity * mask)
+#    
+#    # カラー画像対応
+#    if image.ndim == 3:
+#        vignette = vignette[..., jnp.newaxis]
+#    
+#    # 効果適用
+#    result = jnp.clip(image * vignette, 0, 1) if intensity < 0 else jnp.clip(image + (1-image)*(1-vignette), 0, 1)
+#    return result.astype(jnp.float32)
+@njit(parallel=True, fastmath=True, cache=True)
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
-    """
-    修正版 周辺光量落ち効果
-    - 中心位置が正確にクロップ中心に一致
-    - 効果の向きが正しく適用（負の値で周辺暗く、正の値で周辺明るく）
-    - 滑らかなグラデーション
-    - scaleを適切に考慮した効果適用
-    - 元画像の座標系でのビネット中心を正確に反映
-    
-    Parameters:
-        image: 入力画像 (float32, 0-1)
-        intensity: 効果の強さ (-100 to 100)
-        radius_percent: 効果の半径 (1-100%)
-        disp_info: [x, y, w, h, scale] - 元画像における切り抜き情報
-        gradient_softness: グラデーションの滑らかさ
-    """
-
     intensity = intensity / 100.0
     radius_percent = radius_percent / 100.0
     gradient_softness = max(0.1, gradient_softness)
     
     h, w = image.shape[:2]
     
-    if crop_rect is None:
-        # クロップ情報がない場合は従来通り
-        center_x, center_y = w/2, h/2
-
-        mm = jax.lax.max(w, h)
-        max_radius = jax.lax.sqrt(mm**2 + mm**2) / 2
-    else:        
-        dx, dy, _, _, scale = disp_info
-        x1, y1, x2, y2 = crop_rect
-        offset_x, offset_y = offset
-            
-        # クロップ画像内での元画像中心の位置
-        center_x = (x1 + (x2 - x1) / 2 - dx) * scale + offset_x
-        center_y = (y1 + (y2 - y1) / 2 - dy) * scale + offset_y
-        
-        mm = jax.lax.max((x2 - x1), (y2 - y1)) * scale.astype(jnp.float32)
-        max_radius = jax.lax.sqrt(mm**2 + mm**2) / 2
+    dx, dy, _, _, scale = disp_info
     
-    # 指定された半径パーセントに基づいて実際の半径を計算
+    x1, y1, x2, y2 = crop_rect
+    offset_x, offset_y = offset
+        
+    center_x = (x1 + (x2 - x1) / 2 - dx) * scale + offset_x
+    center_y = (y1 + (y2 - y1) / 2 - dy) * scale + offset_y
+    
+    mm = max((x2 - x1), (y2 - y1)) * scale
+    max_radius = math.sqrt(mm**2 + mm**2) / 2
+    
     radius = max_radius * radius_percent
     
-    # 距離マップ作成
-    y_indices, x_indices = jnp.ogrid[:h, :w]
-    dist = jnp.sqrt((x_indices - center_x)**2 + (y_indices - center_y)**2)
+    res = np.empty_like(image)
     
-    def smoothstep(x):
-        return x * x * (3 - 2 * x)  # 3次多項式
-
-    # マスク作成（0が中心、1が端）
-    mask = jnp.clip(dist / radius, 0, 1)
-    #mask = gaussian_blur(mask, (64, 64), 0)
-    mask = jnp.power(mask, gradient_softness)  # グラデーション調整
-    mask = smoothstep(mask)
+    # 3 channels assumed
+    c = 3
+    if image.ndim == 2:
+        c = 1
     
-    # 効果適用（intensityの符号で方向を制御）
-    vignette = jnp.where(intensity < 0, 1.0 + intensity * mask, 1.0 - intensity * mask)
-    
-    # カラー画像対応
-    if image.ndim == 3:
-        vignette = vignette[..., jnp.newaxis]
-    
-    # 効果適用
-    result = jnp.clip(image * vignette, 0, 1) if intensity < 0 else jnp.clip(image + (1-image)*(1-vignette), 0, 1)
-    return result.astype(jnp.float32)
+    for y in prange(h):
+        for x in prange(w):
+            dist = math.sqrt((x - center_x)**2 + (y - center_y)**2)
+            val = dist / radius
+            if val > 1.0: val = 1.0
+            elif val < 0.0: val = 0.0
+            
+            # pow and smoothstep
+            mask = val ** gradient_softness
+            mask = mask * mask * (3 - 2 * mask)
+            
+            if intensity < 0:
+                vig = 1.0 + intensity * mask
+                if c == 3:
+                    for k in range(3):
+                        v = image[y, x, k] * vig
+                        # v is float32
+                        res[y, x, k] = v
+                else:
+                    v = image[y, x] * vig
+                    res[y, x] = v
+            else:
+                vig = 1.0 - intensity * mask
+                if c == 3:
+                     for k in range(3):
+                        v = image[y, x, k]
+                        # image + (1-image)*(1-vignette) -> v + (1-v)*(1-vig)
+                        v_out = v + (1.0 - v) * (1.0 - vig)
+                        res[y, x, k] = v_out
+                else:
+                    v = image[y, x]
+                    v_out = v + (1.0 - v) * (1.0 - vig)
+                    res[y, x] = v_out
+    return res
 
 #--------------------------------------------------
 # テクスチャサイズとクロップ情報から、新しい描画サイズと余白の大きさを得る
@@ -911,166 +1030,258 @@ def adjust_shape_to_square(img, mode="constant"):
     return img
 
 #--------------------------------------------------
-@partial(jit, static_argnums=(1,2,3,4,5,))
-def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_level=0):
+@njit(parallel=True, fastmath=True, cache=True)
+def get_luminance(img):
+    h, w, c = img.shape
+    y = np.empty((h, w), dtype=np.float32)
+    # Rec.709: 0.2126, 0.7152, 0.0722
+    for i in prange(h):
+        for j in range(w):
+            y[i, j] = 0.2126 * img[i, j, 0] + 0.7152 * img[i, j, 1] + 0.0722 * img[i, j, 2]
+    return y
+
+@njit(fastmath=True, inline='always')
+def _apply_midtones(val, midtone):
+    if midtone == 0: return val
+    if midtone > 0:
+        midtone_scale = 4.0
+        C = midtone / 100.0 * midtone_scale
+        return math.log(1.0 + val * C) / math.log(1.0 + C)
+    else:
+        midtone_scale = 4.0
+        C = -midtone / 100.0 * midtone_scale
+        if abs(C) < 1e-6: return val
+        log1pC = math.log(1.0 + C)
+        normal_result = (math.exp(val * log1pC) - 1.0) / C
+        f_1 = ((1.0 + C) - 1.0) / C
+        derivative_at_1 = (1.0 + C) * log1pC / C
+        if val <= 1.0:
+            return normal_result
+        else:
+            return f_1 + derivative_at_1 * (val - 1.0)
+
+@njit(fastmath=True, inline='always')
+def _apply_shadows(val, shadows):
+    if shadows == 0: return val
+    if shadows > 0:
+        shadow_scale = 6.0
+        factor = shadows / 100.0 * shadow_scale
+        influence = math.exp(-5.0 * val)
+        mask = factor * influence
+        return val * (1.0 + mask)
+    else:
+        factor = shadows / 100.0
+        influence = math.exp(-5.0 * val)
+        min_val = val * 0.1
+        mask = (1.0 + factor * influence)
+        raw_result = val * mask
+        return max(raw_result, min_val)
+
+@njit(fastmath=True, inline='always')
+def _apply_black(val, black_level):
+    if black_level == 0: return val
+    if black_level > 0:
+        value = black_level / 100.0
+        gamma = math.exp(-value * 0.7)
+        return max(val, 0.0) ** gamma
+    else:
+        value = -black_level / 100.0
+        gamma = math.exp(value * 0.7)
+        return max(val, 0.0) ** gamma
+
+@njit(fastmath=True, inline='always')
+def _apply_highlight_pos(val, highlights):
+    strength = highlights / 100.0 * 2.0
+    return val * (1.0 + strength)
+
+@njit(fastmath=True, inline='always')
+def _apply_highlight_neg(val, base, highlights):
+    factor = -highlights / 100.0
+    detail = val - base
+    strength = factor * 1.0
+    compressed_base = base / (1.0 + strength * max(base, 0.0))
+    
+    threshold = 0.6
+    transition_width = 0.4
+    t = (base - threshold) / transition_width
+    if t < 0.0: t = 0.0
+    if t > 1.0: t = 1.0
+    smooth_mask = t * t * (3.0 - 2.0 * t)
+    
+    suppression_alpha = 10.0
+    adaptive_factor = 1.0 / (1.0 + suppression_alpha * abs(detail))
+    detail_boost = 1.02
+    effective_boost = detail_boost * adaptive_factor
+    
+    desired_boost = 1.0 + smooth_mask * factor * (effective_boost - 1.0)
+    compressed_val = compressed_base + detail * desired_boost
+    return compressed_val
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_mid_shadow(y, midtone, shadows):
+    h, w = y.shape
+    res = np.empty_like(y)
+    for i in prange(h):
+        for j in range(w):
+            val = y[i, j]
+            val = _apply_midtones(val, midtone)
+            val = _apply_shadows(val, shadows)
+            res[i, j] = val
+    return res
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_high_pos_black(y, highlights, black_level):
+    h, w = y.shape
+    res = np.empty_like(y)
+    for i in prange(h):
+        for j in range(w):
+            val = y[i, j]
+            val = _apply_highlight_pos(val, highlights)
+            val = _apply_black(val, black_level)
+            res[i, j] = val
+    return res
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_high_neg_black(y, y_blur, highlights, black_level):
+    h, w = y.shape
+    res = np.empty_like(y)
+    for i in prange(h):
+        for j in range(w):
+            val = y[i, j]
+            base = y_blur[i, j]
+            val = _apply_highlight_neg(val, base, highlights)
+            val = _apply_black(val, black_level)
+            res[i, j] = val
+    return res
+
+@njit(fastmath=True, inline='always')
+def _apply_white_pos(val, white_level, max_val):
+    scale = 6.0
+    factor = white_level / 100.0 * scale
+    if max_val <= 1e-6:
+        base = val
+    else:
+        base = val / max_val
+    
+    numer_inner = math.log(1.0 + base)
+    numer = math.log(1.0 + numer_inner)
+    
+    denom_inner = math.log(1.0 + max(max_val, 2.0))
+    denom = math.log(1.0 + denom_inner)
+    
+    if denom == 0: denominator = 1.0
+    else: denominator = 1.0 / denom
+    
+    expansion = 1.0 + factor * (numer * denominator)
+    return val * expansion
+
+@njit(fastmath=True, inline='always')
+def _apply_white_neg(val, base, white_level, max_val):
+    factor = -white_level / 100.0
+    detail = val - base
+    safe_base = max(base, 0.0)
+    
+    denom_inner = math.log(1.0 + max(max_val, 2.0))
+    denom = math.log(1.0 + denom_inner)
+    if denom == 0: denominator = 1.0
+    else: denominator = 1.0 / denom
+    
+    target_inner = math.log(1.0 + safe_base)
+    target = math.log(1.0 + target_inner) * denominator
+    
+    compressed_base = min(safe_base, base * (1.0 - factor) + target * factor)
+    
+    threshold = 0.8
+    transition_width = 0.4
+    t = (base - threshold) / transition_width
+    if t < 0.0: t = 0.0
+    if t > 1.0: t = 1.0
+    smooth_mask = t * t * (3.0 - 2.0 * t)
+    
+    suppression_alpha = 10.0
+    adaptive_factor = 1.0 / (1.0 + suppression_alpha * abs(detail))
+    detail_boost = 1.02
+    effective_boost = detail_boost * adaptive_factor
+    
+    desired_boost = 1.0 + smooth_mask * factor * (effective_boost - 1.0)
+    
+    if detail < 0:
+        safe_boost = min(desired_boost, compressed_base / max(-detail, 1e-8))
+    else:
+        safe_boost = desired_boost
+        
+    compressed_val = compressed_base + detail * safe_boost
+    return max(compressed_val, 0.0)
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_white_pos_final(img, y_current, y_orig, white_level, max_val):
+    h, w, c = img.shape
+    res = np.empty_like(img)
+    eps = 1e-6
+    for i in prange(h):
+        for j in range(w):
+            val = y_current[i, j]
+            val = _apply_white_pos(val, white_level, max_val)
+            
+            orig = y_orig[i, j]
+            safe_orig = orig if orig >= eps else eps
+            gain = val / safe_orig
+            if orig < eps: gain = 1.0
+            
+            for k in range(c):
+                res[i, j, k] = img[i, j, k] * gain
+    return res
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_white_neg_final(img, y_current, y_blur, y_orig, white_level, max_val_blur):
+    h, w, c = img.shape
+    res = np.empty_like(img)
+    eps = 1e-6
+    for i in prange(h):
+        for j in range(w):
+            val = y_current[i, j]
+            base = y_blur[i, j]
+            val = _apply_white_neg(val, base, white_level, max_val_blur)
+            
+            orig = y_orig[i, j]
+            safe_orig = orig if orig >= eps else eps
+            gain = val / safe_orig
+            if orig < eps: gain = 1.0
+            
+            for k in range(c):
+                res[i, j, k] = img[i, j, k] * gain
+    return res
+
+def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_level=0, disp_scale=1.0, resolution_scale=1.0):
     """
     Lightroom風のシャドウ、ハイライト、白レベル、黒レベル調整を行う関数。
-    
-    Parameters:
-        img (jnp.ndarray): 入力画像 (float32, RGB)
-        shadows (float): シャドウの調整 (-100～100)
-        highlights (float): ハイライトの調整 (-100～100)
-        midtone (float): 中間調の調整 (-100～100)
-        white_level (float): 白レベルの調整 (-100～100)
-        black_level (float): 黒レベルの調整 (-100～100)
-    
-    Returns:
-        np.ndarray: 調整後の画像（クリッピングなし）
-        mask(tuple): 効果マスクリスト（Noneあり）
+    (Numba実装版 - JAX/Numpy依存なし, 高速化)
     """
+    # Step 1: Luminance
+    y_orig = get_luminance(img)
     
-    # 輝度の計算 (Rec.709 coefficients)
-    y_orig = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
-    # 形状を保持 (H, W, 1) if needed, but here simple (H, W) is fine for curve.
-    current_y = y_orig
-
-    def _conditional_operation(x, val, pos_func, neg_func):
-        func = pos_func if x > 0 else neg_func if x < 0 else lambda val, x: (val, None)
-        return func(val, x)
-
-    # 中間調の調整
-    def enhance_midtones_positive(val, midtone):
-        C = midtone / 100 * midtone_scale
-        return jnp.log(1 + val * C) / jax.lax.log(1 + C), None
-
-    def enhance_midtones_negative(val, midtone):
-        C = -midtone / 100 * midtone_scale
-
-        # 通常の範囲(0〜1)の計算
-        normal_result = (jnp.exp(val * jax.lax.log(1 + C)) - 1) / C
+    # Step 2: Mid -> Shadow
+    current_y = _kernel_mid_shadow(y_orig, midtone, shadows)
+    
+    # Step 3: Highlight -> Black
+    if highlights < 0:
+        sigma = 20.0 * resolution_scale
+        y_blur = gaussian_blur_cv(current_y, sigma=sigma)
+        current_y = _kernel_high_neg_black(current_y, y_blur, highlights, black_level)
+    else:
+        current_y = _kernel_high_pos_black(current_y, highlights, black_level)
         
-        # 1.0の時の関数値と傾きを計算
-        f_1 = ((1 + C) - 1) / C  # (np.exp(1.0 * math.log(1 + C)) - 1) / C を簡略化
-        derivative_at_1 = (1 + C) * jax.lax.log(1 + C) / C
+    # Step 4: White -> Final
+    if white_level < 0:
+        sigma = 20.0 * resolution_scale
+        y_blur = gaussian_blur_cv(current_y, sigma=sigma)
+        max_val_blur = np.max(y_blur)
+        res = _kernel_white_neg_final(img, current_y, y_blur, y_orig, white_level, float(max_val_blur))
+    else:
+        max_val = np.max(current_y)
+        res = _kernel_white_pos_final(img, current_y, y_orig, white_level, float(max_val))
         
-        # 1.0超の範囲 - 線形拡張する
-        extended_result = f_1 + derivative_at_1 * (val - 1.0)
-        
-        # 条件マスクを使って結果を組み合わせる
-        return jnp.where(val <= 1.0, normal_result, extended_result), None
-
-
-    midtone_scale = 4
-    current_y, _ = _conditional_operation(midtone, current_y, enhance_midtones_positive, enhance_midtones_negative)
-
-    # シャドウ（暗部）の調整
-    def enhance_shadow_positive(val, shadows):
-        factor = shadows / 100 * shadow_scale
-        influence = jnp.exp(-5 * val)
-        mask = factor * influence
-        return val * (1 + mask), mask
-    
-    def enhance_shadow_negative(val, shadows):
-        factor = shadows / 100
-        influence = jnp.exp(-5 * val)
-        min_val = val * 0.1
-        mask = (1 + factor * influence)
-        raw_result = val * mask
-        return jnp.maximum(raw_result, min_val), None
-
-    shadow_scale = 6.0
-    current_y, shadows_mask = _conditional_operation(shadows, current_y, enhance_shadow_positive, enhance_shadow_negative)
-    
-    # ハイライト（明部）の調整 - (Old White Logic: Reinhard / Gain)
-    def enhance_highlight_positive(val, highlights):
-        # Boost Highlights (Gain)
-        strength = highlights / 100.0 * 2.0 
-        return val * (1.0 + strength), None
-
-    def enhance_highlight_negative(val, highlights):
-        factor = -highlights / 100.0
-        # Compress Highlights (Reinhard)
-        # Smoothly rolls off highlights, preserving details > 1.0
-        strength = factor * 1.0 # Max Strength 1.0 (Standard Reinhard)
-        # x / (1 + kx)
-        denominator = 1.0 + strength * jnp.maximum(val, 0)
-        return val / denominator, denominator * factor * 0.4
-
-    # highlight_scale removed/unused for Reinhard logic
-    current_y, mask_h = _conditional_operation(highlights, current_y, enhance_highlight_positive, enhance_highlight_negative)
-    
-    # 黒レベル（省略せずに実装）
-    def enhance_black_positive(val, black_level):
-        value = black_level / 100.0
-        gamma = jnp.exp(-value * 0.7) 
-        res = jnp.power(jnp.maximum(val, 0), gamma)
-        return res, None
-    
-    def enhance_black_negative(val, black_level):
-        value = -black_level / 100.0
-        gamma = jnp.exp(value * 0.7) 
-        res = jnp.power(jnp.maximum(val, 0), gamma)
-        return res, None
-        
-    current_y, _ = _conditional_operation(black_level, current_y, enhance_black_positive, enhance_black_negative)
-    
-    # 白レベル - (Old Highlight Logic: Log-Log)
-    def enhance_white_positive(val, white_level):
-        scale = 6.0 # Was highlight_scale
-        factor = white_level / 100 * scale
-        max_val = jnp.max(val)
-        base = val / max_val  # 0-1に正規化
-        expansion = 1 + factor * (jnp.log1p(jnp.log1p(base)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0))))
-        return val * expansion, None
-
-    def enhance_white_negative(val, white_level):
-        factor = -white_level / 100
-        max_val = jnp.maximum(jnp.max(val), 1e-6) # Avoid div by zero
-        # Safe log input
-        safe_img = jnp.maximum(val, 0)
-        target = jnp.log1p(jnp.log1p(safe_img)) / jax.lax.log1p(jax.lax.log1p(jax.lax.max(max_val, 2.0)))
-        mask = target * factor
-        return jnp.minimum(safe_img, val * (1-factor) + mask), mask
-
-    # white_level_scale = 4 # Dummy (Unused now)
-    current_y, mask_w = _conditional_operation(white_level, current_y, enhance_white_positive, enhance_white_negative)
-    
-    # Fix: Combine masks with Max
-    # mask_h, mask_w can be None
-    def safe_max_abs(m1, m2):
-        if m1 is None and m2 is None: return None
-        if m1 is None: return jnp.abs(m2)
-        if m2 is None: return jnp.abs(m1)
-        return jnp.maximum(jnp.abs(m1), jnp.abs(m2))
-    
-    final_highlight_mask = safe_max_abs(mask_h, mask_w)
-    
-    # 輝度のみ反映 (Apply to Luminance Only)
-    # RGB_new = RGB_old * (Y_new / Y_old)
-    eps = 1e-6
-    
-    # 1. Zero Safety: y_orig < eps -> Set divisor to eps (or handle separately)
-    # 2. Inf Safety: y_orig = Inf -> Gain becomes Inf/Inf = NaN.
-    #    We want Inf -> Inf (Identity). So set Gain = 1.0.
-    
-    safe_y_orig = jnp.where(y_orig < eps, eps, y_orig)
-    gain = current_y / safe_y_orig
-    
-    # Apply conditions
-    # If y_orig (original luminance) was effectively zero, Gain is huge.
-    # But if current_y is also small (shadow processing), it's fine.
-    # If y_orig was Inf (Blown), Gain is NaN. We force it to 1.0 (No change to blown color).
-    gain = jnp.where(jnp.isinf(y_orig) | (y_orig < eps), 1.0, gain)
-    
-    # Apply Gain to original RGB
-    # Ensure gain is broadcastable to (H, W, 3)
-    # Since we squeezed, gain is (H, W). We need (H, W, 1).
-    if gain.ndim == 2:
-        gain = gain[..., jnp.newaxis]
-        
-    img_out = img * gain
-    
-    return img_out, (shadows_mask, final_highlight_mask)
+    return res
 
 
 # 画像のサイズを取得する関数
@@ -1184,31 +1395,54 @@ def _estimate_transmission(depth_map, strength=0.5, lower_bound=0.1):
     
     return transmission
 
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_dehaze_apply(img, A, transmission):
+    h, w, c = img.shape
+    res = np.empty_like(img)
+    for i in prange(h):
+        for j in range(w):
+            t = transmission[i, j]
+            t_clamped = max(t, 0.1)
+            for k in range(c):
+                res[i, j, k] = (img[i, j, k] - A[k]) / t_clamped + A[k]
+    return res
+
+
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_fog_apply_2d(img, transmission_map):
+    h, w, c = img.shape
+    res = np.empty_like(img)
+    for i in prange(h):
+        for j in range(w):
+            t = transmission_map[i, j]
+            inv_t = 1.0 - t
+            for k in range(c):
+                # img * t + 1.0 * (1-t)
+                res[i, j, k] = img[i, j, k] * t + inv_t
+    return res
+
 def dehaze_image(img, strength=0.5):
     """
-    色線形変換先行法を使用した霞除去・霧追加
+    色線形変換先行法を使用した霞除去・霧追加 (Numba Optimized)
     
     img: 入力画像（0-1の範囲のfloat32、RGB形式）
     strength: 霞除去（正の値）または霧追加（負の値）の強さ、-1から1の範囲
     """
     
-    # 深度マップの推定
-    depth_map = _estimate_depth_map(img)
-    
-    # 大気光の推定
-    A = _estimate_atmospheric_light(img, depth_map)
-    
-    # 強さに基づいて調整
     if strength >= 0:
         # 霞除去モード
+        # 深度マップの推定
+        depth_map = _estimate_depth_map(img)
+        # 大気光の推定
+        A = _estimate_atmospheric_light(img, depth_map)
+        
         effective_strength = strength
         # 透過率の推定
         transmission = _estimate_transmission(depth_map, effective_strength)
 
         # 霞補正された画像の計算（大気散乱モデル）
-        result = np.zeros_like(img, dtype=np.float32)
-        for i in range(3):
-            result[:,:,i] = (img[:,:,i] - A[i]) / np.maximum(transmission, 0.1) + A[i]
+        result = _kernel_dehaze_apply(img, A, transmission)
     
     else:
         # ===== ヘイズ追加処理（霞を増やす）=====
@@ -1216,31 +1450,20 @@ def dehaze_image(img, strength=0.5):
         
         haze_strength = -strength  # 強度を正の値に変換
         
-        # 大気光の色（純粋な白）
-        atmospheric_light = np.array([1.0, 1.0, 1.0], dtype=np.float32)  # RGB形式で白
-        
         # 画像サイズを取得
         h, w = img.shape[:2]
         
         # 強度に応じて透過量を滑らかに調整
-        # 強度0では透過量1.0（霞なし）
-        # 強度-1では最小透過量（最大霞）
-        # 二次関数的なイージングを適用して滑らかな遷移を実現
         min_trans = 0.4  # 最小透過量（最大霞）
         
         # 二次関数で滑らかな遷移を作成
-        # haze_strength=0→transmission=1.0（元画像）
-        # haze_strength=1→transmission=min_trans（最大霞）
         transmission_value = 1.0 - (1.0 - min_trans) * (haze_strength * haze_strength)
         
         # 均一な透過量で霞を生成
         transmission = np.ones((h, w), dtype=np.float32) * transmission_value
         
-        # 透過量マップを3チャンネルに拡張
-        transmission = np.stack([transmission] * 3, axis=2)
-        
         # 散乱モデルによる霞の合成
-        result = img * transmission + atmospheric_light * (1 - transmission)
+        result = _kernel_fog_apply_2d(img, transmission)
 
     return result
 
@@ -1849,7 +2072,7 @@ def calc_resolution_scale(current_resolution, scale=1.0):
     return scale * ratio
 
 def type_convert(img, target_type):
-
+    """
     if isinstance(img, target_type):
         return img
     
@@ -1870,7 +2093,7 @@ def type_convert(img, target_type):
             return cv2.UMat(img)
         elif isinstance(img, jnp.ndarray):
             return cv2.UMat(np.array(img))
-
+    """
     return img
 
 def calc_ev_from_exif(exif_data):
@@ -2035,6 +2258,13 @@ class CompactNumpyEncoder(json.JSONEncoder):
         # NumPyスカラーの処理
         if isinstance(obj, np.generic):
             return obj.item()
+        
+        # bytesの処理
+        if isinstance(obj, bytes):
+            return {
+                '__bytes__': True,
+                'data': base64.b64encode(obj).decode('ascii')
+            }
                     
         return super().default(obj)
     
@@ -2068,6 +2298,9 @@ def compact_numpy_decoder(obj: Dict) -> Any:
         # NumPy配列に変換
         array = np.frombuffer(decompressed, dtype=np.dtype(obj['dtype']))
         return array.reshape(obj['shape'])
+
+    if '__bytes__' in obj:
+        return base64.b64decode(obj['data'])
     
     return obj
 
@@ -2246,7 +2479,7 @@ def setup_lensfun(img, exif_data):
         distance = 100
 
     db = lensfunpy.Database()
-    cams = db.find_cameras(make, model, loose_search=True)
+    cams = db.find_cameras(make, model, loose_search=False)
     if len(cams) > 0:
         lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=True)
 
@@ -2310,7 +2543,7 @@ def light_denoise(img, its, col):
     # 輝度チャンネル(Y)のノイズ除去 (Guided Filter)
     if its > 0:
         # 半径
-        radius = max(2, int(its * 0.1))
+        radius = max(2, int(its * 0.01))
         # イプシロンの計算
         # Yは0-1スケール (HDR対応)
         # eps = (閾値)^2
@@ -2340,9 +2573,21 @@ def light_denoise(img, its, col):
 
 #-------------------------------------------------
 
+@njit(parallel=True, fastmath=True, cache=True)
+def _kernel_unsharp_mask_apply(img, blurred, amount):
+    h, w, c = img.shape
+    res = np.empty_like(img)
+    for i in prange(h):
+        for j in range(w):
+            for k in range(c):
+                val = img[i, j, k]
+                blur_val = blurred[i, j, k]
+                res[i, j, k] = val + amount * (val - blur_val)
+    return res
+
 def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
     """
-    RGB画像にアンシャープマスク処理を適用
+    RGB画像にアンシャープマスク処理を適用 (Numba Optimized)
     
     引数:
         rgb_image (numpy.ndarray): RGB形式の入力画像 (float32, 0.0-1.0)
@@ -2355,11 +2600,8 @@ def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
     # ガウシアンフィルタでぼかした画像を生成
     blurred = gaussian_blur_cv(rgb_image, (0, 0), sigma)
     
-    # アンシャープマスクの計算: (元画像 - ぼかし画像)
-    mask = rgb_image - blurred
-    
-    # マスクを適用してシャープニング
-    sharpened = rgb_image + amount * mask
+    # Numbaカーネルで適用
+    sharpened = _kernel_unsharp_mask_apply(rgb_image, blurred, amount)
     
     return sharpened
 

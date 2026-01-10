@@ -28,7 +28,9 @@ class AsyncPipelineManager:
 
     def get_result(self, effect_name, param_hash):
         key = (effect_name, param_hash)
-        return self.cache.get(key)
+        res = self.cache.get(key)
+        print(f"DEBUG: get_result {effect_name} {param_hash} -> {res['status'] if res else 'None'}")
+        return res
 
     def submit_task(self, effect_name, img, params, efconfig, param_hash):
         key = (effect_name, param_hash)
@@ -36,8 +38,11 @@ class AsyncPipelineManager:
         # Check if already submitted
         if key in self.cache:
             if self.cache[key]['status'] in ['RUNNING', 'COMPLETE']:
+                print(f"DEBUG: submit_task HIT {effect_name} {param_hash} status={self.cache[key]['status']}")
                 return self.cache[key]
         
+        print(f"DEBUG: submit_task MISS {effect_name} {param_hash}. Existing keys: {[k for k in self.cache.keys() if k[0]==effect_name]}")
+
         # Check if ANY task for this effect is running (to support cancellation/restart)
         # If we are submitting a NEW task for the same effect, it means parameters changed.
         # We should kill the old one to save resources.
@@ -78,9 +83,13 @@ class AsyncPipelineManager:
         keys_to_remove = []
         for key, info in self.cache.items():
             if key[0] == effect_name:
-                keys_to_remove.append(key)
+                # Only remove running tasks from cache? 
+                # If we remove COMPLETE tasks, we lose cache when toggling visibility.
                 if info['status'] == 'RUNNING':
+                    keys_to_remove.append(key)
                     running = True
+        
+        print(f"DEBUG: cancel_effect {effect_name}. Removing {len(keys_to_remove)} RUNNING tasks. Kept: {[k for k,v in self.cache.items() if k[0]==effect_name and v['status']=='COMPLETE']}")
         
         if running:
             self.worker.cancel_effect(effect_name)
@@ -103,7 +112,7 @@ class AsyncPipelineManager:
         self.cache.clear()
 
 
-def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, loading_flag=-1, is_drag=False):
+def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False):
     
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
@@ -116,6 +125,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = is_zoomed
     efconfig.mode = EffectMode.PREVIEW
+    efconfig.bypass_rotation = True if efconfig.mode == EffectMode.PREVIEW and current_tab == 'Ge' else False
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
     
     # Initialize basic input hash
@@ -168,6 +178,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True
     efconfig.mode = EffectMode.EXPORT
+    efconfig.bypass_rotation = False
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
 
     # 背景レイヤー
@@ -303,8 +314,12 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
     upstream_status = PipelineStatus.COMPLETE # Initial input is complete
     
     efconfig.processor = processor
+    efconfig.layer_status = PipelineStatus.COMPLETE
     
     for i, n in enumerate(lv0):
+        # Update upstream status for the effect
+        efconfig.upstream_status = upstream_status
+        
         if lv1reset == True:
             lv0[n].reeffect()
             
@@ -501,6 +516,10 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
             
         # Update upstream hash
         efconfig.upstream_hash = hash((efconfig.upstream_hash, n, getattr(lv0[n], 'hash', None)))
+
+        # Update upstream status if layer became preview
+        if efconfig.layer_status == PipelineStatus.PREVIEW:
+            upstream_status = PipelineStatus.PREVIEW
 
         if pre_diff is not diff:
             lv1reset = True

@@ -157,9 +157,6 @@ class CropEditor(KVFloatLayout):
             self.callback()
 
     def update_centering(self, *args):
-        pass
-
-    def update_centering_socket(self, *args):
         # 中心に移動するためのトランスレーションを設定
         inwidth = self.input_width * self.scale
         inheight = self.input_height * self.scale

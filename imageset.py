@@ -230,7 +230,9 @@ class ImageSet:
                 
                 # ここで補正
                 img_array = core.adjust_exposure(img_array, Ev)
-                img_array, masks = core.adjust_tone(img_array, white_level=-100)
+                print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
+                img_array = core.adjust_tone(img_array, white_level=-100)
+                print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
                 Ev = -Ev # 補正は逆方向
 
             param['rgb_or_raw'] = 'raw'

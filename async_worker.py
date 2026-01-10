@@ -11,12 +11,13 @@ import copy
 
 import effects
 import config
+import waitinfo
 
-def worker_process(input_queue, result_queue, stop_event, config_dict, latest_tasks):    
+def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict, latest_tasks):    
     """
     Background worker process.
     Continuously pulls tasks from input_queue and processes them.
-    """    
+    """
     # 子プロセスで読み込まれているモジュールを確認
     loaded_modules = list(sys.modules.keys())
     print(f"子プロセス {multiprocessing.current_process().name} で読み込まれているモジュール:")
@@ -32,6 +33,12 @@ def worker_process(input_queue, result_queue, stop_event, config_dict, latest_ta
 
     # Restore configuration in the worker process
     config._config = config_dict
+
+    # Configure logging for the worker process
+    logging.basicConfig(level=logging.INFO, format='[%(levelname)-7s] %(message)s')
+
+    # Initialize waitinfo with IPC queue
+    waitinfo.init(msg_queue)
     
     # Create independent effect instances for the worker
     worker_effects = effects.create_effects()
@@ -164,11 +171,11 @@ class AsyncWorker:
         self.process = None
         self.input_queue = Queue()
         self.result_queue = Queue()
+        self.msg_queue = Queue()
         self.stop_event = Event()
         self.active_shms = set() # Track SHMs to unlink them if needed
         self.task_counter = 0
-        with multiprocessing.Manager() as mp_manager:
-            self.latest_tasks = mp_manager.dict() # effect_name -> task_id
+        self.latest_tasks = multiprocessing.Manager().dict() # effect_name -> task_id
 
     def start(self):
         if self.process is None or not self.process.is_alive():
@@ -177,7 +184,7 @@ class AsyncWorker:
             self.process = Process(
                 target=worker_process,
                 name="ASyncWorker", 
-                args=(self.input_queue, self.result_queue, self.stop_event, config._config, self.latest_tasks)
+                args=(self.input_queue, self.result_queue, self.msg_queue, self.stop_event, config._config, self.latest_tasks)
             )
             self.process.daemon = True
             self.process.start()
@@ -227,6 +234,7 @@ class AsyncWorker:
         # Recreate queues to avoid corruption
         self.input_queue = Queue()
         self.result_queue = Queue()
+        self.msg_queue = Queue()
         self.stop_event = Event()
         
         self.start()
@@ -387,5 +395,17 @@ class AsyncWorker:
             except Empty:
                 break
         
+        
         return results
+
+    def poll_messages(self):
+        """
+        Yields messages from the worker process (e.g. waitinfo updates).
+        """
+        while not self.msg_queue.empty():
+            try:
+                msg = self.msg_queue.get_nowait()
+                yield msg
+            except Empty:
+                break
 

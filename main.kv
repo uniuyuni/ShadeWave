@@ -67,8 +67,17 @@
 <SelectableListItem@OneLineListItem>:
     on_release: app.item_selected(self.text)
 
+<WaitInfo@MDLabel>:
+    font_size: '10pt'
+    valign: 'middle'
+    halign: 'right'
+    color: 'b0b0b0'
+    size_hint_y: None
+    ref_height: 18
+
 <MainWidget>:
     loading: True
+    preview_valid_rect: [0, 0, 100, 100]
 
     BoxLayout:
         orientation: 'vertical'
@@ -207,17 +216,51 @@
                     on_touch_down: root.on_image_touch_down(args[1])
                     on_touch_move: root.on_image_touch_move(args[1])
                     on_touch_up: root.on_image_touch_up(args[1])
-               
-                    Image:
-                        id: preview
-                        pos_hint: {'x':0, 'y': 0}
-                        canvas:
-                            Color:
-                                rgba: dark_color if not self.texture else clear_color
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
- 
+
+                    canvas.before:
+                        # Black background for padding area
+                        Color:
+                            rgba: 0, 0, 0, 1
+                        Rectangle:
+                            pos: self.x + (self.width-root.preview_size[0])/2, self.y + (self.height-root.preview_size[1])/2
+                            size: root.preview_size[0], root.preview_size[1]
+                        
+                        # Stencil Clip to Valid Content (Hide Reflect Padding)
+                        StencilPush:
+                        Rectangle:
+                            pos: self.x + (self.width-root.preview_size[0])/2, self.y + (self.height-root.preview_size[1])/2
+                            size: root.preview_size[0], root.preview_size[1]
+                        StencilUse:
+                        
+                    canvas.after:
+                        StencilUnUse:
+                        Rectangle:
+                            pos: self.x + (self.width-root.preview_size[0])/2, self.y + (self.height-root.preview_size[1])/2
+                            size: root.preview_size[0], root.preview_size[1]
+                        StencilPop:
+
+                    Scatter:
+                        id: transform_wrapper
+                        auto_bring_to_front: False
+                        do_rotation: False
+                        do_scale: False
+                        do_translation: False
+                        size_hint: None, None
+                        center: self.parent.center
+
+                        Image:
+                            id: preview
+                            size_hint: None, None
+                            pos: 0, 0
+                                                        
+                            canvas:
+                                Color:
+                                    rgba: dark_color if not self.texture else clear_color
+                                Rectangle:
+                                    pos: self.pos
+                                    size: self.size
+
+
                     MaskEditor2:
                         id: mask_editor2
                         root: root
@@ -907,24 +950,24 @@
                                 CheckBox:
                                     id: checkbox_color_modification
                                     active: True
-                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
                                 ParamLabel:          
                                     text: "Subpixel"
                                 CheckBox:
                                     id: checkbox_subpixel_distortion
                                     active: True
-                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
                                 ParamLabel:          
                                     text: "Geometry"
                                 CheckBox:
                                     id: checkbox_geometry_distortion
                                     active: True
-                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
 
                             VSpacer
@@ -1167,17 +1210,30 @@
                             ParamBoxLayout:
                                 ParamLabel:
                                     text: "AI"
-                                VSpacer:
+                                WaitInfo:
+                                    id: waitinfo_ai_noise_reduction
                                     size_hint_x: 0.55
+                                    text: ""
                                 ParamChip:
                                     id: switch_ai_noise_reduction
                                     size_hint_x: None
                                     ref_width: 40
-                                    on_active: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
+                                    on_press: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
                                     on_active: root.apply_effects_lv(0, 'ai_noise_reduction')
                                     on_release: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
                                     ParamChipText:
                                         text: "AI"
+
+                            ParamSlider:
+                                id: slider_ai_noise_reduction_intensity
+                                text: "AI Intensity"
+                                min: 0
+                                max: 100
+                                value: 70
+                                step: 1
+                                on_slider: root.apply_effects_lv(0, 'ai_noise_reduction')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
 
                             ParamSlider:
                                 id: slider_light_noise_reduction
@@ -1215,7 +1271,7 @@
                                     id: switch_inpaint
                                     size_hint_x: None
                                     ref_width: 60
-                                    on_active: root.begin_history_effect_ctrl(0, 'inpaint')
+                                    on_press: root.begin_history_effect_ctrl(0, 'inpaint')
                                     on_active: root.apply_effects_lv(0, 'inpaint')
                                     on_release: root.end_history_effect_ctrl(0, 'inpaint')
                                     ParamChipText:
@@ -1248,7 +1304,7 @@
                                     id: switch_defocus
                                     size_hint_x: None
                                     ref_width: 40
-                                    on_active: root.begin_history_effect_ctrl(1, 'defocus')
+                                    on_press: root.begin_history_effect_ctrl(1, 'defocus')
                                     on_active: root.apply_effects_lv(1, 'defocus')
                                     on_release: root.end_history_effect_ctrl(1, 'defocus')
                                     ParamChipText:
@@ -1263,7 +1319,7 @@
                                     id: switch_subpixel_shift
                                     size_hint_x: None
                                     ref_width: 40
-                                    on_active: root.begin_history_effect_ctrl(0, 'subpixel_shift')
+                                    on_press: root.begin_history_effect_ctrl(0, 'subpixel_shift')
                                     on_active: root.apply_effects_lv(0, 'subpixel_shift')
                                     on_release: root.end_history_effect_ctrl(0, 'subpixel_shift')
                                     ParamChipText:
@@ -1294,7 +1350,7 @@
                                     id: lut_spinner
                                     values: [ 'None', ]
                                     #on_hovered_item: root.apply_effects_lv(2, 'lut')
-                                    on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lut')
+                                    on_text: root.begin_history_effect_ctrl(2, 'lut')
                                     on_text: root.apply_effects_lv(2, 'lut')
                                     on_text: root.end_history_effect_ctrl(2, 'lut')
                                 Button:
@@ -1548,7 +1604,7 @@
                                     id: switch_solid_color
                                     size_hint_x: None
                                     ref_width: 60
-                                    on_active: root.begin_history_effect_ctrl(2, 'solid_color')
+                                    on_press: root.begin_history_effect_ctrl(2, 'solid_color')
                                     on_active: root.apply_effects_lv(2, 'solid_color')
                                     on_release: root.end_history_effect_ctrl(2, 'solid_color')
                                     ParamChipText:
@@ -1588,7 +1644,7 @@
                                     size_hint_x: None
                                     ref_width: 60
                                     active: False
-                                    on_active: root.begin_history_effect_ctrl(2, 'highlight_compress')
+                                    on_press: root.begin_history_effect_ctrl(2, 'highlight_compress')
                                     on_active: root.apply_effects_lv(2, 'highlight_compress')
                                     on_release: root.end_history_effect_ctrl(2, 'highlight_compress')
                                     ParamChipText:
@@ -1617,7 +1673,8 @@
                                 min: -45.0
                                 max: 45.0
                                 value: 0
-                                step: 1
+                                step: 0.1
+                                for_float: True
                                 on_slider: root.apply_effects_lv(0, 'rotation')
                                 on_slider: root.apply_effects_lv(0, 'crop')
                                 on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')

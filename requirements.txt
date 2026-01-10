@@ -2,8 +2,6 @@ kivy
 kivymd
 git+https://github.com/FacePerceiver/facer.git@main
 opencv-contrib-python
-jax==0.5.0
-jax-metal
 colour-science
 scikit-image
 rawpy

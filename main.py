@@ -18,16 +18,20 @@ if __name__ == '__main__':
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivy.core.window import Window as KVWindow
     from kivy.graphics.texture import Texture as KVTexture
-    from kivy.properties import BooleanProperty as KVBooleanProperty
+    from kivy.properties import BooleanProperty as KVBooleanProperty, ListProperty as KVListProperty
     from kivy.clock import Clock, mainthread
+    from kivy.graphics.transformation import Matrix as KVMatrix
 
     import threading
     from functools import partial
     import colour
     import logging
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("numba").setLevel(logging.WARNING)
     import re
     import time
     import multiprocessing
+    import math
 
     import define
     import cores.core as core
@@ -44,6 +48,7 @@ if __name__ == '__main__':
     import export
     from processing_dialog import create_processing_dialog
     from async_worker import AsyncWorker
+    import waitinfo
     import history
 
     import widgets.metainfo
@@ -92,18 +97,15 @@ if __name__ != '__main__':
         sys.meta_path.insert(0, blocker)
         print(f"子プロセス {multiprocessing.current_process().name}: インポートブロッカー設定完了")
     
-    init_worker()
+    #init_worker()
 
 import os
 import numpy as np
-import jax
 import cv2
 
 import file_cache_system
 
-# JAXとOpenCVの設定
-os.environ['JAX_LOG_VERBOSITY'] = '0'
-jax.config.update("jax_platform_name", "METAL")
+# OpenCVの設定
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
 
@@ -132,7 +134,8 @@ if __name__ == '__main__':
 
 
     class MainWidget(MDBoxLayout):
-        loading=KVBooleanProperty(False)
+        loading = KVBooleanProperty(False)
+        preview_size = KVListProperty([100, 100])
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -192,6 +195,11 @@ if __name__ == '__main__':
                     # We need to make sure we don't spam redraws?
                     self.start_draw_image()
 
+            if self.async_worker:
+                for msg in self.async_worker.poll_messages():
+                    if msg['type'] == 'waitinfo':
+                        waitinfo.set_text(msg['tag'], msg['text'], self)
+
         def on_kv_post(self, *args, **kwargs):
             super(MainWidget, self).on_kv_post(*args, **kwargs)
 
@@ -233,26 +241,37 @@ if __name__ == '__main__':
                 self.pipeline_version += 1
                 self.draw_image_core(offset)
 
+        @mainthread
         def blit_image(self, img, dt=0):
+            # Texture Resizing logic
+            if self.texture is None or self.texture.size != (img.shape[1], img.shape[0]):
+                self.texture = KVTexture.create(size=(img.shape[1], img.shape[0]), colorfmt='rgb', bufferfmt='float')
+                self.texture.flip_vertical()
+
             if config.get_config('display_output_dither'):
                 img = core.jjn_dither_uint8(img)
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
             else:
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='float')
-            self.ids["preview"].texture = None # 更新のために必要
+
+            # Update Preview Widget Size
+            self.ids["preview"].texture = None 
             self.ids["preview"].texture = self.texture
+            self.ids["preview"].size = self.texture.size
 
             #Singnalを送る
             import signals
             signals.blit_image.emit()
 
+        @mainthread
         def draw_histogram(self, img, blue_count=0, black_count=0, dt=0):
             #logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
             self.ids["histogram"].draw_histogram(img, blue_count, black_count)
 
         def draw_image_core(self, offset=(0, 0)):
             if (self.imgset is not None) and (self.imgset.img is not None):
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, loading_flag=self.imgset.flag, is_drag=self.drag_start_point is not None)
+
+                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=self.imgset.flag, is_drag=self.drag_start_point is not None)
                 if img is None:
                     return
 
@@ -264,24 +283,27 @@ if __name__ == '__main__':
 
                 # ヒストグラム表示
                 img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
-                #self.draw_histogram(img_hist, 0, exclude_count)
-                event = Clock.create_trigger(partial(self.draw_histogram, img_hist, 0, exclude_count))
-                if not event.is_triggered:
-                    event()  # スケジュール
+                self.draw_histogram(img_hist, 0, exclude_count)
 
                 # プレビュー表示
                 img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                 img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
                 img_draw = np.clip(img_draw, 0, 1)
-
+                
+                # Update Property for KV Stencil
+                h, w = img_draw.shape[:2]
+                self.preview_size = [w, h]
+                
                 #描画をスケジューリング
-                #self.blit_image(img_draw)
+                self.blit_image(img_draw)
+                """
                 try:
                     if self.enabledelay is not None:
                         self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
                 except:
                     pass  # 未スケジュール時は無視
                 self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
+                """
 
         def draw_image(self):            
             while self.apply_thread is not None:
@@ -293,6 +315,7 @@ if __name__ == '__main__':
                     self.draw_image_core(offset)
 
                 self.draw_event.wait()
+                self.draw_event.clear()
             
         def start_draw_image(self, offset=(0, 0)):
             self.pipeline_version += 1
@@ -337,6 +360,7 @@ if __name__ == '__main__':
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
+            self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
 
         def set_effect_param(self, lv, effect, arg):
@@ -346,7 +370,43 @@ if __name__ == '__main__':
             current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
+            self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
+
+        def apply_rotation_flip_for_wrapper(self):
+            # Calculate Rotation/Flip for Hardware
+            if self.ids["effects"].current_tab.text == "Ge":
+                rotation_effect = self.primary_effects[0]['rotation']
+                angle = rotation_effect._get_param(self.primary_param,'rotation') + rotation_effect._get_param(self.primary_param,'rotation2')
+                flip = rotation_effect._get_param(self.primary_param,'flip_mode')
+            else:
+                angle = 0
+                flip = 0
+
+            # Apply Hardware Rotation/Flip to Wrapper
+            wrapper = self.ids['transform_wrapper']
+            if wrapper:
+                wrapper.size = self.texture.size
+                
+                # Scale for Flip
+                sx = -1 if (flip & 1) else 1
+                sy = -1 if (flip & 2) else 1
+
+                # Reset transform
+                wrapper.transform = KVMatrix()
+                
+                # Apply Rotation & Flip via Matrix
+                mat = KVMatrix()
+                mat.scale(sx, sy, 1)
+                mat.rotate(math.radians(angle), 0, 0, 1)
+                wrapper.transform = mat
+                
+                # Center wrapper (KV binding should handle this, but re-triggering might be needed if transform affected pos)
+                # Setting transform updates pos, so KV binding might fight. 
+                # Ideally KV binding `center: self.parent.center` wins on next layout cycle.
+                # To be safe, we can manually set center after transform if KV doesn't catch it immediately.
+                if self.ids['preview_widget']:
+                    wrapper.center = self.ids['preview_widget'].center
 
         def begin_history_layer_ctrl(self, layer_ctrl, op, index, op_type):
             self.current_op = history.Operation(type="Layer")
@@ -508,12 +568,13 @@ if __name__ == '__main__':
                 self.processor.cancel_all()
                 self.ids['histogram'].set_histogram_data(None) # Reset histogram? 
 
+            imgset.flag = flag
             self.imgset = imgset
             effects.reeffect_all(self.primary_effects)
             self.start_draw_image_and_crop(imgset)
 
         def on_image_touch_down(self, touch):
-            if self.ids['preview'].collide_point(*touch.pos):
+            if self.ids['preview_widget'].collide_point(*touch.pos):
                 # ズーム操作
                 if touch.is_double_tap == True and self.ids["effects"].current_tab.text != "Ge":
                     self.is_zoomed = not self.is_zoomed

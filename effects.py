@@ -1,7 +1,6 @@
 
 import cv2
 import numpy as np
-import jax.numpy as jnp
 from enum import Enum
 import os
 import logging
@@ -57,38 +56,57 @@ class Effect():
         if self.execution_mode == ExecutionMode.ASYNC and efconfig.processor is not None and efconfig.mode != EffectMode.EXPORT:
             from enums import PipelineStatus
             
-            # Check cache first
-            # We use ClassName + ParamHash as key
-            cached = efconfig.processor.get_result(self.__class__.__name__, param_hash)
-            
-            if cached and cached['status'] == 'COMPLETE':
-                self.diff = cached['result']
-                self.hash = param_hash
-                return True, self.diff
-            
+            # Mix upstream hash into the key to ensure cache validity depends on input content
+            combined_hash = hash((param_hash, efconfig.upstream_hash))
+
+            # 1. Check Upstream Status FIRST
             # If upstream is not complete, skip heavy processing (return None or Preview)
             if efconfig.upstream_status == PipelineStatus.PREVIEW:
                 # Upstream is dirty/preview, so we cannot trust input `img` for heavy calc.
                 # Use preview (None for now)
                 self.diff = None 
+                self.hash = None # Upstream is unstable, so we are unstable
                 if efconfig.layer_status is not None:
                         efconfig.layer_status = PipelineStatus.PREVIEW
                 return True, self.diff
             
+            # 2. Check cache with combined hash
+            # We use ClassName + ParamHash + UpstreamHash as key
+            cached = efconfig.processor.get_result(self.__class__.__name__, combined_hash)
+            
+            if cached and cached['status'] == 'COMPLETE':
+                self.diff = cached['result']
+                self.hash = combined_hash 
+                return True, self.diff
+
             # Upstream complete, check if we are already running
             if cached and cached['status'] == 'RUNNING':
                 if efconfig.layer_status is not None:
                     efconfig.layer_status = PipelineStatus.PREVIEW
+                self.hash = None # Running
                 return True, None # Return None as preview while running
                     
             # Submit new task
-            efconfig.processor.submit_task(self.__class__.__name__, img, param, efconfig, param_hash)
+            efconfig.processor.submit_task(self.__class__.__name__, img, param, efconfig, combined_hash)
             if efconfig.layer_status is not None:
                     efconfig.layer_status = PipelineStatus.PREVIEW
             
+            self.hash = None # Submitted
             return True, None # Submitted
             
         return False, None
+
+    def check_sync_necessity(self, param_hash, efconfig):
+        """
+        Check if synchronous recalculation is needed based on params and upstream status.
+        Also handles upstream hash mixing validation.
+        Returns:
+            (bool, int): (needed, combined_hash)
+        """
+        combined_hash = hash((param_hash, efconfig.upstream_hash))
+        if self.hash != combined_hash:
+            return True, combined_hash
+        return False, combined_hash
 
     def reeffect(self):
         self.diff = None
@@ -187,9 +205,16 @@ class RemoveChromaticAberrationEffect(Effect):
             if handled:
                 return result
 
-            if self.hash != param_hash:
-                self.diff = remove_chromatic_aberration(img)
-                self.hash = param_hash
+            if handled:
+                if result is not None:
+                     print(f"DEBUG: RCA make_diff returning Result Mean={result.mean():.4f}")
+                return result
+
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            if needed:
+                self.diff = img #remove_chromatic_aberration(img)
+                self.hash = combined_hash
+                print(f"DEBUG: RCA make_diff Sync Calc Result Mean={self.diff.mean():.4f}")
         
         return self.diff
 
@@ -563,11 +588,33 @@ class RotationEffect(Effect):
         flp = self._get_param(param, 'flip_mode')
         crop_enable = self._get_param(param, 'crop_enable')
 
-        param_hash = hash((ang, ang2, flp, crop_enable))
+        bypass = getattr(efconfig, 'bypass_rotation', False)
+        if bypass:
+            param_hash = hash((crop_enable))
+        else:
+            param_hash = hash((ang, ang2, flp, crop_enable))
+        
         if self.hash != param_hash:
-            self.diff = core.rotation(img, ang + ang2, flp,
-                                        inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
-                                        border_mode="reflect" if crop_enable == False else "constant")
+            if bypass:
+                # Bypass rotation but maintain Square Output (Padding)
+                h, w = img.shape[:2]
+                size = max(w, h)
+                
+                if w == size and h == size:
+                    self.diff = img
+                else:
+                    top = (size - h) // 2
+                    bottom = size - h - top
+                    left = (size - w) // 2
+                    right = size - w - left
+                    
+                    
+                    bmode = cv2.BORDER_REFLECT if crop_enable == False else cv2.BORDER_CONSTANT
+                    self.diff = cv2.copyMakeBorder(img, top, bottom, left, right, bmode)
+            else:
+                self.diff = core.rotation(img, ang + ang2, flp,
+                                            inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
+                                            border_mode="reflect" if crop_enable == False else "constant")
             self.hash = param_hash
         
         return self.diff
@@ -651,14 +698,12 @@ class CropEffect(Effect):
     def _open_crop_editor(self, param, widget):
         if self.crop_editor is None:
             from widgets.crop_editor import CropEditor
-            import signals
 
             input_width, input_height = param['original_img_size']
             x1, y1, x2, y2 = params.get_crop_rect(param)
             scale = config.get_config('preview_size')/max(input_width, input_height)
             self.crop_editor = CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
             self.crop_editor.set_editing_callback(self._crop_editing)
-            signals.blit_image.connect(self.crop_editor.update_centering_socket)
             widget.ids["preview_widget"].add_widget(self.crop_editor)
 
             # 編集中は一時的に変更
@@ -669,11 +714,8 @@ class CropEffect(Effect):
 
     def _close_crop_editor(self, param, widget):
         if self.crop_editor is not None:
-            import signals
-
             params.set_crop_rect(param, self.crop_editor.get_crop_rect())
             params.set_disp_info(param, self.crop_editor.get_disp_info())
-            signals.blit_image.disconnect(self.crop_editor.update_centering_socket)
             widget.ids["preview_widget"].remove_widget(self.crop_editor)
             self.crop_editor = None
 
@@ -707,54 +749,121 @@ class AINoiseReductonEffect(Effect):
     def get_param_dict(self, param):
         return {
             'ai_noise_reduction': False,
+            'ai_noise_reduction_intensity': 70,
+            'ai_noise_reduction_result': None,
         }
 
     def set2widget(self, widget, param):
         widget.ids["switch_ai_noise_reduction"].active = self._get_param(param, 'ai_noise_reduction')
+        widget.ids["slider_ai_noise_reduction_intensity"].value = self._get_param(param, 'ai_noise_reduction_intensity')
 
     def set2param(self, param, widget):
         param['ai_noise_reduction'] = widget.ids["switch_ai_noise_reduction"].active
+        param['ai_noise_reduction_intensity'] = widget.ids["slider_ai_noise_reduction_intensity"].value
 
     def make_diff(self, img, param, efconfig):
         nr = self._get_param(param, 'ai_noise_reduction')
-        # print(f"DEBUG: AINoise make_diff. Mode={self.execution_mode}, Processor={efconfig.processor is not None}, EfMode={efconfig.mode}")
-
-        if nr == False: #or efconfig.mode == EffectMode.PREVIEW:
+        nr_intensity = self._get_param(param, 'ai_noise_reduction_intensity') 
+        nr_result = self._get_param(param, 'ai_noise_reduction_result') 
+        
+        if nr == False: 
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
+
             self.diff = None
             self.hash = None
+            # param['ai_noise_reduction_result'] = None
+            # Also clear result from params if disabled? User might want to keep it. 
+            # But usually disabled means no result.
+            # param['ai_noise_reduction_result'] = None 
         else:
-            param_hash = hash((nr, efconfig.upstream_hash))
+            # Hash only parameters. try_async_execution will mix upstream_hash.
+            param_hash = hash(nr)
             
-            # Async Processing Logic
+            # Additional hash for rendering (includes intensity)
+            render_hash = hash((param_hash, efconfig.upstream_hash, nr_intensity))
+
+            # Debug Log for Cache Verification
+            print(f"DEBUG: AINoiseReducton make_diff. nr={nr}, upstream={efconfig.upstream_hash}, param_hash={param_hash}, render_hash={render_hash}, self.hash={self.hash}")
+
+            # Optimization: Skip if already rendered for this state
+            if self.hash == render_hash and self.diff is not None:
+                # print("DEBUG: Short-circuit return self.diff")
+                return self.diff
+
+            # Async Processing Logic: Always try async first
             handled, result = self.try_async_execution(img, param, efconfig, param_hash)
             if handled:
-                return result
+                print(f"DEBUG: try_async handled. result ID={id(result) if result is not None else 'None'}. CombinedHash={hash((param_hash, efconfig.upstream_hash))}")
+                # If we got a result (cached or newly computed), update nr_result
+                if result is not None:
+                    param['ai_noise_reduction_result'] = result
+                    
+                    # Blend with intensity
+                    alpha = nr_intensity / 100.0
+                    # Optimization: Use cv2 for faster blending
+                    # self.diff = result * alpha + img * (1.0 - alpha)
+                    if alpha <= 0.0:
+                        self.diff = img
+                    elif alpha >= 1.0:
+                        self.diff = result
+                    else:
+                        self.diff = cv2.addWeighted(result, alpha, img, 1.0 - alpha, 0.0)
+                    
+                    # Store render hash as current state hash
+                    self.hash = render_hash
+                    return self.diff
+                
+                # If running/waiting (result is None), try to use preserved result as preview
+                if nr_result is not None:
+                    # Blend preview too
+                    alpha = nr_intensity / 100.0
+                    # self.diff = nr_result * alpha + img * (1.0 - alpha)
+                    if alpha <= 0.0:
+                        self.diff = img
+                    elif alpha >= 1.0:
+                        self.diff = nr_result
+                    else:
+                        # Ensure shapes match (upstream might have changed size?)
+                        if nr_result.shape == img.shape:
+                            self.diff = cv2.addWeighted(nr_result, alpha, img, 1.0 - alpha, 0.0)
+                        else:
+                            self.diff = None # Cannot blend mismatch
+                    
+                    # Use a distinct hash for preview (add 'preview')
+                    self.hash = hash((render_hash, 'preview')) 
+                    return self.diff
+                    
+                return None
 
-            if self.hash != param_hash:
-                from processing_dialog import wait_prosessing
-
-                if True:
-                    import helpers.nafnet_helper as nafnet_helper
-                    if AINoiseReductonEffect.__net is None:
-                        AINoiseReductonEffect.__net = nafnet_helper.setup_nafnet(task='Image Denoising', device=config.get_config('gpu_device'))
-
-                    #self.diff = wait_prosessing(nafnet_helper.predict_nafnet_helper, AINoiseReductonEffect.__net, img)
-                    self.diff = nafnet_helper.predict_nafnet_helper(AINoiseReductonEffect.__net, img)
-                elif False:
-                    import helpers.restormer_helper as restormer_helper
-                    if AINoiseReductonEffect.__net is None:
-                        AINoiseReductonEffect.__net = restormer_helper.setup_restormer(task='Real_Denoising', device=config.get_config('gpu_device'))
-
-                    self.diff = wait_prosessing(restormer_helper.predict_restormer_helper, AINoiseReductonEffect.__net, img)
-                else:
-                    import helpers.dpir_helper as dpir_helper
-                    if AINoiseReductonEffect.__net is None:
-                        AINoiseReductonEffect.__net = dpir_helper.setup_dpir(device=config.get_config('gpu_device'))
-
-                    self.diff = wait_prosessing(dpir_helper.predict_dpir_helper, AINoiseReductonEffect.__net, img)
-                self.hash = param_hash
+            # Sync Fallback (Main Thread)
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            
+            if needed:
+                import helpers.scunet_helper as scunet_helper
+                if AINoiseReductonEffect.__net is None:
+                    AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config('gpu_device'), is_half=False)
+                
+                raw_diff = scunet_helper.predict_scunet_helper(AINoiseReductonEffect.__net, img)
+                AINoiseReductonEffect.__net = None
+                param['ai_noise_reduction_result'] = raw_diff
+            else:
+                raw_diff = param.get('ai_noise_reduction_result')
+                
+            if raw_diff is not None:
+                 alpha = nr_intensity / 100.0
+                 # self.diff = raw_diff * alpha + img * (1.0 - alpha)
+                 if alpha <= 0.0:
+                     self.diff = img
+                 elif alpha >= 1.0:
+                     self.diff = raw_diff
+                 else:
+                     self.diff = cv2.addWeighted(raw_diff, alpha, img, 1.0 - alpha, 0.0)
+                     
+                 self.hash = render_hash
+            else:
+                 self.diff = None
+                 self.hash = None
         
         return self.diff
 
@@ -1301,8 +1410,8 @@ class ContrastEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            rgb = core.type_convert(rgb, jnp.ndarray)
-            self.diff, _ = core.adjust_tone(rgb, con, -con)
+            rgb = core.type_convert(rgb, np.ndarray)
+            self.diff = core.adjust_tone(rgb, con, -con, disp_scale=efconfig.disp_info[4], resolution_scale=efconfig.resolution_scale)
             self.hash = param_hash
 
         return self.diff
@@ -1426,14 +1535,8 @@ class ToneEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            rgb = core.type_convert(rgb, jnp.ndarray)
-            diff, masks = core.adjust_tone(rgb, highlight, shadow, mt, white, black)  
-            if masks[1] is not None:
-                source = core.type_convert(diff, np.ndarray)
-                mask = core.type_convert(masks[1], np.ndarray)
-                self.diff = highlight_recovery.reconstruct_highlight_details(source, False)
-            else:
-                self.diff = diff
+            rgb = core.type_convert(rgb, np.ndarray)
+            self.diff = core.adjust_tone(rgb, highlight, shadow, mt, white, black, disp_scale=efconfig.disp_info[4], resolution_scale=efconfig.resolution_scale)
             self.hash = param_hash
         return self.diff
     
@@ -1496,7 +1599,7 @@ class LevelEffect(Effect):
             self.hash = None
 
         elif self.hash != param_hash:
-            rgb = core.type_convert(rgb, jnp.ndarray)
+            rgb = core.type_convert(rgb, np.ndarray)
             self.diff = core.apply_level_adjustment(rgb, bl, ml, wl)
             self.hash = param_hash
 
@@ -1604,7 +1707,7 @@ class TonecurveEffect(Effect):
         return self.diff
     
     def apply_diff(self, rgb):
-        rgb =  core.type_convert(rgb, jnp.ndarray)
+        rgb =  core.type_convert(rgb, np.ndarray)
         return core.apply_lut(rgb, self.diff)
 
 class TonecurveRedEffect(Effect):
@@ -1634,7 +1737,7 @@ class TonecurveRedEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_r):
-        rgb_r =  core.type_convert(rgb_r, jnp.ndarray)
+        rgb_r =  core.type_convert(rgb_r, np.ndarray)
         return core.apply_lut(rgb_r, self.diff)
 
 class TonecurveGreenEffect(Effect):
@@ -1664,7 +1767,7 @@ class TonecurveGreenEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_g):
-        rgb_g =  core.type_convert(rgb_g, jnp.ndarray)
+        rgb_g =  core.type_convert(rgb_g, np.ndarray)
         return core.apply_lut(rgb_g, self.diff)
 
 class TonecurveBlueEffect(Effect):
@@ -1695,7 +1798,7 @@ class TonecurveBlueEffect(Effect):
         return self.diff
 
     def apply_diff(self, rgb_b):
-        rgb_b =  core.type_convert(rgb_b, jnp.ndarray)
+        rgb_b =  core.type_convert(rgb_b, np.ndarray)
         return core.apply_lut(rgb_b, self.diff)
 
 class GradingEffect(Effect):
@@ -1748,10 +1851,10 @@ class GradingEffect(Effect):
     
     def apply_diff(self, rgb):
         lut, rgbs = self.diff
-        rgb = core.type_convert(rgb, jnp.ndarray)
+        rgb = core.type_convert(rgb, np.ndarray)
         gray = core.cvtColorRGB2Gray(rgb)
         blend = core.apply_lut(gray, lut)
-        blend = jnp.array(blend)
+        blend = np.array(blend)
         return core.apply_mask(rgb, blend, rgb * rgbs)
 
 class VSandSaturationEffect(Effect):
@@ -1822,7 +1925,7 @@ class HuevsHueEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_h):
-        hls_h = core.type_convert(hls_h, jnp.ndarray)
+        hls_h = core.type_convert(hls_h, np.ndarray)
         return core.apply_lut(hls_h / 360, self.diff, 1.0) + hls_h
 
 class HuevsLumEffect(Effect):
@@ -1853,7 +1956,7 @@ class HuevsLumEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_hl):
-        hls_hl = core.type_convert(hls_hl, jnp.ndarray)
+        hls_hl = core.type_convert(hls_hl, np.ndarray)
         return core.apply_lut(hls_hl[0] / 360, self.diff, 1.0) * hls_hl[1]
 
 class HuevsSatEffect(Effect):
@@ -1884,7 +1987,7 @@ class HuevsSatEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_hs):
-        hls_hs = core.type_convert(hls_hs, jnp.ndarray)
+        hls_hs = core.type_convert(hls_hs, np.ndarray)
         return core.apply_lut(hls_hs[0] / 360.0, self.diff, 1.0) * hls_hs[1]
 
 class LumvsLumEffect(Effect):
@@ -1915,7 +2018,7 @@ class LumvsLumEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_l):
-        hls_l = core.type_convert(hls_l, jnp.ndarray)
+        hls_l = core.type_convert(hls_l, np.ndarray)
         return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class LumvsSatEffect(Effect):
@@ -1946,7 +2049,7 @@ class LumvsSatEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_ls):
-        hls_ls = core.type_convert(hls_ls, jnp.ndarray)
+        hls_ls = core.type_convert(hls_ls, np.ndarray)
         return core.apply_lut(hls_ls[0], self.diff, 1.0) * hls_ls[1]
 
 class SatvsLumEffect(Effect):
@@ -1977,7 +2080,7 @@ class SatvsLumEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_sl):
-        hls_sl = core.type_convert(hls_sl, jnp.ndarray)
+        hls_sl = core.type_convert(hls_sl, np.ndarray)
         return core.apply_lut(hls_sl[0], self.diff, 1.0) * hls_sl[1]
 
 class SatvsSatEffect(Effect):
@@ -2008,7 +2111,7 @@ class SatvsSatEffect(Effect):
         return self.diff
 
     def apply_diff(self, hls_s):
-        hls_s = core.type_convert(hls_s, jnp.ndarray)
+        hls_s = core.type_convert(hls_s, np.ndarray)
         return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
 
 class SaturationEffect(Effect):
@@ -2508,7 +2611,7 @@ class VignetteEffect(Effect):
             param_hash = hash((vi, vr, vs))
             if self.hash != param_hash:
                 _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
-                rgb = core.type_convert(rgb, jnp.ndarray)
+                rgb = core.type_convert(rgb, np.ndarray)
                 vs = (100 - vs) / 100.0 * 3.0 + 1.0  # 1.0-4.0
                 self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y), vs)
                 self.hash = param_hash
@@ -2521,8 +2624,8 @@ def create_effects(distortion_callback=None):
 
     lv0 = effects[0]
     lv0['loading_wait'] = LoadingWaitEffect()
-    lv0['remove_chromatic_aberration'] = RemoveChromaticAberrationEffect()
     lv0['ai_noise_reduction'] = AINoiseReductonEffect()
+    lv0['remove_chromatic_aberration'] = RemoveChromaticAberrationEffect()
     lv0['lens_modifier'] = LensModifierEffect()
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()

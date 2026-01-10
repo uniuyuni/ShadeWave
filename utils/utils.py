@@ -127,30 +127,18 @@ def print_nan_inf(img, label=""):
     if nan_count > 0 or inf_count > 0:
         logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
 
-def convert_image_to_list(image):
-    # 画像を処理できる方に変換
-    img = (image * 255).astype(np.uint8)
+def convert_image_to_list(img):
 
     # データ読み込み
     vips = pyvips.Image.new_from_array(img)
-    buffer = vips.write_to_buffer('.jxl', lossless=True)
-    arr = np.frombuffer(buffer, dtype=np.uint8)
+    buffer = vips.write_to_buffer('.exr', lossless=True)
 
-    pack_buffer, original_len = pack_uint8_to_uint32(arr)
-    list_buffer = pack_buffer #pack_buffer.tolist()
-    save_data = (list_buffer, original_len)
-
-    return save_data
+    return (buffer, img.shape)
 
 def convert_image_from_list(save_data):
     # データを復元
-    list_buffer, original_len = save_data
-    array_buffer = list_buffer #np.array(list_buffer, dtype=np.uint32)
-    unpack_buffer = unpack_uint32_to_uint8(array_buffer, original_len)
-    img = pyvips.Image.new_from_buffer(unpack_buffer.tobytes(), "").numpy()
-
-    # 画像を処理できる方に変換
-    img = img.astype(np.float32) / 255
+    list_buffer, shape = save_data
+    img = pyvips.Image.new_from_buffer(list_buffer, "").numpy()
 
     return img
 

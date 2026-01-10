@@ -7,6 +7,7 @@ import cores.core as core
 import config
 import define
 import effects
+import utils.utils as utils
 
 SPECIAL_PARAM = [
     # for set_image_param
@@ -202,12 +203,28 @@ def _inpaint_load(param):
             inpaint_diff_list.append(inpaint_diff)
         param['inpaint_diff_list'] = inpaint_diff_list
 
+def _ai_noise_reduction_dump(param):
+    return
+    ai_noise_reduction_result = param.get('ai_noise_reduction_result', None)
+    if ai_noise_reduction_result is not None:
+        ai_noise_reduction_result = utils.convert_image_to_list(ai_noise_reduction_result)
+        param['ai_noise_reduction_result'] = ai_noise_reduction_result
+
+def _ai_noise_reduction_load(param):
+    return
+    ai_noise_reduction_result = param.get('ai_noise_reduction_result', None)
+    if ai_noise_reduction_result is not None:
+        ai_noise_reduction_result = utils.convert_image_from_list(ai_noise_reduction_result)
+        param['ai_noise_reduction_result'] = ai_noise_reduction_result
+
 def _serialize_param(param):
     _inpaint_dump(param)
+    _ai_noise_reduction_dump(param)
 
 def _deserialize_param(param):
     param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
     _inpaint_load(param)
+    _ai_noise_reduction_load(param)
 
 def serialize(param, mask_editor2):
     tdatetime = dt.now()

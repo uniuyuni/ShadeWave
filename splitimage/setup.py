@@ -1,3 +1,3 @@
 from setuptools import setup
 
-setup(name="splitimage", version="1.3")
+setup(name="splitimage", version="1.4")

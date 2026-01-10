@@ -22,7 +22,7 @@ def split_image_with_overlap(image: np.ndarray, block_height: int, block_width: 
     pad_width = (block_width - (img_width % (block_width - overlap))) % (block_width - overlap)
 
     # パディングを追加して画像サイズをブロックサイズで割り切れるようにする
-    padded_image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+    padded_image = np.pad(image, ((0, pad_height), (0, pad_width), (0, 0)), mode='reflect')
 
     # パディング後の新しいサイズ
     new_height, new_width, _ = padded_image.shape

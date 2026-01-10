@@ -1,6 +1,15 @@
 
 import numpy as np
 import cv2
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+def empty_cache():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache() # Cuda用
+    elif torch.backends.mps.is_available():
+        torch.mps.empty_cache()  # MPSバックエンド用
 
 def calculate_expanded_crop(img_width, img_height, x, y, w, h, width, height):
     """
@@ -146,5 +155,69 @@ def upscaler(image, width, height):
     result = realesrgan_helper.inference_realesrgan(regan, image, outscale=outscale)
 
     result = cv2.resize(result, (width, height), interpolation=cv2.INTER_LANCZOS4)
+
+    return result
+
+
+def print_model_structure(model, indent=0):
+    """
+    モデルの構造を詳細に表示
+    """
+    for name, module in model.named_children():
+        print("  " * indent + f"├─ {name}: {module.__class__.__name__}")
+        
+        if isinstance(module, nn.InstanceNorm2d):
+            print("  " * indent + f"   └─ ⚠️  InstanceNorm2d detected!")
+        
+        if len(list(module.children())) > 0:
+            print_model_structure(module, indent + 1)
+
+
+def apply_low_frequency_transfer(restored_img, reference_img, sigma=30):
+    """
+    復元画像（restored_img）の高周波成分（ディテール）と、
+    参照画像（reference_img）の低周波成分（色・明るさ）を合成します。
+    
+    これにより、NAFNet/Restormer等のタイル推論で発生した色ズレを
+    元画像の色味に強制的に合わせることで補正します。
+
+    Args:
+        restored_img (numpy.ndarray): タイル推論などで復元された高解像度画像
+        reference_img (numpy.ndarray): 色味の基準となる元画像
+                                      ※サイズが異なる場合は自動でリサイズされます
+        sigma (int): ガウシアンブラーの強度（奇数推奨）。
+                     値が大きいほど「広い範囲の色」を参照し、
+                     値が小さいほど「細かい模様」まで参照画像からコピーします。
+                     通常は 20〜100 程度で調整します。
+
+    Returns:
+        numpy.ndarray: 色補正された画像
+    """
+    
+    # 1. 参照画像を復元画像のサイズに合わせる
+    # （超解像タスクの場合、入力画像は小さいので拡大する必要があります）
+    h, w = restored_img.shape[:2]
+    if reference_img.shape[:2]!= (h, w):
+        reference_img = cv2.resize(reference_img, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    # 2. 計算のためにfloat型に変換（オーバーフロー/アンダーフロー防止）
+    restored_float = restored_img
+    reference_float = reference_img
+
+    # 3. 低周波成分（ぼかした画像）を抽出
+    # カーネルサイズ(ksize)は(0,0)指定でsigmaから自動計算させます
+    low_freq_restored = cv2.GaussianBlur(restored_float, (0, 0), sigmaX=sigma, sigmaY=sigma)
+    low_freq_reference = cv2.GaussianBlur(reference_float, (0, 0), sigmaX=sigma, sigmaY=sigma)
+
+    # 4. 高周波成分（ディテール）を抽出
+    # 復元画像 - その低周波 = 復元されたテクスチャやエッジのみの情報
+    high_freq_restored = restored_float - low_freq_restored
+
+    # 5. 合成（低周波転送）
+    # 参照画像の低周波（正しい色） + 復元画像の高周波（高精細なディテール）
+    result_float = low_freq_reference + high_freq_restored
+
+    # 6. 0-255の範囲にクリップしてuint8に戻す
+    result = result_float
 
     return result
