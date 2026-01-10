@@ -141,6 +141,16 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
         mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
         params.set_disp_info(primary_param, disp_info2)
+        
+        # Crop performed, so upstream (imgc) changed.
+        # But lv1reset might be False if lv0 didn't change.
+        # We MUST set lv1reset=True if we generated a NEW imgc that is different from cached crop result?
+        # Actually core.crop_image runs every time `process_pipeline` is called if we don't cache `crop_image` outside?
+        # `process_pipeline` argument `crop_image` IS the cache from `MainWidget`.
+        # If `crop_image` was None, we created it. So it IS new (to the pipeline flow).
+        # We should set lv1reset=True to force downstream updates.
+        lv1reset = True
+        
     else:
         imgc = crop_image
         disp_info2 = disp_info
@@ -158,8 +168,8 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
             #return None, imgc        
 
     if not is_drag:
-        img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=processor)
-        img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, processor=processor)
+        img2, lv4reset = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=processor)
+        img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, prev_reset=lv4reset, processor=processor)
     else:
         img2 = imgc
 
@@ -191,9 +201,8 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
     mask_editor2.update()
 
-    img2 = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=None)
-
-    img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, processor=None)
+    img2, lv4reset = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=None)
+    img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, prev_reset=lv4reset, processor=None)
     
     # ここでクロップ
     x1, y1, x2, y2 = params.get_crop_rect(primary_param)
@@ -237,7 +246,7 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
             else:
                 img3 = core.apply_mask(img3, mask.get_mask_image()[crop[1]:crop[3], crop[0]:crop[2], :], img2)
 
-    return img3
+    return img3, lv1reset
 
 def _process_effect(effect, name, rgb, param, efconfig, upstream_status, processor):
     # Determine execution mode

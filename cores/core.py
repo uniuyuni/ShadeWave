@@ -385,43 +385,8 @@ def blend_screen(base, over):
 
 #--------------------------------------------------
 # 露出補正
-@dispatch(np.ndarray, (float, int))
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def adjust_exposure(rgb, ev):
-    """
-    露光量を調整する関数
-    
-    Parameters:
-    rgb : np.ndarray (dtype=np.float32, shape=(H,W,3))
-    ev : float
-        露光補正値
-    
-    Returns:
-    np.ndarray : 補正後の画像 (同じshape/dtype)
-                 新しい配列は作成しないので、元の配列を直接変更する
-    """
-    # 2.95秒（CPUメモリなら最速）
-
-    # 定数事前計算
-    factor = 2.0 ** ev
-    h, w, _ = rgb.shape
-
-    result = np.empty_like(rgb)
-        
-    # 並列化処理
-    for i in prange(h):
-        for j in prange(w):
-            result[i, j, 0] = rgb[i, j, 0] * factor
-            result[i, j, 1] = rgb[i, j, 1] * factor
-            result[i, j, 2] = rgb[i, j, 2] * factor
-    
-    return result
-
-#@dispatch(jnp.ndarray, (float, int))
-#@partial(jit, static_argnums=(1,))
-#def adjust_exposure(rgb, ev):
-    # 1.37秒（ただしGPUにのっていることを前提）
-#    return rgb * (2.0 ** ev)
+    return rgb * (2.0 ** ev)
 
 #--------------------------------------------------
 
@@ -450,129 +415,92 @@ def adjust_contrast(img, cf, c=0.5):
     return adjust
     """
 
-@njit(parallel=True, fastmath=True, cache=True)
 def apply_level_adjustment(image, black_level, midtone_level, white_level):
-    max_val = 65535.0
-    black_16bit = float(black_level * 256)
-    white_16bit = float(white_level * 256)
+    """
+    Photoshop風のレベル補正を適用する関数
     
-    # Clip midtone
-    if midtone_level < black_level: midtone_level = black_level
-    if midtone_level > white_level: midtone_level = white_level
-    clipped_midtone = float(midtone_level)
+    Args:
+        image: 入力画像 (0.0-1.0の範囲)
+        black_level: 黒レベル (0-255)
+        midtone_level: 中間調レベル (0-255, 128が中性)
+        white_level: 白レベル (0-255)
+    
+    Returns:
+        調整された画像 (0.0-1.0の範囲)
+    """
+    
+    # 16ビット画像の最大値
+    max_val = 65535
+    
+    # 入力レベルを16ビット範囲に変換
+    black_16bit = black_level * 256
+    white_16bit = white_level * 256
+    
+    # midtone_levelを黒レベルと白レベルの範囲でクリップして再マッピング
+    # Photoshopでは、midtone_levelは黒レベルと白レベルの間の相対位置を表す
+    clipped_midtone = max(min(midtone_level, white_level), black_level)
 
+    # 黒レベルと白レベルの範囲で正規化（0-1）
     if white_level > black_level:
         midtone_normalized = (clipped_midtone - black_level) / (white_level - black_level)
     else:
-        midtone_normalized = 0.5
-
+        midtone_normalized = 0.5  # 範囲が無効な場合は中性値
+    
+    # 正規化された値（0-1）をガンマ値に変換
+    # 0.5が中性（ガンマ1.0）、0に近いほど明るく、1に近いほど暗く
     if midtone_normalized < 0.5:
+        # 0-0.5の範囲を0.1-1.0のガンマ値にマッピング（明るく）
         gamma = 0.1 + (midtone_normalized / 0.5) * 0.9
     else:
+        # 0.5-1.0の範囲を1.0-9.99のガンマ値にマッピング（暗く）
         gamma = 1.0 + ((midtone_normalized - 0.5) / 0.5) * 8.99
-
-    input_range_val = white_16bit - black_16bit
-    if input_range_val < 1.0: input_range_val = 1.0
-    inv_input_range = 1.0 / input_range_val
     
-    h, w, c = image.shape
-    res = np.empty_like(image)
+    # 入力画像を16ビット範囲に変換
+    image_16bit = image * max_val
     
-    for i in prange(h):
-        for j in range(w):
-            for k in range(c):
-                val = image[i, j, k] * max_val
-                adj = val - black_16bit
-                if adj < 0: adj = 0
-                norm = adj * inv_input_range
-                res[i, j, k] = norm ** gamma
-    return res
+    # レベル調整の計算（Photoshop準拠）
+    # 1. 黒レベル以下を0にクリップ
+    adjusted = np.maximum(image_16bit - black_16bit, 0)
+    
+    # 2. 入力範囲を0-1に正規化
+    input_range = white_16bit - black_16bit
+    input_range = np.maximum(input_range, 1.0)  # 0除算を防ぐ
+    normalized = adjusted / input_range
+    
+    # 3. 1.0以上をクリップ
+    #normalized = np.minimum(normalized, 1.0)
+    
+    # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
+    result = np.power(normalized, gamma)
+    
+    return result
 
 #--------------------------------------------------
 # 彩度補正と自然な彩度補正
-@njit(parallel=True, fastmath=True, cache=True)
-def calc_saturation(hsl_s, sat, vib):
-    # Numba implementation
-    sat_val = 1.0 + sat / 100.0
-    vib_val = (vib / 50.0)
-    # Note: original numpy implementation used vib/50.0, but benchmark script used vib/50.0 * 2.0 based on core_jax version!
-    # Let's check core.py lines 500: vib = (vib / 50.0).
-    # core_jax lines 507: vib = (vib / 50.0) * 2.0.
-    # The JAX version had a 2.0 multiplier! The Numpy version didn't.
-    # Which one is correct? Probably JAX one if it was "Natural Saturation".
-    # Or maybe they are different algos?
-    # View file 514, line 500: `vib = (vib / 50.0)`.
-    # Line 525 (commented JAX): `vib = (vib / 50.0) * 2.0`.
-    # I should preserve the behavior invoked by `calc_saturation_jax` which was using 2.0 multiplier.
-    # AND preserve `calc_saturation` which was using 1.0?
-    # But I'm merging them.
-    # Users call `calc_saturation` or `calc_saturation_jax`.
-    # If I merge them, I must choose one logic.
-    # If I use Numba for `calc_saturation`, do I change its logic to match JAX?
-    # The user asked to "port JAX functions".
-    # `calc_saturation` (Numpy) was ALREADY there. User didn't ask to change it.
-    # `calc_saturation_jax` (JAX) was the one to port.
-    # So I should keep `calc_saturation` (Numpy) AS IS (or optimization of IT), and optimization of `calc_saturation_jax`?
-    # But they are 99% same except that 2.0 factor.
-    # Maybe I should keep two functions if logic differs?
-    # Impl below uses optional `factor` argument? No.
-    # I will replace `calc_saturation_jax` with Numba version (with * 2.0) and call it `calc_saturation_jax` (or similar).
-    # AND I will optionally optimize `calc_saturation` (with * 1.0).
-    # Benchmark showed Numba is faster.
-    # So I will implement `calc_saturation` (Numba, * 1.0) AND `calc_saturation_jax` (Numba, * 2.0).
-    # Wait, code duplication?
-    # I can make a helper or just duplicate.
-    
-    sat_val = 1.0 + sat / 100.0
-    vib_val = (vib / 50.0)
-    
-    h, w = hsl_s.shape
-    res = np.empty_like(hsl_s)
-    
-    if vib_val == 0.0:
-        for i in prange(h):
-            for j in range(w):
-                res[i, j] = hsl_s[i, j] * sat_val
-    elif vib_val > 0.0:
-        # np.log(1.0 + vib * hsl_s) / np.log(1.0 + vib)
-        denom =  1.0 / math.log(1.0 + vib_val)
-        for i in prange(h):
-            for j in range(w):
-                res[i, j] = math.log(1.0 + vib_val * hsl_s[i, j]) * denom * sat_val
-    else:
-        # (np.exp(hsl_s * np.log(1.0 + vib)) - 1.0) / vib
-        log_term = math.log(1.0 + vib_val)
-        inv_vib = 1.0 / vib_val
-        for i in prange(h):
-            for j in range(w):
-                res[i, j] = (math.exp(hsl_s[i, j] * log_term) - 1.0) * inv_vib * sat_val
-    return res
 
-@njit(parallel=True, fastmath=True, cache=True)
-def calc_saturation_jax(hsl_s, sat, vib):
-    # Ported from JAX version (vib * 2.0)
-    sat_val = 1.0 + sat / 100.0
-    vib_val = (vib / 50.0) * 2.0
-    
-    h, w = hsl_s.shape
-    res = np.empty_like(hsl_s)
-    
-    if vib_val == 0.0:
-        for i in prange(h):
-            for j in range(w):
-                res[i, j] = hsl_s[i, j] * sat_val
-    elif vib_val > 0.0:
-        denom =  1.0 / math.log(1.0 + vib_val)
-        for i in prange(h):
-            for j in range(w):
-                res[i, j] = math.log(1.0 + vib_val * hsl_s[i, j]) * denom * sat_val
+def calc_saturation(hsl_s, sat, vib):
+
+    # 彩度変更値と自然な彩度変更値を計算
+    sat = 1.0 + sat / 100.0
+    vib = (vib / 50.0)
+
+    # 自然な彩度調整
+    if vib == 0.0:
+        final_s = hsl_s
+
+    elif vib > 0.0:
+        # 通常の計算
+        vib = vib ** 2.0
+        final_s = np.log(1.0 + vib * hsl_s) / np.log(1.0 + vib)
     else:
-        log_term = math.log(1.0 + vib_val)
-        inv_vib = 1.0 / vib_val
-        for i in prange(h):
-            for j in range(w):
-                res[i, j] = (math.exp(hsl_s[i, j] * log_term) - 1.0) * inv_vib * sat_val
-    return res
+        # 逆関数を使用
+        vib = vib ** 2.0
+        final_s = (np.exp(hsl_s * np.log(1.0 + vib)) - 1.0) / vib
+
+    # 彩度を適用
+    final_s = final_s * sat
+
+    return final_s
 
 #--------------------------------------------------
 
@@ -648,43 +576,28 @@ def calc_point_list_to_lut(point_list, max_value=1.0):
     
     return lut
 
-#@partial(jit, static_argnums=(2,))
-#def apply_lut(img, lut, max_value=1.0):
-#    """
-#    画像にLUTを適用する関数
-#    max_value: LUTが対応する最大値（デフォルト1.0）
-#    """
-#    # スケーリングしてLUTのインデックスに変換
-#    scale_factor = 65535 / max_value
-#    lut_indices = jnp.clip(jnp.round(img * scale_factor), 0, 65535).astype(jnp.uint16)
-#
-#    # LUTを適用
-#    result = jnp.take(lut, lut_indices)
-#    
-#    return result
-@njit(parallel=True, fastmath=True, cache=True)
 def apply_lut(img, lut, max_value=1.0):
+    """
+    画像にLUTを適用する関数
+    max_value: LUTが対応する最大値（デフォルト1.0）
+    """
+    # スケーリングしてLUTのインデックスに変換
     scale_factor = 65535 / max_value
-    h, w, c = img.shape
-    res = np.empty_like(img)
-    for i in prange(h):
-        for j in range(w):
-            for k in range(c):
-                val = img[i, j, k] * scale_factor
-                idx = int(val + 0.5)
-                if idx < 0: idx = 0
-                if idx > 65535: idx = 65535
-                res[i, j, k] = lut[idx]
-    return res
+    lut_indices = np.clip(np.round(img * scale_factor), 0, 65535).astype(np.uint16)
+
+    # LUTを適用
+    result = np.take(lut, lut_indices)
+    
+    return result
 
 #--------------------------------------------------
 # マスクイメージの適用
 
-#@dispatch(jnp.ndarray, jnp.ndarray, jnp.ndarray)
+#@dispatch(np.ndarray, np.ndarray, np.ndarray)
 #@jit
 #def apply_mask(img1, msk, img2):
 #
-#    _msk = msk[:, :, jnp.newaxis] if msk.ndim == 2 else msk
+#    _msk = msk[:, :, np.newaxis] if msk.ndim == 2 else msk
 #    img = img1 * (1.0 - _msk) + img2 * _msk
 #
 #    return img
@@ -763,35 +676,35 @@ def apply_mask(img1, msk, img2):
 #        center_x = (x1 + (x2 - x1) / 2 - dx) * scale + offset_x
 #        center_y = (y1 + (y2 - y1) / 2 - dy) * scale + offset_y
 #        
-#        mm = jax.lax.max((x2 - x1), (y2 - y1)) * scale.astype(jnp.float32)
+#        mm = jax.lax.max((x2 - x1), (y2 - y1)) * scale.astype(np.float32)
 #        max_radius = jax.lax.sqrt(mm**2 + mm**2) / 2
 #    
 #    # 指定された半径パーセントに基づいて実際の半径を計算
 #    radius = max_radius * radius_percent
 #    
 #    # 距離マップ作成
-#    y_indices, x_indices = jnp.ogrid[:h, :w]
-#    dist = jnp.sqrt((x_indices - center_x)**2 + (y_indices - center_y)**2)
+#    y_indices, x_indices = np.ogrid[:h, :w]
+#    dist = np.sqrt((x_indices - center_x)**2 + (y_indices - center_y)**2)
 #    
 #    def smoothstep(x):
 #        return x * x * (3 - 2 * x)  # 3次多項式
 #
 #    # マスク作成（0が中心、1が端）
-#    mask = jnp.clip(dist / radius, 0, 1)
+#    mask = np.clip(dist / radius, 0, 1)
 #    #mask = gaussian_blur(mask, (64, 64), 0)
-#    mask = jnp.power(mask, gradient_softness)  # グラデーション調整
+#    mask = np.power(mask, gradient_softness)  # グラデーション調整
 #    mask = smoothstep(mask)
 #    
 #    # 効果適用（intensityの符号で方向を制御）
-#    vignette = jnp.where(intensity < 0, 1.0 + intensity * mask, 1.0 - intensity * mask)
+#    vignette = np.where(intensity < 0, 1.0 + intensity * mask, 1.0 - intensity * mask)
 #    
 #    # カラー画像対応
 #    if image.ndim == 3:
-#        vignette = vignette[..., jnp.newaxis]
+#        vignette = vignette[..., np.newaxis]
 #    
 #    # 効果適用
-#    result = jnp.clip(image * vignette, 0, 1) if intensity < 0 else jnp.clip(image + (1-image)*(1-vignette), 0, 1)
-#    return result.astype(jnp.float32)
+#    result = np.clip(image * vignette, 0, 1) if intensity < 0 else np.clip(image + (1-image)*(1-vignette), 0, 1)
+#    return result.astype(np.float32)
 @njit(parallel=True, fastmath=True, cache=True)
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
     intensity = intensity / 100.0
@@ -942,9 +855,14 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         crop_height = int(texture_height)
 
         if offset == (0, 0):
-            # クリック位置を中心にする
-            crop_x = disp_info[0] + click_image_x - crop_width // 2
-            crop_y = disp_info[1] + click_image_y - crop_height // 2
+            # 既にズーム済み（scale == 1.0）なら位置を維持
+            if abs(scale - 1.0) < 0.01:
+                crop_x = disp_info[0]
+                crop_y = disp_info[1]
+            else:
+                # クリック位置を中心にする
+                crop_x = disp_info[0] + click_image_x - crop_width // 2
+                crop_y = disp_info[1] + click_image_y - crop_height // 2
         else:
             # スクロール
             crop_x = disp_info[0]
@@ -2077,21 +1995,21 @@ def type_convert(img, target_type):
         return img
     
     if target_type == np.ndarray:
-        if isinstance(img, jnp.ndarray):
+        if isinstance(img, np.ndarray):
             return np.array(img)
         elif isinstance(img, cv2.UMat):
             return img.get()
     
-    elif target_type == jnp.ndarray:
+    elif target_type == np.ndarray:
         if isinstance(img, np.ndarray):
-            return jnp.array(img)
+            return np.array(img)
         elif isinstance(img, cv2.UMat):
-            return jnp.array(img.get())
+            return np.array(img.get())
     
     elif target_type == cv2.UMat:
         if isinstance(img, np.ndarray):
             return cv2.UMat(img)
-        elif isinstance(img, jnp.ndarray):
+        elif isinstance(img, np.ndarray):
             return cv2.UMat(np.array(img))
     """
     return img
