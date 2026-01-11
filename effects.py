@@ -204,16 +204,10 @@ class RemoveChromaticAberrationEffect(Effect):
             if handled:
                 return result
 
-            if handled:
-                if result is not None:
-                     print(f"DEBUG: RCA make_diff returning Result Mean={result.mean():.4f}")
-                return result
-
             needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
             if needed:
                 self.diff = remove_chromatic_aberration(img)
                 self.hash = combined_hash
-                print(f"DEBUG: RCA make_diff Sync Calc Result Mean={self.diff.mean():.4f}")
         
         return self.diff
 

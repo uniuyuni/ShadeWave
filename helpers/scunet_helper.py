@@ -15,12 +15,12 @@ import utils.aiutils as aiutils
 from SCUNet.models.network_scunet import SCUNet
 
 # Configuration
-_TILE_SIZE = 256
-_TILE_OVERLAP = 32
+_TILE_SIZE = 32*14
+_TILE_OVERLAP = 32*2
 
 def setup_scunet(is_color=True, device='cpu', is_half=False):
 
-    model_path = "checkpoints/SCUNet/scunet_color_real_psnr.pth" if is_color else "checkpoints/SCUNet/scunet_gray_50.pth"
+    model_path = "checkpoints/SCUNet/scunet_color_real_gan.pth" if is_color else "checkpoints/SCUNet/scunet_gray_50.pth"
 
     """モデルを初期化してロードする"""
     model = SCUNet(in_nc=1 if "gray" in model_path else 3, config=[4]*7, dim=64, input_resolution=_TILE_SIZE)
@@ -78,12 +78,17 @@ def predict_scunet(model, np_image):
 
 def predict_scunet_helper(model, np_image):
 
+    org_image = np_image.copy()
+
     logging.info("SCUNet Predicting...")
     imin = np_image.min()
     imax = np_image.max()
     if 0.0 < imin or 1.0 < imax:
         logging.warning(f"SCUNet Input image range is [{imin}, {imax}].")
-        np_image = (np_image - imin) / (imax - imin)
+        if imax != imin:
+            np_image = (np_image - imin) / (imax - imin)
+        else:
+             np_image = np_image - imin
 
     split_images, split_info = splitimage.split_image_with_overlap(np_image, _TILE_SIZE, _TILE_SIZE, _TILE_OVERLAP)
 
@@ -99,11 +104,14 @@ def predict_scunet_helper(model, np_image):
 
     result = splitimage.combine_image_with_overlap(denoised_images, split_info)
     if 0.0 < imin or 1.0 < imax:
-        result = (result * (imax - imin)) + imin
+        if imax != imin:
+            result = (result * (imax - imin)) + imin
+        else:
+            result = result + imin
 
     logging.info("SCUNet Finalizing...")
     waitinfo.set_text("ai_noise_reduction", "Finalizing...")
-    result = aiutils.apply_low_frequency_transfer(result, np_image, sigma=50)
+    result = aiutils.apply_low_frequency_transfer(result, org_image, sigma=75)
 
     logging.info(f"SCUNet Completed. {time.time() - t1:.2f} seconds")
     waitinfo.set_text("ai_noise_reduction", "")
