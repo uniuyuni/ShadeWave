@@ -178,7 +178,7 @@ class LoadingWaitEffect(Effect):
 class RemoveChromaticAberrationEffect(Effect):
     def get_param_dict(self, param):
         return {
-            'rca_enabled': True,
+            'rca_enabled': False,
         }
         
     def __init__(self, **kwargs):
@@ -186,11 +186,10 @@ class RemoveChromaticAberrationEffect(Effect):
         self.execution_mode = ExecutionMode.ASYNC
 
     def set2widget(self, widget, param):
-        pass
+        widget.ids["switch_rca"].active = self._get_param(param, 'rca_enabled')
 
     def set2param(self, param, widget):
-        param['rca_enabled'] = True
-        pass
+        param['rca_enabled'] = widget.ids["switch_rca"].active
 
     def make_diff(self, img, param, efconfig):
         rca_enabled = self._get_param(param, 'rca_enabled')
@@ -212,7 +211,7 @@ class RemoveChromaticAberrationEffect(Effect):
 
             needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
             if needed:
-                self.diff = img #remove_chromatic_aberration(img)
+                self.diff = remove_chromatic_aberration(img)
                 self.hash = combined_hash
                 print(f"DEBUG: RCA make_diff Sync Calc Result Mean={self.diff.mean():.4f}")
         
@@ -503,7 +502,7 @@ class DistortionEffect(Effect):
                     tcg_info = core.param_to_tcg_info(param)
                     self.diff = DistortionCanvas.replay_recorded(img, param['distortion_recorded'], tcg_info)
                     self.hash = param_hash
-
+        
         return self.diff
 
     def apply_diff(self, img):

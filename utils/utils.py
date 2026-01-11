@@ -7,6 +7,7 @@ import json
 import logging
 import numpy as np
 import pyvips
+import tempfile
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -186,6 +187,46 @@ def unpack_uint32_to_uint8(packed_uint32, original_length):
     # 元の長さでトリミング（パディング部分を除去）
     return byte_arr[:original_length]
 
+def array_to_memmap(arr):
+    """
+    numpy配列をメモリマップドファイルに変換する関数
+    
+    Args:
+        arr (np.ndarray): 入力配列
+        
+    Returns:
+        tuple: (memmap_obj, temp_file_obj)
+        memmap_obj: メモリマップされた配列
+        temp_file_obj: 一時ファイルオブジェクト（これを保持していないとファイルが消える）
+    """
+    # 一時ファイルを作成（自動削除されるように設定）
+    tfile = tempfile.TemporaryFile()
+    
+    # 配列の全データをファイルに書き込む
+    # メモリマップを作成するために必要なサイズを確保する
+    # tofileではなく、memmapを作ってそこにコピーする方が効率的かもしれないが、
+    # 確実なのはデータを書き込んでからmmapすること
+    
+    # メモリマップを作成（書き込み用）
+    shape = arr.shape
+    dtype = arr.dtype
+    
+    # データを確保
+    #tfile.truncate(arr.nbytes)
+    #tfile.flush()
+    
+    # arrの内容を書き込む
+    # np.saveやndarray.tofileはヘッダーがついたりシーク位置がずれる可能性があるため
+    # np.memmapを使って直接書き込む
+    
+    mm = np.memmap(tfile, dtype=dtype, mode='w+', shape=shape)
+    mm[:] = arr[:]
+    mm.flush()
+    #mm._mmap.close() # これをしてはいけない。ファイルが閉じられる
+    
+    # 読み込みモード（w+なので読み書き可能だが、意図としてはキャッシュ）
+    # ファイルオブジェクトが開いている限り、OSが管理する一時ファイルとして存在する
+    return mm, tfile
 
 if __name__ == '__main__':
 

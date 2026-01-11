@@ -139,7 +139,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     if crop_image is None or lv1reset == True:
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, offset, is_zoomed)
         mask_editor2.set_primary_param(primary_param, disp_info2)
-        mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
+        mask_editor2.set_ref_image(imgc, pre_rotation_img)
         params.set_disp_info(primary_param, disp_info2)
         
         # Crop performed, so upstream (imgc) changed.
@@ -198,7 +198,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     imax = max(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_texture_size(imax, imax)
     mask_editor2.set_primary_param(primary_param, disp_info)
-    mask_editor2.set_ref_image(imgc, img0, pre_rotation_img)
+    mask_editor2.set_ref_image(imgc, pre_rotation_img)
     mask_editor2.update()
 
     img2, lv4reset = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=None)
@@ -547,7 +547,7 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
     efconfig.layer_status = PipelineStatus.COMPLETE
     efconfig.processor = processor
 
-    rgb = img.copy()
+    rgb = img
     for i, n in enumerate(lv1):
         if lv2reset == True:
             lv1[n].reeffect()

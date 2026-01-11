@@ -362,19 +362,23 @@ class BaseMask(Widget):
             'sat': 255,
         }
 
-        full_image_hls = self.editor.get_full_image_hls()
+        #original_image_hls = self.editor.get_original_image_hls()
         crop_image_hls = self.editor.get_crop_image_hls()
-        if full_image_hls is not None:            
-            fimg = full_image_hls[..., HLS_NUM[hls_str]]
+        #if original_image_hls is not None:            
+        if crop_image_hls is not None:            
+            #oimg = original_image_hls[..., HLS_NUM[hls_str]]
             cimg = crop_image_hls[..., HLS_NUM[hls_str]]
             dmax = HLS_DIS_MAX[hls_str]
             mmax = HLS_MAX[hls_str]
             
             ndis = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_distance', dmax)
             if ndis != dmax:
-                cx, cy = self.editor.tcg_to_full_image(*self.center)
-                print(f"point: {cx}, {cy}, {fimg[int(cy), int(cx)]}")
-                center_n = fimg[int(cy), int(cx)] 
+                #cx, cy = self.editor.tcg_to_original_image(*self.center)
+                #print(f"point: {cx}, {cy}, {oimg[int(cy), int(cx)]}")
+                #center_n = oimg[int(cy), int(cx)]
+                cx, cy = self.editor.tcg_to_crop_image(*self.center)
+                print(f"point: {cx}, {cy}, {cimg[int(cy), int(cx)]}")
+                center_n = cimg[int(cy), int(cx)] 
                 
                 if hls_str == 'hue':
                     # 色相の範囲チェック（0-360の円状ループを考慮）
@@ -2002,8 +2006,8 @@ class SegmentMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_original(*self.center)
-        corner = self.editor.tcg_to_original(*self.corner)
+        center = self.editor.tcg_to_original_image(*self.center)
+        corner = self.editor.tcg_to_original_image(*self.corner)
         invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
         segment_mask = None
 
@@ -2063,10 +2067,7 @@ class SegmentMask(BaseMask):
             SegmentMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
         
         # 画像の取得
-        if self.editor.original_image is not None:
-            img = self.editor.original_image
-        else:
-            img = self.editor.full_image_rgb
+        img = self.editor.get_original_image_rgb()
         
         # バウンディングボックスの検証
         if bbox[0] == bbox[0] + bbox[2] or bbox[1] == bbox[1] + bbox[3]:
@@ -2197,7 +2198,7 @@ class DepthMapMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_original(*self.center)
+        center = self.editor.tcg_to_original_image(*self.center)
         depth_map_mask = None
 
         newhash = hash((image_size))
@@ -2241,10 +2242,7 @@ class DepthMapMask(BaseMask):
             DepthMapMask.__model = depth_pro.setup_model(device=config.get_config('gpu_device'))
 
         # 画像の取得
-        if self.editor.original_image is not None:
-            img = self.editor.original_image
-        else:
-            img = self.editor.full_image_rgb
+        img = self.editor.get_original_image_rgb()
 
         mask = depth_pro.predict_model(DepthMapMask.__model, img)
 
@@ -2366,7 +2364,7 @@ class FaceMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_original(*self.center)
+        center = self.editor.tcg_to_original_image(*self.center)
         exclude_names = []
         if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_face') == False:
             exclude_names.append('face')
@@ -2422,10 +2420,7 @@ class FaceMask(BaseMask):
         import helpers.facer_helper as facer_helper
 
         # 画像の取得
-        if self.editor.original_image is not None:
-            img = self.editor.original_image
-        else:
-            img = self.editor.full_image_rgb
+        img = self.editor.get_original_image_rgb()
 
         if FaceMask.__faces is None:
             FaceMask.__faces = facer_helper.create_faces(img, device='cpu')
@@ -2575,7 +2570,7 @@ class TargetTextMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_original(*self.center)
+        center = self.editor.tcg_to_original_image(*self.center)
         invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
         text = self.target_text
         segment_mask = None
@@ -2626,10 +2621,7 @@ class TargetTextMask(BaseMask):
             TargetTextMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
         
         # 画像の取得
-        if self.editor.original_image is not None:
-            img = self.editor.original_image
-        else:
-            img = self.editor.full_image_rgb
+        img = self.editor.get_original_image_rgb()
         
         # 推論実行 (Original画像に対して)
         mask_original = sam3_helper.predict_sam3_for_text(TargetTextMask.__processor, img, text)
@@ -2666,11 +2658,10 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.margin = (0, 0)
         self.texture_size = (0, 0)
 
-        self.full_image_rgb = None
-        self.full_image_hls = None
         self.crop_image_rgb = None
         self.crop_image_hls = None
-        self.original_image = None
+        self.original_image_rgb = None
+        self.original_image_hls = None
 
         logging.info("MaskEditor: 初期化完了")
 
@@ -2714,28 +2705,28 @@ class MaskEditor2(FloatLayout, LayerCtrl):
 
         return True
     
-    def set_ref_image(self, crop_image, full_image, original_image=None):
-        if self.crop_image_rgb is not crop_image:
+    def set_ref_image(self, crop_image, original_image=None):
+        if self.crop_image_rgb is None:
             self.crop_image_rgb = crop_image
-            self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
+            self.crop_image_hls = None
 
-        if self.full_image_rgb is not full_image:
-            self.full_image_rgb = full_image
-            self.full_image_hls = hlsrgb.rgb_to_hlc_gain(self.full_image_rgb)
-
-        self.original_image = original_image
-        if self.original_image is None:
-            self.original_image = full_image
+        if self.original_image_rgb is not original_image:
+            self.original_image_rgb = original_image
+            self.original_image_hls = None
 
     def get_crop_image_hls(self):
-        if self.crop_image_hls is None:
+        if self.crop_image_hls is None and self.crop_image_rgb is not None:
             self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
+            self.crop_image_rgb = None
         return self.crop_image_hls
 
-    def get_full_image_hls(self):
-        if self.full_image_hls is None and self.full_image_rgb is not None:
-            self.full_image_hls = hlsrgb.rgb_to_hlc_gain(self.full_image_rgb)
-        return self.full_image_hls
+    def get_original_image_rgb(self):
+        return self.original_image_rgb
+
+    def get_original_image_hls(self):
+        if self.original_image_hls is None and self.original_image_rgb is not None:
+            self.original_image_hls = hlsrgb.rgb_to_hlc_gain(self.original_image_rgb)
+        return self.original_image_hls
 
     def set_texture_size(self, tx, ty):
         self.texture_size = (tx, ty)
@@ -3208,15 +3199,16 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     def tcg_to_crop_image(self, cx, cy):
         # TCG座標をクロップ（pipeline0処理後のクロップ画像）画像座標に変換する
         cx, cy = self.tcg_to_full_image(cx, cy)
-        cx = cx * (self.crop_image_hls.shape[1] / self.full_image_rgb.shape[1])
-        cy = cy * (self.crop_image_hls.shape[0] / self.full_image_rgb.shape[0])
+        shape_max = max(self.original_image_rgb.shape[0], self.original_image_rgb.shape[1])
+        cx = cx * (self.crop_image_hls.shape[1] / shape_max)
+        cy = cy * (self.crop_image_hls.shape[0] / shape_max)
         return (cx, cy)
 
-    def tcg_to_original(self, cx, cy):
+    def tcg_to_original_image(self, cx, cy):
         # 座標変換：TCG座標（回転後） -> Original座標（回転前）
         # 1. TCG座標は元画像の中心を原点とした、回転・反転のない座標系
         # なので、単に左上原点に戻すだけでよい
-        h, w = self.original_image.shape[:2]
+        h, w = self.get_original_image_rgb().shape[:2]
         cx, cy = cx + w * 0.5, cy + h * 0.5       
         cx, cy = min(max(cx, 0), w), min(max(cy, 0), h) # クリップ (範囲外に出ないように)
         return (cx, cy)

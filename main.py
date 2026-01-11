@@ -3,9 +3,12 @@
 #display_splash_screen("assets/platypus.png")
 
 if __name__ == '__main__':
-    import matplotlib
-    matplotlib.interactive(False)  # インタラクティブ完全OFF
-
+    try:
+        import matplotlib
+        matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
+        matplotlib.interactive(False)
+    except ImportError:
+        pass    
     import tkinter as tk
     
     # tk.Tk()で落ちるのを回避するためのパッチ
@@ -244,12 +247,19 @@ if __name__ == '__main__':
         @mainthread
         def blit_image(self, img, dt=0):
             # Texture Resizing logic
+            is_dither = config.get_config('display_output_dither')
+            is_downscale = config.get_config('display_output_downscale')
+            target_fmt = 'ubyte' if (is_dither or is_downscale) else 'float'
+
             if self.texture is None or self.texture.size != (img.shape[1], img.shape[0]):
-                self.texture = KVTexture.create(size=(img.shape[1], img.shape[0]), colorfmt='rgb', bufferfmt='float')
+                self.texture = KVTexture.create(size=(img.shape[1], img.shape[0]), colorfmt='rgb', bufferfmt=target_fmt)
                 self.texture.flip_vertical()
 
-            if config.get_config('display_output_dither'):
+            if is_dither:
                 img = core.jjn_dither_uint8(img)
+                self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
+            elif is_downscale:
+                img = (np.clip(img, 0, 1) * 255).astype(np.uint8)
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
             else:
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='float')
@@ -264,9 +274,9 @@ if __name__ == '__main__':
             signals.blit_image.emit()
 
         @mainthread
-        def draw_histogram(self, img, blue_count=0, black_count=0, dt=0):
-            #logging.debug(f"draw_histogram blue_count={blue_count}, black_count={black_count}")
-            self.ids["histogram"].draw_histogram(img, blue_count, black_count)
+        def draw_histogram_view(self, hist_data):
+            #logging.debug(f"draw_histogram_view")
+            self.ids["histogram"].draw_histogram_from_data(hist_data)
 
         def draw_image_core(self, offset=(0, 0)):
             if (self.imgset is not None) and (self.imgset.img is not None):
@@ -283,12 +293,13 @@ if __name__ == '__main__':
 
                 # ヒストグラム表示
                 img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
-                self.draw_histogram(img_hist, 0, exclude_count)
+                hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
+                self.draw_histogram_view(hist_data)
 
                 # プレビュー表示
                 img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                 img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
-                img_draw = np.clip(img_draw, 0, 1)
+                np.clip(img_draw, 0, 1, out=img_draw)
                 
                 # Update Property for KV Stencil
                 h, w = img_draw.shape[:2]
@@ -305,7 +316,7 @@ if __name__ == '__main__':
                 self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
                 """
 
-        def draw_image(self):            
+        def draw_image(self):
             while self.apply_thread is not None:
 
                 if self.apply_draw_image_offset is not None:

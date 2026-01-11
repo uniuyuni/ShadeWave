@@ -9,6 +9,7 @@ import logging
 
 import imageset
 import config
+import utils.utils as utils
 
 # メインプロセスで実行されるコールバック関数
 def _task_callback(file_callbacks, shared_resources, future):
@@ -21,6 +22,15 @@ def _task_callback(file_callbacks, shared_resources, future):
         else:
             # メインプロセス実行ならメモリから取得
             file_path, imgset, exif_data, param, flag = future
+
+        # Memmap化 (キャッシュ投入前)
+        if imgset is not None and imgset.img is not None:
+             # しきい値: 1MB
+            if imgset.img.nbytes > 1 * 1024 * 1024:
+                mm, backing = utils.array_to_memmap(imgset.img)
+                imgset.img = mm
+                imgset.backing = backing
+                logging.info(f"FCS: Converted {file_path} to memmap. Backing: {backing}")
 
         # キャッシュに追加
         shared_resources['cache'][file_path] = (imgset, exif_data, param.copy())
@@ -106,7 +116,7 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
 class FileCacheSystem:
     def __init__(self, max_cache_size: int = 10, max_concurrent_loads: int = 4):
         # 共有リソースを初期化
-        self.ppe = ProcessPoolExecutor(max_workers=1)
+        self.ppe = ProcessPoolExecutor(max_workers=2)
         self.shared_resources = {
             'cache': {},
             'preload_registry': {},

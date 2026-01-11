@@ -4,35 +4,22 @@ import io
 import cv2
 import math
 import numpy as np
-from functools import partial
-try:
-    import matplotlib
-    matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
-    matplotlib.interactive(False)
-except ImportError:
-    pass
 import colour
-import math
-from scipy.interpolate import splprep, splev
-from scipy.ndimage import label
-import lensfunpy
+
 import logging
 import numba
 from numba.experimental import jitclass
 from numba import njit, prange
 from PIL import ImageCms
-from multipledispatch import dispatch
 import json
 from typing import Any, Dict
 import base64
 
-import cores.highlight_recovery as highlight_recovery
 import cores.sigmoid as sigmoid
 import dng_sdk.dng_temperature
 import utils.utils as utils
 import params
 import config
-#import cores.aces_tonemapping as aces_tonemapping
 
 def normalize_image(image_data):
     # 画像データを正規化
@@ -70,9 +57,9 @@ def convert_RGB2TempTint(rgb):
     dng = dng_sdk.dng_temperature.DngTemperature()
     dng.set_xy_coord(xy)
 
-    return float(dng.fTemperature), float(dng.fTint), float(xyz[1])
+    return (float(dng.fTemperature), float(dng.fTint), float(xyz[1]))
 
-def __invert_temp_tint(temp, tint, ref_temp):
+def _invert_temp_tint(temp, tint, ref_temp):
 
     # 色温度の反転
     mired_temp = 1e6 / temp
@@ -82,12 +69,12 @@ def __invert_temp_tint(temp, tint, ref_temp):
     # ティントの反転
     inverted_tint = -tint
 
-    return inverted_temp, inverted_tint
+    return (inverted_temp, inverted_tint)
 
 def invert_RGB2TempTint(rgb, ref_temp=5000.0):
     temp, tint, Y = convert_RGB2TempTint(rgb)
 
-    invert_temp, invert_tint = __invert_temp_tint(temp, tint, ref_temp)
+    invert_temp, invert_tint = _invert_temp_tint(temp, tint, ref_temp)
 
     return (invert_temp, invert_tint, Y)
 
@@ -304,32 +291,12 @@ def apply_lens_distortion(image, map_x, map_y, scale=1.0, interpolation='linear'
                      res[i, j, k] = 0.0
     return res
 
-def _adjust_highlights(image, strength=0.8):
-    """ ハイライトのみを圧縮する補助関数 """
-    highlights = np.clip(image - 0.75, 0, 1)  # ハイライト領域抽出
-    adjusted = highlights * (1 - strength)
-    return image - highlights + adjusted
-
 def highlight_compress(image):
     # Lazy load to avoid importing torch at module level
     import cores.aces_tonemapping as aces_tonemapping
+    import config
+    
     return aces_tonemapping.aces_tonemapping(image, 1.0, config.get_config('gpu_device'))
-    adjusted = _adjust_highlights(aces, 0.8)
-
-    blurred = gaussian_blur_cv(adjusted, (0,0), 1.2)
-    detail = np.clip(adjusted - blurred + 0.5, 0, 1)
-
-    return adjusted
-
-
-    return highlight_recovery.reconstruct_highlight_details(image, False)
-    return cv2.createTonemapReinhard(
-        gamma=1.0, 
-        intensity=0.0,
-        light_adapt=0.5, 
-        color_adapt=0.5
-    ).process(image)
-
 
 def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96), opacity=0.5) -> np.ndarray:
     """
@@ -390,7 +357,6 @@ def adjust_exposure(rgb, ev):
 
 #--------------------------------------------------
 
-#@partial(jit, static_argnums=(1,2,))
 def adjust_contrast(img, cf, c=0.5):
     # コントラスト補正
     # img: 変換元画像
@@ -505,6 +471,7 @@ def calc_saturation(hsl_s, sat, vib):
 #--------------------------------------------------
 
 def calc_point_list_to_lut(point_list, max_value=1.0):
+    from scipy.interpolate import splprep, splev
     """
     スプライン補間を使った基本的なLUT生成関数
     
@@ -593,8 +560,6 @@ def apply_lut(img, lut, max_value=1.0):
 #--------------------------------------------------
 # マスクイメージの適用
 
-#@dispatch(np.ndarray, np.ndarray, np.ndarray)
-#@jit
 #def apply_mask(img1, msk, img2):
 #
 #    _msk = msk[:, :, np.newaxis] if msk.ndim == 2 else msk
@@ -602,7 +567,6 @@ def apply_lut(img, lut, max_value=1.0):
 #
 #    return img
 
-@dispatch(np.ndarray, np.ndarray, np.ndarray)
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def apply_mask(img1, msk, img2):
 
@@ -637,7 +601,6 @@ def apply_mask(img1, msk, img2):
 
 #--------------------------------------------------
 # 周辺減光効果
-#@partial(jit, static_argnums=(1,2,5,6))
 #def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
 #    """
 #    修正版 周辺光量落ち効果
@@ -908,6 +871,7 @@ def get_multiple_mask_bbox(mask):
         各領域の(x, y, w, h)のリスト
             空のマスクの場合は空リストを返す
     """
+    from scipy.ndimage import label
     # マスクが空かチェック
     if not np.any(mask > 0):
         return []
@@ -931,7 +895,7 @@ def get_multiple_mask_bbox(mask):
         y_min, y_max = np.where(rows)[0][[0, -1]]
         x_min, x_max = np.where(cols)[0][[0, -1]]
         
-        bboxes.append((int(x_min), int(y_min), int(x_max-x_min), int(y_max-y_min)))
+        bboxes.append((int(x_min), int(y_min), int(x_max-x_min+1), int(y_max-y_min+1)))
     
     return bboxes
 
@@ -2374,6 +2338,14 @@ def chromatic_aberration_correction(
 
 #-------------------------------------------------
 
+_lensfun_db_instance = None
+def get_lensfun_db():
+    global _lensfun_db_instance
+    import lensfunpy
+    if _lensfun_db_instance is None:
+        _lensfun_db_instance = lensfunpy.Database()
+    return _lensfun_db_instance
+
 def setup_lensfun(img, exif_data):
     global __lensfun_mod
 
@@ -2396,10 +2368,11 @@ def setup_lensfun(img, exif_data):
     if distance == 'Unknown':
         distance = 100
 
-    db = lensfunpy.Database()
-    cams = db.find_cameras(make, model, loose_search=False)
+    import lensfunpy
+    db = get_lensfun_db()
+    cams = db.find_cameras(make, model, loose_search=True)
     if len(cams) > 0:
-        lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=True)
+        lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=False)
 
         if len(lens) > 0:
             height, width = img.shape[:2]

@@ -13,5 +13,6 @@
         4096,
         4096
     ],
-    "display_output_dither": false
+    "display_output_dither": false,
+    "display_output_downscale": true
 }

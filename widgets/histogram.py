@@ -20,8 +20,8 @@ class HistogramWidget(KVImage):
             return
         self.draw_histogram(pixels, blue_count, black_count)
 
-    def draw_histogram(self, pixels, blue_count, black_count):
-
+    @staticmethod
+    def calculate_histogram_data(pixels, blue_count, black_count):
         # 手動対数変換関数
         def manual_scale(data):
             """
@@ -53,6 +53,11 @@ class HistogramWidget(KVImage):
         # ヒストグラムの最大値を取得
         max_value = max(np.max(r_hist), np.max(g_hist), np.max(b_hist), np.max(l_hist))
 
+        return (r_hist, g_hist, b_hist, l_hist, max_value)
+
+    def draw_histogram_from_data(self, hist_data):
+        r_hist, g_hist, b_hist, l_hist, max_value = hist_data
+
         # ヒストグラムを描画
         self.canvas.clear()
         with self.canvas:
@@ -63,6 +68,10 @@ class HistogramWidget(KVImage):
         self.__draw_histogram_bars(g_hist, max_value, (0, 1, 0, 0.8))
         self.__draw_histogram_bars(b_hist, max_value, (0, 0, 1, 0.8))
         self.__draw_histogram_bars(l_hist, max_value, (0.8, 0.8, 0.8, 1))  # 輝度ヒストグラムをグレーで表示
+
+    def draw_histogram(self, pixels, blue_count, black_count):
+        hist_data = self.calculate_histogram_data(pixels, blue_count, black_count)
+        self.draw_histogram_from_data(hist_data)
 
     def __draw_histogram_bars(self, histogram, max_value, color, offset_x=0, offset_y=0):
         bar_width = 1

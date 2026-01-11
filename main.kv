@@ -1649,7 +1649,22 @@
                                     on_release: root.end_history_effect_ctrl(2, 'highlight_compress')
                                     ParamChipText:
                                         text: "Apply"
-                            
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "RCA"
+                                VSpacer:
+                                    size_hint_x: 0.55
+                                ParamChip:
+                                    id: switch_rca
+                                    size_hint_x: None
+                                    ref_width: 40
+                                    on_press: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                    on_active: root.apply_effects_lv(0, 'remove_chromatic_aberration')
+                                    on_release: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                    ParamChipText:
+                                        text: "Apply"
+
                             VSpacer:
 
                 IconTabbedPanelItem:

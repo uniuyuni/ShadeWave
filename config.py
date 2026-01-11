@@ -24,7 +24,8 @@ def init_config(widget):
         'gpu_device': "mps",
         'cat': "cat16",
         'base_resolution_scale': [4096, 4096],
-        'display_output_dither': False
+        'display_output_dither': False,
+        'display_output_downscale': True
     })
 
     if not os.path.exists(os.getcwd() + '/config.json'):
@@ -50,6 +51,8 @@ def _apply_config(key):
         _main_widget.set_lut_path(_config.get('lut_path', os.getcwd() + "/lut"))
     elif key == 'import_path':
         _main_widget.ids['viewer'].set_path(_config.get('import_path', os.getcwd() + "/test_photos"))
+    elif key in ['display_output_dither', 'display_output_downscale']:
+        _main_widget.texture = None
 
 def apply_config():
     global _config

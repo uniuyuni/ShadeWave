@@ -4,7 +4,7 @@ import numpy as np
 import rawpy
 import logging
 import io
-import colour
+
 from functools import partial
 from PIL import Image as PILImage, ImageOps as PILImageOps
 from multiprocessing import shared_memory
@@ -118,6 +118,7 @@ class ImageSet:
             img_array = core.convert_to_float32(img_array)
 
             # 色空間変換
+            import colour
             img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
                                 apply_cctf_encoding=False, apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
             
@@ -281,6 +282,7 @@ class ImageSet:
 
             # 色空間変更
             src_icc_profile_name = core.get_icc_profile_name(img)
+            import colour
             img_array = colour.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', config.get_config('cat'),
                                             apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
 
