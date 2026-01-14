@@ -15,9 +15,12 @@ import numpy as np
 import os
 import time
 import numba as nb
+from numba import njit, prange
 import logging
 
 import cores.core as core
+from cores.core import lock_numba
+import config
 
 class DistortionEngine:
     def __init__(self, image_size, grid_size=30):
@@ -181,7 +184,8 @@ class DistortionEngine:
         self.last_warped_image = None
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True, cache=True)
+    @lock_numba
+    @njit(parallel=True, fastmath=True, cache=True)
     def _generate_deformation_map_numba(original_grid, current_grid, width, height, grid_size):
         """ Numbaで高速化された変形マップ生成 """
         map_x = np.zeros((height, width), dtype=np.float32)
@@ -194,8 +198,8 @@ class DistortionEngine:
         grid_step_x = grid_size
         grid_step_y = grid_size
         
-        for y in nb.prange(height):
-            for x in nb.prange(width):
+        for y in prange(height):
+            for x in prange(width):
                 # グリッドインデックス計算
                 grid_i = y // grid_step_y
                 grid_j = x // grid_step_x
@@ -241,7 +245,8 @@ class DistortionEngine:
         return map_x, map_y
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True, cache=True)
+    @lock_numba
+    @njit(parallel=True, fastmath=True, cache=True)
     def _apply_forward_warp_numba(grid, center, radius, strength, direction, 
                                 x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
@@ -251,8 +256,8 @@ class DistortionEngine:
         dir_x /= -dir_norm
         dir_y /= -dir_norm
         
-        for i in nb.prange(grid.shape[0]):
-            for j in nb.prange(grid.shape[1]):
+        for i in prange(grid.shape[0]):
+            for j in prange(grid.shape[1]):
                 px, py = grid[i, j]
                 if not (x_min <= px <= x_max and y_min <= py <= y_max):
                     continue
@@ -271,14 +276,15 @@ class DistortionEngine:
         return new_grid
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True, cache=True)
+    @lock_numba
+    @njit(parallel=True, fastmath=True, cache=True)
     def _apply_bulge_numba(grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
         center_x, center_y = center
         
-        for i in nb.prange(grid.shape[0]):
-            for j in nb.prange(grid.shape[1]):
+        for i in prange(grid.shape[0]):
+            for j in prange(grid.shape[1]):
                 px, py = grid[i, j]
                 if not (x_min <= px <= x_max and y_min <= py <= y_max):
                     continue
@@ -299,14 +305,15 @@ class DistortionEngine:
         return new_grid
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True, cache=True)
+    @lock_numba
+    @njit(parallel=True, fastmath=True, cache=True)
     def _apply_swirl_numba(grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
         center_x, center_y = center
         
-        for i in nb.prange(grid.shape[0]):
-            for j in nb.prange(grid.shape[1]):
+        for i in prange(grid.shape[0]):
+            for j in prange(grid.shape[1]):
                 px, py = grid[i, j]
                 if not (x_min <= px <= x_max and y_min <= py <= y_max):
                     continue
@@ -329,7 +336,8 @@ class DistortionEngine:
         return new_grid
 
     @staticmethod
-    @nb.njit(parallel=True, fastmath=True, cache=True)
+    @lock_numba
+    @njit(parallel=True, fastmath=True, cache=True)
     def _apply_restore_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
@@ -339,8 +347,8 @@ class DistortionEngine:
         radius_sq = (radius / 3) ** 2
         effect_radius_sq = effect_radius ** 2
                 
-        for i in nb.prange(grid.shape[0]):
-            for j in nb.prange(grid.shape[1]):
+        for i in prange(grid.shape[0]):
+            for j in prange(grid.shape[1]):
                 px, py = grid[i, j]
                 
                 # ROIチェック
@@ -390,10 +398,17 @@ class DistortionCanvas(FloatLayout):
         self.preview_texture = None
         self.full_quality_texture = None
         self.needs_full_update = False
-        self.image_widget = image_widget if image_widget is not None else self.ids.image_widget
+        self.image_widget = image_widget
         self.callback = callback
 
+        self.bind(parent=self.on_parent_changed)
+
         Clock.schedule_once(self._set_brush_cursor, -1)
+
+    def on_parent_changed(self, instance, parent):
+        if parent:
+            if self.image_widget is None:
+                self.image_widget = parent
 
     def on_size(self, *args):
         self._set_brush_cursor(0)
@@ -678,7 +693,8 @@ class DistortionCanvas(FloatLayout):
 
     # ワールド座標からテクスチャのグローバル座標に
     def _window_to_tcg(self, cx, cy):
-        return core.window_to_texture(cx, cy, self, self.image_widget.texture_size, self.tcg_info)
+        texture_size = (config.get_config('preview_size'), config.get_config('preview_size'))
+        return core.window_to_tcg(cx, cy, self, texture_size, self.tcg_info)
 
     
 class Distortion_PainterApp(App):

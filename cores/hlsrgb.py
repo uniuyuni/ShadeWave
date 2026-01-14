@@ -3,6 +3,8 @@ import numpy as np
 from numba import njit, prange
 import time
 
+from cores.core import lock_numba
+
 @njit(parallel=True)
 def rgb2hls(img):
     """
@@ -97,6 +99,7 @@ KR = 0.2126
 KG = 0.7152
 KB = 0.0722
 
+@lock_numba
 @njit(fastmath=True)
 def rgb_to_hlc_gain(rgb):
     """
@@ -171,7 +174,7 @@ def rgb_to_hlc_gain(rgb):
     
     return hlcg
 
-
+@lock_numba
 @njit(parallel=True, fastmath=True)
 def hlc_gain_to_rgb(hlcg):
     """

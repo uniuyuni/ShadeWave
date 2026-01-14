@@ -9,7 +9,8 @@ if __name__ == '__main__':
         #matplotlib.interactive(False)
         pass
     except ImportError:
-        pass    
+        pass
+    
     import tkinter as tk
     
     # tk.Tk()で落ちるのを回避するためのパッチ

@@ -282,7 +282,7 @@ class ImageSet:
 
             # 色空間変更
             src_icc_profile_name = core.get_icc_profile_name(img)
-            import cores.colcolour_functionour as colour_functions
+            import cores.colour_functions as colour_functions
             img_array = colour_functions.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', config.get_config('cat'),
                                             apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
 

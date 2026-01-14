@@ -4,6 +4,16 @@ import io
 import cv2
 import math
 import numpy as np
+import threading
+
+# Numbaの並行アクセスを防ぐためのロック
+numba_lock = threading.Lock()
+
+def lock_numba(func):
+    def wrapper(*args, **kwargs):
+        with numba_lock:
+            return func(*args, **kwargs)
+    return wrapper
 
 import logging
 import numba
@@ -177,6 +187,7 @@ def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
     #return gaussian_blur_jax(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
     return gaussian_blur_cv(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _lucy_ratio_step(srcf, bdest):
     eps = np.finfo(np.float32).eps
@@ -188,6 +199,7 @@ def _lucy_ratio_step(srcf, bdest):
                 ratio[i, j, k] = srcf[i, j, k] / (bdest[i, j, k] + eps)
     return ratio
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _lucy_update_step(destf, ratio_blur):
     h, w, c = destf.shape
@@ -218,6 +230,7 @@ def lucy_richardson_gauss(srcf, iteration):
     
     return destf
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def create_distortion_map(param_vec, width, height):
     """
@@ -250,6 +263,7 @@ def create_distortion_map(param_vec, width, height):
             
     return map_x, map_y
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def apply_lens_distortion(image, map_x, map_y, scale=1.0, interpolation='linear'):
     """
@@ -567,6 +581,7 @@ def apply_lut(img, lut, max_value=1.0):
 #
 #    return img
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def apply_mask(img1, msk, img2):
 
@@ -668,6 +683,7 @@ def apply_mask(img1, msk, img2):
 #    # 効果適用
 #    result = np.clip(image * vignette, 0, 1) if intensity < 0 else np.clip(image + (1-image)*(1-vignette), 0, 1)
 #    return result.astype(np.float32)
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
     intensity = intensity / 100.0
@@ -912,6 +928,7 @@ def adjust_shape_to_square(img, mode="constant"):
     return img
 
 #--------------------------------------------------
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def get_luminance(img):
     h, w, c = img.shape
@@ -999,6 +1016,7 @@ def _apply_highlight_neg(val, base, highlights):
     compressed_val = compressed_base + detail * desired_boost
     return compressed_val
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_mid_shadow(y, midtone, shadows):
     h, w = y.shape
@@ -1011,6 +1029,7 @@ def _kernel_mid_shadow(y, midtone, shadows):
             res[i, j] = val
     return res
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_high_pos_black(y, highlights, black_level):
     h, w = y.shape
@@ -1023,6 +1042,7 @@ def _kernel_high_pos_black(y, highlights, black_level):
             res[i, j] = val
     return res
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_high_neg_black(y, y_blur, highlights, black_level):
     h, w = y.shape
@@ -1095,6 +1115,7 @@ def _apply_white_neg(val, base, white_level, max_val):
     compressed_val = compressed_base + detail * safe_boost
     return max(compressed_val, 0.0)
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_white_pos_final(img, y_current, y_orig, white_level, max_val):
     h, w, c = img.shape
@@ -1114,6 +1135,7 @@ def _kernel_white_pos_final(img, y_current, y_orig, white_level, max_val):
                 res[i, j, k] = img[i, j, k] * gain
     return res
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_white_neg_final(img, y_current, y_blur, y_orig, white_level, max_val_blur):
     h, w, c = img.shape
@@ -1277,6 +1299,7 @@ def _estimate_transmission(depth_map, strength=0.5, lower_bound=0.1):
     
     return transmission
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_dehaze_apply(img, A, transmission):
     h, w, c = img.shape
@@ -1291,6 +1314,7 @@ def _kernel_dehaze_apply(img, A, transmission):
 
 
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_fog_apply_2d(img, transmission_map):
     h, w, c = img.shape
@@ -1350,6 +1374,7 @@ def dehaze_image(img, strength=0.5):
     return result
 
 # ガウスカーネル生成関数
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def _gaussian_kernel(size, sigma):
     if size % 2 == 0:
@@ -1397,6 +1422,7 @@ def _circular_smooth_step(hue, center, width, fade_width):
         return 0.0
 
 # ベクトル化された円環ステップ関数
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def _vectorized_circular_smooth_step(hue_map, center, width, fade_width):
     h, w = hue_map.shape
@@ -1408,6 +1434,7 @@ def _vectorized_circular_smooth_step(hue_map, center, width, fade_width):
     
     return result
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def _adjust_hls_with_weight(hls_img, weight, adjust):
     h, w, c = hls_img.shape
@@ -1454,6 +1481,7 @@ def _adjust_hls_with_weight(hls_img, weight, adjust):
     
     return output
 
+@lock_numba
 @njit(parallel=True, fastmath=False, cache=True, boundscheck=False, error_model="numpy")
 def _calculate_elliptical_weight(hls_img, center_h, width_h, fade_h, l_range, s_range):
     h, w, _ = hls_img.shape
@@ -1728,6 +1756,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, ref
     return np.array(adjusted_hls)
 
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
 def jjn_dither_uint8(img_float):
     """
@@ -1775,6 +1804,7 @@ def jjn_dither_uint8(img_float):
         
     return output
 
+#@lock_numba
 #@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def jjn_dither_uint16(img_float):
     """
@@ -1822,6 +1852,7 @@ def jjn_dither_uint16(img_float):
         
     return output
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def fast_median_filter(img, kernel_size=3, num_bins=256):
     """
@@ -2464,6 +2495,7 @@ def light_denoise(img, its, col):
 
 #-------------------------------------------------
 
+@lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
 def _kernel_unsharp_mask_apply(img, blurred, amount):
     h, w, c = img.shape
@@ -2564,31 +2596,6 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
     cx, cy = cx + margin_x, cy + margin_y
     wx, wy = widget.to_window(*widget.pos)
     cx, cy = cx + wx, cy + wy
-    return (cx, cy)
-
-def window_to_texture(cx, cy, widget, texture_size, tcg_info):
-    """
-    ウインドウ座標からテクスチャ座標に変換
-    cx, cy: TCG座標
-    widget: 表示するウィジェット
-    texture_size: テクスチャサイズ
-    ref_image: 参照イメージ
-    tcg_info: 回転情報
-    戻り値: TCG座標
-    """
-    disp_info = params.get_disp_info(tcg_info)
-    wx, wy = widget.to_window(*widget.pos)
-    cx, cy = cx - wx, cy - wy
-    margin_x, margin_y = (widget.size[0]-texture_size[1])/2, (widget.size[1]-texture_size[0])/2
-    cx, cy = cx - margin_x, cy - margin_y
-    cx, cy = cx, texture_size[1] - cy
-    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
-    cx, cy = cx - offset_x, cy - offset_y
-    cx, cy = cx / disp_info[4], cy / disp_info[4]
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    cx, cy = cx + disp_info[0], cy + disp_info[1]
-    cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
-    cx, cy = center_rotate_invert(cx, cy, tcg_info)
     return (cx, cy)
 
 def tcg_to_ref_image(cx, cy, ref_img, tcg_info):

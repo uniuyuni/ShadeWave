@@ -467,7 +467,7 @@ class DistortionEffect(Effect):
             self.effect_type = arg
 
     def make_diff(self, img, param, efconfig):
-        if self.is_initial_open > 0:
+        if self.is_initial_open > 0 and efconfig.loading_flag != None:
             if self.is_initial_open > 1:
                 self.distortion_painter.set_effect(self.effect_type)
                 self.distortion_painter.set_ref_image(img, True)
@@ -517,7 +517,7 @@ class DistortionEffect(Effect):
         if self.distortion_painter is None:
             from widgets.distortion_painter import DistortionCanvas
 
-            self.distortion_painter = DistortionCanvas(image_widget=widget.ids["preview"],
+            self.distortion_painter = DistortionCanvas(#image_widget=widget.ids["preview_widget"],
                     recorded=self._get_param(param, 'distortion_recorded'),
                     callback=self._painter_callback,
                     effect_type=self.effect_type,
@@ -526,6 +526,11 @@ class DistortionEffect(Effect):
             widget.ids["preview_widget"].add_widget(self.distortion_painter)
             self.is_initial_open = 2
             self.is_initial_close = 0
+        else:
+             if self.distortion_painter not in widget.ids["preview_widget"].children:
+                 widget.ids["preview_widget"].add_widget(self.distortion_painter)
+                 self.is_initial_open = 2
+                 self.is_initial_close = 0
 
     def _close_distortion_painter(self, param, widget):
         if self.distortion_painter is not None:
@@ -2888,8 +2893,8 @@ def create_effects(distortion_callback=None, rotation_callback=None):
     lv0['lens_modifier'] = LensModifierEffect()
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
-    lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
     lv0['rotation'] = RotationEffect(distortion_editor_callback=rotation_callback)
+    lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]
