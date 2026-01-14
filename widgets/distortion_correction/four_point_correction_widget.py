@@ -18,7 +18,6 @@ from kivy.uix.widget import Widget
 import numpy as np
 import cv2
 from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
-from cores.distortion_correction.coordinate_utils import tcg_to_kivy_coords, kivy_to_tcg_coords
 
 import cores.core as core
 
