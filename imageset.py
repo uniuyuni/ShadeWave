@@ -118,8 +118,8 @@ class ImageSet:
             img_array = core.convert_to_float32(img_array)
 
             # 色空間変換
-            import colour
-            img_array = colour.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
+            import cores.colour_functions as colour_functions
+            img_array = colour_functions.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
                                 apply_cctf_encoding=False, apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
             
             # ホワイトバランス定義
@@ -213,12 +213,12 @@ class ImageSet:
                 profile = reader.read()
                 processor = DCPProcessor(profile)
                 img_array = processor.process(img_array,
-                        partial(colour.XYZ_to_RGB, colourspace='ProPhoto RGB', chromatic_adaptation_transform=config.get_config('cat')),
+                        partial(colour_functions.XYZ_to_RGB, colourspace='ProPhoto RGB', chromatic_adaptation_transform=config.get_config('cat')),
                         illuminant='1', use_look_table=True)
             else:            
                 # プロファイルを使わない時用
                 img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
-                img_array = colour.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
+                img_array = colour_functions.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
             """
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -282,8 +282,8 @@ class ImageSet:
 
             # 色空間変更
             src_icc_profile_name = core.get_icc_profile_name(img)
-            import colour
-            img_array = colour.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', config.get_config('cat'),
+            import cores.colcolour_functionour as colour_functions
+            img_array = colour_functions.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', config.get_config('cat'),
                                             apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
 
             # 画像からホワイトバランスパラメータ取得

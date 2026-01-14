@@ -4,7 +4,6 @@ import io
 import cv2
 import math
 import numpy as np
-import colour
 
 import logging
 import numba
@@ -15,6 +14,7 @@ import json
 from typing import Any, Dict
 import base64
 
+import cores.colour_functions as colour_functions
 import cores.sigmoid as sigmoid
 import dng_sdk.dng_temperature
 import utils.utils as utils
@@ -50,9 +50,9 @@ def cvtColorRGB2Gray(rgb):
 
 def convert_RGB2TempTint(rgb):
 
-    xyz = colour.RGB_to_XYZ(rgb, 'sRGB')
+    xyz = colour_functions.RGB_to_XYZ(rgb, 'ProPhoto RGB')
 
-    xy = colour.XYZ_to_xy(xyz)
+    xy = colour_functions.XYZ_to_xy(xyz)
 
     dng = dng_sdk.dng_temperature.DngTemperature()
     dng.set_xy_coord(xy)
@@ -87,10 +87,10 @@ def convert_TempTint2RGB(temp, tint, Y):
 
     xy = dng.get_xy_coord()
 
-    xyz = colour.xy_to_XYZ(xy)
+    xyz = colour_functions.xy_to_XYZ(xy)
     xyz *= Y
 
-    rgb = colour.XYZ_to_RGB(xyz, 'sRGB')
+    rgb = colour_functions.XYZ_to_RGB(xyz, 'ProPhoto RGB')
 
     return rgb.astype(np.float32)
 
@@ -2521,7 +2521,58 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
     widget: 表示するウィジェット
     texture_size: テクスチャサイズ
     ref_image: 参照イメージ
-    disp_info:
+    tcg_info: 回転情報
+    戻り値: TCG座標
+    """
+    disp_info = params.get_disp_info(tcg_info)
+    wx, wy = widget.to_window(*widget.pos)
+    cx, cy = cx - wx, cy - wy
+    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
+    cx, cy = cx - margin_x, cy - margin_y
+    cx, cy = cx, texture_size[1] - cy
+    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
+    cx, cy = cx - offset_x, cy - offset_y
+    cx, cy = cx / disp_info[4], cy / disp_info[4]
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = cx + disp_info[0], cy + disp_info[1]
+    cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
+    cx, cy = center_rotate_invert(cx, cy, tcg_info)
+    cx, cy = params.norm_param(tcg_info, (cx, cy))
+    return (cx, cy)
+
+def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
+    """
+    TCG座標をウインドウ座標に変換
+    cx, cy: TCG座標
+    widget: 表示するウィジェット
+    texture_size: テクスチャサイズ
+    ref_image: 参照イメージ
+    tcg_info: 回転情報
+    戻り値: ウインドウ座標
+    """
+    disp_info = params.get_disp_info(tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = params.denorm_param(tcg_info, (cx, cy))
+    cx, cy = center_rotate(cx, cy, tcg_info)
+    cx, cy = cx + imax, cy + imax
+    cx, cy = cx - disp_info[0], cy - disp_info[1]
+    cx, cy = cx * disp_info[4], cy * disp_info[4]        
+    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
+    cx, cy = cx + offset_x, cy + offset_y
+    cx, cy = cx, texture_size[1] - cy
+    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
+    cx, cy = cx + margin_x, cy + margin_y
+    wx, wy = widget.to_window(*widget.pos)
+    cx, cy = cx + wx, cy + wy
+    return (cx, cy)
+
+def window_to_texture(cx, cy, widget, texture_size, tcg_info):
+    """
+    ウインドウ座標からテクスチャ座標に変換
+    cx, cy: TCG座標
+    widget: 表示するウィジェット
+    texture_size: テクスチャサイズ
+    ref_image: 参照イメージ
     tcg_info: 回転情報
     戻り値: TCG座標
     """
@@ -2534,40 +2585,10 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
     _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
     cx, cy = cx - offset_x, cy - offset_y
     cx, cy = cx / disp_info[4], cy / disp_info[4]
-    #imax = max(ref_image.shape[1] / 2, ref_image.shape[0] / 2)
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     cx, cy = cx + disp_info[0], cy + disp_info[1]
-    #cx, cy = cx + self.disp_info[0] - (imax - self.current_image.shape[1] / 2), cy + self.disp_info[1] - (imax - self.current_image.shape[0] / 2)   
-    #cx, cy = cx - self.current_image.shape[1] / 2, cy - self.current_image.shape[0] / 2
     cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
     cx, cy = center_rotate_invert(cx, cy, tcg_info)
-    #logging.debug(f"Window to TCG: {cx}, {cy}")
-    return (cx, cy)
-
-def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
-    """
-    TCG座標をウインドウ座標に変換
-    cx, cy: TCG座標
-    widget: 表示するウィジェット
-    texture_size: テクスチャサイズ
-    ref_image: 参照イメージ
-    disp_info:
-    tcg_info: 回転情報
-    戻り値: ウインドウ座標
-    """
-    disp_info = params.get_disp_info(tcg_info)
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    cx, cy = center_rotate(cx, cy, tcg_info)
-    cx, cy = cx + imax, cy + imax
-    cx, cy = cx - disp_info[0], cy - disp_info[1]
-    cx, cy = cx * disp_info[4], cy * disp_info[4]        
-    _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
-    cx, cy = cx + offset_x, cy + offset_y
-    cx, cy = cx, rexture_size[1] - cy
-    margin_x, margin_y = (widget.size[0]-texture_size[1])/2, (widget.size[1]-texture_size[0])/2
-    cx, cy = cx + margin_x, cy + margin_y
-    wx, wy = widget.to_window(*widget.pos)
-    cx, cy = cx + wx, cy + wy
     return (cx, cy)
 
 def tcg_to_ref_image(cx, cy, ref_img, tcg_info):
@@ -2579,11 +2600,28 @@ def tcg_to_ref_image(cx, cy, ref_img, tcg_info):
     tcg_info: 回転情報
     戻り値: 参照イメージ座標
     """
-    #cx, cy = center_rotate(cx, cy, tcg_info)
-    imax = max(ref_img.shape[1] / 2, ref_img.shape[0] / 2)
-    #cx, cy = cx + imax, cy + imax
-    cx, cy = cx + ref_img.shape[1] / 2, cy + ref_img.shape[0] / 2
+    cx, cy = params.denorm_param(tcg_info, (cx, cy))
+    cx, cy = center_rotate(cx, cy, tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = cx + imax, cy + imax
+    #cx, cy = cx + ref_img.shape[1] / 2, cy + ref_img.shape[0] / 2
     return (cx, cy)
+
+def ref_image_to_tcg(cx, cy, ref_img, tcg_info):
+    """
+    参照イメージの座標からTCGを得る
+
+    cx, cy: 参照イメージ座標
+    ref_img: 参照イメージ
+    tcg_info: 回転情報
+    戻り値: TCG座標
+    """
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = cx - imax, cy - imax
+    cx, cy = center_rotate_invert(cx, cy, tcg_info)
+    cx, cy = params.norm_param(tcg_info, (cx, cy))
+    return (cx, cy)
+    
 
 def apply_orientation(cx, cy, tcg_info):
     rad, flip = tcg_info['rotation2'], tcg_info['flip']

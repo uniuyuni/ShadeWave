@@ -114,7 +114,7 @@ class HistoryContentPanel(KVBoxLayout):
         result = op.diff[0]
         bps = _format_value(result[1])
         ups = _format_value(result[2])
-        list_item = f"{self._format_string(result[0], 15)} {bps}, {ups}"
+        list_item = f"{self._format_string(result[0], 25)} {bps}, {ups}"
 
         return {'text': list_item, 'active': is_active}
 

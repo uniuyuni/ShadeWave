@@ -16,6 +16,9 @@ import cores.local_contrast as local_contrast
 import cores.highlight_recovery as highlight_recovery
 import cores.hlsrgb as hlsrgb
 from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
+from cores.distortion_correction import (
+    correct_lens_distortion, correct_trapezoid, correct_four_points, correct_with_lines, warp_mesh
+)
 import config
 import pipeline
 import params
@@ -536,11 +539,30 @@ class DistortionEffect(Effect):
         if self.distortion_callback is not None:
             self.distortion_callback()
 
-# 画像回転、反転
+# 画像回転、反転、変形
 class RotationEffect(Effect):
+
+    def __init__(self, distortion_editor_callback=None, **kwargs):
+        super().__init__(**kwargs)
+        
+        self.distortion_editor = None
+        self.distortion_editor_callback = distortion_editor_callback
+
+    def _editor_update_callback(self, type, widget):
+        if self.distortion_editor_callback:
+            self.distortion_editor_callback(type, widget)
 
     def get_param_dict(self, param):
         return {
+            'lens_distortion_strength': 0,
+            'lens_distortion_scale': 0,
+            'correct_horizontal': 0,
+            'correct_vertical': 0,
+            'focal_length': 20,
+            'four_points': [],
+            'reference_lines': [],
+            'mesh_size': [4, 4],
+            'control_points': {},
             'rotation': 0,
             'rotation2': 0,
             'flip_mode': 0,
@@ -548,11 +570,42 @@ class RotationEffect(Effect):
         }
 
     def set2widget(self, widget, param):
+        widget.ids["slider_lens_distortion_strength"].set_slider_value(self._get_param(param, 'lens_distortion_strength'))
+        widget.ids["slider_lens_distortion_scale"].set_slider_value(self._get_param(param, 'lens_distortion_scale'))
+        widget.ids["slider_correct_trapezoid_h"].set_slider_value(self._get_param(param, 'correct_horizontal'))
+        widget.ids["slider_correct_trapezoid_v"].set_slider_value(self._get_param(param, 'correct_vertical'))
+        widget.ids["slider_focal_length"].set_slider_value(self._get_param(param, 'focal_length'))
         widget.ids["slider_rotation"].set_slider_value(self._get_param(param, 'rotation'))
 
+        if self.distortion_editor is not None:
+            self.distortion_editor.set_correction_params(param)
+
     def set2param(self, param, widget):
+        param['lens_distortion_strength'] = widget.ids["slider_lens_distortion_strength"].value
+        param['lens_distortion_scale'] = widget.ids["slider_lens_distortion_scale"].value
+        param['correct_horizontal'] = widget.ids["slider_correct_trapezoid_h"].value
+        param['correct_vertical'] = widget.ids["slider_correct_trapezoid_v"].value
+        param['focal_length'] = widget.ids["slider_focal_length"].value
         param['rotation'] = widget.ids["slider_rotation"].value
-        
+    
+        # crop_rect がないのはマスク
+        if params.get_crop_rect(param) is not None:
+
+            def get_selected():
+                """1行で全確認"""
+                for btn_name in ['btn_lens', 'btn_trapezoid', 'btn_four_points', 'btn_mesh', 'btn_lines']:
+                    btn = getattr(widget.ids, btn_name)
+                    if btn.state == 'down':
+                        return btn.text
+                return None
+            
+            # Update params from editor if active (BEFORE opening/syncing)
+            if self.distortion_editor is not None:
+                    param.update(self.distortion_editor.get_correction_params())
+
+            type = get_selected()
+            self._open_dictortion_editor(widget, type, param)
+
     def set2param2(self, param, arg):
         if arg == 'hflip':
             param['flip_mode'] = self._get_param(param, 'flip_mode') ^ 1
@@ -572,20 +625,33 @@ class RotationEffect(Effect):
                 rot = 90*3
             param['rotation2'] = rot
 
-        else:
-            pass
 
     def make_diff(self, img, param, efconfig):
+        lens_distortion_strength = self._get_param(param, 'lens_distortion_strength')
+        lens_distortion_scale = self._get_param(param, 'lens_distortion_scale')
+        correct_horizontal = self._get_param(param, 'correct_horizontal')
+        correct_vertical = self._get_param(param, 'correct_vertical')
+        focal_length = self._get_param(param, 'focal_length')
         ang = self._get_param(param, 'rotation')
         ang2 = self._get_param(param, 'rotation2')
         flp = self._get_param(param, 'flip_mode')
+        four_points = self._get_param(param, 'four_points')
+        reference_lines = self._get_param(param, 'reference_lines')
+        mesh_size = self._get_param(param, 'mesh_size')
+        control_points = self._get_param(param, 'control_points') # dict
         crop_enable = self._get_param(param, 'crop_enable')
 
         bypass = getattr(efconfig, 'bypass_rotation', False)
         if bypass:
             param_hash = hash((crop_enable))
         else:
-            param_hash = hash((ang, ang2, flp, crop_enable))
+            # list, convert to tuple for hashing
+            fps_hash = tuple(tuple(x) for x in four_points) if four_points else None
+            lines_hash = tuple(tuple(tuple(p) for p in line) for line in reference_lines) if reference_lines else None
+            cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
+            mesh_hash = tuple(mesh_size)
+            
+            param_hash = hash((ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         
         if self.hash != param_hash:
             if bypass:
@@ -605,10 +671,210 @@ class RotationEffect(Effect):
                     bmode = cv2.BORDER_REFLECT if crop_enable == False else cv2.BORDER_CONSTANT
                     self.diff = cv2.copyMakeBorder(img, top, bottom, left, right, bmode)
             else:
-                self.diff = core.rotation(img, ang + ang2, flp,
-                                            inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
-                                            border_mode="reflect" if crop_enable == False else "constant")
+
+                # レンズ歪み補正
+                if lens_distortion_strength != 0:
+                    img = correct_lens_distortion(
+                            img,
+                            strength=lens_distortion_strength,
+                            scale=lens_distortion_scale / 100.0 + 1.0,
+                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                            grid_size=2 if efconfig.mode == EffectMode.EXPORT else 4,
+                    )
+
+                # 回転
+                img = core.rotation(img, ang + ang2, flp,
+                        inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
+                        border_mode="reflect" if crop_enable == False else "constant")
+
+                org_size = (img.shape[1], img.shape[0])
+                #resize = (config.get_config('preview_size'), config.get_config('preview_size'))
+                #img = cv2.resize(img, resize)
+
+                # 台形補正
+                if correct_horizontal != 0 or correct_vertical != 0:
+                    # Focal Length Mapping:
+                    # 0-100 Slider -> Multiplier.
+                    # Assuming 0 is Wide (High persp), 100 is Tele (Low persp).
+                    # Previous default was max(w,h) which corresponds to freq standard lens.
+                    # Let's say Slider=20 -> 1.0x (Standard)
+                    # Slider=0 -> 0.5x (Super Wide)
+                    # Slider=100 -> 5.0x (Super Tele)
+                    
+                    # Using a linear mapping for simplicity first:
+                    # val 20 -> 1.0
+                    # val 0 -> 0.5 (delta -20 -> -0.5 => 1 unit = 0.5/20 = 0.025)
+                    # val 100 -> 1.0 + (80 * 0.025) = 1.0 + 2.0 = 3.0
+                    
+                    # So: multiplier = 0.5 + (focal_length* 0.025)
+                    # 0 -> 0.5
+                    # 20 -> 1.0
+                    # 100 -> 3.0
+                    base_f = np.max(img.shape[:2])
+                    multiplier = 0.5 + (focal_length * 0.025)
+                    f_pixel = base_f * multiplier
+                    img, H = correct_trapezoid(
+                            img,
+                            horizontal=correct_horizontal * 0.5, # 効果が強すぎた
+                            vertical=correct_vertical * 0.5,
+                            focal_length=f_pixel,
+                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    )
+
+                # 4点補正
+                reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+                if four_points != [] and four_points != reset_points:
+
+                    # 座標をテクスチャ座標へ変換
+                    tcg_info = core.param_to_tcg_info(param)
+                    src_point = []
+                    for cx, cy in four_points:
+                        src_point.append(core.tcg_to_ref_image(cx, cy, img, tcg_info))
+                    dst_point = []
+                    for cx, cy in reset_points:
+                        dst_point.append(core.tcg_to_ref_image(cx, cy, img, tcg_info))
+
+                    img = correct_four_points(
+                            img,
+                            src_point,
+                            dst_point,
+                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    )
+
+                # Lines
+                if len(reference_lines) > 0:
+                    img, H = correct_with_lines(
+                            img,
+                            reference_lines,
+                            tcg_info=core.param_to_tcg_info(param),
+                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    )
+
+                # Mesh           
+                if control_points:
+                    # Ensure keys are tuples
+                    cp = {}
+                    for k, v in control_points.items():
+                        if isinstance(k, str):
+                            try:
+                                parts = k.strip('()').split(',')
+                                key = (int(parts[0]), int(parts[1]))
+                            except:
+                                continue
+                        else:
+                            key = tuple(k)
+                        cp[key] = tuple(v)
+                        
+                    tcg_info = core.param_to_tcg_info(param)
+                    img = warp_mesh(
+                        img,
+                        mesh_size if mesh_size else (4, 4),
+                        cp,
+                        tcg_info=tcg_info,
+                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear'
+                    )
+
+                #img = cv2.resize(img, org_size)
+                self.diff = img
+
             self.hash = param_hash
+        
+        return self.diff
+
+    def _open_dictortion_editor(self, widget, type, param=None):
+        from widgets.distortion_correction import (
+            LensDistortionWidget, LineGuideCorrectionWidget, TrapezoidCorrectionWidget, FourPointCorrectionWidget, MeshWarpWidget
+        )
+        
+        # Check if we can reuse the existing editor
+        current_editor_class = self.distortion_editor.__class__.__name__ if self.distortion_editor else None
+        target_class = None
+        match type:
+            case 'Lens': target_class = 'LensDistortionWidget'
+            case 'Trapezoid': target_class = 'TrapezoidCorrectionWidget'
+            case 'Four Points': target_class = 'FourPointCorrectionWidget'
+            case 'Mesh': target_class = 'MeshWarpWidget'
+            case 'Lines': target_class = 'LineGuideCorrectionWidget'
+            case 'Points': target_class = 'PointWarpWidget'
+
+        # 前のを削除
+        if current_editor_class != target_class:
+            if self.distortion_editor is not None:
+                widget.ids['preview_widget'].remove_widget(self.distortion_editor)
+                self.distortion_editor = None
+
+        # 作成
+        if self.distortion_editor is None:
+            texture_size = (config.get_config('preview_width'), config.get_config('preview_height'))
+            match type:
+                case 'Lens': self.distortion_editor = LensDistortionWidget(texture_size, param)
+                case 'Trapezoid': self.distortion_editor = TrapezoidCorrectionWidget(texture_size, param)
+                case 'Four Points': self.distortion_editor = FourPointCorrectionWidget(texture_size, param)
+                case 'Mesh': self.distortion_editor = MeshWarpWidget(texture_size, param)
+                case 'Lines': self.distortion_editor = LineGuideCorrectionWidget(texture_size, param)
+                #case 'Points': self.distortion_editor = PointWarpWidget(texture_size, param)
+
+            if self.distortion_editor is not None:
+                self.distortion_editor.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+                widget.ids['preview_widget'].add_widget(self.distortion_editor)
+
+        # Update parameters and image if applicable
+        if self.distortion_editor is not None and param is not None:
+            if type == 'Lens':
+                #self.distortion_editor.set_image(widget.imgset.img) # なんか重い
+                # Sync Params
+                self.distortion_editor.set_correction_params(param)
+
+            elif type == 'Trapezoid':
+                pass
+
+            elif type == 'Four Points':                
+                # Sync Params
+                self.distortion_editor.set_correction_params(param)
+                # Bind callback
+                self.distortion_editor.set_callback(self._editor_update_callback)
+
+            elif type == 'Lines':
+                # Sync Params
+                self.distortion_editor.set_correction_params(param)
+                # Bind callback
+                self.distortion_editor.set_callback(self._editor_update_callback)
+
+            elif type == 'Mesh':
+                # Sync Params
+                self.distortion_editor.set_correction_params(param)
+                # Bind callback
+                self.distortion_editor.set_callback(self._editor_update_callback)
+
+
+class DistortionCorrectionEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'lens_distortion_strength': 0,
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_lens_distortion_strength"].set_slider_value(self._get_param(param, 'lens_distortion_strength'))
+
+    def set2param(self, param, widget):
+        param['lens_distortion_strength'] = widget.ids["slider_lens_distortion_strength"].value
+        
+    def make_diff(self, img, param, efconfig):
+        strength = self._get_param(param, 'lens_distortion_strength')
+        if strength == 0:
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((strength))        
+            if self.hash != param_hash:
+                self.diff = distortion_correction.correct_lens_distortion(
+                    img,
+                    strength=strength,
+                    interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    grid_size=2 if efconfig.mode == EffectMode.EXPORT else 4,
+                )
+                self.hash = param_hash
         
         return self.diff
 
@@ -2612,7 +2878,7 @@ class VignetteEffect(Effect):
         return self.diff
     
 
-def create_effects(distortion_callback=None):
+def create_effects(distortion_callback=None, rotation_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
@@ -2623,7 +2889,7 @@ def create_effects(distortion_callback=None):
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
     lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
-    lv0['rotation'] = RotationEffect()
+    lv0['rotation'] = RotationEffect(distortion_editor_callback=rotation_callback)
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]

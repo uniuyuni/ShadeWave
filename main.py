@@ -4,15 +4,16 @@
 
 if __name__ == '__main__':
     try:
-        import matplotlib
-        matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
-        matplotlib.interactive(False)
+        #import matplotlib
+        #matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
+        #matplotlib.interactive(False)
+        pass
     except ImportError:
         pass    
     import tkinter as tk
     
     # tk.Tk()で落ちるのを回避するためのパッチ
-    matplotlib.use('tkagg')
+    #matplotlib.use('tkagg')
     tk = tk.Tk()
     tk.withdraw()
     tk.destroy()
@@ -27,7 +28,7 @@ if __name__ == '__main__':
 
     import threading
     from functools import partial
-    import colour
+    import cores.colour_functions as colour_functions
     import logging
     logging.getLogger("watchfiles").setLevel(logging.WARNING)
     logging.getLogger("numba").setLevel(logging.WARNING)
@@ -54,6 +55,7 @@ if __name__ == '__main__':
     import waitinfo
     import history
 
+    import widgets.distortion_correction as distortion_correction
     import widgets.metainfo
     import widgets.float_input
     import widgets.param_slider
@@ -151,7 +153,7 @@ if __name__ == '__main__':
             self.is_zoomed = False
             self.drag_start_point = None
             self.primary_param = {}
-            self.primary_effects = effects.create_effects(distortion_callback=self.distortion_callback)
+            self.primary_effects = effects.create_effects(distortion_callback=self.distortion_callback, rotation_callback=self.rotation_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.inpaint_edit = None
             self.cache_system = cache_system
@@ -288,7 +290,7 @@ if __name__ == '__main__':
                 img = np.array(img)
                 utils.print_nan_inf(img, "output")
 
-                img = colour.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                img = colour_functions.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
                                         apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
                 # ヒストグラム表示
@@ -340,6 +342,16 @@ if __name__ == '__main__':
         def distortion_callback(self):
             self.apply_effects_lv(0, 'distortion')
 
+        def rotation_callback(self, proc, widget):
+            match proc:
+                case 'start':
+                    self.begin_history_effect_ctrl(0, 'rotation')
+                case 'update' | 'apply':
+                    self.apply_effects_lv(0, 'rotation')
+                case 'end':
+                    self.primary_param.update(widget.get_correction_params())
+                    self.end_history_effect_ctrl(0, 'rotation')
+
         def _get_active_effects(self, mask_id=None, lv=None):
             if mask_id is None:
                 mask = self.ids['mask_editor2'].get_active_mask()
@@ -386,7 +398,8 @@ if __name__ == '__main__':
 
         def apply_rotation_flip_for_wrapper(self):
             # Calculate Rotation/Flip for Hardware
-            if self.ids["effects"].current_tab.text == "Ge":
+            #if self.ids["effects"].current_tab.text == "Ge":
+            if False:
                 rotation_effect = self.primary_effects[0]['rotation']
                 angle = rotation_effect._get_param(self.primary_param,'rotation') + rotation_effect._get_param(self.primary_param,'rotation2')
                 flip = rotation_effect._get_param(self.primary_param,'flip_mode')
@@ -760,6 +773,32 @@ if __name__ == '__main__':
 
         #--------------------------------
 
+        def set_lens_distortion_strength(self, value):
+            ldw = None
+            for child in self.ids['preview_widget'].children:
+                if child.__class__.__name__ == 'LensDistortionWidget':
+                    ldw = child
+                    break
+            if ldw:
+                ldw.strength = value
+
+        def show_distortion_correction(self, type):
+            match type:
+                case 'lens':
+                    widget = distortion_correction.LensDistortionWidget()
+                    widget.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+                    self.ids['preview_widget'].add_widget(widget)
+                    widget.set_edit_start_callback(self._on_lens_distortion_edit_start)
+                    widget.set_edit_end_callback(self._on_lens_distortion_edit_end)
+        
+        def _on_lens_distortion_edit_start(self, widget):
+            pass
+        
+        def _on_lens_distortion_edit_end(self, widget):
+            pass
+            
+        #--------------------------------
+
         def _enable_inpaint_edit(self):
             if self.inpaint_edit is None:
                 self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
@@ -820,6 +859,7 @@ if __name__ == '__main__':
 
             if self.imgset is not None:
                 self.apply_effects_lv(0, "distortion")
+                self.apply_effects_lv(0, "rotation")
                 self.apply_effects_lv(0, "crop")
 
 

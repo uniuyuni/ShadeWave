@@ -4,7 +4,7 @@ import numpy as np
 from imagecodecs import imwrite
 import json
 import exiftool
-import colour
+import cores.colour_functions as colour_functions
 
 import cores.core as core
 import define
@@ -159,7 +159,7 @@ class ExportFile():
         params.load_json(self.file_path, self.param, self.mask_editor2)
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
 
-        img = colour.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], config.get_config('cat'),
+        img = colour_functions.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], config.get_config('cat'),
                                 apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
         img = np.clip(img, 0, 1)
 

@@ -125,7 +125,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = is_zoomed
     efconfig.mode = EffectMode.PREVIEW
-    efconfig.bypass_rotation = True if efconfig.mode == EffectMode.PREVIEW and current_tab == 'Ge' else False
+    efconfig.bypass_rotation = False #True if efconfig.mode == EffectMode.PREVIEW and current_tab == 'Ge' else False
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
     
     # Initialize basic input hash

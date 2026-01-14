@@ -1,10 +1,11 @@
 
 import os
 import numpy as np
-from colour.io.luts.iridas_cube import read_LUT_IridasCube, LUT3D, LUT3x1D
 from typing import Union
 
 def read_lut(lut_path, clip=False):
+    from colour.io.luts.iridas_cube import read_LUT_IridasCube, LUT3D, LUT3x1D
+    
     """
     Reads a LUT from the specified path, returning instance of LUT3D or LUT3x1D
 
@@ -30,6 +31,8 @@ def read_lut(lut_path, clip=False):
 
 
 def apply_lut(image, lut, log=False):
+    from colour.io.luts.iridas_cube import read_LUT_IridasCube, LUT3D, LUT3x1D
+    
     """Opens the image at <image_path>, transforms it using the passed
     <lut> with trilinear interpolation, and saves the image at
     <output_path>, or if it is None, then the same folder as <image_path>.

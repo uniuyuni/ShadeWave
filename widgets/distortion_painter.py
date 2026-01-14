@@ -678,7 +678,7 @@ class DistortionCanvas(FloatLayout):
 
     # ワールド座標からテクスチャのグローバル座標に
     def _window_to_tcg(self, cx, cy):
-        return core.window_to_tcg(cx, cy, self, self.image_widget.texture_size, self.tcg_info)
+        return core.window_to_texture(cx, cy, self, self.image_widget.texture_size, self.tcg_info)
 
     
 class Distortion_PainterApp(App):

@@ -111,6 +111,16 @@ def set_disp_info(param, disp_info):
 
 def denorm_param(param, val):
     if val is not None:
+        if type(val) == tuple or type(val) == list:
+            x = val[0] * param['original_img_size'][0]
+            y = val[1] * param['original_img_size'][1]
+            return (x, y)
+        
+        return val * max(param['original_img_size'])
+
+    return None
+
+    if val is not None:
         maxsize = max(param['original_img_size'])
         if type(val) == tuple:
             val = (v * maxsize for v in val)
@@ -119,6 +129,15 @@ def denorm_param(param, val):
     return val
 
 def norm_param(param, val):
+    if val is not None:
+        if type(val) == tuple or type(val) == list:
+            x = val[0] / param['original_img_size'][0]
+            y = val[1] / param['original_img_size'][1]
+            return (x, y)
+        
+        return val / max(param['original_img_size'])
+    return None
+
     if val is not None:
         maxsize = max(param['original_img_size'])
         if type(val) == tuple:
