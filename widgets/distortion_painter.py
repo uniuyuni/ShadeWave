@@ -103,23 +103,23 @@ class DistortionEngine:
 
             # 変形マップを高速更新
             self._update_deformation_map_fast()
-            """
+            
             # 前回の変形結果をベースに使用
-            base_image = self.last_warped_image if self.last_warped_image is not None else original_image.copy()
+            base_image = self.last_warped_image if self.last_warped_image is not None else original_image
 
             # ROI領域のみを変形
-            roi = original_image[y_min:y_max, x_min:x_max].copy()
+            #roi = original_image[y_min:y_max, x_min:x_max].copy()
             
             # マップのROI部分を切り出し
             map_x_roi = self.map_x[y_min:y_max, x_min:x_max].copy()
             map_y_roi = self.map_y[y_min:y_max, x_min:x_max].copy()
             
             # オフセット調整
-            map_x_roi -= x_min
-            map_y_roi -= y_min
+            #map_x_roi -= x_min
+            #map_y_roi -= y_min
             
             warped_roi = cv2.remap(
-                roi, 
+                original_image, 
                 map_x_roi, 
                 map_y_roi, 
                 cv2.INTER_LINEAR, 
@@ -129,7 +129,6 @@ class DistortionEngine:
             # 結果をコピー
             base_image[y_min:y_max, x_min:x_max] = warped_roi
             """
-            
             base_image = cv2.remap(
                 original_image, 
                 self.map_x,
@@ -137,6 +136,7 @@ class DistortionEngine:
                 cv2.INTER_LINEAR, 
                 borderMode=cv2.BORDER_REFLECT
             )
+            """
             
             # 更新結果を保持
             self.last_warped_image = base_image
