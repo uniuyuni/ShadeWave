@@ -72,22 +72,22 @@ class DistortionEngine:
         # Numbaで高速化された処理を実行
         if effect_type == 'forward_warp':
             self.current_grid = DistortionEngine._apply_forward_warp_numba(
-                self.current_grid, center, radius, strength, direction,
+                self.current_grid, self.original_grid, center, radius, strength, direction,
                 x_min, x_max, y_min, y_max, effect_radius
             )
         elif effect_type == 'bulge':
             self.current_grid = DistortionEngine._apply_bulge_numba(
-                self.current_grid, center, radius, -strength,
+                self.current_grid, self.original_grid, center, radius, -strength,
                 x_min, x_max, y_min, y_max, effect_radius
             )
         elif effect_type == 'pinch':
             self.current_grid = DistortionEngine._apply_bulge_numba(
-                self.current_grid, center, radius, strength,
+                self.current_grid, self.original_grid, center, radius, strength,
                 x_min, x_max, y_min, y_max, effect_radius
             )
         elif effect_type == 'swirl':
             self.current_grid = DistortionEngine._apply_swirl_numba(
-                self.current_grid, center, radius, strength,
+                self.current_grid, self.original_grid, center, radius, strength,
                 x_min, x_max, y_min, y_max, effect_radius
             )
         elif effect_type == 'restore':
@@ -247,7 +247,7 @@ class DistortionEngine:
     @staticmethod
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
-    def _apply_forward_warp_numba(grid, center, radius, strength, direction, 
+    def _apply_forward_warp_numba(grid, original_grid, center, radius, strength, direction, 
                                 x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
         center_x, center_y = center
@@ -258,16 +258,23 @@ class DistortionEngine:
         
         for i in prange(grid.shape[0]):
             for j in prange(grid.shape[1]):
-                px, py = grid[i, j]
-                if not (x_min <= px <= x_max and y_min <= py <= y_max):
+                # スクリーンスペースでの判定（元の位置基準）
+                ox, oy = original_grid[i, j]
+                
+                # ROIチェック
+                if not (x_min <= ox <= x_max and y_min <= oy <= y_max):
                     continue
                     
-                dx = px - center_x
-                dy = py - center_y
+                # 距離計算（スクリーンスペース）
+                dx = ox - center_x
+                dy = oy - center_y
                 dist = np.sqrt(dx*dx + dy*dy)
                 if dist >= effect_radius:
                     continue
-                    
+                
+                # 移動対象は現在のグリッド値（ソース座標）
+                px, py = grid[i, j]
+                
                 weight = np.exp(-(dist*dist) / (2 * (radius/3)**2))
                 move = strength * radius * weight * 0.5
                 new_grid[i, j, 0] = px + dir_x * move
@@ -278,19 +285,20 @@ class DistortionEngine:
     @staticmethod
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
-    def _apply_bulge_numba(grid, center, radius, strength, 
+    def _apply_bulge_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
         center_x, center_y = center
         
         for i in prange(grid.shape[0]):
             for j in prange(grid.shape[1]):
-                px, py = grid[i, j]
-                if not (x_min <= px <= x_max and y_min <= py <= y_max):
+                ox, oy = original_grid[i, j]
+                
+                if not (x_min <= ox <= x_max and y_min <= oy <= y_max):
                     continue
                     
-                dx = px - center_x
-                dy = py - center_y
+                dx = ox - center_x
+                dy = oy - center_y
                 dist = np.sqrt(dx*dx + dy*dy)
                 if dist >= effect_radius or dist < 1e-5:
                     continue
@@ -299,6 +307,9 @@ class DistortionEngine:
                 move = strength * radius * weight * 0.5
                 dir_x = dx / dist
                 dir_y = dy / dist
+                
+                # 移動対象はSource座標
+                px, py = grid[i, j]
                 new_grid[i, j, 0] = px + dir_x * move
                 new_grid[i, j, 1] = py + dir_y * move
                 
@@ -307,19 +318,20 @@ class DistortionEngine:
     @staticmethod
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
-    def _apply_swirl_numba(grid, center, radius, strength, 
+    def _apply_swirl_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius):
         new_grid = grid.copy()
         center_x, center_y = center
         
         for i in prange(grid.shape[0]):
             for j in prange(grid.shape[1]):
-                px, py = grid[i, j]
-                if not (x_min <= px <= x_max and y_min <= py <= y_max):
+                ox, oy = original_grid[i, j]
+                
+                if not (x_min <= ox <= x_max and y_min <= oy <= y_max):
                     continue
                     
-                dx = px - center_x
-                dy = py - center_y
+                dx = ox - center_x
+                dy = oy - center_y
                 dist = np.sqrt(dx*dx + dy*dy)
                 if dist >= effect_radius or dist < 1e-5:
                     continue
@@ -328,8 +340,15 @@ class DistortionEngine:
                 angle = weight * strength * 0.5
                 cos_a = np.cos(angle)
                 sin_a = np.sin(angle)
-                x_rot = dx * cos_a - dy * sin_a
-                y_rot = dx * sin_a + dy * cos_a
+                
+                # 回転対象はSource座標
+                px, py = grid[i, j]
+                v_x = px - center_x
+                v_y = py - center_y
+                
+                x_rot = v_x * cos_a - v_y * sin_a
+                y_rot = v_x * sin_a + v_y * cos_a
+                
                 new_grid[i, j, 0] = center_x + x_rot
                 new_grid[i, j, 1] = center_y + y_rot
                 
@@ -349,23 +368,25 @@ class DistortionEngine:
                 
         for i in prange(grid.shape[0]):
             for j in prange(grid.shape[1]):
-                px, py = grid[i, j]
+                # 判定は画面上の位置（Original Grid）で行う
+                ox, oy = original_grid[i, j]
                 
                 # ROIチェック
-                if px < x_min or px > x_max or py < y_min or py > y_max:
+                if ox < x_min or ox > x_max or oy < y_min or oy > y_max:
                     continue
 
-                # 元の位置
-                orig_px, orig_py = original_grid[i, j]
-
                 # 距離の二乗を計算
-                dx = px - center_x
-                dy = py - center_y
+                dx = ox - center_x
+                dy = oy - center_y
                 dist_sq = dx*dx + dy*dy
                 
                 # 効果半径チェック
                 if dist_sq > effect_radius_sq:
                     continue
+                
+                # 現在位置と元の位置（ここはSource）
+                px, py = grid[i, j]
+                orig_px, orig_py = original_grid[i, j]
                     
                 # 重み計算 (指数関数の引数を制限)
                 weight = strength * np.exp(-dist_sq / (2 * radius_sq))
@@ -465,7 +486,8 @@ class DistortionCanvas(FloatLayout):
         self.tcg_info = core.param_to_tcg_info(primary_param)
         
     def remap_recorded(self):
-        DistortionCanvas.replay_recorded(self.original_image, self.recorded, self.tcg_info, self.engine)
+        self.engine.reset()
+        self.current_image = DistortionCanvas.replay_recorded(self.original_image, self.recorded, self.tcg_info, self.engine)
 
     def on_mouse_pos(self, window, pos):
         #print(f"Mouse position: {pos}")
@@ -504,9 +526,6 @@ class DistortionCanvas(FloatLayout):
             # プレビューテクスチャを使用
             self.ids.image_widget.texture = self.full_quality_texture
         
-        if self.callback is not None:
-            self.callback()
-
     def on_touch_down(self, touch):
         if self.image_widget.collide_point(*touch.pos) and self.current_image is not None:
             
@@ -528,6 +547,8 @@ class DistortionCanvas(FloatLayout):
             }
             # 記録開始
             if self.is_recording:
+                if self.callback is not None:
+                    self.callback('start', self)
                 self.recorded.append(record)
 
             # ポイントをバッファにも追加
@@ -576,6 +597,16 @@ class DistortionCanvas(FloatLayout):
 
         return True
 
+    def on_touch_up(self, touch):
+        # バッファに残っているポイントを処理
+        if self.points_buffer:
+            self.process_buffer()
+            
+        if self.callback is not None:
+            self.callback('end', self)
+
+        return super().on_touch_up(touch)
+
     def convert_to_image_coords(self, touch_x, touch_y):
         img_widget = self.image_widget
         if img_widget.texture_size[0] == 0 or img_widget.texture_size[1] == 0:
@@ -621,23 +652,20 @@ class DistortionCanvas(FloatLayout):
         
         # テクスチャ更新をスケジュール（パフォーマンスのため遅延処理）
         if self.update_event is None:
-            self.update_event = Clock.schedule_once(self.delayed_texture_update, 0.05)
+            self.update_event = Clock.schedule_once(self.delayed_texture_update, 0.01)
         
         # バッファクリア
         self.points_buffer = []
 
     def delayed_texture_update(self, dt):
         self.update_texture()
+        if self.callback is not None:
+            self.callback('apply', self)
         self.update_event = None
-
-    def on_touch_up(self, touch):
-        # バッファに残っているポイントを処理
-        if self.points_buffer:
-            self.process_buffer()
-        return super().on_touch_up(touch)
 
     def remap_image(self):
         self.current_image = self.engine.warp_image(self.original_image)
+        self.update_texture()
 
     @staticmethod
     def replay_recorded(original_image, recorded, tcg_info, engine=None):
@@ -670,11 +698,16 @@ class DistortionCanvas(FloatLayout):
 
     def reset_image(self):
         if self.original_image is not None:
+            if self.callback is not None:
+                self.callback('start', self)
             self.current_image = self.original_image.copy()
             self.recorded = []
             self.engine.reset()
             self.update_texture()
-            print("Image reset")
+            if self.callback is not None:
+                self.callback('apply', self)
+            if self.callback is not None:
+                self.callback('end', self)
 
     def set_effect(self, effect_type):
         self.effect_type = effect_type
@@ -690,6 +723,14 @@ class DistortionCanvas(FloatLayout):
 
     def get_recorded(self):
         return self.recorded
+
+    def set_recorded(self, recorded):
+        self.recorded = recorded
+
+    def get_distortion_params(self):
+        return {
+            'distortion_recorded': self.recorded
+        }
 
     # ワールド座標からテクスチャのグローバル座標に
     def _window_to_tcg(self, cx, cy):

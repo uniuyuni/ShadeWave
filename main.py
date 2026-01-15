@@ -340,8 +340,15 @@ if __name__ == '__main__':
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
 
-        def distortion_callback(self):
-            self.apply_effects_lv(0, 'distortion')
+        def distortion_callback(self, proc, widget):
+            match proc:
+                case 'start':
+                    self.begin_history_effect_ctrl(0, 'distortion')
+                case 'update' | 'apply':
+                    self.apply_effects_lv(0, 'distortion')
+                case 'end':
+                    self.primary_param.update(widget.get_distortion_params())
+                    self.end_history_effect_ctrl(0, 'distortion')
 
         def rotation_callback(self, proc, widget):
             match proc:
@@ -772,32 +779,6 @@ if __name__ == '__main__':
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = True
                 self._disable_mask2()
 
-        #--------------------------------
-
-        def set_lens_distortion_strength(self, value):
-            ldw = None
-            for child in self.ids['preview_widget'].children:
-                if child.__class__.__name__ == 'LensDistortionWidget':
-                    ldw = child
-                    break
-            if ldw:
-                ldw.strength = value
-
-        def show_distortion_correction(self, type):
-            match type:
-                case 'lens':
-                    widget = distortion_correction.LensDistortionWidget()
-                    widget.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-                    self.ids['preview_widget'].add_widget(widget)
-                    widget.set_edit_start_callback(self._on_lens_distortion_edit_start)
-                    widget.set_edit_end_callback(self._on_lens_distortion_edit_end)
-        
-        def _on_lens_distortion_edit_start(self, widget):
-            pass
-        
-        def _on_lens_distortion_edit_end(self, widget):
-            pass
-            
         #--------------------------------
 
         def _enable_inpaint_edit(self):
