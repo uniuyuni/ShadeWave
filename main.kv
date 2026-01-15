@@ -2203,23 +2203,23 @@
                                 DistortionEffectButton:
                                     text: "For. Warp"
                                     state: 'down'
-                                    on_press: root.set_effect_param(0, 'distortion', 'forward_warp')
+                                    on_press: root.set_effect_param(1, 'distortion', 'forward_warp')
                                 
                                 DistortionEffectButton:
                                     text: "Bulge"
-                                    on_press: root.set_effect_param(0, 'distortion', 'bulge')
+                                    on_press: root.set_effect_param(1, 'distortion', 'bulge')
                                 
                                 DistortionEffectButton:
                                     text: "Pinch"
-                                    on_press: root.set_effect_param(0, 'distortion', 'pinch')
+                                    on_press: root.set_effect_param(1, 'distortion', 'pinch')
                                 
                                 DistortionEffectButton:
                                     text: "Swirl"
-                                    on_press: root.set_effect_param(0, 'distortion', 'swirl')
+                                    on_press: root.set_effect_param(1, 'distortion', 'swirl')
 
                                 DistortionEffectButton:
                                     text: "Restore"
-                                    on_press: root.set_effect_param(0, 'distortion', 'restore')
+                                    on_press: root.set_effect_param(1, 'distortion', 'restore')
 
                             VSpacer:
 
@@ -2230,9 +2230,9 @@
                                 max: 300
                                 value: 100
                                 step: 1
-                                on_slider: root.apply_effects_lv(0, 'distortion')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'distortion')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'distortion')
+                                on_slider: root.apply_effects_lv(1, 'distortion')
+                                on_before_edit: root.begin_history_effect_ctrl(1, 'distortion')
+                                on_after_edit: root.end_history_effect_ctrl(1, 'distortion')
                             ParamSlider:
                                 id: slider_distortion_strength
                                 text: "Strength"
@@ -2240,9 +2240,9 @@
                                 max: 100
                                 value: 50
                                 step: 1
-                                on_slider: root.apply_effects_lv(0, 'distortion')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'distortion')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'distortion')
+                                on_slider: root.apply_effects_lv(1, 'distortion')
+                                on_before_edit: root.begin_history_effect_ctrl(1, 'distortion')
+                                on_after_edit: root.end_history_effect_ctrl(1, 'distortion')
 
                             ParamBoxLayout:
                                 ParamLabel:
@@ -2254,9 +2254,9 @@
                                     id: button_distortion_reset
                                     size_hint_x: None
                                     ref_width: 60
-                                    on_press: root.begin_history_effect_ctrl(0, 'distortion')
-                                    on_press: root.apply_effects_lv(0, 'distortion')
-                                    on_release: root.end_history_effect_ctrl(0, 'distortion')
+                                    on_press: root.begin_history_effect_ctrl(1, 'distortion')
+                                    on_press: root.apply_effects_lv(1, 'distortion')
+                                    on_release: root.end_history_effect_ctrl(1, 'distortion')
                                     ParamChipText:
                                         text: "Reset"
 

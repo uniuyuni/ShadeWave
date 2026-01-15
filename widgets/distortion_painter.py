@@ -20,12 +20,13 @@ import logging
 
 import cores.core as core
 from cores.core import lock_numba
+import params
 import config
 
 class DistortionEngine:
-    def __init__(self, image_size, grid_size=30):
+    def __init__(self, image_size, grid_size=20):
         self.width, self.height = image_size
-        self.grid_size = grid_size
+        self.grid_size = int(grid_size)
         
         # メッシュグリッドの生成
         self.original_grid = self._create_initial_grid()
@@ -59,7 +60,7 @@ class DistortionEngine:
         # 効果半径を計算 (安全マージン追加)
         effect_radius = radius * 1.5 + 10
         
-        # ROI領域を正確に計算
+        # ROI領域を正確に計算 (ピクセル座標)
         x_min = max(0, int(center[0] - effect_radius))
         y_min = max(0, int(center[1] - effect_radius))
         x_max = min(self.width, int(center[0] + effect_radius))
@@ -68,56 +69,66 @@ class DistortionEngine:
         # 領域サイズが0の場合は処理しない
         if x_min >= x_max or y_min >= y_max:
             return original_image
-        
-        # Numbaで高速化された処理を実行
+            
+        # グリッドインデックスの範囲を計算
+        j_min = max(0, int(x_min / self.grid_size))
+        i_min = max(0, int(y_min / self.grid_size))
+        j_max = min(self.current_grid.shape[1], int(x_max / self.grid_size) + 2)
+        i_max = min(self.current_grid.shape[0], int(y_max / self.grid_size) + 2)
+
+        # Numbaで高速化された処理を実行 (ROI範囲のみ)
         if effect_type == 'forward_warp':
             self.current_grid = DistortionEngine._apply_forward_warp_numba(
                 self.current_grid, self.original_grid, center, radius, strength, direction,
-                x_min, x_max, y_min, y_max, effect_radius
+                x_min, x_max, y_min, y_max, effect_radius,
+                i_min, i_max, j_min, j_max
             )
         elif effect_type == 'bulge':
             self.current_grid = DistortionEngine._apply_bulge_numba(
                 self.current_grid, self.original_grid, center, radius, -strength,
-                x_min, x_max, y_min, y_max, effect_radius
+                x_min, x_max, y_min, y_max, effect_radius,
+                i_min, i_max, j_min, j_max
             )
         elif effect_type == 'pinch':
             self.current_grid = DistortionEngine._apply_bulge_numba(
                 self.current_grid, self.original_grid, center, radius, strength,
-                x_min, x_max, y_min, y_max, effect_radius
+                x_min, x_max, y_min, y_max, effect_radius,
+                i_min, i_max, j_min, j_max
             )
         elif effect_type == 'swirl':
             self.current_grid = DistortionEngine._apply_swirl_numba(
                 self.current_grid, self.original_grid, center, radius, strength,
-                x_min, x_max, y_min, y_max, effect_radius
+                x_min, x_max, y_min, y_max, effect_radius,
+                i_min, i_max, j_min, j_max
             )
         elif effect_type == 'restore':
             self.current_grid = DistortionEngine._apply_restore_numba(
                 self.current_grid, self.original_grid, center, radius, strength,
-                x_min, x_max, y_min, y_max, effect_radius
+                x_min, x_max, y_min, y_max, effect_radius,
+                i_min, i_max, j_min, j_max
             )
         
         self.dirty = True
         
         # 画像が提供されている場合、ROI領域のみを更新して返す
         if original_image is not None:
-
-            # 変形マップを高速更新
-            self._update_deformation_map_fast()
             
-            # 前回の変形結果をベースに使用
-            base_image = self.last_warped_image if self.last_warped_image is not None else original_image
+            # 初回、またはリセット直後は全体を初期化する必要がある
+            if self.last_warped_image is None or self.map_x is None:
+                self.warp_image(original_image)
+                return self.last_warped_image
 
-            # ROI領域のみを変形
-            #roi = original_image[y_min:y_max, x_min:x_max].copy()
+            # 変形マップを高速更新 (ROIのみ)
+            self._update_deformation_map_roi(x_min, x_max, y_min, y_max)
             
+            # 前回の変形結果をベースに使用 (コピー不要、in-place更新)
+            base_image = self.last_warped_image
+
             # マップのROI部分を切り出し
-            map_x_roi = self.map_x[y_min:y_max, x_min:x_max].copy()
-            map_y_roi = self.map_y[y_min:y_max, x_min:x_max].copy()
+            map_x_roi = self.map_x[y_min:y_max, x_min:x_max]
+            map_y_roi = self.map_y[y_min:y_max, x_min:x_max]
             
-            # オフセット調整
-            #map_x_roi -= x_min
-            #map_y_roi -= y_min
-            
+            # ROI領域を変形 (ソースは常に original_image)
             warped_roi = cv2.remap(
                 original_image, 
                 map_x_roi, 
@@ -126,20 +137,9 @@ class DistortionEngine:
                 borderMode=cv2.BORDER_REFLECT
             )
             
-            # 結果をコピー
+            # 結果をパッチ適用
             base_image[y_min:y_max, x_min:x_max] = warped_roi
-            """
-            base_image = cv2.remap(
-                original_image, 
-                self.map_x,
-                self.map_y, 
-                cv2.INTER_LINEAR, 
-                borderMode=cv2.BORDER_REFLECT
-            )
-            """
             
-            # 更新結果を保持
-            self.last_warped_image = base_image
             return base_image
         
         return None
@@ -159,6 +159,27 @@ class DistortionEngine:
         )
         
         self.dirty = False
+
+    def _update_deformation_map_roi(self, x_min, x_max, y_min, y_max):
+        """ ROI領域のみ変形マップを更新 """
+        if self.map_x is None:
+            self._update_deformation_map_fast()
+            return
+
+        # NumbaでROI領域のみ更新
+        DistortionEngine._generate_deformation_map_roi_numba(
+            self.original_grid,
+            self.current_grid,
+            self.map_x,
+            self.map_y,
+            x_min, x_max, y_min, y_max,
+            self.grid_size,
+            self.width,
+            self.height
+        )
+        
+        # dirtyフラグは下ろさない（全体整合性のため）
+        # self.dirty = False
     
     def warp_image(self, image):
         """ 画像全体を変形 """
@@ -201,8 +222,8 @@ class DistortionEngine:
         for y in prange(height):
             for x in prange(width):
                 # グリッドインデックス計算
-                grid_i = y // grid_step_y
-                grid_j = x // grid_step_x
+                grid_i = int(y // grid_step_y)
+                grid_j = int(x // grid_step_x)
                 
                 # グリッドセル内の位置
                 dy = y % grid_step_y
@@ -247,8 +268,67 @@ class DistortionEngine:
     @staticmethod
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
+    def _generate_deformation_map_roi_numba(original_grid, current_grid, map_x, map_y, 
+                                          x_min, x_max, y_min, y_max, 
+                                          grid_size, width, height):
+        """ Numbaで高速化された変形マップ生成（ROI限定更新） """
+        rows, cols, _ = original_grid.shape
+        displacement_x = current_grid[:, :, 0] - original_grid[:, :, 0]
+        displacement_y = current_grid[:, :, 1] - original_grid[:, :, 1]
+        
+        grid_step_x = grid_size
+        grid_step_y = grid_size
+        
+        for y in prange(y_min, y_max):
+            for x in prange(x_min, x_max):
+                # グリッドインデックス計算
+                grid_i = y // grid_step_y
+                grid_j = x // grid_step_x
+                
+                # グリッドセル内の位置
+                dy = y % grid_step_y
+                dx = x % grid_step_x
+                
+                # グリッドセルの4点を取得
+                i0 = min(grid_i, rows-1)
+                j0 = min(grid_j, cols-1)
+                i1 = min(grid_i+1, rows-1)
+                j1 = min(grid_j+1, cols-1)
+                
+                # バイリニア補間の重み
+                wx = dx / grid_step_x
+                wy = dy / grid_step_y
+                
+                # 4点の変位
+                d00_x = displacement_x[i0, j0]
+                d00_y = displacement_y[i0, j0]
+                d01_x = displacement_x[i0, j1]
+                d01_y = displacement_y[i0, j1]
+                d10_x = displacement_x[i1, j0]
+                d10_y = displacement_y[i1, j0]
+                d11_x = displacement_x[i1, j1]
+                d11_y = displacement_y[i1, j1]
+                
+                # X方向の補間
+                top_x = (1 - wx) * d00_x + wx * d01_x
+                bottom_x = (1 - wx) * d10_x + wx * d11_x
+                dx_interp = (1 - wy) * top_x + wy * bottom_x
+                
+                # Y方向の補間
+                top_y = (1 - wx) * d00_y + wx * d01_y
+                bottom_y = (1 - wx) * d10_y + wx * d11_y
+                dy_interp = (1 - wy) * top_y + wy * bottom_y
+                
+                # 変形マップに設定
+                map_x[y, x] = x + dx_interp
+                map_y[y, x] = y + dy_interp
+
+    @staticmethod
+    @lock_numba
+    @njit(parallel=True, fastmath=True, cache=True)
     def _apply_forward_warp_numba(grid, original_grid, center, radius, strength, direction, 
-                                x_min, x_max, y_min, y_max, effect_radius):
+                                x_min, x_max, y_min, y_max, effect_radius,
+                                i_min, i_max, j_min, j_max):
         new_grid = grid.copy()
         center_x, center_y = center
         dir_x, dir_y = direction
@@ -256,8 +336,8 @@ class DistortionEngine:
         dir_x /= -dir_norm
         dir_y /= -dir_norm
         
-        for i in prange(grid.shape[0]):
-            for j in prange(grid.shape[1]):
+        for i in prange(i_min, i_max):
+            for j in prange(j_min, j_max):
                 # スクリーンスペースでの判定（元の位置基準）
                 ox, oy = original_grid[i, j]
                 
@@ -286,12 +366,13 @@ class DistortionEngine:
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
     def _apply_bulge_numba(grid, original_grid, center, radius, strength, 
-                        x_min, x_max, y_min, y_max, effect_radius):
+                        x_min, x_max, y_min, y_max, effect_radius,
+                        i_min, i_max, j_min, j_max):
         new_grid = grid.copy()
         center_x, center_y = center
         
-        for i in prange(grid.shape[0]):
-            for j in prange(grid.shape[1]):
+        for i in prange(i_min, i_max):
+            for j in prange(j_min, j_max):
                 ox, oy = original_grid[i, j]
                 
                 if not (x_min <= ox <= x_max and y_min <= oy <= y_max):
@@ -319,12 +400,13 @@ class DistortionEngine:
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
     def _apply_swirl_numba(grid, original_grid, center, radius, strength, 
-                        x_min, x_max, y_min, y_max, effect_radius):
+                        x_min, x_max, y_min, y_max, effect_radius,
+                        i_min, i_max, j_min, j_max):
         new_grid = grid.copy()
         center_x, center_y = center
         
-        for i in prange(grid.shape[0]):
-            for j in prange(grid.shape[1]):
+        for i in prange(i_min, i_max):
+            for j in prange(j_min, j_max):
                 ox, oy = original_grid[i, j]
                 
                 if not (x_min <= ox <= x_max and y_min <= oy <= y_max):
@@ -358,7 +440,8 @@ class DistortionEngine:
     @lock_numba
     @njit(parallel=True, fastmath=True, cache=True)
     def _apply_restore_numba(grid, original_grid, center, radius, strength, 
-                        x_min, x_max, y_min, y_max, effect_radius):
+                        x_min, x_max, y_min, y_max, effect_radius,
+                        i_min, i_max, j_min, j_max):
         new_grid = grid.copy()
         center_x, center_y = center
 
@@ -366,8 +449,8 @@ class DistortionEngine:
         radius_sq = (radius / 3) ** 2
         effect_radius_sq = effect_radius ** 2
                 
-        for i in prange(grid.shape[0]):
-            for j in prange(grid.shape[1]):
+        for i in prange(i_min, i_max):
+            for j in prange(j_min, j_max):
                 # 判定は画面上の位置（Original Grid）で行う
                 ox, oy = original_grid[i, j]
                 
@@ -480,7 +563,8 @@ class DistortionCanvas(FloatLayout):
 
         if engine_recreate:
             h, w = ref_image.shape[:2]
-            self.engine = DistortionEngine((w, h))
+            disp_info = params.get_disp_info(self.tcg_info)
+            self.engine = DistortionEngine((w, h), grid_size=20 * disp_info[4])
 
     def set_primary_param(self, primary_param):
         self.tcg_info = core.param_to_tcg_info(primary_param)
@@ -579,7 +663,7 @@ class DistortionCanvas(FloatLayout):
             # 記録データ作成
             record = {
                     "x": tcg_x, "y": tcg_y,
-                    "size": self.brush_size,
+                    "size": self.brush_size / self.tcg_info['disp_info'][4],
                     "strength": strength,
                     "effect": self.effect_type,
                     "direction": direction,
@@ -589,7 +673,9 @@ class DistortionCanvas(FloatLayout):
             # 記録
             if self.is_recording:
                 self.recorded.append(record)
-                
+                if self.callback is not None:
+                    self.callback('apply', self)
+                        
             # ポイントをバッファに追加
             self.points_buffer.append(record)
 
@@ -607,22 +693,6 @@ class DistortionCanvas(FloatLayout):
 
         return super().on_touch_up(touch)
 
-    def convert_to_image_coords(self, touch_x, touch_y):
-        img_widget = self.image_widget
-        if img_widget.texture_size[0] == 0 or img_widget.texture_size[1] == 0:
-            return 0, 0
-            
-        # 座標変換 (Widget座標 → 画像座標)
-        img_x = int((touch_x - img_widget.x) * img_widget.texture_size[0] / img_widget.width)
-        img_y = int((img_widget.height - (touch_y - img_widget.y)) * 
-                   img_widget.texture_size[1] / img_widget.height)
-        
-        # 境界チェック
-        img_x = max(0, min(img_x, img_widget.texture_size[0] - 1))
-        img_y = max(0, min(img_y, img_widget.texture_size[1] - 1))
-        
-        return img_x, img_y
-
     def process_buffer(self):
         if not self.points_buffer or len(self.points_buffer) <= 0:
             return
@@ -634,13 +704,12 @@ class DistortionCanvas(FloatLayout):
             strength = record['strength']
             effect_type = record['effect']
             direction = record['direction']
-            time = record['time']
 
-            img_x, img_y = core.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info)
+            img_x, img_y = core.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True)
             # 変形
             self.current_image = self.engine.apply_effect(
                 center=(img_x, img_y),
-                radius=brush_size / self.tcg_info['disp_info'][4],
+                radius=brush_size * self.tcg_info['disp_info'][4],
                 strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
                 effect_type=effect_type,
                 direction=direction,
@@ -679,22 +748,21 @@ class DistortionCanvas(FloatLayout):
 
         if engine is None:
             h, w = original_image.shape[:2]
-            engine = DistortionEngine((w, h))
+            disp_info = params.get_disp_info(tcg_info)
+            engine = DistortionEngine((w, h), grid_size=20 * disp_info[4])
 
         # 記録再生
         for action in recorded:
             engine.apply_effect(
-                center=core.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info),
-                radius=action['size'] / tcg_info['disp_info'][4],
+                center=core.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info, True),
+                radius=action['size'] * tcg_info['disp_info'][4],
                 strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
                 effect_type=action.get('effect', 'forward_warp'),
                 direction=action['direction'],
                 original_image=None,
             )
 
-        img = engine.warp_image(original_image)
-
-        return img
+        return engine.warp_image(original_image)
 
     def reset_image(self):
         if self.original_image is not None:

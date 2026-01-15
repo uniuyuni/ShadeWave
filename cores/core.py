@@ -2557,6 +2557,7 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
     戻り値: TCG座標
     """
     disp_info = params.get_disp_info(tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     wx, wy = widget.to_window(*widget.pos)
     cx, cy = cx - wx, cy - wy
     margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
@@ -2565,7 +2566,6 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
     _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
     cx, cy = cx - offset_x, cy - offset_y
     cx, cy = cx / disp_info[4], cy / disp_info[4]
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     cx, cy = cx + disp_info[0], cy + disp_info[1]
     cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
     cx, cy = center_rotate_invert(cx, cy, tcg_info)
@@ -2598,31 +2598,58 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
     cx, cy = cx + wx, cy + wy
     return (cx, cy)
 
-def tcg_to_ref_image(cx, cy, ref_img, tcg_info):
+def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
     """
     TCGから参照イメージの座標を得る
 
     cx, cy: TCG座標
     ref_img: 参照イメージ
     tcg_info: 回転情報
+    apply_disp_info: disp_infoを適用するかどうか
     戻り値: 参照イメージ座標
     """
     cx, cy = params.denorm_param(tcg_info, (cx, cy))
     cx, cy = center_rotate(cx, cy, tcg_info)
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     cx, cy = cx + imax, cy + imax
-    #cx, cy = cx + ref_img.shape[1] / 2, cy + ref_img.shape[0] / 2
+    if apply_disp_info:
+        disp_info = params.get_disp_info(tcg_info)
+        if (   np.isclose(disp_info[2], disp_info[3])
+            or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
+                    and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
+            or np.isclose(disp_info[4], 1.0)
+           ):
+            # Geometryモード時、クロップ時または拡大表示時
+            cx, cy = cx - disp_info[0], cy - disp_info[1]
+            # クロップ時の表示空白
+            cx = cx + (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
+            cy = cy + (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
+        cx, cy = cx * disp_info[4], cy * disp_info[4]
     return (cx, cy)
 
-def ref_image_to_tcg(cx, cy, ref_img, tcg_info):
+def ref_image_to_tcg(cx, cy, ref_img, tcg_info, apply_disp_info=False):
     """
     参照イメージの座標からTCGを得る
 
     cx, cy: 参照イメージ座標
     ref_img: 参照イメージ
     tcg_info: 回転情報
+    apply_disp_info: disp_infoを適用するかどうか
     戻り値: TCG座標
     """
+    if apply_disp_info:
+        disp_info = params.get_disp_info(tcg_info)
+        cx, cy = cx / disp_info[4], cy / disp_info[4]
+        if (   np.isclose(disp_info[2], disp_info[3])
+            or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
+                    and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
+            or np.isclose(disp_info[4], 1.0)
+           ):
+            # クロップ時の表示空白
+            cx = cx - (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
+            cy = cy - (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
+            # Geometryモード時、クロップ時または拡大表示時
+            cx, cy = cx + disp_info[0], cy + disp_info[1]
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     cx, cy = cx - imax, cy - imax
     cx, cy = center_rotate_invert(cx, cy, tcg_info)

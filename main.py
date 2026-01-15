@@ -343,12 +343,12 @@ if __name__ == '__main__':
         def distortion_callback(self, proc, widget):
             match proc:
                 case 'start':
-                    self.begin_history_effect_ctrl(0, 'distortion')
+                    self.begin_history_effect_ctrl(1, 'distortion')
                 case 'update' | 'apply':
-                    self.apply_effects_lv(0, 'distortion')
+                    self.apply_effects_lv(1, 'distortion')
                 case 'end':
                     self.primary_param.update(widget.get_distortion_params())
-                    self.end_history_effect_ctrl(0, 'distortion')
+                    self.end_history_effect_ctrl(1, 'distortion')
 
         def rotation_callback(self, proc, widget):
             match proc:
@@ -580,7 +580,7 @@ if __name__ == '__main__':
                 self.set2widget_all(self.primary_effects, self.primary_param)
                 
                 # 特別あつかいでエディタを起動できるなら起動する
-                self.apply_effects_lv(0, 'distortion')
+                self.apply_effects_lv(1, 'distortion')
                 self.apply_effects_lv(0, 'crop')
 
                 # lensfun セットアップ
@@ -840,9 +840,9 @@ if __name__ == '__main__':
                 self.is_zoomed = False
 
             if self.imgset is not None:
-                self.apply_effects_lv(0, "distortion")
                 self.apply_effects_lv(0, "rotation")
                 self.apply_effects_lv(0, "crop")
+                self.apply_effects_lv(1, "distortion")
 
 
         def set_lut_path(self, path):

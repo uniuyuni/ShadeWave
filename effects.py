@@ -471,8 +471,8 @@ class DistortionEffect(Effect):
         if self.is_initial_open > 0:
             if self.distortion_painter is not None and efconfig.loading_flag != None:
                 self.distortion_painter.set_effect(self.effect_type)
-                self.distortion_painter.set_ref_image(img, True)
                 self.distortion_painter.set_primary_param(param)
+                self.distortion_painter.set_ref_image(img, True)
                 self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
                 self.distortion_painter.remap_recorded()
 
@@ -2884,10 +2884,10 @@ def create_effects(distortion_callback=None, rotation_callback=None):
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
     lv0['rotation'] = RotationEffect(distortion_editor_callback=rotation_callback)
-    lv0['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]
+    lv1['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
