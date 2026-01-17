@@ -7,7 +7,10 @@ import json
 import logging
 import numpy as np
 import pyvips
+
 import tempfile
+import io
+from contextlib import redirect_stdout, redirect_stderr
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -132,7 +135,7 @@ def convert_image_to_list(img):
 
     # データ読み込み
     vips = pyvips.Image.new_from_array(img)
-    buffer = vips.write_to_buffer('.exr', lossless=True)
+    buffer = vips.write_to_buffer('.tiff', compression="zstd", level=22)
 
     return (buffer, img.shape)
 

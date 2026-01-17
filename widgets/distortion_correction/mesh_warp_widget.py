@@ -7,9 +7,7 @@ KivyMDベースのGUIウィジェット
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.widget import Widget
 from kivy.uix.button import Button
-from kivy.properties import (
-    ListProperty, DictProperty
-)
+from kivy.properties import ListProperty, DictProperty
 from kivy.graphics import Color, Line
 from kivy.clock import mainthread
 from kivymd.uix.button import MDRaisedButton, MDIconButton, MDTextButton
@@ -17,8 +15,9 @@ from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
 import numpy as np
 import cv2
-import cores.core as core
+
 from cores.distortion_correction.warp_correction import get_mesh_coordinates
+import params
 
 class MeshWarpWidget(FloatLayout):
     """メッシュワープWidget"""
@@ -31,7 +30,7 @@ class MeshWarpWidget(FloatLayout):
         super().__init__(**kwargs)
         
         self.texture_size = texture_size
-        self.tcg_info = core.param_to_tcg_info(param)
+        self.tcg_info = params.param_to_tcg_info(param)
 
         self.on_callback = None
         
@@ -221,11 +220,11 @@ class MeshWarpWidget(FloatLayout):
             self.on_callback('apply', self)
 
     def _get_tcg_pos(self, touch_pos):
-        tx, ty = core.window_to_tcg(touch_pos[0], touch_pos[1], self, self.texture_size, self.tcg_info)
+        tx, ty = params.window_to_tcg(touch_pos[0], touch_pos[1], self, self.texture_size, self.tcg_info)
         return tx, ty
 
     def _get_window_pos(self, tx, ty):
-        wx, wy = core.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
+        wx, wy = params.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
         return wx, wy
         
     def _hit_test(self, tcg_x, tcg_y, touch_tcg_x, touch_tcg_y):

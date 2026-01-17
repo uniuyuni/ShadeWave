@@ -14,12 +14,11 @@ import cv2
 import numpy as np
 import os
 import time
-import numba as nb
 from numba import njit, prange
 import logging
 
 import cores.core as core
-from cores.core import lock_numba
+from threads import lock_numba
 import params
 import config
 
@@ -206,7 +205,7 @@ class DistortionEngine:
 
     @staticmethod
     @lock_numba
-    @njit(parallel=True, fastmath=True, cache=True)
+    @njit('Tuple((f4[:,:], f4[:,:]))(f4[:,:,:], f4[:,:,:], i4, i4, i4)', parallel=True, fastmath=True, cache=True)
     def _generate_deformation_map_numba(original_grid, current_grid, width, height, grid_size):
         """ Numbaで高速化された変形マップ生成 """
         map_x = np.zeros((height, width), dtype=np.float32)
@@ -263,11 +262,11 @@ class DistortionEngine:
                 map_x[y, x] = x + dx_interp
                 map_y[y, x] = y + dy_interp
         
-        return map_x, map_y
+        return (map_x, map_y)
 
     @staticmethod
     @lock_numba
-    @njit(parallel=True, fastmath=True, cache=True)
+    @njit('void(f4[:,:,:], f4[:,:,:], f4[:,:], f4[:,:], i4, i4, i4, i4, i4, i4, i4)', parallel=True, fastmath=True, cache=True)
     def _generate_deformation_map_roi_numba(original_grid, current_grid, map_x, map_y, 
                                           x_min, x_max, y_min, y_max, 
                                           grid_size, width, height):
@@ -325,7 +324,7 @@ class DistortionEngine:
 
     @staticmethod
     @lock_numba
-    @njit(parallel=True, fastmath=True, cache=True)
+    @njit('f4[:,:,:](f4[:,:,:],f4[:,:,:],UniTuple(f8,2),f8,f8,UniTuple(f8,2),i8,i8,i8,i8,f8,i8,i8,i8,i8)', parallel=True, fastmath=True, cache=True)
     def _apply_forward_warp_numba(grid, original_grid, center, radius, strength, direction, 
                                 x_min, x_max, y_min, y_max, effect_radius,
                                 i_min, i_max, j_min, j_max):
@@ -364,7 +363,7 @@ class DistortionEngine:
 
     @staticmethod
     @lock_numba
-    @njit(parallel=True, fastmath=True, cache=True)
+    @njit('f4[:,:,:](f4[:,:,:],f4[:,:,:],UniTuple(f8,2),f8,f8,i8,i8,i8,i8,f8,i8,i8,i8,i8)', parallel=True, fastmath=True, cache=True)
     def _apply_bulge_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius,
                         i_min, i_max, j_min, j_max):
@@ -398,7 +397,7 @@ class DistortionEngine:
 
     @staticmethod
     @lock_numba
-    @njit(parallel=True, fastmath=True, cache=True)
+    @njit('f4[:,:,:](f4[:,:,:],f4[:,:,:],UniTuple(f8,2),f8,f8,i8,i8,i8,i8,f8,i8,i8,i8,i8)', parallel=True, fastmath=True, cache=True)
     def _apply_swirl_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius,
                         i_min, i_max, j_min, j_max):
@@ -438,7 +437,7 @@ class DistortionEngine:
 
     @staticmethod
     @lock_numba
-    @njit(parallel=True, fastmath=True, cache=True)
+    @njit('f4[:,:,:](f4[:,:,:],f4[:,:,:],UniTuple(f8,2),f8,f8,i8,i8,i8,i8,f8,i8,i8,i8,i8)', parallel=True, fastmath=True, cache=True)
     def _apply_restore_numba(grid, original_grid, center, radius, strength, 
                         x_min, x_max, y_min, y_max, effect_radius,
                         i_min, i_max, j_min, j_max):
@@ -567,7 +566,7 @@ class DistortionCanvas(FloatLayout):
             self.engine = DistortionEngine((w, h), grid_size=20 * disp_info[4])
 
     def set_primary_param(self, primary_param):
-        self.tcg_info = core.param_to_tcg_info(primary_param)
+        self.tcg_info = params.param_to_tcg_info(primary_param)
         
     def remap_recorded(self):
         self.engine.reset()
@@ -705,7 +704,7 @@ class DistortionCanvas(FloatLayout):
             effect_type = record['effect']
             direction = record['direction']
 
-            img_x, img_y = core.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True)
+            img_x, img_y = params.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True)
             # 変形
             self.current_image = self.engine.apply_effect(
                 center=(img_x, img_y),
@@ -754,7 +753,7 @@ class DistortionCanvas(FloatLayout):
         # 記録再生
         for action in recorded:
             engine.apply_effect(
-                center=core.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info, True),
+                center=params.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info, True),
                 radius=action['size'] * tcg_info['disp_info'][4],
                 strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
                 effect_type=action.get('effect', 'forward_warp'),
@@ -803,7 +802,7 @@ class DistortionCanvas(FloatLayout):
     # ワールド座標からテクスチャのグローバル座標に
     def _window_to_tcg(self, cx, cy):
         texture_size = (config.get_config('preview_size'), config.get_config('preview_size'))
-        return core.window_to_tcg(cx, cy, self, texture_size, self.tcg_info)
+        return params.window_to_tcg(cx, cy, self, texture_size, self.tcg_info)
 
     
 class Distortion_PainterApp(App):

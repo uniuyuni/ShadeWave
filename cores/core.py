@@ -4,16 +4,6 @@ import io
 import cv2
 import math
 import numpy as np
-import threading
-
-# Numbaの並行アクセスを防ぐためのロック
-numba_lock = threading.Lock()
-
-def lock_numba(func):
-    def wrapper(*args, **kwargs):
-        with numba_lock:
-            return func(*args, **kwargs)
-    return wrapper
 
 import logging
 import numba
@@ -30,6 +20,7 @@ import dng_sdk.dng_temperature
 import utils.utils as utils
 import params
 import config
+from threads import lock_numba
 
 def normalize_image(image_data):
     # 画像データを正規化
@@ -115,21 +106,6 @@ def invert_TempTint2RGB(temp, tint, Y, reference_temp=5000.0):
 
 #--------------------------------------------------
 
-def calc_resize_image(original_size, max_length):
-    width, height = original_size
-
-    if width > height:
-        # 幅が長辺の場合
-        scale_factor = max_length / width
-    else:
-        # 高さが長辺の場合
-        scale_factor = max_length / height
-
-    new_width = int(width * scale_factor)
-    new_height = int(height * scale_factor)
-
-    return (new_width, new_height)
-
 def rotation(img, angle, flip_mode=0, inter_mode=0, border_mode="reflect"):
     # 元の画像の高さと幅を取得
     height, width = img.shape[:2]
@@ -183,12 +159,10 @@ def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
 
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
-    # JAX依存を削除し、OpenCVを使用する
-    #return gaussian_blur_jax(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
     return gaussian_blur_cv(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
 
 @lock_numba
-@njit(parallel=True, fastmath=True, cache=True)
+@njit('f4[:,:,:](f4[:,:,:],f4[:,:,:])', parallel=True, fastmath=True, cache=True)
 def _lucy_ratio_step(srcf, bdest):
     eps = np.finfo(np.float32).eps
     h, w, c = srcf.shape
@@ -200,7 +174,7 @@ def _lucy_ratio_step(srcf, bdest):
     return ratio
 
 @lock_numba
-@njit(parallel=True, fastmath=True, cache=True)
+@njit('f4[:,:,:](f4[:,:,:],f4[:,:,:])', parallel=True, fastmath=True, cache=True)
 def _lucy_update_step(destf, ratio_blur):
     h, w, c = destf.shape
     res = np.empty_like(destf)
@@ -213,17 +187,17 @@ def _lucy_update_step(destf, ratio_blur):
 
 def lucy_richardson_gauss(srcf, iteration):
     # 出力用の画像を初期化
-    destf = srcf.copy()
+    destf = srcf
 
     for i in range(iteration):
         # ガウスぼかしを適用してぼけをシミュレーション (OpenCV)
-        bdest = gaussian_blur_cv(destf, ksize=(9, 9), sigma=0)
+        bdest = gaussian_blur(destf, ksize=(9, 9), sigma=0)
 
         # 元画像とぼけた画像の比を計算 (Numba)
         ratio = _lucy_ratio_step(srcf, bdest)
 
         # 誤差の分配のために再びガウスぼかしを適用 (OpenCV)
-        ratio_blur = gaussian_blur_cv(ratio, ksize=(9, 9), sigma=0)
+        ratio_blur = gaussian_blur(ratio, ksize=(9, 9), sigma=0)
 
         # 元の出力画像に誤差を乗算 (Numba)
         destf = _lucy_update_step(destf, ratio_blur)
@@ -306,9 +280,7 @@ def apply_lens_distortion(image, map_x, map_y, scale=1.0, interpolation='linear'
     return res
 
 def highlight_compress(image):
-    # Lazy load to avoid importing torch at module level
     import cores.aces_tonemapping as aces_tonemapping
-    import config
     
     return aces_tonemapping.aces_tonemapping(image, 1.0, config.get_config('gpu_device'))
 
@@ -330,22 +302,10 @@ def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96), opa
         correction[:,:,i] = solid_color[i]
         
     # 元の画像と補正色をブレンド
-    result = image_rgb * (1-opacity) + correction * opacity
-    
-    return result
+    return cv2.addWeighted(image_rgb, 1.0 - opacity, correction, opacity, 0.0)
+    #return image_rgb * (1-opacity) + correction * opacity
 
-# ローパスフィルタ
-def lowpass_filter(img, r):
-    lpf = gaussian_blur(img, ksize=(r, r), sigma=0.0)
-
-    return lpf
-
-# ハイパスフィルタ
-def highpass_filter(img, r):
-    hpf = img - gaussian_blur(img, ksize=(r, r), sigma=0.0)+0.5
-
-    return hpf    
-
+#--------------------------------------------------
 # オーバーレイ合成
 def blend_overlay(base, over):
     result = np.zeros(base.shape, dtype=np.float32)
@@ -389,11 +349,6 @@ def adjust_contrast(img, cf, c=0.5):
         adjust_img = sigmoid.scaled_inverse_sigmoid(img/mm, -f, c/mm)*mm
         
     return adjust_img
-    """
-    adjust = adjust_tone(img, cf, -cf)
-
-    return adjust
-    """
 
 def apply_level_adjustment(image, black_level, midtone_level, white_level):
     """
@@ -582,7 +537,7 @@ def apply_lut(img, lut, max_value=1.0):
 #    return img
 
 @lock_numba
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+@njit('f4[:,:,:](f4[:,:,:], f4[:,:], f4[:,:,:])', parallel=True, fastmath=True, cache=True)
 def apply_mask(img1, msk, img2):
 
     """マスクが（3チャンネル）専用の最適化版"""
@@ -784,20 +739,6 @@ def crop_image_with_disp_info(image, disp_info):
 
     return result
 
-def crop_image_with_param_crop_rect(image, param_crop_rect):
-    # スケーリング
-    org_h, org_w = image.shape[:2]
-    cx, cy, cx2, cy2 = int(org_w * param_crop_rect[0]), int(org_h * param_crop_rect[1]), int(org_w * param_crop_rect[2]), int(org_h * param_crop_rect[3])
-
-    # 切り抜き
-    result = image[cy:cy2, cx:cx2]
-
-    # 中央へ配置
-    new_h, new_w = result.shape[:2]
-    result = np.pad(result, ((cy, org_h-(new_h+cy)), (cx, org_w-(new_w+cx))), mode="constant")
-
-    return result
-
 def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click_x, click_y, offset, is_zoomed):
 
     # 画像のサイズを取得
@@ -864,13 +805,10 @@ def crop_image_info(image, disp_info, crop_rect, offset=(0, 0)):
     y = int(disp_y + offset[1])
 
     # 画像の範囲外にならないように調整
-    #x = int(max(0, min(x, image_width - disp_width)))
-    #y = int(max(0, min(y, image_height - disp_height)))
     x = int(max(crop_rect[0], min(x, crop_rect[2] - disp_width)))
     y = int(max(crop_rect[1], min(y, crop_rect[3] - disp_height)))
 
     # 画像を切り抜く
-    #cropped_img = jax.lax.slice(image, (disp_y, disp_x, 0), (disp_y+disp_height, disp_x+disp_width, 3))
     cropped_img = image[y:y+disp_height, x:x+disp_width]
 
     return cropped_img, (x, y, disp_width, disp_height, scale)
@@ -893,8 +831,6 @@ def get_multiple_mask_bbox(mask):
         return []
     
     # 連結成分のラベリングを実行
-#    structure = np.ones((3, 3), dtype=int)
-#    labeled_array, num_features = label(mask > 0, structure=structure)
     labeled_array, num_features = label(mask > 0)
     
     bboxes = []
@@ -1757,7 +1693,7 @@ def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, ref
 
 
 @lock_numba
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=True, error_model="numpy")
+@njit('u1[:,:,:](f4[:,:,:])', parallel=True, fastmath=True, cache=True)
 def jjn_dither_uint8(img_float):
     """
     float32画像(0.0-1.0)をJJN法でディザリングしてuint8に変換
@@ -1804,8 +1740,8 @@ def jjn_dither_uint8(img_float):
         
     return output
 
-#@lock_numba
-#@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+@lock_numba
+@njit('u2[:,:,:](f4[:,:,:])', parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def jjn_dither_uint16(img_float):
     """
     float32画像(0.0-1.0)をJJN法でディザリングしてuint16に変換
@@ -1852,75 +1788,6 @@ def jjn_dither_uint16(img_float):
         
     return output
 
-@lock_numba
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def fast_median_filter(img, kernel_size=3, num_bins=256):
-    """
-    量子化とヒストグラムベースの高速メディアンフィルタ
-    float32画像を高速処理可能
-    
-    Parameters:
-        img (np.ndarray): 入力画像 (float32)
-        kernel_size (int): カーネルサイズ (奇数)
-        num_bins (int): 量子化ビン数 (速度/精度のトレードオフ)
-    
-    Returns:
-        np.ndarray: フィルタリング後の画像 (float32)
-    """
-    h, w = img.shape
-    pad = kernel_size // 2
-    median_index = (kernel_size * kernel_size) // 2
-    
-    # 画像の最小値/最大値を計算
-    min_val = np.min(img)
-    max_val = np.max(img)
-    scale = (num_bins - 1) / (max_val - min_val + 1e-7)
-    
-    # 量子化画像の作成
-    quantized = ((img - min_val) * scale).astype(np.float32)
-    
-    # パディング追加 (reflectモード)
-    padded = np.zeros((h + 2*pad, w + 2*pad), dtype=np.float32)
-    padded[pad:-pad, pad:-pad] = quantized
-    for i in prange(pad):
-        padded[i, pad:-pad] = quantized[pad-i-1]  # 上端
-        padded[-(i+1), pad:-pad] = quantized[-(pad-i)]  # 下端
-        padded[pad:-pad, i] = quantized[:, pad-i-1]  # 左端
-        padded[pad:-pad, -(i+1)] = quantized[:, -(pad-i)]  # 右端
-    
-    # 出力画像初期化
-    result = np.zeros((h, w), dtype=np.float32)
-    
-    # メイン処理 (並列化)
-    for y in prange(h):
-        hist = np.zeros(num_bins, dtype=np.uint16)
-        # 初期ヒストグラム構築
-        for ky in prange(kernel_size):
-            for kx in prange(kernel_size):
-                val = padded[y + ky, kx]
-                hist[int(val)] += 1
-        
-        # 行方向にスライディング
-        for x in prange(w):
-            # 中央値計算
-            cumsum = 0
-            for b in prange(num_bins):
-                cumsum += hist[b]
-                if cumsum > median_index:
-                    result[y, x] = min_val + b / scale
-                    break
-            
-            # ヒストグラム更新 (左カラム削除/右カラム追加)
-            if x < w - 1:
-                for ky in prange(kernel_size):
-                    # 左カラム削除
-                    left_val = padded[y + ky, x]
-                    hist[int(left_val)] -= 1
-                    # 右カラム追加
-                    right_val = padded[y + ky, x + kernel_size]
-                    hist[int(right_val)] += 1
-                    
-    return result
 
 ICC_PROFILE_TO_COLOR_SPACE = {
     'sRGB': 'sRGB', # 何故かこれを返すデータがある
@@ -1943,7 +1810,6 @@ def apply_zero_wrap(img, param):
     """
     Zero-wrapフィルタを適用する関数
     """        
-    #crop_rect = params.get_crop_rect(param)
     disp_info = params.get_disp_info(param)
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
@@ -2370,7 +2236,7 @@ def chromatic_aberration_correction(
 #-------------------------------------------------
 
 _lensfun_db_instance = None
-def get_lensfun_db():
+def _get_lensfun_db():
     global _lensfun_db_instance
     import lensfunpy
     if _lensfun_db_instance is None:
@@ -2400,7 +2266,7 @@ def setup_lensfun(img, exif_data):
         distance = 100
 
     import lensfunpy
-    db = get_lensfun_db()
+    db = _get_lensfun_db()
     cams = db.find_cameras(make, model, loose_search=True)
     if len(cams) > 0:
         lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=False)
@@ -2528,162 +2394,3 @@ def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
     
     return sharpened
 
-#--------------------------------------------------
-
-def param_to_tcg_info(param):
-    """
-    パラメータをTCGパラメータに変換
-
-    param: パラメータ辞書(Noneなら全て0に設定)
-    戻り値: 情報辞書
-    """
-    tcg_info = {}
-    tcg_info['original_img_size'] = param['original_img_size']
-    tcg_info['disp_info'] = param['disp_info']
-    tcg_info['rotation'] = math.radians(param.get('rotation', 0.0))
-    tcg_info['rotation2'] = math.radians(param.get('rotation2', 0.0))
-    tcg_info['flip'] = param.get('flip', 0)
-
-    return tcg_info
-
-def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
-    """
-    ウインドウ座標からTCG座標に変換
-    cx, cy: TCG座標
-    widget: 表示するウィジェット
-    texture_size: テクスチャサイズ
-    ref_image: 参照イメージ
-    tcg_info: 回転情報
-    戻り値: TCG座標
-    """
-    disp_info = params.get_disp_info(tcg_info)
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    wx, wy = widget.to_window(*widget.pos)
-    cx, cy = cx - wx, cy - wy
-    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
-    cx, cy = cx - margin_x, cy - margin_y
-    cx, cy = cx, texture_size[1] - cy
-    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
-    cx, cy = cx - offset_x, cy - offset_y
-    cx, cy = cx / disp_info[4], cy / disp_info[4]
-    cx, cy = cx + disp_info[0], cy + disp_info[1]
-    cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
-    cx, cy = center_rotate_invert(cx, cy, tcg_info)
-    cx, cy = params.norm_param(tcg_info, (cx, cy))
-    return (cx, cy)
-
-def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
-    """
-    TCG座標をウインドウ座標に変換
-    cx, cy: TCG座標
-    widget: 表示するウィジェット
-    texture_size: テクスチャサイズ
-    ref_image: 参照イメージ
-    tcg_info: 回転情報
-    戻り値: ウインドウ座標
-    """
-    disp_info = params.get_disp_info(tcg_info)
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    cx, cy = params.denorm_param(tcg_info, (cx, cy))
-    cx, cy = center_rotate(cx, cy, tcg_info)
-    cx, cy = cx + imax, cy + imax
-    cx, cy = cx - disp_info[0], cy - disp_info[1]
-    cx, cy = cx * disp_info[4], cy * disp_info[4]        
-    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(*texture_size, disp_info)
-    cx, cy = cx + offset_x, cy + offset_y
-    cx, cy = cx, texture_size[1] - cy
-    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
-    cx, cy = cx + margin_x, cy + margin_y
-    wx, wy = widget.to_window(*widget.pos)
-    cx, cy = cx + wx, cy + wy
-    return (cx, cy)
-
-def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
-    """
-    TCGから参照イメージの座標を得る
-
-    cx, cy: TCG座標
-    ref_img: 参照イメージ
-    tcg_info: 回転情報
-    apply_disp_info: disp_infoを適用するかどうか
-    戻り値: 参照イメージ座標
-    """
-    cx, cy = params.denorm_param(tcg_info, (cx, cy))
-    cx, cy = center_rotate(cx, cy, tcg_info)
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    cx, cy = cx + imax, cy + imax
-    if apply_disp_info:
-        disp_info = params.get_disp_info(tcg_info)
-        if (   np.isclose(disp_info[2], disp_info[3])
-            or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
-                    and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
-            or np.isclose(disp_info[4], 1.0)
-           ):
-            # Geometryモード時、クロップ時または拡大表示時
-            cx, cy = cx - disp_info[0], cy - disp_info[1]
-            # クロップ時の表示空白
-            cx = cx + (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
-            cy = cy + (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
-        cx, cy = cx * disp_info[4], cy * disp_info[4]
-    return (cx, cy)
-
-def ref_image_to_tcg(cx, cy, ref_img, tcg_info, apply_disp_info=False):
-    """
-    参照イメージの座標からTCGを得る
-
-    cx, cy: 参照イメージ座標
-    ref_img: 参照イメージ
-    tcg_info: 回転情報
-    apply_disp_info: disp_infoを適用するかどうか
-    戻り値: TCG座標
-    """
-    if apply_disp_info:
-        disp_info = params.get_disp_info(tcg_info)
-        cx, cy = cx / disp_info[4], cy / disp_info[4]
-        if (   np.isclose(disp_info[2], disp_info[3])
-            or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
-                    and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
-            or np.isclose(disp_info[4], 1.0)
-           ):
-            # クロップ時の表示空白
-            cx = cx - (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
-            cy = cy - (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
-            # Geometryモード時、クロップ時または拡大表示時
-            cx, cy = cx + disp_info[0], cy + disp_info[1]
-    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    cx, cy = cx - imax, cy - imax
-    cx, cy = center_rotate_invert(cx, cy, tcg_info)
-    cx, cy = params.norm_param(tcg_info, (cx, cy))
-    return (cx, cy)
-    
-
-def apply_orientation(cx, cy, tcg_info):
-    rad, flip = tcg_info['rotation2'], tcg_info['flip']
-
-    if (flip & 1) == 1:
-        cx = -cx
-    if (flip & 2) == 2:
-        cy = -cy
-
-    return cx, cy, rad
-
-def center_rotate(cx, cy, tcg_info):
-    cx, cy, rad = apply_orientation(cx, cy, tcg_info)
-    rad = tcg_info['rotation'] + rad
-    rad = -rad
-
-    new_cx = cx * math.cos(rad) - cy * math.sin(rad)
-    new_cy = cx * math.sin(rad) + cy * math.cos(rad)
-
-    return (new_cx, new_cy)
-
-def center_rotate_invert(cx, cy, tcg_info):
-    rad = tcg_info['rotation'] + tcg_info['rotation2']
-    rad = -rad
-
-    new_cx = cx * math.cos(rad) + cy * math.sin(rad)
-    new_cy = -cx * math.sin(rad) + cy * math.cos(rad)
-
-    new_cx, new_cy, _ = apply_orientation(new_cx, new_cy, tcg_info)
-
-    return (new_cx, new_cy)

@@ -8,7 +8,8 @@ import numpy as np
 import cv2
 from typing import Dict, Tuple, List, Optional
 from scipy.interpolate import Rbf
-import cores.core as core
+
+import params
 
 
 def warp_mesh(
@@ -27,7 +28,7 @@ def warp_mesh(
         control_points: dict
             キー: (row_index, col_index)
             値: (offset_x, offset_y)（TCG座標系のオフセット）
-        tcg_info: 座標変換情報 (from core.param_to_tcg_info)
+        tcg_info: 座標変換情報 (from params.param_to_tcg_info)
         interpolation: str、'bilinear' | 'bicubic'
     
     Returns:
@@ -67,14 +68,14 @@ def warp_mesh(
         return image
         
     # 2. 座標変換 (TCG -> Image Pixel)
-    # core.tcg_to_ref_image を使用して座標変換
+    # params.tcg_to_ref_image を使用して座標変換
     src_px_list = []
     for px, py in src_points:
-        src_px_list.append(core.tcg_to_ref_image(px, py, image, tcg_info))
+        src_px_list.append(params.tcg_to_ref_image(px, py, image, tcg_info))
     
     dst_px_list = []
     for px, py in dst_points:
-        dst_px_list.append(core.tcg_to_ref_image(px, py, image, tcg_info))
+        dst_px_list.append(params.tcg_to_ref_image(px, py, image, tcg_info))
         
     src_px = np.array(src_px_list)
     dst_px = np.array(dst_px_list)
@@ -229,8 +230,8 @@ def correct_with_lines(
     pixel_lines = []
     for line in reference_lines:
         p1_norm, p2_norm = line
-        p1_pixel = core.tcg_to_ref_image(p1_norm[0], p1_norm[1], image, tcg_info)
-        p2_pixel = core.tcg_to_ref_image(p2_norm[0], p2_norm[1], image, tcg_info)
+        p1_pixel = params.tcg_to_ref_image(p1_norm[0], p1_norm[1], image, tcg_info)
+        p2_pixel = params.tcg_to_ref_image(p2_norm[0], p2_norm[1], image, tcg_info)
         pixel_lines.append((p1_pixel, p2_pixel))
     
     # 各線が垂直か水平かを判定し、対応点を生成
@@ -315,7 +316,7 @@ def apply_homography_to_tcg_point(
     ...     print(f"補正前TCG(-0.5, 0.3) → 補正後TCG({x_new:.2f}, {y_new:.2f})")
     """
     # TCG座標 → ピクセル座標
-    px, py = core.tcg_to_ref_image(x_tcg, y_tcg, image, tcg_info)
+    px, py = params.tcg_to_ref_image(x_tcg, y_tcg, image, tcg_info)
     
     # ホモグラフィ変換を適用
     pt = np.array([px, py, 1.0])
@@ -324,7 +325,7 @@ def apply_homography_to_tcg_point(
     py_new = pt_transformed[1] / pt_transformed[2]
     
     # ピクセル座標 → TCG座標
-    x_tcg_new, y_tcg_new = core.ref_image_to_tcg(px_new, py_new, image, tcg_info)
+    x_tcg_new, y_tcg_new = params.ref_image_to_tcg(px_new, py_new, image, tcg_info)
     
     return (x_tcg_new, y_tcg_new)
 

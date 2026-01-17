@@ -9,14 +9,14 @@ from kivy.properties import (
     ObjectProperty, NumericProperty, BooleanProperty, StringProperty
 )
 from kivy.graphics import Color, Line
-from kivy.graphics.texture import Texture
 from kivy.clock import mainthread
 from kivymd.uix.button import MDRaisedButton
 from kivy.uix.image import Image as KivyImage
 import numpy as np
 import cv2
-from cores.distortion_correction.lens_distortion import correct_lens_distortion
-import cores.core as core
+
+from cores.distortion_correction.lens_distortion import correct_lens_distortion, detect_lens_distortion
+import params
 
 
 class LensDistortionWidget(FloatLayout):
@@ -32,7 +32,7 @@ class LensDistortionWidget(FloatLayout):
         super().__init__(**kwargs)
         
         self.texture_size = texture_size
-        self.tcg_info = core.param_to_tcg_info(param)
+        self.tcg_info = params.param_to_tcg_info(param)
 
         self.on_callback = None
         
@@ -79,9 +79,7 @@ class LensDistortionWidget(FloatLayout):
         if self.source_image is None:
             return
         
-        try:
-            from cores.distortion_correction.lens_distortion import detect_lens_distortion
-            
+        try:            
             detected_strength = detect_lens_distortion(self.source_image)
             self.strength = detected_strength
             
@@ -143,8 +141,8 @@ class LensDistortionWidget(FloatLayout):
                 t = i / nx
                 tcg_x = t - 0.5
                 
-                kx1, ky1 = core.tcg_to_window(tcg_x, -0.5, self, self.texture_size, self.tcg_info)
-                kx2, ky2 = core.tcg_to_window(tcg_x, 0.5, self, self.texture_size, self.tcg_info)
+                kx1, ky1 = params.tcg_to_window(tcg_x, -0.5, self, self.texture_size, self.tcg_info)
+                kx2, ky2 = params.tcg_to_window(tcg_x, 0.5, self, self.texture_size, self.tcg_info)
                 Line(points=[kx1, ky1, kx2, ky2], width=1)
             
             # 横線
@@ -152,8 +150,8 @@ class LensDistortionWidget(FloatLayout):
                 t = i / ny
                 tcg_y = t - 0.5
                 
-                kx1, ky1 = core.tcg_to_window(-0.5, tcg_y, self, self.texture_size, self.tcg_info)
-                kx2, ky2 = core.tcg_to_window(0.5, tcg_y, self, self.texture_size, self.tcg_info)
+                kx1, ky1 = params.tcg_to_window(-0.5, tcg_y, self, self.texture_size, self.tcg_info)
+                kx2, ky2 = params.tcg_to_window(0.5, tcg_y, self, self.texture_size, self.tcg_info)
                 Line(points=[kx1, ky1, kx2, ky2], width=1)
     
     def _clear_grid(self):

@@ -6,20 +6,16 @@ KivyMDベースのGUIウィジェット
 
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.scatter import Scatter
-from kivy.properties import (
-    ObjectProperty, ListProperty, StringProperty, NumericProperty
-)
+from kivy.properties import ListProperty, StringProperty
 from kivy.graphics import Color, Line, PushMatrix, PopMatrix, Translate, Ellipse
-from kivy.graphics.texture import Texture
 from kivy.clock import mainthread
 from kivymd.uix.button import MDRaisedButton
 from kivy.uix.image import Image as KivyImage
-from kivy.uix.widget import Widget
 import numpy as np
 import cv2
-from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
 
-import cores.core as core
+from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
+import params
 
 class FourPointCorrectionWidget(FloatLayout):
     """4点自由補正Widget"""
@@ -32,7 +28,7 @@ class FourPointCorrectionWidget(FloatLayout):
         super().__init__(**kwargs)
 
         self.texture_size = texture_size
-        self.tcg_info = core.param_to_tcg_info(param)
+        self.tcg_info = params.param_to_tcg_info(param)
         self.image_shape = (param['original_img_size'][1], param['original_img_size'][0])
 
         self.on_callback = None
@@ -166,7 +162,7 @@ class FourPointCorrectionWidget(FloatLayout):
                     self.add_widget(handle)
     
             for i, (tx, ty) in enumerate(self.corner_positions_tcg):
-                kx, ky = core.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
+                kx, ky = params.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
                 self.handles[i].center = (kx, ky)
             
             # 接続線を描画
@@ -180,7 +176,7 @@ class FourPointCorrectionWidget(FloatLayout):
         self.corner_positions_tcg = []
         for handle in self.handles:
             kx, ky = handle.center
-            tx, ty = core.window_to_tcg(kx, ky, self, self.texture_size, self.tcg_info)
+            tx, ty = params.window_to_tcg(kx, ky, self, self.texture_size, self.tcg_info)
             self.corner_positions_tcg.append((tx, ty))
             
     def _create_handle(self, index: int, pos: tuple):

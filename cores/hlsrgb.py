@@ -3,7 +3,7 @@ import numpy as np
 from numba import njit, prange
 import time
 
-from cores.core import lock_numba
+from threads import lock_numba
 
 @njit(parallel=True)
 def rgb2hls(img):

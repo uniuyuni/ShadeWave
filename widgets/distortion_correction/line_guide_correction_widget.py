@@ -6,20 +6,17 @@ KivyMDベースのGUIウィジェット
 
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.widget import Widget
-from kivy.properties import (
-    ObjectProperty, ListProperty, BooleanProperty, 
-    StringProperty, NumericProperty
-)
+from kivy.properties import ListProperty, StringProperty, NumericProperty
 from kivy.graphics import Color, Line
-from kivy.graphics.texture import Texture
 from kivy.clock import mainthread
 from kivymd.uix.button import MDRaisedButton, MDFlatButton
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivy.uix.image import Image as KivyImage
 import numpy as np
 import cv2
+
 from cores.distortion_correction.warp_correction import correct_with_lines
-import cores.core as core
+import params
 
 
 class LineGuideCorrectionWidget(FloatLayout):
@@ -33,7 +30,7 @@ class LineGuideCorrectionWidget(FloatLayout):
         super().__init__(**kwargs)
         
         self.texture_size = texture_size
-        self.tcg_info = core.param_to_tcg_info(param)
+        self.tcg_info = params.param_to_tcg_info(param)
 
         self.on_callback = None
         
@@ -149,12 +146,12 @@ class LineGuideCorrectionWidget(FloatLayout):
 
     def _get_tcg_pos(self, touch_pos):
         """タッチ位置(Widget座標)をTCG座標に変換"""
-        tx, ty = core.window_to_tcg(touch_pos[0], touch_pos[1], self, self.texture_size, self.tcg_info)
+        tx, ty = params.window_to_tcg(touch_pos[0], touch_pos[1], self, self.texture_size, self.tcg_info)
         return tx, ty
 
     def _get_window_pos(self, tx, ty):
         """TCG座標をウィンドウ座標に変換"""
-        wx, wy = core.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
+        wx, wy = params.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
         return wx, wy
 
     def _hit_test(self, tcg_x, tcg_y, touch_tcg_x, touch_tcg_y):

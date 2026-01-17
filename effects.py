@@ -489,7 +489,7 @@ class DistortionEffect(Effect):
             if self.hash != param_hash:
                 from widgets.distortion_painter import DistortionCanvas
 
-                tcg_info = core.param_to_tcg_info(param)
+                tcg_info = params.param_to_tcg_info(param)
                 self.diff = DistortionCanvas.replay_recorded(img, dr, tcg_info)
                 self.hash = param_hash
         
@@ -664,6 +664,7 @@ class RotationEffect(Effect):
                     bmode = cv2.BORDER_REFLECT if crop_enable == False else cv2.BORDER_CONSTANT
                     self.diff = cv2.copyMakeBorder(img, top, bottom, left, right, bmode)
             else:
+                params.set_matrix(param, None)
 
                 # レンズ歪み補正
                 if lens_distortion_strength != 0:
@@ -713,35 +714,50 @@ class RotationEffect(Effect):
                             focal_length=f_pixel,
                             interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
-
+                    
+                    h, w = img.shape[:2]
+                    half_size = max(w, h) / 2
+                    params.add_matrix(param, H, offset=(half_size, half_size))
+                
                 # 4点補正
                 reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
                 if four_points != [] and four_points != reset_points:
 
                     # 座標をテクスチャ座標へ変換
-                    tcg_info = core.param_to_tcg_info(param)
+                    tcg_info = params.param_to_tcg_info(param)
                     src_point = []
                     for cx, cy in four_points:
-                        src_point.append(core.tcg_to_ref_image(cx, cy, img, tcg_info))
+                        src_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
                     dst_point = []
                     for cx, cy in reset_points:
-                        dst_point.append(core.tcg_to_ref_image(cx, cy, img, tcg_info))
+                        dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
 
-                    img = correct_four_points(
+                    img, H = correct_four_points(
                             img,
                             src_point,
                             dst_point,
                             interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
+                    
+                    if H is not None:
+                        # 座標系変換 (Left-Top Origin -> Center Origin)
+                        h, w = img.shape[:2]
+                        half_size = max(w, h) / 2
+                        params.add_matrix(param, H, offset=(half_size, half_size))
 
                 # Lines
                 if len(reference_lines) > 0:
                     img, H = correct_with_lines(
                             img,
                             reference_lines,
-                            tcg_info=core.param_to_tcg_info(param),
+                            tcg_info=params.param_to_tcg_info(param),
                             interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
+
+                    # 座標系変換 (Left-Top Origin -> Center Origin)
+                    h, w = img.shape[:2]
+                    half_size = max(w, h) / 2
+                    params.add_matrix(param, H, offset=(half_size, half_size))
 
                 # Mesh           
                 if control_points:
@@ -758,7 +774,7 @@ class RotationEffect(Effect):
                             key = tuple(k)
                         cp[key] = tuple(v)
                         
-                    tcg_info = core.param_to_tcg_info(param)
+                    tcg_info = params.param_to_tcg_info(param)
                     img = warp_mesh(
                         img,
                         mesh_size if mesh_size else (4, 4),
@@ -1351,6 +1367,42 @@ class MosaicEffect(Effect):
             param_hash = hash((fr))
             if self.hash != param_hash:
                 self.diff = filters.mosaic_effect(img, int(fr * efconfig.resolution_scale))
+                self.hash = param_hash
+
+        return self.diff
+
+class OrtonEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'orton_radius': 30,
+            'orton_opacity': 75,
+            'orton_intensity': 0,
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_orton_radius"].set_slider_value(self._get_param(param, 'orton_radius'))
+        widget.ids["slider_orton_opacity"].set_slider_value(self._get_param(param, 'orton_opacity'))
+        widget.ids["slider_orton_intensity"].set_slider_value(self._get_param(param, 'orton_intensity'))
+
+    def set2param(self, param, widget):
+        param['orton_radius'] = widget.ids["slider_orton_radius"].value
+        param['orton_opacity'] = widget.ids["slider_orton_opacity"].value
+        param['orton_intensity'] = widget.ids["slider_orton_intensity"].value
+
+    def make_diff(self, img, param, efconfig):
+        oradius = int(self._get_param(param, 'orton_radius'))
+        oopacity = int(self._get_param(param, 'orton_opacity'))
+        ointensity = int(self._get_param(param, 'orton_intensity'))
+
+        if ointensity == 0:
+            self.diff = None
+            self.hash = None
+
+        else:
+            param_hash = hash((oradius, oopacity, ointensity))
+            if self.hash != param_hash:
+                self.diff = filters.orton_effect(img, oradius * efconfig.disp_info[4], oopacity / 100, ointensity / 100)
                 self.hash = param_hash
 
         return self.diff
@@ -2890,6 +2942,7 @@ def create_effects(distortion_callback=None, rotation_callback=None):
     lv1['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
     lv1['deblur_filter'] = DeblurFilterEffect()
     lv1['defocus'] = DefocusEffect()
+    lv1['orton'] = OrtonEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
     lv1['scratch'] = ScratchEffect()
     lv1['frosted_glass'] = FrostedGlassEffect()

@@ -1499,6 +1499,42 @@
                             VSeparator:
 
                             HeadLabel:
+                                text: ' Orton Effect'
+
+                            ParamSlider:
+                                id: slider_orton_radius
+                                text: "Radius"
+                                min: 0
+                                max: 100
+                                value: 30
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'orton')
+                                on_before_edit: root.begin_history_effect_ctrl(1, 'orton')
+                                on_after_edit: root.end_history_effect_ctrl(1, 'orton')
+                            ParamSlider:
+                                id: slider_orton_opacity
+                                text: "Opacity"
+                                min: 0
+                                max: 100
+                                value: 75
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'orton')
+                                on_before_edit: root.begin_history_effect_ctrl(1, 'orton')
+                                on_after_edit: root.end_history_effect_ctrl(1, 'orton')
+                            ParamSlider:
+                                id: slider_orton_intensity
+                                text: "Intensity"
+                                min: 0
+                                max: 100
+                                value: 0
+                                step: 1
+                                on_slider: root.apply_effects_lv(1, 'orton')
+                                on_before_edit: root.begin_history_effect_ctrl(1, 'orton')
+                                on_after_edit: root.end_history_effect_ctrl(1, 'orton')
+
+                            VSeparator:
+
+                            HeadLabel:
                                 text: ' Glow Effect'
 
                             ParamSlider:

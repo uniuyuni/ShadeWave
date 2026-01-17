@@ -1,6 +1,9 @@
 
 import numpy as np
 import cv2
+from numba import njit, prange
+
+from threads import lock_numba
 
 def lensblur_filter(image, radius):
     # カーネルを生成
@@ -150,3 +153,120 @@ if __name__ == '__main__':
     cv2.imwrite("test_mosaic.jpg", (mosaic_img*255).astype(np.uint8))
     frosted_img = cv2.cvtColor(frosted_img, cv2.COLOR_RGB2BGR)
     cv2.imwrite("test_frosted.jpg", (frosted_img*255).astype(np.uint8))
+
+
+@lock_numba
+@njit('f4[:,:](f4[:,:], i4, i4)', parallel=True, fastmath=True, cache=True)
+def fast_median_filter(img, kernel_size=3, num_bins=256):
+    """
+    量子化とヒストグラムベースの高速メディアンフィルタ
+    float32画像を高速処理可能
+    
+    Parameters:
+        img (np.ndarray): 入力画像 (float32)
+        kernel_size (int): カーネルサイズ (奇数)
+        num_bins (int): 量子化ビン数 (速度/精度のトレードオフ)
+    
+    Returns:
+        np.ndarray: フィルタリング後の画像 (float32)
+    """
+    h, w = img.shape
+    pad = kernel_size // 2
+    median_index = (kernel_size * kernel_size) // 2
+    
+    # 画像の最小値/最大値を計算
+    min_val = np.min(img)
+    max_val = np.max(img)
+    scale = (num_bins - 1) / (max_val - min_val + 1e-7)
+    
+    # 量子化画像の作成
+    quantized = ((img - min_val) * scale).astype(np.float32)
+    
+    # パディング追加 (reflectモード)
+    padded = np.zeros((h + 2*pad, w + 2*pad), dtype=np.float32)
+    padded[pad:-pad, pad:-pad] = quantized
+    for i in prange(pad):
+        padded[i, pad:-pad] = quantized[pad-i-1]  # 上端
+        padded[-(i+1), pad:-pad] = quantized[-(pad-i)]  # 下端
+        padded[pad:-pad, i] = quantized[:, pad-i-1]  # 左端
+        padded[pad:-pad, -(i+1)] = quantized[:, -(pad-i)]  # 右端
+    
+    # 出力画像初期化
+    result = np.zeros((h, w), dtype=np.float32)
+    
+    # メイン処理 (並列化)
+    for y in prange(h):
+        hist = np.zeros(num_bins, dtype=np.uint16)
+        # 初期ヒストグラム構築
+        for ky in prange(kernel_size):
+            for kx in prange(kernel_size):
+                val = padded[y + ky, kx]
+                hist[int(val)] += 1
+        
+        # 行方向にスライディング
+        for x in prange(w):
+            # 中央値計算
+            cumsum = 0
+            for b in range(num_bins):
+                cumsum += hist[b]
+                if cumsum > median_index:
+                    result[y, x] = min_val + b / scale
+                    break
+            
+            # ヒストグラム更新 (左カラム削除/右カラム追加)
+            if x < w - 1:
+                for ky in prange(kernel_size):
+                    # 左カラム削除
+                    left_val = padded[y + ky, x]
+                    hist[int(left_val)] -= 1
+                    # 右カラム追加
+                    right_val = padded[y + ky, x + kernel_size]
+                    hist[int(right_val)] += 1
+                    
+    return result
+
+def orton_effect(image, blur_radius=30, opacity=0.75, intensity=0.5):
+    """
+    オートン効果を適用する関数（方法B: 最上位レイヤーが乗算+ぼかし）
+    
+    Parameters:
+    -----------
+    image : np.ndarray
+        入力画像 (H, W, 3) のfloat32 RGB画像 (値域: 0.0-1.0)
+    blur_radius : float
+        ガウスぼかしの半径（標準偏差）。デフォルトは30
+        大きいほど柔らかい効果
+    opacity : float
+        最上位レイヤー（乗算+ぼかし）の不透明度 (0.0-1.0)
+        デフォルトは0.75。大きいほど効果が強い
+    intensity : float
+        効果の強さ (0.0-1.0)
+        デフォルトは0.5。大きいほど効果が強い
+    
+    Returns:
+    --------
+    result : np.ndarray
+        オートン効果を適用した画像 (H, W, 3) のfloat32 RGB画像
+    """
+    # 入力画像のコピー（ベースレイヤー）
+    base = image
+    
+    # ぼかし画像の作成（各チャンネル独立にぼかし）
+    #blurred = np.zeros_like(image)
+    #for i in range(3):  # RGB各チャンネル
+    #    blurred[:, :, i] = cv2.GaussianBlur(image[:, :, i], (0, 0), blur_radius)
+    blurred = cv2.GaussianBlur(image, (0, 0), blur_radius)
+    
+    # スクリーンレイヤー（中間）: 1 - (1-base) * (1-base)
+    screen_layer = 1.0 - (1.0 - base) * (1.0 - base)
+    
+    # 乗算レイヤー（最上位）: screen_layer * blurred
+    multiply_layer = screen_layer * blurred
+
+    # screen_layerとmultiply_layerをopacityでブレンド
+    result = cv2.addWeighted(screen_layer, 1.0 - opacity, multiply_layer, opacity, 0)
+    
+    # 最終合成
+    result = cv2.addWeighted(image, 1.0 - intensity, result, intensity, 0)
+    
+    return result

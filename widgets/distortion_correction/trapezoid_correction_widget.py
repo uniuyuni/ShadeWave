@@ -5,13 +5,11 @@ KivyMDベースのGUIウィジェット
 """
 
 from kivy.uix.floatlayout import FloatLayout
-from kivy.properties import (
-    BooleanProperty
-)
+from kivy.properties import BooleanProperty
 from kivy.graphics import Color, Line
 from kivy.clock import mainthread
 
-import cores.core as core
+import params
 
 
 class TrapezoidCorrectionWidget(FloatLayout):
@@ -24,7 +22,7 @@ class TrapezoidCorrectionWidget(FloatLayout):
         super().__init__(**kwargs)
         
         self.texture_size = texture_size
-        self.tcg_info = core.param_to_tcg_info(param)
+        self.tcg_info = params.param_to_tcg_info(param)
 
         self.on_callback = None
         
@@ -88,7 +86,7 @@ class TrapezoidCorrectionWidget(FloatLayout):
                 norm_y = i / 4.0
                 tcg_y = -(norm_y - 0.5) # Core Y is down?, TCG standard. core TCG: -0.5=Top?
                 # core.py TCG: Center 0,0. Range -0.5 ~ 0.5.
-                # In core.tcg_to_window: cx, cy are passed.
+                # In params.tcg_to_window: cx, cy are passed.
                 # If I want 25% from top: Top is -0.5? Bottom is 0.5?
                 # core.py: 
                 # x_img = (x_tcg + 0.5) * (width - 1)
@@ -98,8 +96,8 @@ class TrapezoidCorrectionWidget(FloatLayout):
                 start_tcg_y = (norm_y - 0.5)
                 
                 # Start (-0.5, y), End (0.5, y)
-                kx1, ky1 = core.tcg_to_window(-0.5, start_tcg_y, self, self.texture_size, self.tcg_info)
-                kx2, ky2 = core.tcg_to_window(0.5, start_tcg_y, self, self.texture_size, self.tcg_info)
+                kx1, ky1 = params.tcg_to_window(-0.5, start_tcg_y, self, self.texture_size, self.tcg_info)
+                kx2, ky2 = params.tcg_to_window(0.5, start_tcg_y, self, self.texture_size, self.tcg_info)
                 
                 Line(points=[kx1, ky1, kx2, ky2], width=1)
             
@@ -109,8 +107,8 @@ class TrapezoidCorrectionWidget(FloatLayout):
                 start_tcg_x = norm_x - 0.5
                 
                 # Start (x, -0.5), End (x, 0.5)
-                kx1, ky1 = core.tcg_to_window(start_tcg_x, -0.5, self, self.texture_size, self.tcg_info)
-                kx2, ky2 = core.tcg_to_window(start_tcg_x, 0.5, self, self.texture_size, self.tcg_info)
+                kx1, ky1 = params.tcg_to_window(start_tcg_x, -0.5, self, self.texture_size, self.tcg_info)
+                kx2, ky2 = params.tcg_to_window(start_tcg_x, 0.5, self, self.texture_size, self.tcg_info)
                 
                 Line(points=[kx1, ky1, kx2, ky2], width=1)
     

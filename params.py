@@ -1,6 +1,8 @@
 
 import os
+import numpy as np
 import json
+import math
 from datetime import datetime as dt
 
 import cores.core as core
@@ -223,14 +225,12 @@ def _inpaint_load(param):
         param['inpaint_diff_list'] = inpaint_diff_list
 
 def _ai_noise_reduction_dump(param):
-    return
     ai_noise_reduction_result = param.get('ai_noise_reduction_result', None)
     if ai_noise_reduction_result is not None:
         ai_noise_reduction_result = utils.convert_image_to_list(ai_noise_reduction_result)
         param['ai_noise_reduction_result'] = ai_noise_reduction_result
 
 def _ai_noise_reduction_load(param):
-    return
     ai_noise_reduction_result = param.get('ai_noise_reduction_result', None)
     if ai_noise_reduction_result is not None:
         ai_noise_reduction_result = utils.convert_image_from_list(ai_noise_reduction_result)
@@ -331,3 +331,201 @@ def delete_empty_param_json(file_path):
 
     return False
 
+
+#-------------------------------------------------
+
+def param_to_tcg_info(param):
+    """
+    パラメータをTCGパラメータに変換
+
+    param: パラメータ辞書(Noneなら全て0に設定)
+    戻り値: 情報辞書
+    """
+    tcg_info = {}
+    tcg_info['original_img_size'] = param.get('original_img_size', (config.get_config('preview_size'), config.get_config('preview_size')))
+    tcg_info['disp_info'] = param.get('disp_info', (0, 0, 1.0, 1.0, 1.0))
+    tcg_info['rotation'] = math.radians(param.get('rotation', 0.0))
+    tcg_info['rotation2'] = math.radians(param.get('rotation2', 0.0))
+    tcg_info['flip'] = param.get('flip', 0)
+    tcg_info['matrix'] = param.get('matrix', np.eye(3))
+
+    return tcg_info
+
+def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
+    """
+    ウインドウ座標からTCG座標に変換
+    cx, cy: TCG座標
+    widget: 表示するウィジェット
+    texture_size: テクスチャサイズ
+    ref_image: 参照イメージ
+    tcg_info: 回転情報
+    戻り値: TCG座標
+    """
+    disp_info = get_disp_info(tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    wx, wy = widget.to_window(*widget.pos)
+    cx, cy = cx - wx, cy - wy
+    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
+    cx, cy = cx - margin_x, cy - margin_y
+    cx, cy = cx, texture_size[1] - cy
+    _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
+    cx, cy = cx - offset_x, cy - offset_y
+    cx, cy = cx / disp_info[4], cy / disp_info[4]
+    cx, cy = cx + disp_info[0], cy + disp_info[1]
+    cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
+    cx, cy = center_rotate_invert(cx, cy, tcg_info)
+    cx, cy = norm_param(tcg_info, (cx, cy))
+    return (cx, cy)
+
+def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
+    """
+    TCG座標をウインドウ座標に変換
+    cx, cy: TCG座標
+    widget: 表示するウィジェット
+    texture_size: テクスチャサイズ
+    ref_image: 参照イメージ
+    tcg_info: 回転情報
+    戻り値: ウインドウ座標
+    """
+    disp_info = get_disp_info(tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = denorm_param(tcg_info, (cx, cy))
+    cx, cy = center_rotate(cx, cy, tcg_info)
+    cx, cy = cx + imax, cy + imax
+    cx, cy = cx - disp_info[0], cy - disp_info[1]
+    cx, cy = cx * disp_info[4], cy * disp_info[4]        
+    _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
+    cx, cy = cx + offset_x, cy + offset_y
+    cx, cy = cx, texture_size[1] - cy
+    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
+    cx, cy = cx + margin_x, cy + margin_y
+    wx, wy = widget.to_window(*widget.pos)
+    cx, cy = cx + wx, cy + wy
+    return (cx, cy)
+
+def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
+    """
+    TCGから参照イメージの座標を得る
+
+    cx, cy: TCG座標
+    ref_img: 参照イメージ
+    tcg_info: 回転情報
+    apply_disp_info: disp_infoを適用するかどうか
+    戻り値: 参照イメージ座標
+    """
+    cx, cy = denorm_param(tcg_info, (cx, cy))
+    cx, cy = center_rotate(cx, cy, tcg_info)
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = cx + imax, cy + imax
+    if apply_disp_info:
+        disp_info = get_disp_info(tcg_info)
+        if (   np.isclose(disp_info[2], disp_info[3])
+            or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
+                    and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
+            or np.isclose(disp_info[4], 1.0)
+           ):
+            # Geometryモード時、クロップ時または拡大表示時
+            cx, cy = cx - disp_info[0], cy - disp_info[1]
+            # クロップ時の表示空白
+            cx = cx + (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
+            cy = cy + (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
+        cx, cy = cx * disp_info[4], cy * disp_info[4]
+    return (cx, cy)
+
+def ref_image_to_tcg(cx, cy, ref_img, tcg_info, apply_disp_info=False):
+    """
+    参照イメージの座標からTCGを得る
+
+    cx, cy: 参照イメージ座標
+    ref_img: 参照イメージ
+    tcg_info: 回転情報
+    apply_disp_info: disp_infoを適用するかどうか
+    戻り値: TCG座標
+    """
+    if apply_disp_info:
+        disp_info = get_disp_info(tcg_info)
+        cx, cy = cx / disp_info[4], cy / disp_info[4]
+        if (   np.isclose(disp_info[2], disp_info[3])
+            or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
+                    and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
+            or np.isclose(disp_info[4], 1.0)
+           ):
+            # クロップ時の表示空白
+            cx = cx - (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
+            cy = cy - (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
+            # Geometryモード時、クロップ時または拡大表示時
+            cx, cy = cx + disp_info[0], cy + disp_info[1]
+    imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+    cx, cy = cx - imax, cy - imax
+    cx, cy = center_rotate_invert(cx, cy, tcg_info)
+    cx, cy = norm_param(tcg_info, (cx, cy))
+    return (cx, cy)
+    
+
+def apply_orientation(cx, cy, tcg_info):
+    rad, flip = tcg_info['rotation2'], tcg_info['flip']
+
+    if (flip & 1) == 1:
+        cx = -cx
+    if (flip & 2) == 2:
+        cy = -cy
+
+    return cx, cy, rad
+
+def center_rotate(cx, cy, tcg_info):
+    cx, cy, rad = apply_orientation(cx, cy, tcg_info)
+    rad = tcg_info['rotation'] + rad
+    rad = -rad
+
+    new_cx = cx * math.cos(rad) - cy * math.sin(rad)
+    new_cy = cx * math.sin(rad) + cy * math.cos(rad)
+
+    new_cx, new_cy = apply_matrix(new_cx, new_cy, tcg_info['matrix'])
+
+    return (new_cx, new_cy)
+
+def center_rotate_invert(cx, cy, tcg_info):
+    rad = tcg_info['rotation'] + tcg_info['rotation2']
+    rad = -rad
+
+    cx, cy = apply_matrix_inverse(cx, cy, tcg_info['matrix'])
+
+    new_cx = cx * math.cos(rad) + cy * math.sin(rad)
+    new_cy = -cx * math.sin(rad) + cy * math.cos(rad)
+
+    new_cx, new_cy, _ = apply_orientation(new_cx, new_cy, tcg_info)
+
+    return (new_cx, new_cy)
+
+def set_matrix(param, matrix):
+    if matrix is None:
+        param['matrix'] = np.eye(3)
+    else:
+        param['matrix'] = matrix.copy()
+
+def add_matrix(param, matrix, offset=(0, 0)):
+    if offset != (0, 0):
+        # 座標系変換
+        T = np.array([
+            [1, 0, offset[0]],
+            [0, 1, offset[1]],
+            [0, 0, 1]
+        ])
+        T_inv = np.linalg.inv(T)
+        matrix = T_inv @ matrix @ T
+    
+    if 'matrix' not in param:
+        param['matrix'] = matrix.copy()
+    else:
+        param['matrix'] = np.dot(matrix, param['matrix'])
+
+def apply_matrix(px, py, matrix):
+    pt = np.array([px, py, 1.0])
+    pt_transformed = matrix @ pt
+    px_new = pt_transformed[0] / pt_transformed[2]
+    py_new = pt_transformed[1] / pt_transformed[2]
+    return (px_new, py_new)
+
+def apply_matrix_inverse(px, py, matrix):
+    H_inv = np.linalg.inv(matrix)
+    return apply_matrix(px, py, H_inv)

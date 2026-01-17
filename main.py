@@ -33,6 +33,7 @@ if __name__ == '__main__':
     import logging
     logging.getLogger("watchfiles").setLevel(logging.WARNING)
     logging.getLogger("numba").setLevel(logging.WARNING)
+    logging.getLogger("pyvips").setLevel(logging.WARNING)
     import re
     import time
     import multiprocessing

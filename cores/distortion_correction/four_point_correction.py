@@ -84,7 +84,8 @@ def correct_four_points(
         borderValue=(0, 0, 0)
     )
     
-    return corrected
+    # 順変換行列を返す (Src -> Dst)
+    return corrected, np.linalg.inv(H)
 
 def detect_rectangle(
     image: np.ndarray,
