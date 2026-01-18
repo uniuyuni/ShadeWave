@@ -552,7 +552,7 @@ class DistortionCanvas(FloatLayout):
         tcg_info['disp_info'] = param['disp_info']
         tcg_info['rotation'] = 0.0
         tcg_info['rotation2'] = 0.0
-        tcg_info['flip'] = 0
+        tcg_info['flip_mode'] = 0
 
     def set_ref_image(self, ref_image, engine_recreate=True):
         self.original_image = ref_image

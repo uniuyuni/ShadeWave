@@ -346,12 +346,12 @@ def param_to_tcg_info(param):
     tcg_info['disp_info'] = param.get('disp_info', (0, 0, 1.0, 1.0, 1.0))
     tcg_info['rotation'] = math.radians(param.get('rotation', 0.0))
     tcg_info['rotation2'] = math.radians(param.get('rotation2', 0.0))
-    tcg_info['flip'] = param.get('flip', 0)
+    tcg_info['flip_mode'] = param.get('flip_mode', 0)
     tcg_info['matrix'] = param.get('matrix', np.eye(3))
 
     return tcg_info
 
-def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
+def window_to_tcg(cx, cy, widget, texture_size, tcg_info, normalize=True):
     """
     ウインドウ座標からTCG座標に変換
     cx, cy: TCG座標
@@ -359,6 +359,7 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
     texture_size: テクスチャサイズ
     ref_image: 参照イメージ
     tcg_info: 回転情報
+    normalize: 正規化するかどうか
     戻り値: TCG座標
     """
     disp_info = get_disp_info(tcg_info)
@@ -374,10 +375,11 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info):
     cx, cy = cx + disp_info[0], cy + disp_info[1]
     cx, cy = cx - imax, cy - imax # ここで - (imax - self.current_image.shape[0] / 2)の分の計算もやってる
     cx, cy = center_rotate_invert(cx, cy, tcg_info)
-    cx, cy = norm_param(tcg_info, (cx, cy))
+    if normalize:
+        cx, cy = norm_param(tcg_info, (cx, cy))
     return (cx, cy)
 
-def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
+def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     """
     TCG座標をウインドウ座標に変換
     cx, cy: TCG座標
@@ -385,11 +387,13 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
     texture_size: テクスチャサイズ
     ref_image: 参照イメージ
     tcg_info: 回転情報
+    normalize: 正規化するかどうか
     戻り値: ウインドウ座標
     """
     disp_info = get_disp_info(tcg_info)
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
-    cx, cy = denorm_param(tcg_info, (cx, cy))
+    if normalize:
+        cx, cy = denorm_param(tcg_info, (cx, cy))
     cx, cy = center_rotate(cx, cy, tcg_info)
     cx, cy = cx + imax, cy + imax
     cx, cy = cx - disp_info[0], cy - disp_info[1]
@@ -402,6 +406,14 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info):
     wx, wy = widget.to_window(*widget.pos)
     cx, cy = cx + wx, cy + wy
     return (cx, cy)
+
+def window_to_tcg_scale(x, y, tcg_info):
+    # ワールド座標にスケーリングだけ適用する
+    return (x / tcg_info['disp_info'][4], y / tcg_info['disp_info'][4])
+
+def tcg_to_window_scale(x, y, tcg_info):
+    # TCG座標にスケーリングだけ適用する
+    return (x * tcg_info['disp_info'][4], y * tcg_info['disp_info'][4])
 
 def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
     """
@@ -463,7 +475,7 @@ def ref_image_to_tcg(cx, cy, ref_img, tcg_info, apply_disp_info=False):
     
 
 def apply_orientation(cx, cy, tcg_info):
-    rad, flip = tcg_info['rotation2'], tcg_info['flip']
+    rad, flip = tcg_info['rotation2'], tcg_info['flip_mode']
 
     if (flip & 1) == 1:
         cx = -cx
@@ -524,7 +536,7 @@ def apply_matrix(px, py, matrix):
     pt_transformed = matrix @ pt
     px_new = pt_transformed[0] / pt_transformed[2]
     py_new = pt_transformed[1] / pt_transformed[2]
-    return (px_new, py_new)
+    return (float(px_new), float(py_new))
 
 def apply_matrix_inverse(px, py, matrix):
     H_inv = np.linalg.inv(matrix)
