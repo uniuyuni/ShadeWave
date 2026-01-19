@@ -11,6 +11,11 @@ import imageset
 import config
 import utils.utils as utils
 
+# warm-up用のダミー関数（pickle化可能なトップレベル関数）
+def _warmup_worker():
+    """ProcessPoolExecutor warm-up用の空関数"""
+    pass
+
 # メインプロセスで実行されるコールバック関数
 def _task_callback(file_callbacks, shared_resources, future):
     try:
@@ -124,8 +129,11 @@ class FileCacheSystem:
             'process_queue_flag': False,
             'executor': self.ppe
         }
-        # ダミーを走らせる
-        #self.ppe.submit(lambda: None)
+        # ダミーを走らせる（プロセスのwarm-up）
+        # アプリケーション起動時にワーカープロセスを起動しておくことで、
+        # 最初の画像読み込み時のプロセス起動コストを回避
+        for _ in range(self.ppe._max_workers):
+            self.ppe.submit(_warmup_worker).result()
         
         # 各共有リソースへの参照を設定
         self.cache = self.shared_resources['cache']

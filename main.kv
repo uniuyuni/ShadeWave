@@ -1726,10 +1726,10 @@
                                 value: 0
                                 step: 0.1
                                 for_float: True
-                                on_slider: root.apply_effects_lv(0, 'rotation')
+                                on_slider: root.apply_effects_lv(0, 'geometry')
                                 on_slider: root.apply_effects_lv(0, 'crop')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'rotation')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
 
                             VSpacer:
                             
@@ -1742,25 +1742,25 @@
                                     ref_height: 20
                                     text: "L"
                                     on_press: root.apply_effects_lv(0, 'crop')
-                                    on_press: root.set_effect_param(0, 'rotation', 90)
+                                    on_press: root.set_effect_param(0, 'geometry', 90)
                                 Button:
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     ref_height: 20
                                     text: "R"
                                     on_press: root.apply_effects_lv(0, 'crop')
-                                    on_press: root.set_effect_param(0, 'rotation', -90)
+                                    on_press: root.set_effect_param(0, 'geometry', -90)
                                 Button:
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     ref_height: 20
                                     text: "H"
                                     on_press: root.apply_effects_lv(0, 'crop')
-                                    on_press: root.set_effect_param(0, 'rotation', 'hflip')
+                                    on_press: root.set_effect_param(0, 'geometry', 'hflip')
                                 Button:
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     ref_height: 20
                                     text: "V"
                                     on_press: root.apply_effects_lv(0, 'crop')
-                                    on_press: root.set_effect_param(0, 'rotation', 'vflip')
+                                    on_press: root.set_effect_param(0, 'geometry', 'vflip')
 
                             VSeparator:
 
@@ -1782,7 +1782,23 @@
                                     on_release: root.end_history_effect_ctrl(0, 'crop')
                                     ParamChipText:
                                         text: "Reset"
-                                    
+
+                            ParamBoxLayout:
+                                ParamLabel:
+                                    text: "Auto Crop"
+                                HSpacer:
+                                    size_hint_x: 0.5
+                                ParamChip:
+                                    type: 'assist'
+                                    id: button_crop_auto
+                                    size_hint_x: None
+                                    ref_width: 60
+                                    on_press: root.begin_history_effect_ctrl(0, 'crop')
+                                    on_press: root.apply_effects_lv(0, 'crop')
+                                    on_release: root.end_history_effect_ctrl(0, 'crop')
+                                    ParamChipText:
+                                        text: "Crop"
+
                             ParamBoxLayout:
                                 ParamLabel:
                                     text: "Aspect Ratio"
@@ -1808,21 +1824,21 @@
                                     ref_height: 20
                                     text: "Lens"
                                     group: 'distortion'
-                                    on_press: root.apply_effects_lv(0, "rotation")
+                                    on_press: root.apply_effects_lv(0, "geometry")
                                 ToggleButton:
                                     id: btn_trapezoid
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     ref_height: 20
                                     text: "Trapezoid"
                                     group: 'distortion'
-                                    on_press: root.apply_effects_lv(0, "rotation")
+                                    on_press: root.apply_effects_lv(0, "geometry")
                                 ToggleButton:
                                     id: btn_four_points
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     ref_height: 20
                                     text: "Four Points"
                                     group: 'distortion'
-                                    on_press: root.apply_effects_lv(0, "rotation")
+                                    on_press: root.apply_effects_lv(0, "geometry")
 
                             ParamBoxLayout:
                                 HSpacer:
@@ -1833,14 +1849,14 @@
                                     ref_height: 20
                                     text: "Mesh"
                                     group: 'distortion'
-                                    on_press: root.apply_effects_lv(0, "rotation")
+                                    on_press: root.apply_effects_lv(0, "geometry")
                                 ToggleButton:
                                     id: btn_lines
                                     pos_hint: {'center_x': .5, 'center_y': .5}
                                     ref_height: 20
                                     text: "Lines"
                                     group: 'distortion'
-                                    on_press: root.apply_effects_lv(0, "rotation")
+                                    on_press: root.apply_effects_lv(0, "geometry")
 
                             ParamSlider:
                                 id: slider_lens_distortion_strength
@@ -1850,9 +1866,9 @@
                                 max: 100
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(0, 'rotation')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'rotation')
+                                on_slider: root.apply_effects_lv(0, 'geometry')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
 
                             ParamSlider:
                                 id: slider_lens_distortion_scale
@@ -1862,9 +1878,9 @@
                                 max: 100
                                 value: 0
                                 step: 1
-                                on_slider: root.apply_effects_lv(0, 'rotation')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'rotation')
+                                on_slider: root.apply_effects_lv(0, 'geometry')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
 
                             ParamSlider:
                                 id: slider_correct_trapezoid_h
@@ -1874,9 +1890,9 @@
                                 max: 100
                                 value: 0
                                 step: 0.5
-                                on_slider: root.apply_effects_lv(0, 'rotation')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'rotation')
+                                on_slider: root.apply_effects_lv(0, 'geometry')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
 
 
                             ParamSlider:
@@ -1887,9 +1903,9 @@
                                 max: 100
                                 value: 0
                                 step: 0.5
-                                on_slider: root.apply_effects_lv(0, 'rotation')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'rotation')
+                                on_slider: root.apply_effects_lv(0, 'geometry')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
 
                             ParamSlider:
                                 id: slider_focal_length
@@ -1899,9 +1915,9 @@
                                 max: 100
                                 value: 20
                                 step: 1
-                                on_slider: root.apply_effects_lv(0, 'rotation')
-                                on_before_edit: root.begin_history_effect_ctrl(0, 'rotation')
-                                on_after_edit: root.end_history_effect_ctrl(0, 'rotation')
+                                on_slider: root.apply_effects_lv(0, 'geometry')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
 
                 IconTabbedPanelItem:
                     text: 'Lo'

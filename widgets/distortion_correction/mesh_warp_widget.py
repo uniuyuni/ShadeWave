@@ -50,7 +50,11 @@ class MeshWarpWidget(FloatLayout):
             spacing=10,
             padding=10
         )
-        
+
+        self.reset_btn = MDRaisedButton(text="Reset")
+        self.reset_btn.bind(on_press=self.reset_mesh)
+        button_layout.add_widget(self.reset_btn)
+
         # Rows Control
         button_layout.add_widget(MDLabel(text="Y:", size_hint_x=None, width=40, halign='right', theme_text_color="Custom", text_color=(1,1,1,1)))
         btn_row_minus = MDTextButton(text="-", width=20, height=20, on_release=lambda x: self.change_mesh_size(-2, 0))
@@ -95,14 +99,10 @@ class MeshWarpWidget(FloatLayout):
         btn_col_plus.ref_height = 20
         button_layout.add_widget(btn_col_plus)
         
-        self.reset_btn = MDRaisedButton(text="Reset")
-        self.reset_btn.bind(on_press=self.reset_mesh)
-        button_layout.add_widget(self.reset_btn)
-
         self.apply_btn = MDRaisedButton(text="Apply")
         self.apply_btn.bind(on_press=lambda x: self._apply())
         button_layout.add_widget(self.apply_btn)
-        
+
         self.add_widget(button_layout)
         
         # Update labels on property change

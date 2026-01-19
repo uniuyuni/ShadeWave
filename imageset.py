@@ -133,7 +133,7 @@ class ImageSet:
 
             # 自動露出調整値を適当に設定する
             param['rgb_or_raw'] = 'rgb'
-            param['auto_exposure'] = -2.5
+            param['auto_exposure'] = -2.0
 
             # 情報の設定
             params.set_image_param(param, img_array)

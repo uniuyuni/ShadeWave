@@ -155,7 +155,10 @@ if __name__ == '__main__':
             self.is_zoomed = False
             self.drag_start_point = None
             self.primary_param = {}
-            self.primary_effects = effects.create_effects(distortion_callback=self.distortion_callback, rotation_callback=self.rotation_callback)
+            self.primary_effects = effects.create_effects(
+                lens_modifier_callback=self.lens_modifier_callback,
+                distortion_callback=self.distortion_callback,
+                geometry_callback=self.geometry_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.inpaint_edit = None
             self.cache_system = cache_system
@@ -341,6 +344,9 @@ if __name__ == '__main__':
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
 
+        def lens_modifier_callback(self):
+            self.primary_effects[0]['lens_modifier'].set2widget(self, self.primary_param)
+
         def distortion_callback(self, proc, widget):
             match proc:
                 case 'start':
@@ -351,15 +357,15 @@ if __name__ == '__main__':
                     self.primary_param.update(widget.get_distortion_params())
                     self.end_history_effect_ctrl(1, 'distortion')
 
-        def rotation_callback(self, proc, widget):
+        def geometry_callback(self, proc, widget):
             match proc:
                 case 'start':
-                    self.begin_history_effect_ctrl(0, 'rotation')
+                    self.begin_history_effect_ctrl(0, 'geometry')
                 case 'update' | 'apply':
-                    self.apply_effects_lv(0, 'rotation')
+                    self.apply_effects_lv(0, 'geometry')
                 case 'end':
                     self.primary_param.update(widget.get_correction_params())
-                    self.end_history_effect_ctrl(0, 'rotation')
+                    self.end_history_effect_ctrl(0, 'geometry')
 
         def _get_active_effects(self, mask_id=None, lv=None):
             if mask_id is None:
@@ -409,7 +415,7 @@ if __name__ == '__main__':
             # Calculate Rotation/Flip for Hardware
             #if self.ids["effects"].current_tab.text == "Ge":
             if False:
-                rotation_effect = self.primary_effects[0]['rotation']
+                rotation_effect = self.primary_effects[0]['geometry']
                 angle = rotation_effect._get_param(self.primary_param,'rotation') + rotation_effect._get_param(self.primary_param,'rotation2')
                 flip = rotation_effect._get_param(self.primary_param,'flip_mode')
             else:
@@ -584,8 +590,9 @@ if __name__ == '__main__':
                 self.apply_effects_lv(1, 'distortion')
                 self.apply_effects_lv(0, 'crop')
 
+            if flag == -1:
                 # lensfun セットアップ
-                core.setup_lensfun(imgset.img, exif_data)
+                core.setup_lensfun(param['original_img_size'], exif_data)
 
                 # ロード終了
                 self.loading = False
@@ -841,7 +848,7 @@ if __name__ == '__main__':
                 self.is_zoomed = False
 
             if self.imgset is not None:
-                self.apply_effects_lv(0, "rotation")
+                self.apply_effects_lv(0, "geometry")
                 self.apply_effects_lv(0, "crop")
                 self.apply_effects_lv(1, "distortion")
 

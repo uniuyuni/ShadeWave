@@ -216,6 +216,10 @@ class RemoveChromaticAberrationEffect(Effect):
 
 # レンズモディファイア
 class LensModifierEffect(Effect):
+    
+    def __init__(self, lens_modifier_callback=None, **kwargs):
+        super().__init__(**kwargs)
+        self.callback = lens_modifier_callback
 
     def get_param_dict(self, param):
         return {
@@ -240,14 +244,20 @@ class LensModifierEffect(Effect):
         cd = self._get_param(param, 'color_modification')
         sd = self._get_param(param, 'subpixel_distortion')
         gd = self._get_param(param, 'geometry_distortion')
-        if lm == False or (cd == False and sd == False and gd == False):
+        if lm == False or (cd == False and sd == False and gd == False) or efconfig.loading_flag != -1:
             self.diff = None
             self.hash = None
         else:
             param_hash = hash((cd, sd, gd))
             if self.hash != param_hash:
-                self.diff = core.modify_lensfun(img, cd, sd, gd)
+                self.diff, is_cm, is_sd, is_gd = core.modify_lensfun(img, cd, sd, gd)
                 self.hash = param_hash
+
+                # 適用されなかったパラメータをUIに反映
+                param['color_modification'] = is_cm
+                param['subpixel_distortion'] = is_sd
+                param['geometry_distortion'] = is_gd
+                self.callback()
         
         return self.diff
     
@@ -533,17 +543,17 @@ class DistortionEffect(Effect):
             self.distortion_callback(proc, widget)
 
 # 画像回転、反転、変形
-class RotationEffect(Effect):
+class GeometryEffect(Effect):
 
-    def __init__(self, distortion_editor_callback=None, **kwargs):
+    def __init__(self, geometry_callback=None, **kwargs):
         super().__init__(**kwargs)
         
-        self.distortion_editor = None
-        self.distortion_editor_callback = distortion_editor_callback
+        self.geometry_editor = None
+        self.geometry_editor_callback = geometry_callback
 
     def _editor_update_callback(self, type, widget):
-        if self.distortion_editor_callback:
-            self.distortion_editor_callback(type, widget)
+        if self.geometry_editor_callback:
+            self.geometry_editor_callback(type, widget)
 
     def get_param_dict(self, param):
         return {
@@ -570,8 +580,8 @@ class RotationEffect(Effect):
         widget.ids["slider_focal_length"].set_slider_value(self._get_param(param, 'focal_length'))
         widget.ids["slider_rotation"].set_slider_value(self._get_param(param, 'rotation'))
 
-        if self.distortion_editor is not None:
-            self.distortion_editor.set_correction_params(param)
+        if self.geometry_editor is not None:
+            self.geometry_editor.set_correction_params(param)
 
     def set2param(self, param, widget):
         param['lens_distortion_strength'] = widget.ids["slider_lens_distortion_strength"].value
@@ -593,11 +603,11 @@ class RotationEffect(Effect):
                 return None
             
             # Update params from editor if active (BEFORE opening/syncing)
-            if self.distortion_editor is not None:
-                    param.update(self.distortion_editor.get_correction_params())
+            if self.geometry_editor is not None:
+                    param.update(self.geometry_editor.get_correction_params())
 
             type = get_selected()
-            self._open_dictortion_editor(widget, type, param)
+            self._open_geometry_editor(widget, type, param)
 
     def set2param2(self, param, arg):
         if arg == 'hflip':
@@ -791,15 +801,15 @@ class RotationEffect(Effect):
         return self.diff
 
     def finalize(self, param, widget):
-        self._open_dictortion_editor(widget, None) # 閉じる
+        self._open_geometry_editor(widget, None) # 閉じる
 
-    def _open_dictortion_editor(self, widget, type, param=None):
+    def _open_geometry_editor(self, widget, type, param=None):
         from widgets.distortion_correction import (
             LensDistortionWidget, LineGuideCorrectionWidget, TrapezoidCorrectionWidget, FourPointCorrectionWidget, MeshWarpWidget
         )
         
         # Check if we can reuse the existing editor
-        current_editor_class = self.distortion_editor.__class__.__name__ if self.distortion_editor else None
+        current_editor_class = self.geometry_editor.__class__.__name__ if self.geometry_editor else None
         target_class = None
         match type:
             case 'Lens': target_class = 'LensDistortionWidget'
@@ -811,83 +821,51 @@ class RotationEffect(Effect):
 
         # 前のを削除
         if current_editor_class != target_class:
-            if self.distortion_editor is not None:
-                widget.ids['preview_widget'].remove_widget(self.distortion_editor)
-                self.distortion_editor = None
+            if self.geometry_editor is not None:
+                widget.ids['preview_widget'].remove_widget(self.geometry_editor)
+                self.geometry_editor = None
 
         # 作成
-        if self.distortion_editor is None:
+        if self.geometry_editor is None:
             texture_size = (config.get_config('preview_width'), config.get_config('preview_height'))
             match type:
-                case 'Lens': self.distortion_editor = LensDistortionWidget(texture_size, param)
-                case 'Trapezoid': self.distortion_editor = TrapezoidCorrectionWidget(texture_size, param)
-                case 'Four Points': self.distortion_editor = FourPointCorrectionWidget(texture_size, param)
-                case 'Mesh': self.distortion_editor = MeshWarpWidget(texture_size, param)
-                case 'Lines': self.distortion_editor = LineGuideCorrectionWidget(texture_size, param)
+                case 'Lens': self.geometry_editor = LensDistortionWidget(texture_size, param)
+                case 'Trapezoid': self.geometry_editor = TrapezoidCorrectionWidget(texture_size, param)
+                case 'Four Points': self.geometry_editor = FourPointCorrectionWidget(texture_size, param)
+                case 'Mesh': self.geometry_editor = MeshWarpWidget(texture_size, param)
+                case 'Lines': self.geometry_editor = LineGuideCorrectionWidget(texture_size, param)
 
-            if self.distortion_editor is not None:
-                self.distortion_editor.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-                widget.ids['preview_widget'].add_widget(self.distortion_editor)
+            if self.geometry_editor is not None:
+                self.geometry_editor.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+                widget.ids['preview_widget'].add_widget(self.geometry_editor)
 
         # Update parameters and image if applicable
-        if self.distortion_editor is not None and param is not None:
+        if self.geometry_editor is not None and param is not None:
             if type == 'Lens':
-                #self.distortion_editor.set_image(widget.imgset.img) # なんか重い
+                #self.geometry_editor.set_image(widget.imgset.img) # なんか重い
                 # Sync Params
-                self.distortion_editor.set_correction_params(param)
+                self.geometry_editor.set_correction_params(param)
 
             elif type == 'Trapezoid':
                 pass
 
             elif type == 'Four Points':                
                 # Sync Params
-                self.distortion_editor.set_correction_params(param)
+                self.geometry_editor.set_correction_params(param)
                 # Bind callback
-                self.distortion_editor.set_callback(self._editor_update_callback)
+                self.geometry_editor.set_callback(self._editor_update_callback)
 
             elif type == 'Lines':
                 # Sync Params
-                self.distortion_editor.set_correction_params(param)
+                self.geometry_editor.set_correction_params(param)
                 # Bind callback
-                self.distortion_editor.set_callback(self._editor_update_callback)
+                self.geometry_editor.set_callback(self._editor_update_callback)
 
             elif type == 'Mesh':
                 # Sync Params
-                self.distortion_editor.set_correction_params(param)
+                self.geometry_editor.set_correction_params(param)
                 # Bind callback
-                self.distortion_editor.set_callback(self._editor_update_callback)
-
-
-class DistortionCorrectionEffect(Effect):
-
-    def get_param_dict(self, param):
-        return {
-            'lens_distortion_strength': 0,
-        }
-
-    def set2widget(self, widget, param):
-        widget.ids["slider_lens_distortion_strength"].set_slider_value(self._get_param(param, 'lens_distortion_strength'))
-
-    def set2param(self, param, widget):
-        param['lens_distortion_strength'] = widget.ids["slider_lens_distortion_strength"].value
-        
-    def make_diff(self, img, param, efconfig):
-        strength = self._get_param(param, 'lens_distortion_strength')
-        if strength == 0:
-            self.diff = None
-            self.hash = None
-        else:
-            param_hash = hash((strength))        
-            if self.hash != param_hash:
-                self.diff = distortion_correction.correct_lens_distortion(
-                    img,
-                    strength=strength,
-                    interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    grid_size=2 if efconfig.mode == EffectMode.EXPORT else 4,
-                )
-                self.hash = param_hash
-        
-        return self.diff
+                self.geometry_editor.set_callback(self._editor_update_callback)
 
 # クロップ
 class CropEffect(Effect):
@@ -895,6 +873,8 @@ class CropEffect(Effect):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
+        self.backup_img = None
+
         self.crop_editor = None
         self.crop_editor_callback = None
 
@@ -915,6 +895,7 @@ class CropEffect(Effect):
             'crop_enable': False,
             'crop_rect': param2['crop_rect'],
             'aspect_ratio': "None",
+            'auto_crop': False,
         }
 
     def set2widget(self, widget, param):
@@ -936,16 +917,20 @@ class CropEffect(Effect):
                 self._close_crop_editor(param, widget)
 
             # クロップ範囲をリセット
-            if self.crop_editor is not None:
-                if widget.ids["button_crop_reset"].state == "down":
-                    self.reset_crop_editor()
+            if widget.ids["button_crop_reset"].state == "down":
+                self.reset_crop_editor()
 
-                self.reset2_crop_editor(param)
+            self.reset2_crop_editor(param)
 
+            # 自動クロップ
+            if widget.ids["button_crop_auto"].state == "down":
+                self.auto_crop_editor(self.backup_img)
 
     def make_diff(self, img, param, efconfig):
         ce = self._get_param(param, 'crop_enable')
         disp_info = params.get_disp_info(param)
+
+        self.backup_img = img
 
         if ce == True or disp_info is None:
             self.diff = None
@@ -1003,6 +988,27 @@ class CropEffect(Effect):
         if self.crop_editor is not None:
             self.crop_editor.input_angle = self._get_param(param, 'rotation') + self._get_param(param, 'rotation2')
             self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
+
+    # 自動クロップ
+    def auto_crop_editor(self, img):
+        import cores.find_bounding_box as find_bounding_box
+
+        if img is not None:
+            # クロップエディタのアスペクト比設定を取得
+            aspect_ratio = None
+            if self.crop_editor is not None:
+                ar = self.crop_editor.aspect_ratio
+                # aspect_ratioが0でない場合のみ使用
+                if ar is not None and ar > 0:
+                    aspect_ratio = ar
+            
+            bbox = find_bounding_box.find_bounding_box(
+                img, 
+                threshold=0.0001, 
+                aspect_ratio=aspect_ratio,
+                verbose=True
+            )
+            self.crop_editor._set_to_local_crop_rect(bbox)
 
     def finalize(self, param, widget):
         self._close_crop_editor(param, widget)
@@ -2925,17 +2931,17 @@ class VignetteEffect(Effect):
         return self.diff
     
 
-def create_effects(distortion_callback=None, rotation_callback=None):
+def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
     lv0['loading_wait'] = LoadingWaitEffect()
     lv0['ai_noise_reduction'] = AINoiseReductonEffect()
     lv0['remove_chromatic_aberration'] = RemoveChromaticAberrationEffect()
-    lv0['lens_modifier'] = LensModifierEffect()
+    lv0['lens_modifier'] = LensModifierEffect(lens_modifier_callback=lens_modifier_callback)
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
-    lv0['rotation'] = RotationEffect(distortion_editor_callback=rotation_callback)
+    lv0['geometry'] = GeometryEffect(geometry_callback=geometry_callback)
     lv0['crop'] = CropEffect()
 
     lv1 = effects[1]

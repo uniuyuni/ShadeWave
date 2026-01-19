@@ -15,6 +15,7 @@ import math
 
 import cores.core as core
 
+
 class CropEditor(KVFloatLayout):
     input_width = KVNumericProperty(dp(400))
     input_height = KVNumericProperty(dp(300))

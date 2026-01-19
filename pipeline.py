@@ -332,7 +332,7 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
         if lv1reset == True:
             lv0[n].reeffect()
             
-        if n == 'rotation':
+        if n == 'geometry':
             pre_rotation_img = rgb
             
         pre_diff = lv0[n].diff

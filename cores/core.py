@@ -2243,7 +2243,7 @@ def _get_lensfun_db():
         _lensfun_db_instance = lensfunpy.Database()
     return _lensfun_db_instance
 
-def setup_lensfun(img, exif_data):
+def setup_lensfun(img_size, exif_data):
     global __lensfun_mod
 
     make =  exif_data.get('Make', None)
@@ -2272,7 +2272,7 @@ def setup_lensfun(img, exif_data):
         lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=False)
 
         if len(lens) > 0:
-            height, width = img.shape[:2]
+            width, height = img_size
             __lensfun_mod = lensfunpy.Modifier(lens[0], cams[0].crop_factor, width, height)
             __lensfun_mod.initialize(float(focal_length[0:-3]), aperture, distance, pixel_format=np.float32)
             return
@@ -2298,11 +2298,13 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
         did_apply = mod.apply_color_modification(modimg)
         if did_apply == False:
             logging.warning("Apply Color Modification is Failed")
+            is_cm = False
 
     if is_sd == True:
         undist_coords = mod.apply_subpixel_distortion()
         if undist_coords is None:
             logging.warning("Apply Subpixel Distortion is Failed")
+            is_sd = False
         else:
             modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
             modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
@@ -2312,10 +2314,11 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
         undist_coords = mod.apply_geometry_distortion()
         if undist_coords is None:
             logging.warning("Apply Geometry Distortion is Failed")
+            is_gd = False
         else:
             modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
 
-    return modimg
+    return (modimg, is_cm, is_sd, is_gd)
 
 #-------------------------------------------------
 
