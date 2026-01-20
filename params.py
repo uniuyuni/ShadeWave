@@ -24,6 +24,7 @@ SPECIAL_PARAM = [
     'color_tint_reset',
     'color_Y',
     # for effects.CropEffect
+    'matrix',
     'crop_enable',
     # for effecs.Inpaint
     'inpaint',

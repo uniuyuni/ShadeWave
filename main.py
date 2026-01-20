@@ -570,7 +570,7 @@ if __name__ == '__main__':
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
             print(f"Load image SHAPE: {imgset.img.shape} FLAG: {imgset.flag}, Proc: {flag}")
 
-            if flag == 0:
+            if flag == 0 or flag == -2:
                 # 最終的なパラメータを合成
                 card = self.ids['viewer'].get_card(file_path)
                 if card is not None:
@@ -590,12 +590,16 @@ if __name__ == '__main__':
                 self.apply_effects_lv(1, 'distortion')
                 self.apply_effects_lv(0, 'crop')
 
-            if flag == -1:
+            # 読み込み終わり
+            if flag < 0:
                 # lensfun セットアップ
                 core.setup_lensfun(param['original_img_size'], exif_data)
 
                 # ロード終了
                 self.loading = False
+
+                # flag -2はrgbの終わり
+                flag = -1
 
             # 暫定処置
             if imgset.flag == False:

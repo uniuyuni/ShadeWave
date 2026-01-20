@@ -257,7 +257,8 @@ class LensModifierEffect(Effect):
                 param['color_modification'] = is_cm
                 param['subpixel_distortion'] = is_sd
                 param['geometry_distortion'] = is_gd
-                self.callback()
+                if self.callback:
+                    self.callback()
         
         return self.diff
     
@@ -569,6 +570,7 @@ class GeometryEffect(Effect):
             'rotation': 0,
             'rotation2': 0,
             'flip_mode': 0,
+            'matrix': np.eye(3),
             'crop_enable': False,
         }
 
@@ -2922,7 +2924,11 @@ class VignetteEffect(Effect):
         else:
             param_hash = hash((vi, vr, vs))
             if self.hash != param_hash:
-                _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
+                if efconfig.mode == EffectMode.EXPORT:
+                    offset_x, offset_y = 0, 0
+                else:
+                    _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
+                
                 rgb = core.type_convert(rgb, np.ndarray)
                 vs = (100 - vs) / 100.0 * 3.0 + 1.0  # 1.0-4.0
                 self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y), vs)

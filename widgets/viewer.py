@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 from watchfiles import watch
 import time
+import pyvips
 
 from kivymd.app import MDApp
 from kivy.core.window import Window as KVWindow
@@ -224,8 +225,8 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                         with rawpy.imread(file_path) as raw:
                             thumb = raw.postprocess()
                     else:
-                        thumb = cv2.imread(file_path)
-                        thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+                        with pyvips.Image.new_from_file(file_path) as vips_image:
+                            thumb = np.array(vips_image)
             
                 thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)
                 thumb = cv2.resize(thumb, thumb_size)

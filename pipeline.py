@@ -192,22 +192,20 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
 
     # 背景レイヤー
-    # Export ignores async, passes None as processor
     img0, lv1reset, pre_rotation_img, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig, processor=None)
-    imgc = img0
-    imax = max(imgc.shape[1], imgc.shape[0])
-    mask_editor2.set_texture_size(imax, imax)
-    mask_editor2.set_primary_param(primary_param, disp_info)
-    mask_editor2.set_ref_image(imgc, pre_rotation_img)
+
+    # ここでクロップ (Export: Apply Crop FIRST)
+    x1, y1, x2, y2 = params.get_crop_rect(primary_param)
+    imgc = img0[y1:y2, x1:x2]
+    
+    mask_editor2.set_texture_size(imgc.shape[1], imgc.shape[0])
+    mask_editor2.set_primary_param(primary_param, disp_info)    
+    mask_editor2.set_ref_image(imgc, pre_rotation_img) 
     mask_editor2.update()
 
     img2, lv4reset = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=None)
     img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, prev_reset=lv4reset, processor=None)
     
-    # ここでクロップ
-    x1, y1, x2, y2 = params.get_crop_rect(primary_param)
-    img2 = img2[y1:y2, x1:x2] # ただのクロップ
-
     return img2
 
 def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig, lv1reset=False, processor=None):
@@ -221,7 +219,7 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
     # マスクレイヤー
     if mask_editor2 is not None:
         mask_list = mask_editor2.get_mask_list()
-        for mask in mask_list:
+        for i, mask in enumerate(mask_list):
             if not mask.is_composit():
                 continue
             

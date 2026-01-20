@@ -51,7 +51,7 @@
 
                 Spinner:
                     text: root.format_value
-                    values: ['.JPG', '.TIFF', '.HEIC']
+                    values: ['.JPG', '.TIFF', '.JXL', '.PNG']
                     size_hint_x: None
                     ref_width: 80
                     on_text: root.format_value = self.text
@@ -63,8 +63,8 @@
                     max: 100
                     value: 0
                     step: 1
-                    opacity: 1 if root.format_value == '.JPG' else 0
-                    disabled: root.format_value != '.JPG'
+                    opacity: 1 if root.format_value != '.TIFF' else 0
+                    disabled: root.format_value == '.TIFF'
                     value: root.quality_value
                     on_slider: root.quality_value = int(self.value)
 

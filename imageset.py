@@ -4,11 +4,11 @@ import numpy as np
 import rawpy
 import logging
 import io
-
 from functools import partial
-from PIL import Image as PILImage, ImageOps as PILImageOps
+from PIL import Image as PILImage, ImageOps as PILImageOps, ImageCms
 from multiprocessing import shared_memory
 import base64
+import pyvips
 
 import libraw_enhanced as lre
 import config
@@ -268,9 +268,8 @@ class ImageSet:
 
     def _load_rgb(self, raw, file_path, exif_data, param):
         # RGB画像で読み込んでみる
-        with PILImage.open(file_path) as img:
-            img = PILImageOps.exif_transpose(img)
-            img_array = np.array(img)
+        with pyvips.Image.new_from_file(file_path) as vips_image:
+            img_array = np.array(vips_image)
 
             # float32へ
             img_array = core.convert_to_float32(img_array)
@@ -278,12 +277,26 @@ class ImageSet:
             # グレイ画像をカラーへ
             if img_array.ndim == 2 or img_array.shape[2] == 1:
                 img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-                #cv2.imwrite("test.jpg", cv2.cvtColor((img_array * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
 
             # 色空間変更
-            src_icc_profile_name = core.get_icc_profile_name(img)
+            def get_icc_profile_name(vips_image):                
+                # ICCプロファイルバイナリ取得
+                try:
+                    icc_data = vips_image.get("icc-profile-data")
+                    if icc_data is None:
+                        return "sRGB"
+                    
+                    # Pillowでパース
+                    profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_data))
+                    profile_name = ImageCms.getProfileDescription(profile)
+                    return profile_name.strip()
+                    
+                except Exception as e:
+                    return "sRGB"
+
+            src_icc_profile_name = get_icc_profile_name(vips_image)
             import cores.colour_functions as colour_functions
-            img_array = colour_functions.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE[src_icc_profile_name], 'ProPhoto RGB', config.get_config('cat'),
+            img_array = colour_functions.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE.get(src_icc_profile_name, 'sRGB'), 'ProPhoto RGB', config.get_config('cat'),
                                             apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
 
             # 画像からホワイトバランスパラメータ取得
@@ -305,7 +318,7 @@ class ImageSet:
             
         self.img = np.array(img_array)
         
-        return (file_path, self, exif_data, param, 0)
+        return (file_path, self, exif_data, param, -2)
 
     class Result():
         def __init__(self, worker, source):

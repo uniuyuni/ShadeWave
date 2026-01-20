@@ -67,14 +67,14 @@ class ExportConfirmDialog(Popup):
 class ExportDialog(ModalView):
     # File format properties
     format_value = StringProperty('.JPG')
-    quality_value = NumericProperty(85)
+    quality_value = NumericProperty(90)
     
     # Size properties
     size_mode = StringProperty('Original')
     size_value = StringProperty('')
     
     # Sharpening property
-    sharpen_value = NumericProperty(50)
+    sharpen_value = NumericProperty(0)
     
     # Metadata property
     include_metadata = BooleanProperty(True)
@@ -99,9 +99,10 @@ class ExportDialog(ModalView):
     def on_kv_post(self, *args, **kwargs):
         self.bind(on_dismiss=self.handle_dismiss)
 
-        self._load_json()
         self._load_default_presets()
-
+        self._load_json()
+        self.load_preset('Default')
+    
     def handle_dismiss(self, instance):
         self._save_json()
 
@@ -127,6 +128,7 @@ class ExportDialog(ModalView):
             'size_value': '',
             'sharpen': 50,
             'metadata': True,
+            'dithering': True,
             'output_path': '',
             'icc_profile': 'sRGB IEC61966-2.1',
         }
@@ -194,7 +196,7 @@ class ExportDialog(ModalView):
                 'metadata': self.include_metadata,
                 'dithering': self.dithering,
                 'output_path': self.output_path,
-                'color_space': self.color_space,
+                'icc_profile': self.icc_profile,
             }
             # Spinnerの値を更新
             preset_spinner = self.ids['preset_spinner']
@@ -222,7 +224,7 @@ class ExportDialog(ModalView):
             self.include_metadata = settings['metadata']
             self.dithering = settings['dithering']
             self.output_path = settings['output_path']
-            self.color_space = settings['color_space']
+            self.icc_profile = settings['icc_profile']
             self.current_preset = preset_name
 
 

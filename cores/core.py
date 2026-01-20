@@ -1713,17 +1713,17 @@ def jjn_dither_uint8(img_float):
     
     # 各チャンネルを個別に処理
     for c in prange(channels):
-        # 現在のチャンネルの画像をコピー
-        error = np.zeros((h+4, w+4), dtype=np.float32)  # 境界処理用の余裕を持たせた誤差バッファ
+        # 現在のチャンネル用の誤差バッファ
+        error = np.zeros((h+4, w+4), dtype=np.float32)
         
         # ラスタ走査（左上→右下）
-        for y in prange(h):
-            for x in prange(w):
-                # 現在のピクセル値 + 累積誤差
-                current_val = img_float[y, x, c] + error[y, x]
+        for y in range(h):
+            for x in range(w):
+                # 現在のピクセル値 + 累積誤差 (xを+2シフト)
+                current_val = img_float[y, x, c] + error[y, x+2]
                 
                 # 量子化（四捨五入）
-                quantized_val = _manual_clip(round(current_val * 255.0), 0.0, 255.0)
+                quantized_val = min(max(round(current_val * 255.0), 0.0), 255.0)
                 
                 # 出力値設定
                 output[y, x, c] = int(quantized_val)
@@ -1735,13 +1735,13 @@ def jjn_dither_uint8(img_float):
                 for dy, dx, weight in kernel:
                     ey = y + dy
                     ex = x + dx
-                    if 0 <= ey < h and 0 <= ex < w:
-                        error[ey, ex] += quant_error * (weight / divisor)
+                    # xは+2オフセット
+                    error[ey, ex+2] += quant_error * (weight / divisor)
         
     return output
 
 @lock_numba
-@njit('u2[:,:,:](f4[:,:,:])', parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+@njit('u2[:,:,:](f4[:,:,:])', parallel=True, fastmath=True, cache=True)
 def jjn_dither_uint16(img_float):
     """
     float32画像(0.0-1.0)をJJN法でディザリングしてuint16に変換
@@ -1759,19 +1759,20 @@ def jjn_dither_uint16(img_float):
     ]
     divisor = 48  # 係数の合計値
     
-    # 各チャンネルを個別に処理
+    # 各チャンネルを個別に処理（チャンネル間は並列化可能）
     for c in prange(channels):
-        # 現在のチャンネルの画像をコピー
-        error = np.zeros((h+4, w+4), dtype=np.float32)  # 境界処理用の余裕を持たせた誤差バッファ
+        # 現在のチャンネル用の誤差バッファ
+        # x方向は左右に余裕、yは下に余裕
+        error = np.zeros((h+4, w+4), dtype=np.float32)
         
         # ラスタ走査（左上→右下）
-        for y in prange(h):
-            for x in prange(w):
-                # 現在のピクセル値 + 累積誤差
-                current_val = img_float[y, x, c] + error[y, x]
+        for y in range(h):
+            for x in range(w):
+                # 現在のピクセル値 + 累積誤差 (xを+2シフトしてアクセス)
+                current_val = img_float[y, x, c] + error[y, x+2]
                 
                 # 量子化（四捨五入）
-                quantized_val = _manual_clip(round(current_val * 65535.0), 0.0, 65535.0)
+                quantized_val = min(max(round(current_val * 65535.0), 0.0), 65535.0)
                 
                 # 出力値設定
                 output[y, x, c] = int(quantized_val)
@@ -1783,8 +1784,8 @@ def jjn_dither_uint16(img_float):
                 for dy, dx, weight in kernel:
                     ey = y + dy
                     ex = x + dx
-                    if 0 <= ey < h and 0 <= ex < w:
-                        error[ey, ex] += quant_error * (weight / divisor)
+                    # xは+2オフセットして書き込み
+                    error[ey, ex+2] += quant_error * (weight / divisor)
         
     return output
 
@@ -2289,7 +2290,7 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
 
     if __lensfun_mod is None:
         logging.warning("Lensfun is not initialized")
-        return img
+        return (img, False, False, False)
 
     mod = __lensfun_mod
     modimg = img

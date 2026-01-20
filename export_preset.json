@@ -1,1 +1,1 @@
-{"Default": {"format": ".JPG", "quality": 90, "size_mode": "Original", "size_value": "", "sharpen": 50, "metadata": true, "output_path": "", "color_space": "sRGB"}}
+{"Default": {"format": ".JPG", "quality": 90, "size_mode": "Original", "size_value": "", "sharpen": 1, "metadata": true, "dithering": true, "output_path": "", "icc_profile": "sRGB IEC61966-2.1"}, "JPEG XL": {"format": ".JXL", "quality": 80, "size_mode": "Original", "size_value": "", "sharpen": 0, "metadata": true, "dithering": true, "output_path": "", "icc_profile": "ProPhoto RGB"}}

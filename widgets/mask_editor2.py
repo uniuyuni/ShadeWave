@@ -544,7 +544,7 @@ class CompositMask(BaseMask):
 
     def get_mask_image(self):
         # 合成マスクの画像作成
-        composit = np.zeros((int(self.editor.texture_size[0]), int(self.editor.texture_size[1])), dtype=np.float32)
+        composit = np.zeros((int(self.editor.texture_size[1]), int(self.editor.texture_size[0])), dtype=np.float32)
 
         for mask, maskop in reversed(self.mask_list):
             mimage = mask.get_mask_image()

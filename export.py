@@ -1,10 +1,11 @@
 
 import os
 import numpy as np
-from imagecodecs import imwrite
 import json
 import exiftool
 import cores.colour_functions as colour_functions
+import pyvips
+import subprocess
 
 import cores.core as core
 import define
@@ -14,7 +15,7 @@ import pipeline
 import params
 import effects
 import config
-import widgets.mask_editor2
+import widgets.mask_editor2 as mask_editor2
 
 safe_tags = [
     # EXIF（カメラと撮影設定）
@@ -127,7 +128,9 @@ class ExportFile():
     FORMAT = {
         '.JPG': 'JPEG',
         '.TIFF': 'TIFF',
-        '.HEIC': 'HEIC',
+        '.JXL': 'JPEG XL',
+        '.HEIF': 'HEIF',
+        '.PNG': 'PNG',
     }
 
     def __init__(self, file_path, exif_data):
@@ -140,7 +143,7 @@ class ExportFile():
         self.imgset = None
         self.effects = effects.create_effects()
         self.param = {}
-        self.mask_editor2 = widget.mask_editor2.MaskEditor2()
+        self.mask_editor2 = mask_editor2.MaskEditor2()
 
     def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw, dithering):
         self.quality = quality
@@ -161,39 +164,91 @@ class ExportFile():
 
         img = colour_functions.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], config.get_config('cat'),
                                 apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-        img = np.clip(img, 0, 1)
 
-        ex_ext = os.path.splitext(self.ex_path)[1]
-        try:
-            format = ExportFile.FORMAT[ex_ext]
-        except KeyError:
-            return
+        format = ex_ext = os.path.splitext(self.ex_path)[1]
 
+        # Ditheringか単なるキャストか
         if dithering:
-            if format == 'JPEG':
-                img = core.jjn_dither_uint8(img)
-            elif format == 'TIFF':
-                img = core.jjn_dither_uint16(img)
-            elif format == 'HEIC':
-                img = core.jjn_dither_uint16(img)
+            match format:
+                case '.JPG' | '.JXL' | '.HEIF' | '.PNG':
+                    img = core.jjn_dither_uint8(img)
+                case '.TIFF':
+                    img = core.jjn_dither_uint16(img)
+        else:
+            match format:
+                case '.JPG' | '.JXL' | '.HEIF' | '.PNG':
+                    img = (img * 255).astype(np.uint8)
+                case '.TIFF':
+                    img = (img * 65535).astype(np.uint16)
 
+        # Save options
+        save_options = {}
+        match format:
+            case '.JPG' | '.HEIF' | '.JXL' | '.PNG':
+                save_options['Q'] = self.quality
+            case '.TIFF':
+                save_options['compression'] = 'deflate'
+                save_options['bitdepth'] = 16
+
+        # ディレクトリがなかったら作成
         ex_dir = os.path.dirname(self.ex_path)
         os.makedirs(ex_dir, exist_ok=True)
 
+        # VipsImage作成
+        vips_image = pyvips.Image.new_from_array(img)
+
+        # Resize
+        if resize_str:
+            try:
+                scale = 1.0
+                h, w = vips_image.height, vips_image.width
+                
+                parts = resize_str.lower().split('x')
+                if len(parts) == 2:
+                    tx_str, ty_str = parts
+                    
+                    target_w = int(tx_str) if tx_str else None
+                    target_h = int(ty_str) if ty_str else None
+
+                    if target_w and target_h:
+                        scale = min(target_w / w, target_h / h)
+                    elif target_w:
+                        scale = target_w / w
+                    elif target_h:
+                        scale = target_h / h
+                        
+                    if scale != 1.0:
+                        vips_image = vips_image.resize(scale, kernel=pyvips.enums.Kernel.LANCZOS3)
+                        
+            except ValueError:
+                print(f"Export: Invalid resize string {resize_str}")
+        
+        # Sharpen
+        if sharpen > 0:
+            vips_image = vips_image.sharpen(sigma=sharpen)
+
+        # ICCプロファイルファイルを読み込む
+        try:
+            with open('icc/' + self.icc_profile + '.icc', 'rb') as f:
+                icc_data = f.read()
+            
+            # 画像にICCプロファイルを設定
+            vips_image = vips_image.copy()
+            vips_image.set_type(pyvips.GValue.blob_type, 'icc-profile-data', icc_data)
+            vips_image.set_type(pyvips.GValue.gstr_type, 'icc-profile-description', self.icc_profile)
+            vips_image.set_type(pyvips.GValue.gstr_type, 'exif-ifd0-InterColorProfile', self.icc_profile)
+            vips_image.set_type(pyvips.GValue.gint_type, 'exif-ifd0-ColorSpace', 0xfffe)
+
+        except:
+            logging.warning(f"ICC profile {self.icc_profile} not found")
+
         # ファイル書き込み
-        imwrite(self.ex_path, img, level=self.quality)
-        """
-        with WandImage.from_array(img) as wi:
-            wi.compression_quality = self.quality 
-            wi.format = format
-            wi.sharpen(sharpen)
-            wi.transform(resize=resize_str)
-            wi.save(filename=self.ex_path)
-        """
+        vips_image.write_to_file(self.ex_path, **save_options)
+
         # Exif書き込み
         if exifsw:
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
                 safe_metadata = make_safe_metadata(self.exif_data)
                 safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
-                result = et.set_tags(self.ex_path, tags=safe_metadata)
-                print(result)
+                #safe_metadata["ColorSpace"] = 0xfffe
+                et.set_tags(self.ex_path, tags=safe_metadata)
