@@ -712,7 +712,7 @@ if __name__ == '__main__':
                     if preset['size_mode'] == "Percentage": resize_str = preset['size_value'] + "%"
 
                     exfile = export.ExportFile(x.file_path, x.exif_data)
-                    exfile.write_to_file(ex_path, preset['quality'], resize_str, preset['sharpen']/100, preset['icc_profile'], preset['metadata'], preset['dithering'])
+                    exfile.write_to_file(ex_path, preset['quality'], resize_str, preset['sharpen']/100, preset['icc_profile'], preset['metadata'], preset['gps'], preset['dithering'])
 
         def _make_export_path(seslf, path, preset):
             dirname, basename = os.path.split(path)

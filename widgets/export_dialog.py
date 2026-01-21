@@ -21,21 +21,41 @@ class PresetNameDialog(Popup):
     def __init__(self, save_callback, **kwargs):
         super().__init__(**kwargs)
         self.title = "Save Preset"
-        self.size_hint = (0.6, 0.3)
+        self.size_hint = (0.3, None)
+        self.ref_height = kvutils.dpi_scale_height(64)
+        self.bind(pos=self.on_popup_resize)
+        #self.bind(size=self.on_popup_resize)
         
-        layout = BoxLayout(orientation='vertical', padding=dp(5), spacing=dp(5))
-        self.preset_name = TextInput(multiline=False)
-        save_button = Button(text='Save', size_hint_y=None, height=40)
-        save_button.bind(on_press=lambda x: self.save_preset(save_callback))
-        
+        layout = BoxLayout(orientation='vertical')
+        #layout.pos_hint = {'left': 0, 'top': 0}
+        layout.ref_padding = kvutils.dpi_scale_width(5)
+
+        self.preset_name = TextInput(multiline=False, size_hint_y=None)
+        self.preset_name.ref_height = kvutils.dpi_scale_height(14)
+
+        button_layout = BoxLayout(orientation='horizontal')
+
+        cancel_button = Button(text='Cancel', size_hint_y=None)
+        cancel_button.ref_height = kvutils.dpi_scale_height(15)
+        cancel_button.bind(on_press=lambda x: self.dismiss())
+        button_layout.add_widget(cancel_button)
+
+        save_button = Button(text='Save', size_hint_y=None)
+        save_button.ref_height = kvutils.dpi_scale_height(15)
+        save_button.bind(on_press=lambda x: self.save_preset(save_callback))        
+        button_layout.add_widget(save_button)
+
         layout.add_widget(self.preset_name)
-        layout.add_widget(save_button)
+        layout.add_widget(button_layout)
         self.content = layout
 
     def save_preset(self, callback):
         if self.preset_name.text:
             callback(self.preset_name.text)
             self.dismiss()
+        
+    def on_popup_resize(self, instance, value):
+        kvutils.traverse_widget(instance)
 
 class ExportConfirmDialog(Popup):
 
@@ -78,6 +98,7 @@ class ExportDialog(ModalView):
     
     # Metadata property
     include_metadata = BooleanProperty(True)
+    include_gps = BooleanProperty(True)
 
     # Dhithering property
     dithering = BooleanProperty(True)
@@ -128,6 +149,7 @@ class ExportDialog(ModalView):
             'size_value': '',
             'sharpen': 50,
             'metadata': True,
+            'gps': True,
             'dithering': True,
             'output_path': '',
             'icc_profile': 'sRGB IEC61966-2.1',
@@ -156,6 +178,7 @@ class ExportDialog(ModalView):
         print(f"Size: {self.size_mode} - {self.size_value}")
         print(f"Sharpen: {self.sharpen_value}")
         print(f"Metadata: {self.include_metadata}")
+        print(f"GPS: {self.include_gps}")
         print(f"Dithering: {self.dithering}")
         print(f"Output: {self.output_path}")
         print(f"ICC Profile: {self.icc_profile}")
@@ -169,6 +192,7 @@ class ExportDialog(ModalView):
                 'size_value': self.size_value,
                 'sharpen': self.sharpen_value,
                 'metadata': self.include_metadata,
+                'gps': self.include_gps,
                 'dithering': self.dithering,
                 'output_path': self.output_path,
                 'icc_profile': self.icc_profile,
@@ -194,6 +218,7 @@ class ExportDialog(ModalView):
                 'size_value': self.size_value,
                 'sharpen': self.sharpen_value,
                 'metadata': self.include_metadata,
+                'gps': self.include_gps,
                 'dithering': self.dithering,
                 'output_path': self.output_path,
                 'icc_profile': self.icc_profile,
@@ -214,17 +239,18 @@ class ExportDialog(ModalView):
     def load_preset(self, preset_name):
         if preset_name in self.presets:
             settings = self.presets[preset_name]
-            self.format_value = settings['format']
-            self.quality_value = settings['quality']
+            self.format_value = settings.get('format', self.format_value)
+            self.quality_value = settings.get('quality', self.quality_value)
             self.ids['slider_quality'].set_slider_value(self.quality_value)
-            self.size_mode = settings['size_mode']
-            self.size_value = settings['size_value']
-            self.sharpen_value = settings['sharpen']
+            self.size_mode = settings.get('size_mode', self.size_mode)
+            self.size_value = settings.get('size_value', self.size_value)
+            self.sharpen_value = settings.get('sharpen', self.sharpen_value)
             self.ids['slider_sharpen'].set_slider_value(self.sharpen_value)
-            self.include_metadata = settings['metadata']
-            self.dithering = settings['dithering']
-            self.output_path = settings['output_path']
-            self.icc_profile = settings['icc_profile']
+            self.include_metadata = settings.get('metadata', self.include_metadata)
+            self.include_gps = settings.get('gps', self.include_gps)
+            self.dithering = settings.get('dithering', self.dithering)
+            self.output_path = settings.get('output_path', self.output_path)
+            self.icc_profile = settings.get('icc_profile', self.icc_profile)
             self.current_preset = preset_name
 
 

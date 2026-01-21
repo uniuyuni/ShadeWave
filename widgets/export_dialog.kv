@@ -151,6 +151,16 @@
                     on_active: root.include_metadata = self.active
 
                 ParamLabel:
+                    text: "GPS"
+
+                CheckBox:
+                    size_hint_x: None
+                    ref_width: 20
+                    halign: 'left'
+                    active: root.include_gps
+                    on_active: root.include_gps = self.active
+
+                ParamLabel:
                     text: "Dithering"
 
                 CheckBox:

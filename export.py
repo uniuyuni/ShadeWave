@@ -17,7 +17,7 @@ import effects
 import config
 import widgets.mask_editor2 as mask_editor2
 
-safe_tags = [
+_SAFE_TAGS = [
     # EXIF（カメラと撮影設定）
     "EXIF:Make",
     "EXIF:Model",
@@ -113,14 +113,16 @@ safe_tags = [
     "XMP:ModifyDate"
 ]
 
-def make_safe_metadata(exif_data):
+def make_safe_metadata(exif_data, gpssw):
     safe_metadata = {}
-    for tag in safe_tags:
+    for tag in _SAFE_TAGS:
         group, field = tag.split(':')
         
         # タグが存在する場合のみ追加
         if field in exif_data:
-            safe_metadata[field] = exif_data[field]
+            # gpsswがTrue、またはgpsswがFalseかつGPSタグではない場合に情報を保持する
+            if gpssw == True or 'GPS' not in field:
+                safe_metadata[field] = exif_data[field]
     return safe_metadata
   
 class ExportFile():
@@ -145,7 +147,7 @@ class ExportFile():
         self.param = {}
         self.mask_editor2 = mask_editor2.MaskEditor2()
 
-    def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw, dithering):
+    def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw, gpssw, dithering):
         self.quality = quality
         self.ex_path = ex_path
         self.icc_profile = icc_profile
@@ -248,7 +250,7 @@ class ExportFile():
         # Exif書き込み
         if exifsw:
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
-                safe_metadata = make_safe_metadata(self.exif_data)
+                safe_metadata = make_safe_metadata(self.exif_data, gpssw)
                 safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
                 #safe_metadata["ColorSpace"] = 0xfffe
                 et.set_tags(self.ex_path, tags=safe_metadata)
