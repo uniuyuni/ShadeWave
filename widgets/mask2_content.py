@@ -8,6 +8,7 @@ from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivymd.uix.list import OneLineListItem as MDOneLineListItem
 from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from utils import kvutils
 
 import re
 
@@ -30,7 +31,13 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
 
     def refresh_view_attrs(self, rv, index, data):
         self.index = index
-        return super().refresh_view_attrs(rv, index, data)
+        ret = super().refresh_view_attrs(rv, index, data)
+        
+        # Force height update on refresh
+        if self.ref_height:
+             self.height = kvutils.dpi_scale_height(self.ref_height)
+
+        return ret
 
     def on_touch_down(self, touch):
         if super().on_touch_down(touch):

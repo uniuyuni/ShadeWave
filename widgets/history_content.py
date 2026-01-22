@@ -8,6 +8,7 @@ from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivymd.uix.list import OneLineListItem as MDOneLineListItem
 from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from utils import kvutils
 
 import re
 
@@ -30,6 +31,11 @@ class HistoryItem(MDOneLineListItem, KVRecycleDataViewBehavior):
         self.active = data.get('active', True)
         self.index = index
         self.ids['_lbl_primary'].color = (.8, .8, .8, 1) if self.active == True else (.4, .4, .4, 1)
+        
+        # Force height update on refresh
+        if self.ref_height:
+             self.height = kvutils.dpi_scale_height(self.ref_height)
+        
         return ret
 
     def on_touch_down(self, touch):

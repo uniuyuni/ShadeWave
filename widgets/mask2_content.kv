@@ -1,4 +1,6 @@
 
+#:import kvutils utils.kvutils
+
 <Mask2CustomHeader>:
     size_hint_y: None
     ref_height: 10  # ここで縦幅を調整
@@ -6,7 +8,8 @@
 <Mask2Item>:
     orientation: 'horizontal'
     size_hint_y: None
-    ref_height: 46
+    ref_height: 24
+    height: kvutils.dpi_scale_height(self.ref_height)
     canvas.before:
         Color:
             rgba: (0.2, 0.2, 0.6, 0.6) if self.active else (0, 0, 0, 0)
@@ -75,6 +78,6 @@
         SelectableRecycleBoxLayout:
             orientation: 'vertical'
             default_size_hint: 1, None
-            default_size: None, dp(20)
+            default_size: None, None
             size_hint_y: None
             height: self.minimum_height

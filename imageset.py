@@ -234,10 +234,9 @@ class ImageSet:
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
                 img_array = core.adjust_tone(img_array, white_level=-100)
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
-                Ev = -Ev # 補正は逆方向
 
             param['rgb_or_raw'] = 'raw'
-            param['auto_exposure'] = Ev
+            param['auto_exposure'] = -Ev # 補正は逆方向
             
             # サイズを合わせる
             #if img_array.shape[1] != width or img_array.shape[0] != height:

@@ -274,7 +274,8 @@ if __name__ == '__main__':
             # Update Preview Widget Size
             self.ids["preview"].texture = None 
             self.ids["preview"].texture = self.texture
-            self.ids["preview"].size = self.texture.size
+
+            self.resize()
 
             #Singnalを送る
             import signals
@@ -307,11 +308,7 @@ if __name__ == '__main__':
                 img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                 img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
                 np.clip(img_draw, 0, 1, out=img_draw)
-                
-                # Update Property for KV Stencil
-                h, w = img_draw.shape[:2]
-                self.preview_size = [w, h]
-                
+                                
                 #描画をスケジューリング
                 self.blit_image(img_draw)
                 """
@@ -398,7 +395,7 @@ if __name__ == '__main__':
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
-            self.apply_rotation_flip_for_wrapper()
+            #self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
 
         def set_effect_param(self, lv, effect, arg):
@@ -408,7 +405,7 @@ if __name__ == '__main__':
             current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
-            self.apply_rotation_flip_for_wrapper()
+            #self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
 
         def apply_rotation_flip_for_wrapper(self):
@@ -916,6 +913,14 @@ if __name__ == '__main__':
                 t = self.apply_thread
                 self.apply_thread = None
                 t.join()
+
+        def resize(self):
+            # Update Property for KV Stencil
+            if self.imgset is not None and self.imgset.img is not None:
+                h, w = self.imgset.img.shape[:2]
+                self.preview_size = [kvutils.dpi_scale_width(w), kvutils.dpi_scale_height(h)]
+                self.ids["transform_wrapper"].scale = kvutils.dpi_scale()
+                self.ids["transform_wrapper"].center = self.ids['preview_widget'].center
                 
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
@@ -980,10 +985,11 @@ if __name__ == '__main__':
 
         def on_window_resize(self, window, width, height):
             kvutils.traverse_widget(self.root)
+            self.main_widget.resize()
 
         def on_widget_pos(self, root, pos):
             kvutils.traverse_widget(root)
-
+            self.main_widget.resize()
 
 if __name__ == '__main__':
     # 処理中ダイアログ作成

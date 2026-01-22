@@ -1,4 +1,6 @@
 
+#:import kvutils utils.kvutils
+
 <HistoryCustomHeader>:
     size_hint_y: None
     ref_height: 10  # ここで縦幅を調整
@@ -17,6 +19,10 @@
         Rectangle:
             pos: self.pos
             size: self.size
+
+    size_hint_y: None
+    ref_height: 20
+    height: kvutils.dpi_scale_height(self.ref_height)
 
 <SelectableRecycleBoxLayout>:
 
@@ -40,6 +46,6 @@
         SelectableRecycleBoxLayout:
             orientation: 'vertical'
             default_size_hint: 1, None
-            default_size: None, dp(20)
+            default_size: None, None
             size_hint_y: None
             height: self.minimum_height

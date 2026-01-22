@@ -1,7 +1,7 @@
 {
     "import_path": "/Users/uniuyuni/PythonProjects/platypus/test_photos",
     "lut_path": "/Users/uniuyuni/Pictures/LUTs",
-    "preview_size": 1152,
+    "preview_size": 576,
     "raw_auto_exposure": true,
     "scale_threshold": 0.5,
     "inpaint_resize_limit": 1024,

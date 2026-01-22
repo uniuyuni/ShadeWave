@@ -755,7 +755,7 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
     if not is_zoomed:
         # リサイズ
         dx, dy, dw, dh, _ = disp_info
-        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
+        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
 
         # リサイズした画像を中央に配置
         result = np.pad(resized_img, ((offset_y, texture_height-(offset_y+new_height)), (offset_x, texture_width-(offset_x+new_width)), (0, 0)), mode="constant")

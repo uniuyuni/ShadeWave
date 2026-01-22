@@ -118,10 +118,10 @@
 
                 HistogramWidget:
                     id: histogram
-                    size_hint: None, None
-                    ref_width: 256+128
-                    ref_height: 128-32
-                    ref_margin: 4
+                    size_hint: 1, None
+                    #ref_width: 256+128
+                    ref_height: 128-16
+                    ref_padding: 4
                     canvas:
                         Color:
                             rgba: dark_color
@@ -222,21 +222,21 @@
                         Color:
                             rgba: 0, 0, 0, 1
                         Rectangle:
-                            pos: self.x + (self.width-root.preview_size[0])/2, self.y + (self.height-root.preview_size[1])/2
-                            size: root.preview_size[0], root.preview_size[1]
+                            pos: self.pos
+                            size: self.size
                         
                         # Stencil Clip to Valid Content (Hide Reflect Padding)
                         StencilPush:
                         Rectangle:
-                            pos: self.x + (self.width-root.preview_size[0])/2, self.y + (self.height-root.preview_size[1])/2
-                            size: root.preview_size[0], root.preview_size[1]
+                            pos: self.pos
+                            size: self.size
                         StencilUse:
                         
                     canvas.after:
                         StencilUnUse:
                         Rectangle:
-                            pos: self.x + (self.width-root.preview_size[0])/2, self.y + (self.height-root.preview_size[1])/2
-                            size: root.preview_size[0], root.preview_size[1]
+                            pos: self.pos
+                            size: self.size
                         StencilPop:
 
                     Scatter:
@@ -246,20 +246,21 @@
                         do_scale: False
                         do_translation: False
                         size_hint: None, None
+                        size: preview.size
                         center: self.parent.center
 
                         Image:
                             id: preview
                             size_hint: None, None
                             pos: 0, 0
-                                                        
+                            size: self.texture_size
+
                             canvas:
                                 Color:
                                     rgba: dark_color if not self.texture else clear_color
                                 Rectangle:
                                     pos: self.pos
                                     size: self.size
-
 
                     MaskEditor2:
                         id: mask_editor2

@@ -3,7 +3,9 @@ import numpy as np
 import cv2
 from kivy.app import App as KVApp
 from kivy.uix.image import Image as KVImage
-from kivy.graphics import Color as KVColor, Rectangle as KVRectangle, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix
+from kivy.graphics import Color as KVColor, Rectangle as KVRectangle, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Scale as KVScale, Translate as KVTranslate
+
+import utils.kvutils as kvutils
 
 class HistogramWidget(KVImage):
     
@@ -17,8 +19,17 @@ class HistogramWidget(KVImage):
     def set_histogram_data(self, pixels, blue_count=0, black_count=0):
         if pixels is None:
             self.canvas.clear()
+            self.last_hist_data = None
             return
         self.draw_histogram(pixels, blue_count, black_count)
+
+    def on_size(self, *args):
+        if hasattr(self, 'last_hist_data') and self.last_hist_data:
+            self.draw_histogram_from_data(self.last_hist_data)
+
+    def on_pos(self, *args):
+        if hasattr(self, 'last_hist_data') and self.last_hist_data:
+            self.draw_histogram_from_data(self.last_hist_data)
 
     @staticmethod
     def calculate_histogram_data(pixels, blue_count, black_count):
@@ -56,35 +67,51 @@ class HistogramWidget(KVImage):
         return (r_hist, g_hist, b_hist, l_hist, max_value)
 
     def draw_histogram_from_data(self, hist_data):
-        r_hist, g_hist, b_hist, l_hist, max_value = hist_data
+        self.last_hist_data = hist_data
 
+        r_hist, g_hist, b_hist, l_hist, max_value = hist_data
+        
         # ヒストグラムを描画
         self.canvas.clear()
+        
+        # Original fixed dimensions
+        fixed_w = 256 + 64 + 32 + 128 + 32  # 512
+        fixed_h = 128 + 64                  # 192
+        
+        # Calculate scaling factors
+        scale_x = kvutils.dpi_scale() * 0.5 * (self.width / kvutils.dpi_scale_width(256))
+        scale_y = kvutils.dpi_scale() * 0.5
+
         with self.canvas:
+            KVPushMatrix()
+            KVTranslate(self.x, self.y)
+            KVScale(scale_x, scale_y, 1)
+            
             KVColor((0.8, 0.8, 0.8, 1))
-            KVLine(rectangle=(self.pos[0], self.pos[1], 256+64+32, 128+64), width=1)
-            KVLine(rectangle=(self.pos[0]+256+64+32, self.pos[1], 128+32, 128+64), width=1)
-        self.__draw_histogram_bars(r_hist, max_value, (1, 0, 0, 0.8))
-        self.__draw_histogram_bars(g_hist, max_value, (0, 1, 0, 0.8))
-        self.__draw_histogram_bars(b_hist, max_value, (0, 0, 1, 0.8))
-        self.__draw_histogram_bars(l_hist, max_value, (0.8, 0.8, 0.8, 1))  # 輝度ヒストグラムをグレーで表示
+            KVLine(rectangle=(0, 0, 256+64+32, 128+64), width=1)
+            KVLine(rectangle=(0+256+64+32, 0, 128+32, 128+64), width=1)
+        
+            self.__draw_histogram_bars(r_hist, max_value, (1, 0, 0, 0.6))
+            self.__draw_histogram_bars(g_hist, max_value, (0, 1, 0, 0.6))
+            self.__draw_histogram_bars(b_hist, max_value, (0, 0, 1, 0.6))
+            self.__draw_histogram_bars(l_hist, max_value, (0.8, 0.8, 0.8, 1))#, offset_x_ref=256+64+32)  # Ref offset for luminance
+            KVPopMatrix()
 
     def draw_histogram(self, pixels, blue_count, black_count):
         hist_data = self.calculate_histogram_data(pixels, blue_count, black_count)
         self.draw_histogram_from_data(hist_data)
 
-    def __draw_histogram_bars(self, histogram, max_value, color, offset_x=0, offset_y=0):
+    def __draw_histogram_bars(self, histogram, max_value, color, offset_x_ref=0, offset_y_ref=0):
         bar_width = 1
-        offset_x += self.pos[0]
-        offset_y += self.pos[1]
+        # Drawing in local coordinates (0,0 based), so just use refs
+        offset_x = offset_x_ref
+        offset_y = offset_y_ref
         
         with self.canvas:
-            KVPushMatrix()
             KVColor(*color)
             for x, value in enumerate(histogram):
                 height = min(127+64, (value / max_value) * (127+64))  # ヒストグラムの高さを設定
                 KVRectangle(pos=(x * bar_width + offset_x, offset_y), size=(bar_width, height))
-            KVPopMatrix()
 
 class HistogramApp(KVApp):
     def build(self):
