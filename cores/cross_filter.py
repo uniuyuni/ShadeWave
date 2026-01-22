@@ -3,9 +3,12 @@ import numpy as np
 import random
 
 # ==========================================
-#  1. カーネル生成 (変更なし)
+#  1. カーネル生成関数
 # ==========================================
 def create_diffraction_kernel(length, decay_rate=8.0, symmetric=True):
+    """
+    光条の減衰パターン（1次元カーネル）を生成します。
+    """
     radius = length // 2
     if radius < 1: return np.ones((1, 1), dtype=np.float32)
     x = np.linspace(0, radius, radius)
@@ -20,90 +23,162 @@ def create_diffraction_kernel(length, decay_rate=8.0, symmetric=True):
 
 
 # ==========================================
-#  2. メインフィルター (輝度判定 + ピーク検出)
+#  2. メインフィルター関数 (ピーク検出・完全版)
 # ==========================================
 def apply_cross_filter(img_rgb, num_points=6, length=100, angle_deg=0, 
                        threshold=1.0, intensity=1.0, spectral_strength=0.2, 
-                       line_thickness=1.0, max_blob_size=0, min_blob_area=0,
-                       randomness=0.0, speed_factor=4):
+                       line_thickness=1.0, min_distance=10,
+                       randomness=0.0, speed_factor=4,
+                       debug_mode=False):
     """
-    輝度(Luminance)に基づいて光源を検出し、
-    各光源エリア内の「最大輝度点(ピーク)」から光条を発生させます。
+    物理ベースのクロスフィルター（光条）効果を画像に適用します。
+    
+    【アルゴリズムの特徴】
+    従来の「塊(Blob)検出」を廃止し、「局所ピーク(Local Maxima)検出」を採用しました。
+    これにより、閾値を下げて検出範囲が広がっても、中心の1点だけが検出されるため、
+    「サイズオーバーで消える」という矛盾が起きず、ドーナツボケも自然に無視されます。
+
+    Args:
+        img_rgb (np.ndarray):
+            入力画像データ (Height, Width, 3)。
+            float32型 (HDRデータ対応) を推奨。
+
+        num_points (int, optional):
+            光条の本数。
+            - 偶数 (4, 6, 8...): 対称型（十字など）。
+            - 奇数 (1, 3, 5...): 非対称型（星型）。
+
+        length (int, optional):
+            光条の長さ（ピクセル単位）。
+            speed_factorにより高速化されるため、長い値でも高速に動作します。
+
+        angle_deg (float, optional):
+            フィルターの回転角度（度数法）。
+
+        threshold (float, optional):
+            ★最重要パラメータ
+            光源として認識する「ピークの最低輝度」。
+            この値より明るい「頂点」だけが光ります。
+            - HDR画像: 1.0 〜 5.0 推奨。
+            - SDR画像: 0.9 〜 0.95 推奨。
+            値を下げると暗い点も光り、上げると明るい点だけ光ります（直感的）。
+
+        intensity (float, optional):
+            光条の合成強度。
+            デフォルト 1.0。強く光らせたい場合は 2.0 〜 5.0 に設定。
+
+        spectral_strength (float, optional):
+            分光（色収差）の強さ (0.0 〜 1.0)。
+            値を上げると光条の端が虹色に分離します。
+
+        line_thickness (float, optional):
+            光条の太さ（鋭さ）。
+            - 1.0: ブラーなし（最鋭）。
+            - 1.1以上: 値を上げるほどソフトな光になります。
+
+        min_distance (int, optional):
+            ★重要パラメータ
+            検出するピーク同士の最小距離（ピクセル）。
+            近くに複数の明るい点がある場合、最も明るい1つだけを残して間引きます。
+            - 値が小さい(1〜3): ノイズや細かいテクスチャもすべて光ります。
+            - 値が大きい(10〜20): まとまった光源の中心だけが光ります。
+
+        randomness (float, optional):
+            各光条の明るさのランダムなばらつき (0.0 〜 1.0)。
+
+        speed_factor (int, optional):
+            高速化係数。
+            - 1: 最高画質（低速）。
+            - 4: 推奨。画像を1/4サイズで計算します。
+              光条のようなボケ要素は縮小しても劣化が目立たず、計算が劇的に速くなります。
+
+        debug_mode (bool, optional):
+            Trueにすると、光条を描画する代わりに「検出されたピーク位置」に
+            赤い点を打った画像を返します。パラメータ調整時に便利です。
+
+    Returns:
+        np.ndarray: 効果適用後の画像 (float32)。
     """
     h, w = img_rgb.shape[:2]
     
-    # --- A. 輝度マップの計算 (RGB -> Luminance) ---
-    # ITU-R BT.601 係数を使用 (R:0.299, G:0.587, B:0.114)
-    # これにより「人間の目に明るく見える場所」を正しく判定できます。
-    # img_rgb[:,:,0]がRと仮定しています。OpenCVで読み込んだ直後ならRGB変換済みを確認してください。
-    
-    # 高速化のためアインシュタインの縮約記法または単純な掛け算を使用
-    # (H, W, 3) * (3,) -> (H, W)
+    # ---------------------------------------------------------
+    # A. 輝度マップ計算 (RGB -> Luminance)
+    # ---------------------------------------------------------
+    # 人間の目の感度に合わせて重み付け (R:0.299, G:0.587, B:0.114)
     luminance_weights = np.array([0.299, 0.587, 0.114], dtype=np.float32)
     luminance_map = np.dot(img_rgb, luminance_weights)
     
-    # --- B. 光源検出 ---
-    # 輝度に基づいて閾値処理
-    binary_mask = (luminance_map > threshold).astype(np.uint8) * 255
+    # ---------------------------------------------------------
+    # B. ピーク検出 (Local Maxima Detection)
+    # ---------------------------------------------------------
+    # 「自分の周囲(min_distance)の中で、自分が一番明るいか？」を判定します。
+    # これにより、ブロブを作らずにピンポイントで光源を特定できます。
     
-    # 連結成分解析
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
-
-    # --- C. インパルス生成 ---
+    # 探索範囲のカーネルサイズ (奇数)
+    ksize = int(min_distance * 2) + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (ksize, ksize))
+    
+    # 1. ダイレーション（膨張処理）: 各画素に「近傍エリア内の最大値」を代入
+    dilated_map = cv2.dilate(luminance_map, kernel)
+    
+    # 2. ピーク判定: 「元の値」が「近傍最大値」と一致すれば、そこが山頂
+    local_max_mask = (luminance_map == dilated_map)
+    
+    # 3. 閾値判定: 山頂であっても、thresholdより暗ければ無視
+    threshold_mask = (luminance_map > threshold)
+    
+    # 最終的なピーク位置 (AND演算)
+    peak_mask = local_max_mask & threshold_mask
+    
+    # 座標リスト取得
+    peak_ys, peak_xs = np.where(peak_mask)
+    
+    # ---------------------------------------------------------
+    # C. インパルス生成
+    # ---------------------------------------------------------
     sh, sw = h // speed_factor, w // speed_factor
     if sh < 1 or sw < 1: sh, sw = h, w
+    
+    debug_img = img_rgb.copy() if debug_mode else None
     impulse_mini = np.zeros((sh, sw, 3), dtype=np.float32)
     
-    for i in range(1, num_labels):
-        x, y, bw, bh = stats[i, :4]
-        area = stats[i, cv2.CC_STAT_AREA]
-
-        # フィルタリング
-        if max_blob_size > 0 and max(bw, bh) > max_blob_size: continue
-        if area < min_blob_area: continue
-
-        # --- ピーク検出 (輝度マップを使用) ---
-        # 1. このブロブ(ラベルi)の範囲の輝度を取得
-        roi_lum = luminance_map[y:y+bh, x:x+bw]
-        roi_labels = labels[y:y+bh, x:x+bw]
+    for i in range(len(peak_ys)):
+        py, px = peak_ys[i], peak_xs[i]
         
-        # 2. マスク作成
-        mask_roi = (roi_labels == i).astype(np.uint8)
+        # 色取得 (ピーク位置の色)
+        color = img_rgb[py, px]
         
-        # 3. マスク内で最も「輝度が高い」場所を探す
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(roi_lum, mask=mask_roi)
-        
-        # もし最大輝度が閾値以下なら無視 (念のため)
-        if max_val <= threshold:
-            continue
-            
-        # 4. 座標変換 (ROI座標 -> 全体座標)
-        peak_x = x + max_loc[0]
-        peak_y = y + max_loc[1]
-        
-        # ---------------------------
-
-        # 色取得 (ピーク位置の元のRGB色を使う)
-        color = img_rgb[peak_y, peak_x]
-
+        # ランダム性
         if randomness > 0:
             gain = random.uniform(1.0 - randomness, 1.0 + randomness)
             color = color * gain
 
-        # 縮小座標へ変換
-        sx, sy = int(peak_x / speed_factor), int(peak_y / speed_factor)
-        if 0 <= sx < sw and 0 <= sy < sh:
-            boost = speed_factor * 1.5
-            impulse_mini[sy, sx] = color * boost
+        # デバッグ表示
+        if debug_mode:
+            # 赤い点を打つ
+            cv2.circle(debug_img, (px, py), 4, (0, 0, 10.0), -1)
+        else:
+            # 縮小座標へ変換してプロット
+            sx, sy = int(px / speed_factor), int(py / speed_factor)
+            if 0 <= sx < sw and 0 <= sy < sh:
+                # 縮小分のエネルギー減衰を補正
+                boost = speed_factor * 1.5
+                impulse_mini[sy, sx] = color * boost
 
-    # --- D. アンチエイリアス ---
+    if debug_mode: return debug_img
+
+    # ---------------------------------------------------------
+    # D. アンチエイリアス / 太さ制御
+    # ---------------------------------------------------------
     if line_thickness > 1.0:
         sigma = (line_thickness - 1.0) * 0.5
         ksize_blur = int(sigma * 6) | 1
         if ksize_blur >= 3:
             impulse_mini = cv2.GaussianBlur(impulse_mini, (ksize_blur, ksize_blur), sigma)
 
-    # --- E. 光条生成 ---
+    # ---------------------------------------------------------
+    # E. 光条生成 (回折シミュレーション)
+    # ---------------------------------------------------------
     mini_length = int(length / speed_factor)
     if mini_length < 1: mini_length = 1
     
@@ -146,6 +221,9 @@ def apply_cross_filter(img_rgb, num_points=6, length=100, angle_deg=0,
         unrotated = cv2.warpAffine(merged, M_inv, (pw, ph), flags=cv2.INTER_LINEAR)
         accumulated_streaks += unrotated
 
+    # ---------------------------------------------------------
+    # F. 合成
+    # ---------------------------------------------------------
     streaks_mini = accumulated_streaks[pad_len:pad_len+sh, pad_len:pad_len+sw]
     streaks_full = cv2.resize(streaks_mini, (w, h), interpolation=cv2.INTER_LINEAR)
     
@@ -153,41 +231,43 @@ def apply_cross_filter(img_rgb, num_points=6, length=100, angle_deg=0,
 
 
 # ==========================================
-#  テスト: 輝度 vs 最大値RGB の違い確認
+#  テスト: 安定性の確認
 # ==========================================
 if __name__ == "__main__":
     
-    def generate_luminance_test(h, w):
+    def generate_peak_test(h, w):
         img = np.zeros((h, w, 3), dtype=np.float32)
-        
-        # 1. 「青い」高輝度点 (RGB最大値=5.0 だが、輝度は低い)
-        # 輝度 = 0.114 * 5.0 = 0.57
-        # -> threshold=1.0 なら消えるべき
-        cv2.circle(img, (200, 200), 10, (0.0, 0.0, 5.0), -1)
-        
-        # 2. 「白い」高輝度点 (RGB最大値=5.0 で、輝度も高い)
-        # 輝度 = 5.0
-        # -> threshold=1.0 なら残るべき
-        cv2.circle(img, (400, 200), 10, (5.0, 5.0, 5.0), -1)
+        # 1. 巨大なハローを持つ強力な光源
+        # 中心(200,200)は輝度5.0、周辺(R=50)まで輝度1.2が広がる
+        # 以前のコードでは閾値を1.0にするとブロブが巨大化して消えていましたが、今回は光ります。
+        cv2.circle(img, (200, 200), 50, (1.2, 1.2, 1.2), -1) 
+        cv2.circle(img, (200, 200), 5,  (5.0, 5.0, 5.0), -1) 
+
+        # 2. ドーナツボケ
+        # 中心(400,200)は暗い(0.0) -> ピークではないので検出されません。
+        cv2.circle(img, (400, 200), 40, (5.0, 5.0, 5.0), -1)
+        cv2.circle(img, (400, 200), 20, (0.0, 0.0, 0.0), -1)
         
         return img
 
     H, W = 600, 400
-    input_img = generate_luminance_test(H, W)
+    input_img = generate_peak_test(H, W)
 
-    print("Checking Luminance Thresholding...")
+    print("Testing Peak Detection Method...")
     
-    # 閾値を 1.0 に設定
-    # 以前のロジック(RGB Max)なら、両方とも最大値5.0なので両方光るはず。
-    # 今回のロジック(Luminance)なら、青(輝度0.57)は消え、白(輝度5.0)だけ光るはず。
-    res = apply_cross_filter(input_img, threshold=1.0, length=100, speed_factor=4)
+    # 閾値を 1.0 に下げても、ピーク検出なら範囲が広がらないため安定して光ります。
+    res_low = apply_cross_filter(input_img, threshold=1.0, length=100)
+    
+    # 閾値を 2.0 に上げても、同様に光ります。
+    res_high = apply_cross_filter(input_img, threshold=2.0, length=100)
 
     # 表示
-    disp = (np.clip(res, 0, 1) * 255).astype(np.uint8)[:, :, ::-1].copy()
+    disp_low  = (np.clip(res_low,  0, 1) * 255).astype(np.uint8)[:, :, ::-1].copy()
+    disp_high = (np.clip(res_high, 0, 1) * 255).astype(np.uint8)[:, :, ::-1].copy()
     
-    cv2.putText(disp, "Blue(5.0)", (150, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
-    cv2.putText(disp, "White(5.0)", (350, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
-    
-    cv2.imshow("Luminance Test", disp)
+    cv2.putText(disp_low,  "Th=1.0 (Stable)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+    cv2.putText(disp_high, "Th=2.0 (Stable)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+
+    cv2.imshow("Peak Method Final", np.hstack((disp_low, disp_high)))
     cv2.waitKey(0)
     cv2.destroyAllWindows()

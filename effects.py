@@ -444,7 +444,7 @@ class CrossFilterEffect(Effect):
             'cross_filter_intensity': 15,
             'cross_filter_spectral': 25,
             'cross_filter_thickness': 1,
-            'cross_filter_brobsize': 20,
+            'cross_filter_distance': 100,
             'cross_filter_random': 50
         }
 
@@ -456,7 +456,7 @@ class CrossFilterEffect(Effect):
         widget.ids["slider_cross_filter_intensity"].set_slider_value(self._get_param(param, 'cross_filter_intensity'))
         widget.ids["slider_cross_filter_spectral"].set_slider_value(self._get_param(param, 'cross_filter_spectral'))
         widget.ids["slider_cross_filter_thickness"].set_slider_value(self._get_param(param, 'cross_filter_thickness'))
-        widget.ids["slider_cross_filter_brobsize"].set_slider_value(self._get_param(param, 'cross_filter_brobsize'))
+        widget.ids["slider_cross_filter_distance"].set_slider_value(self._get_param(param, 'cross_filter_distance'))
         widget.ids["slider_cross_filter_random"].set_slider_value(self._get_param(param, 'cross_filter_random'))
 
     def set2param(self, param, widget):
@@ -467,7 +467,7 @@ class CrossFilterEffect(Effect):
         param['cross_filter_intensity'] = widget.ids["slider_cross_filter_intensity"].value
         param['cross_filter_spectral'] = widget.ids["slider_cross_filter_spectral"].value
         param['cross_filter_thickness'] = widget.ids["slider_cross_filter_thickness"].value
-        param['cross_filter_brobsize'] = widget.ids["slider_cross_filter_brobsize"].value
+        param['cross_filter_distance'] = widget.ids["slider_cross_filter_distance"].value
         param['cross_filter_random'] = widget.ids["slider_cross_filter_random"].value
 
     def make_diff(self, rgb, param, efconfig):
@@ -478,16 +478,16 @@ class CrossFilterEffect(Effect):
         intensity = self._get_param(param, 'cross_filter_intensity') #/ max(0.01, efconfig.disp_info[4])
         spectral = self._get_param(param, 'cross_filter_spectral')
         thickness = max(1.0, self._get_param(param, 'cross_filter_thickness')) #* efconfig.disp_info[4])
-        brobsize = self._get_param(param, 'cross_filter_brobsize') #* efconfig.disp_info[4]
+        distance = self._get_param(param, 'cross_filter_distance') #* efconfig.disp_info[4]
         random = self._get_param(param, 'cross_filter_random')
-        if num_points == 0 or length <= 1 or intensity == 0:
+        if num_points == 0 or length <= 1 or intensity == 0 or efconfig.loading_flag > -1:
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
 
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((num_points, length, angle, threshold, intensity, spectral, thickness, brobsize, random))
+            param_hash = hash((num_points, length, angle, threshold, intensity, spectral, thickness, distance, random))
 
            # Async Processing Logic
             handled, result = self.try_async_execution(rgb, param, efconfig, param_hash)
@@ -496,7 +496,6 @@ class CrossFilterEffect(Effect):
 
             needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
             if needed:
-                brobsize = int(max(1, brobsize))
                 self.diff = cross_filter.apply_cross_filter(
                                 rgb,
                                 num_points=int(num_points),
@@ -506,8 +505,7 @@ class CrossFilterEffect(Effect):
                                 intensity=intensity/100.0,
                                 spectral_strength=spectral/100.0,
                                 line_thickness=thickness,
-                                max_blob_size=brobsize,
-                                min_blob_area=4,
+                                min_distance=distance,
                                 randomness=random/100.0,
                                 speed_factor=4)
                 self.hash = combined_hash

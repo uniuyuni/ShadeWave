@@ -1790,11 +1790,11 @@
                                 on_before_edit: root.begin_history_effect_ctrl(0, 'cross_filter')
                                 on_after_edit: root.end_history_effect_ctrl(0, 'cross_filter')
                             ParamSlider:
-                                id: slider_cross_filter_brobsize
-                                text: "Brob Size"
+                                id: slider_cross_filter_distance
+                                text: "Distance"
                                 min: 0
-                                max: 100
-                                value: 20
+                                max: 1000
+                                value: 100
                                 step: 1
                                 on_slider: root.apply_effects_lv(0, 'cross_filter')
                                 on_before_edit: root.begin_history_effect_ctrl(0, 'cross_filter')
