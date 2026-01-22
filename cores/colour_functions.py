@@ -280,6 +280,15 @@ def _init_colourspaces():
         whitepoint=ILLUMINANTS['D65'],
         whitepoint_name='D65'
     )
+    # Override with exact matrix from colour library for maximum precision
+    RGB_COLOURSPACES['sRGB'].RGB_to_XYZ_matrix = np.array([
+        [0.4124, 0.3576, 0.1805],
+        [0.2126, 0.7152, 0.0722],
+        [0.0193, 0.1192, 0.9505]
+    ])
+    RGB_COLOURSPACES['sRGB'].XYZ_to_RGB_matrix = np.linalg.inv(
+        RGB_COLOURSPACES['sRGB'].RGB_to_XYZ_matrix
+    )
     RGB_COLOURSPACES['Rec.709'] = RGB_COLOURSPACES['sRGB']
     
     # Adobe RGB (1998)
@@ -297,6 +306,15 @@ def _init_colourspaces():
         primaries=np.array([0.7347, 0.2653, 0.1596, 0.8404, 0.0366, 0.0001]),
         whitepoint=ILLUMINANTS['D50'],
         whitepoint_name='D50'
+    )
+    # Override with exact matrix from colour library for maximum precision
+    RGB_COLOURSPACES['ProPhoto RGB'].RGB_to_XYZ_matrix = np.array([
+        [0.7977, 0.1352, 0.0313],
+        [0.2880, 0.7119, 0.0001],
+        [0.0000, 0.0000, 0.8249]
+    ])
+    RGB_COLOURSPACES['ProPhoto RGB'].XYZ_to_RGB_matrix = np.linalg.inv(
+        RGB_COLOURSPACES['ProPhoto RGB'].RGB_to_XYZ_matrix
     )
     RGB_COLOURSPACES['ROMM RGB'] = RGB_COLOURSPACES['ProPhoto RGB']
     
@@ -805,9 +823,13 @@ def sRGB_to_linear(sRGB: ArrayLike) -> np.ndarray:
     """
     Convert gamma-corrected sRGB to linear sRGB.
     
+    Matches colour library behavior:
+    - Positive values: Standard sRGB inverse transfer function
+    - Negative values: Linear scaling (x / 12.92) only
+    
     Parameters:
         sRGB: array_like
-            Gamma-corrected sRGB values [0-1]
+            Gamma-corrected sRGB values
     
     Returns:
         linear: ndarray
@@ -815,18 +837,32 @@ def sRGB_to_linear(sRGB: ArrayLike) -> np.ndarray:
     """
     sRGB = np.asarray(sRGB, dtype=np.float64)
     
-    return np.where(
-        sRGB <= 0.04045,
-        sRGB / 12.92,
-        np.power((sRGB + 0.055) / 1.055, 2.4)
+    # Split positive and negative values
+    result = np.zeros_like(sRGB)
+    
+    # Positive values: standard sRGB inverse transfer function
+    pos_mask = sRGB >= 0
+    pos_vals = sRGB[pos_mask]
+    result[pos_mask] = np.where(
+        pos_vals <= 0.04045,
+        pos_vals / 12.92,
+        np.power((pos_vals + 0.055) / 1.055, 2.4)
     )
+    
+    # Negative values: linear scaling only (colour library behavior)
+    neg_mask = sRGB < 0
+    result[neg_mask] = sRGB[neg_mask] / 12.92
+    
+    return result
 
 
 def linear_to_sRGB(linear: ArrayLike) -> np.ndarray:
     """
     Convert linear sRGB to gamma-corrected sRGB.
     
-    Handles negative values (out-of-gamut) by preserving sign.
+    Matches colour library behavior:
+    - Positive values: Standard sRGB transfer function
+    - Negative values: Linear scaling (12.92 * x) only
     
     Parameters:
         linear: array_like
@@ -834,23 +870,27 @@ def linear_to_sRGB(linear: ArrayLike) -> np.ndarray:
     
     Returns:
         sRGB: ndarray
-            Gamma-corrected sRGB values [0-1]
+            Gamma-corrected sRGB values
     """
     linear = np.asarray(linear, dtype=np.float64)
     
-    # Preserve sign for negative values (out-of-gamut)
-    sign = np.sign(linear)
-    abs_linear = np.abs(linear)
+    # Split positive and negative values
+    result = np.zeros_like(linear)
     
-    # Apply sRGB transfer function to absolute values
-    result = np.where(
-        abs_linear <= 0.0031308,
-        12.92 * abs_linear,
-        1.055 * np.power(abs_linear, 1.0/2.4) - 0.055
+    # Positive values: standard sRGB transfer function
+    pos_mask = linear >= 0
+    pos_vals = linear[pos_mask]
+    result[pos_mask] = np.where(
+        pos_vals <= 0.0031308,
+        12.92 * pos_vals,
+        1.055 * np.power(pos_vals, 1.0/2.4) - 0.055
     )
     
-    # Restore sign
-    return result * sign
+    # Negative values: linear scaling only (colour library behavior)
+    neg_mask = linear < 0
+    result[neg_mask] = 12.92 * linear[neg_mask]
+    
+    return result
 
 
 def apply_gamma(rgb: ArrayLike, gamma: float) -> np.ndarray:

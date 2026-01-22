@@ -115,12 +115,14 @@ class LUT3D:
         coords_frac = coords - coords_floor
         
         # Extract coordinates
-        r0, g0, b0 = coords_floor[:, 0], coords_floor[:, 1], coords_floor[:, 2]
-        r1, g1, b1 = coords_ceil[:, 0], coords_ceil[:, 1], coords_ceil[:, 2]
+        # NOTE: colour library stores .cube data with BGR indexing
+        # Input RGB [R, G, B] should map to table indices [B, G, R]
+        r0, g0, b0 = coords_floor[:, 2], coords_floor[:, 1], coords_floor[:, 0]  # Reverse!
+        r1, g1, b1 = coords_ceil[:, 2], coords_ceil[:, 1], coords_ceil[:, 0]  # Reverse!
         
-        rd, gd, bd = coords_frac[:, 0:1], coords_frac[:, 1:2], coords_frac[:, 2:3]
+        rd, gd, bd = coords_frac[:, 2:3], coords_frac[:, 1:2], coords_frac[:, 0:1]  # Reverse!
         
-        # Get 8 corner values
+        # Get 8 corner values (now correctly addressing table[b,g,r] for input [r,g,b])
         c000 = self.table[r0, g0, b0]  # shape (N, 3)
         c001 = self.table[r0, g0, b1]
         c010 = self.table[r0, g1, b0]
@@ -131,7 +133,6 @@ class LUT3D:
         c111 = self.table[r1, g1, b1]
         
         # Trilinear interpolation/extrapolation
-        # When rd>1 or rd<0, this extrapolates linearly
         c00 = c000 * (1 - rd) + c100 * rd
         c01 = c001 * (1 - rd) + c101 * rd
         c10 = c010 * (1 - rd) + c110 * rd
@@ -316,6 +317,9 @@ def read_LUT_IridasCube(path: str) -> Union[LUT3D, LUT3x1D]:
             raise ValueError(f"Expected {expected_size} entries for {lut_3d_size}³ LUT, got {data.shape[0]}")
         
         # Reshape to 3D
+        # NOTE: .cube files store data in Blue-fastest order (R outer, G middle, B inner)
+        # but colour library indexes as [B, G, R] for compatibility
+        # So we reshape as [R, G, B] but will access as [B, G, R] in apply()
         table = data.reshape(lut_3d_size, lut_3d_size, lut_3d_size, 3)
         
         return LUT3D(table, name=title, domain=domain, size=lut_3d_size)
