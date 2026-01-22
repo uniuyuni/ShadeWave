@@ -19,6 +19,7 @@ from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
 from cores.distortion_correction import (
     correct_lens_distortion, correct_trapezoid, correct_four_points, correct_with_lines, warp_mesh
 )
+import cores.cross_filter as cross_filter
 import config
 import pipeline
 import params
@@ -197,6 +198,9 @@ class RemoveChromaticAberrationEffect(Effect):
     def make_diff(self, img, param, efconfig):
         rca_enabled = self._get_param(param, 'rca_enabled')
         if rca_enabled == False or efconfig.loading_flag != -1:
+            if efconfig.processor is not None:
+                efconfig.processor.cancel_effect(self.__class__.__name__)
+            
             self.diff = None
             self.hash = None
         else:
@@ -427,6 +431,88 @@ class InpaintEffect(Effect):
                             image=mask[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
 
         param['inpaint_mask_list'] = self.inpaint_mask_list
+
+
+class CrossFilterEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'cross_filter_num_points': 0,
+            'cross_filter_length': 2000,
+            'cross_filter_angle': 0,
+            'cross_filter_threshold': 70,
+            'cross_filter_intensity': 15,
+            'cross_filter_spectral': 25,
+            'cross_filter_thickness': 1,
+            'cross_filter_brobsize': 20,
+            'cross_filter_random': 50
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["slider_cross_filter_num_points"].set_slider_value(self._get_param(param, 'cross_filter_num_points'))
+        widget.ids["slider_cross_filter_length"].set_slider_value(self._get_param(param, 'cross_filter_length'))
+        widget.ids["slider_cross_filter_angle"].set_slider_value(self._get_param(param, 'cross_filter_angle'))
+        widget.ids["slider_cross_filter_threshold"].set_slider_value(self._get_param(param, 'cross_filter_threshold'))
+        widget.ids["slider_cross_filter_intensity"].set_slider_value(self._get_param(param, 'cross_filter_intensity'))
+        widget.ids["slider_cross_filter_spectral"].set_slider_value(self._get_param(param, 'cross_filter_spectral'))
+        widget.ids["slider_cross_filter_thickness"].set_slider_value(self._get_param(param, 'cross_filter_thickness'))
+        widget.ids["slider_cross_filter_brobsize"].set_slider_value(self._get_param(param, 'cross_filter_brobsize'))
+        widget.ids["slider_cross_filter_random"].set_slider_value(self._get_param(param, 'cross_filter_random'))
+
+    def set2param(self, param, widget):
+        param['cross_filter_num_points'] = widget.ids["slider_cross_filter_num_points"].value
+        param['cross_filter_length'] = widget.ids["slider_cross_filter_length"].value
+        param['cross_filter_angle'] = widget.ids["slider_cross_filter_angle"].value
+        param['cross_filter_threshold'] = widget.ids["slider_cross_filter_threshold"].value
+        param['cross_filter_intensity'] = widget.ids["slider_cross_filter_intensity"].value
+        param['cross_filter_spectral'] = widget.ids["slider_cross_filter_spectral"].value
+        param['cross_filter_thickness'] = widget.ids["slider_cross_filter_thickness"].value
+        param['cross_filter_brobsize'] = widget.ids["slider_cross_filter_brobsize"].value
+        param['cross_filter_random'] = widget.ids["slider_cross_filter_random"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        num_points = self._get_param(param, 'cross_filter_num_points')
+        length = self._get_param(param, 'cross_filter_length') #* efconfig.disp_info[4]
+        angle = self._get_param(param, 'cross_filter_angle')
+        threshold = self._get_param(param, 'cross_filter_threshold')
+        intensity = self._get_param(param, 'cross_filter_intensity') #/ max(0.01, efconfig.disp_info[4])
+        spectral = self._get_param(param, 'cross_filter_spectral')
+        thickness = max(1.0, self._get_param(param, 'cross_filter_thickness')) #* efconfig.disp_info[4])
+        brobsize = self._get_param(param, 'cross_filter_brobsize') #* efconfig.disp_info[4]
+        random = self._get_param(param, 'cross_filter_random')
+        if num_points == 0 or length <= 1 or intensity == 0:
+            if efconfig.processor is not None:
+                efconfig.processor.cancel_effect(self.__class__.__name__)
+
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((num_points, length, angle, threshold, intensity, spectral, thickness, brobsize, random))
+
+           # Async Processing Logic
+            handled, result = self.try_async_execution(rgb, param, efconfig, param_hash)
+            if handled:
+                return result
+
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            if needed:
+                brobsize = int(max(1, brobsize))
+                self.diff = cross_filter.apply_cross_filter(
+                                rgb,
+                                num_points=int(num_points),
+                                length=int(length),
+                                angle_deg=angle,
+                                threshold=threshold/50.0,
+                                intensity=intensity/100.0,
+                                spectral_strength=spectral/100.0,
+                                line_thickness=thickness,
+                                max_blob_size=brobsize,
+                                min_blob_area=4,
+                                randomness=random/100.0,
+                                speed_factor=4)
+                self.hash = combined_hash
+
+        return self.diff
 
 # 変形描画
 class DistortionEffect(Effect):
@@ -1044,7 +1130,7 @@ class AINoiseReductonEffect(Effect):
         nr_intensity = self._get_param(param, 'ai_noise_reduction_intensity') 
         nr_result = self._get_param(param, 'ai_noise_reduction_result') 
         
-        if nr == False: 
+        if nr == False:
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
 
@@ -2947,6 +3033,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['lens_modifier'] = LensModifierEffect(lens_modifier_callback=lens_modifier_callback)
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
+    lv0['cross_filter'] = CrossFilterEffect()
     lv0['geometry'] = GeometryEffect(geometry_callback=geometry_callback)
     lv0['crop'] = CropEffect()
 
