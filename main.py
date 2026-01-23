@@ -71,6 +71,7 @@ if __name__ == '__main__':
     import widgets.history_content as history_content
     import widgets.mask2_content as mask2_content
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
+    import widgets.collapsible_box
 
     from kivy.config import Config
     Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
@@ -219,10 +220,13 @@ if __name__ == '__main__':
             self._set_lens_presets()
 
             self.mask2_panel = mask2_content.create_mask2_content_panel(self.ids['mask_editor2'])
-            self.ids['info'].add_widget(self.mask2_panel)
+            self.ids['masks_box'].add_widget(self.mask2_panel)
+            #self.ids['masks_box'].ids['content'].add_widget(self.mask2_panel)
 
             self.history_panel = history_content.create_history_content_panel(self._on_history_selected)
-            self.ids['info'].add_widget(self.history_panel)
+            self.ids['history_box'].add_widget(self.history_panel)
+            #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
+
     
         def empty_image(self):
             self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')

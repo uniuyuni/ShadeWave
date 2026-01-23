@@ -11,6 +11,7 @@
 #:include widgets/curve.kv
 #:include widgets/mask2_content.kv
 #:include widgets/history_content.kv
+#:include widgets/collapsible_box.kv
 
 #:set clear_color 0, 0, 0, 0
 #:set dark_color 0.08, 0.08, 0.08, 1
@@ -109,101 +110,129 @@
         BoxLayout:
             orientation: 'horizontal'
 
-            BoxLayout:
-                id: info
-                orientation: 'vertical'
+            MDScrollView:
                 size_hint: 0.3, 1
-                ref_margin: 8
-                ref_spacing: 8
-
-                HistogramWidget:
-                    id: histogram
-                    size_hint: 1, None
-                    #ref_width: 256+128
-                    ref_height: 128-16
-                    ref_padding: 4
-                    canvas:
-                        Color:
-                            rgba: dark_color
-                        Rectangle:
-                            size: self.size
-                            pos: self.pos                    
+                do_scroll_x: False
+                bar_width: dp(10)
+                scroll_type: ['bars', 'content']
 
                 BoxLayout:
-                    orientation: 'horizontal'
+                    id: info
+                    orientation: 'vertical'
                     size_hint_y: None
-                    ref_height: 16
-                    ref_margin: 0
-                    
-                    ToggleButton:
-                        id: toggle_underexposure
-                        size_hint_x: None
-                        ref_width: 50
-                        text: "Under"
-                        on_state: root.start_draw_image()
-                    ToggleButton:
-                        id: toggle_overexposure
-                        size_hint_x: None
-                        ref_width: 50
-                        text: "Over"
-                        on_state: root.start_draw_image()
+                    height: self.minimum_height
+                    ref_margin: 8
+                    ref_spacing: 8
 
-                MDScrollView:
-                    size_hint: 1, 0.8
+                    CollapsibleBox:
+                        title: "Histogram"
+                        is_expanded: True
+                        
+                        BoxLayout:
+                            orientation: "vertical"
+                            size_hint_y: None
+                            height: self.minimum_height
 
-                    BoxLayout:
-                        size_hint_y: None
-                        orientation: "vertical"
-                        height: self.minimum_height
+                            HistogramWidget:
+                                id: histogram
+                                size_hint: 1, None
+                                ref_height: 128-32
+                                ref_padding: 4
+                                canvas:
+                                    Color:
+                                        rgba: dark_color
+                                    Rectangle:
+                                        size: self.size
+                                        pos: self.pos                    
 
-                        MetaInfo:
-                            id: exif_file_name
-                            key: "File Name"
-                        MetaInfo:
-                            id: exif_file_size
-                            key: "File Size"
-                        MetaInfo:
-                            id: exif_create_date
-                            key: "Create Date"
-                        MetaInfo:
-                            id: exif_image_size
-                            key: "Image Size"
-                        MetaInfo:
-                            id: exif_iso_speed
-                            key: "ISO"
-                        MetaInfo:
-                            id: exif_aperture
-                            key: "Aperture"
-                        MetaInfo:
-                            id: exif_shutter_speed
-                            key: "Shutter Speed"
-                        MetaInfo:
-                            id: exif_exposure_compensation
-                            key: "Exposure Comp."
-                        MetaInfo:
-                            id: exif_flash
-                            key: "Flash"
-                        MetaInfo:
-                            id: exif_white_balance
-                            key: "White Balance"
-                        MetaInfo:
-                            id: exif_focal_length
-                            key: "Focal Length"
-                        MetaInfo:
-                            id: exif_exposure_program
-                            key: "Exposure Program"
-                        MetaInfo:
-                            id: exif_make
-                            key: "Make"
-                        MetaInfo:
-                            id: exif_model
-                            key: "Model"
-                        MetaInfo:
-                            id: exif_lens_model
-                            key: "Lens Model"
-                        MetaInfo:
-                            id: exif_software
-                            key: "Software"
+                            BoxLayout:
+                                orientation: 'horizontal'
+                                size_hint_y: None
+                                ref_height: 22
+                                ref_padding: 4
+                                
+                                ToggleButton:
+                                    id: toggle_underexposure
+                                    size_hint_x: None
+                                    ref_width: 50
+                                    text: "Under"
+                                    on_state: root.start_draw_image()
+                                ToggleButton:
+                                    id: toggle_overexposure
+                                    size_hint_x: None
+                                    ref_width: 50
+                                    text: "Over"
+                                    on_state: root.start_draw_image()
+
+                    CollapsibleBox:
+                        title: "Information"
+                        is_expanded: True
+                        
+                        BoxLayout:
+                            size_hint_y: None
+                            orientation: "vertical"
+                            height: self.minimum_height
+
+                            MetaInfo:
+                                id: exif_file_name
+                                key: "File Name"
+                            MetaInfo:
+                                id: exif_file_size
+                                key: "File Size"
+                            MetaInfo:
+                                id: exif_create_date
+                                key: "Create Date"
+                            MetaInfo:
+                                id: exif_image_size
+                                key: "Image Size"
+                            MetaInfo:
+                                id: exif_iso_speed
+                                key: "ISO"
+                            MetaInfo:
+                                id: exif_aperture
+                                key: "Aperture"
+                            MetaInfo:
+                                id: exif_shutter_speed
+                                key: "Shutter Speed"
+                            MetaInfo:
+                                id: exif_exposure_compensation
+                                key: "Exposure Comp."
+                            MetaInfo:
+                                id: exif_flash
+                                key: "Flash"
+                            MetaInfo:
+                                id: exif_white_balance
+                                key: "White Balance"
+                            MetaInfo:
+                                id: exif_focal_length
+                                key: "Focal Length"
+                            MetaInfo:
+                                id: exif_exposure_program
+                                key: "Exposure Program"
+                            MetaInfo:
+                                id: exif_make
+                                key: "Make"
+                            MetaInfo:
+                                id: exif_model
+                                key: "Model"
+                            MetaInfo:
+                                id: exif_lens_model
+                                key: "Lens Model"
+                            MetaInfo:
+                                id: exif_software
+                                key: "Software"
+
+                    CollapsibleBox:
+                        id: masks_box
+                        title: "Masks"
+                        is_expanded: True
+                        # Content will be added via python
+
+                    CollapsibleBox:
+                        id: history_box
+                        title: "History"
+                        is_expanded: True
+                        # Content will be added via python
                             
             BoxLayout:
                 orientation: 'vertical'

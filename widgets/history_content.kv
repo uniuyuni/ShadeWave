@@ -28,22 +28,19 @@
 
 <HistoryContentPanel>:
     orientation: "vertical"
-
-    Label:
-        text: "History"
-        text_size: self.size
-        halign: 'left'
-        ref_height: 10
+    size_hint_y: None
+    height: self.minimum_height
 
     RecycleView:
         id: history_rv
         viewclass: 'HistoryItem'
-        do_scroll_y: True
+        do_scroll_y: False
         scroll_type: ['bars', 'content']
         size_hint_y: None
-        ref_height: 150
+        height: layout.minimum_height
 
         SelectableRecycleBoxLayout:
+            id: layout
             orientation: 'vertical'
             default_size_hint: 1, None
             default_size: None, None

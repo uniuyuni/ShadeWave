@@ -56,26 +56,26 @@
 
 <Mask2ContentPanel>:
     orientation: "vertical"
-    size_hint_y: 1
+    size_hint_y: None
+    height: self.minimum_height
     disabled: True if root.disabled == True else False
 
-    Label:
-        text: "Masks"
-        text_size: self.size
-        halign: 'left'
     Button:
         text: "Add Layer"
+        size_hint_y: None
+        height: 32
         on_release: root.add_layer()
 
     RecycleView:
         id: mask2_rv
         viewclass: 'Mask2Item'
-        do_scroll_y: True
+        do_scroll_y: False # Disable internal scroll
         scroll_type: ['bars', 'content']
         size_hint_y: None
-        ref_height: 150-16
+        height: layout.minimum_height # Bind to layout height
 
         SelectableRecycleBoxLayout:
+            id: layout
             orientation: 'vertical'
             default_size_hint: 1, None
             default_size: None, None

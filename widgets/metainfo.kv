@@ -1,3 +1,5 @@
+#:import kvutils utils.kvutils
+
 <MetaKey@MDLabel>:
     halign: 'right'
     font_size: '9pt'
@@ -16,6 +18,7 @@
     orientation: 'horizontal'
     size_hint_y: None
     ref_height: 20
+    height: kvutils.dpi_scale_height(self.ref_height)
 
     MetaKey:
         id: key
