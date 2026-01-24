@@ -125,7 +125,8 @@
                     ref_spacing: 8
 
                     CollapsibleBox:
-                        title: "Histogram"
+                        title: " Histogram"
+                        icon: "assets/Histogram.png"
                         is_expanded: True
                         
                         BoxLayout:
@@ -165,7 +166,8 @@
                                     on_state: root.start_draw_image()
 
                     CollapsibleBox:
-                        title: "Information"
+                        title: " Information"
+                        icon: "assets/Metadata.png"
                         is_expanded: True
                         
                         BoxLayout:
@@ -224,13 +226,15 @@
 
                     CollapsibleBox:
                         id: masks_box
-                        title: "Masks"
+                        icon: "assets/Mask2Layer.png"
+                        title: " Masks"
                         is_expanded: True
                         # Content will be added via python
 
                     CollapsibleBox:
                         id: history_box
-                        title: "History"
+                        icon: "assets/History.png"
+                        title: " History"
                         is_expanded: True
                         # Content will be added via python
                             

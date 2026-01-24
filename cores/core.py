@@ -106,7 +106,7 @@ def invert_TempTint2RGB(temp, tint, Y, reference_temp=5000.0):
 
 #--------------------------------------------------
 
-def rotation(img, angle, flip_mode=0, inter_mode=0, border_mode="reflect"):
+def rotation(img, angle, flip_mode=0, matrix=None, inter_mode=0, border_mode="reflect"):
     # 元の画像の高さと幅を取得
     height, width = img.shape[:2]
     
@@ -145,10 +145,37 @@ def rotation(img, angle, flip_mode=0, inter_mode=0, border_mode="reflect"):
         trans[1, 1] = -m11
         trans[1, 2] = m11*(height-1) + m12
 
-    # 回転と中心補正を同時に行う
-    img_affine = cv2.warpAffine(img, trans, (size, size),
-                                flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
-                                borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
+    if matrix is not None:
+        # transを3x3行列に拡張
+        trans3x3 = np.eye(3)
+        trans3x3[:2, :] = trans
+        
+        # transを中心原点座標系に変換
+        # matrixは既にparams.add_matrixで中心原点座標系に変換済み
+        T = np.array([
+            [1, 0, size / 2],
+            [0, 1, size / 2],
+            [0, 0, 1]
+        ])
+        T_inv = np.linalg.inv(T)
+        trans_centered = T_inv @ trans3x3 @ T
+        
+        # 中心原点座標系で合成: 先にtrans（回転・フリップ）を適用し、その後にmatrix（ジオメトリ補正）を適用
+        combined = matrix @ trans_centered
+        
+        # 左上原点座標系に戻す
+        final_matrix = T @ combined @ T_inv
+        
+        # こっちはパースペクティブ
+        img_affine = cv2.warpPerspective(img, final_matrix, (size, size),
+                                    flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
+                                    borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
+
+    else:
+        # 回転と中心補正を同時に行う
+        img_affine = cv2.warpAffine(img, trans, (size, size),
+                                    flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
+                                    borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
     return img_affine
 

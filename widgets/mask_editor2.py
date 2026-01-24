@@ -2040,7 +2040,7 @@ class SegmentMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip)
+            segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             #segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
             nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
@@ -2216,7 +2216,7 @@ class DepthMapMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            depth_map_mask = core.rotation(depth_map_mask, rotate_rad, flip)
+            depth_map_mask = core.rotation(depth_map_mask, rotate_rad, flip, np.array(matrix).reshape(3, 3))
             depth_map_mask = core.crop_image_with_disp_info(depth_map_mask, disp_info)
 
             nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], disp_info)
@@ -2397,7 +2397,7 @@ class FaceMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            faces_mask = core.rotation(faces_mask, np.rad2deg(rotate_rad), flip)
+            faces_mask = core.rotation(faces_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             #faces_mask = core.crop_image_with_disp_info(faces_mask, disp_info)
 
             nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
@@ -2597,7 +2597,7 @@ class TargetTextMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip)
+            segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             #segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
             nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
@@ -2706,7 +2706,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.update()
 
     def get_hash_items(self):
-        return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'] + self.tcg_info['rotation2'], self.tcg_info['flip_mode'], (0, 0)) # self.tcg_info['matrix'])
+        return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'] + self.tcg_info['rotation2'], self.tcg_info['flip_mode'], tuple(self.tcg_info['matrix'].flatten()))
 
     def __set_image_info(self):
         for mask in reversed(self.mask_list):
