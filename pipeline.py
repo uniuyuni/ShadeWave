@@ -112,7 +112,7 @@ class AsyncPipelineManager:
         self.cache.clear()
 
 
-def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False):
+def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None):
     
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
@@ -137,7 +137,7 @@ def process_pipeline(img, offset, crop_image, is_zoomed, texture_width, texture_
     disp_info = params.get_disp_info(primary_param) # Cropによって値が更新されてるかも
 
     if crop_image is None or lv1reset == True:
-        imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, offset, is_zoomed)
+        imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos)
         mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, pre_rotation_img)
         params.set_disp_info(primary_param, disp_info2)

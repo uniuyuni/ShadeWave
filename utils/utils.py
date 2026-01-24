@@ -11,6 +11,7 @@ import pyvips
 import tempfile
 import io
 from contextlib import redirect_stdout, redirect_stderr
+import time
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -222,11 +223,17 @@ def array_to_memmap(arr):
     # np.saveやndarray.tofileはヘッダーがついたりシーク位置がずれる可能性があるため
     # np.memmapを使って直接書き込む
     
+    t0 = time.perf_counter()
+
     mm = np.memmap(tfile, dtype=dtype, mode='w+', shape=shape)
     mm[:] = arr[:]
     mm.flush()
     #mm._mmap.close() # これをしてはいけない。ファイルが閉じられる
     
+    t1 = time.perf_counter()
+    if arr.nbytes > 1024*1024: # 1MB以上のみログ出力
+        logging.info(f"PERF: array_to_memmap write time: {t1-t0:.4f}s. Size: {arr.nbytes/1024/1024:.2f}MB")
+
     # 読み込みモード（w+なので読み書き可能だが、意図としてはキャッシュ）
     # ファイルオブジェクトが開いている限り、OSが管理する一時ファイルとして存在する
     return mm, tfile

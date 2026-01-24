@@ -766,7 +766,7 @@ def crop_image_with_disp_info(image, disp_info):
 
     return result
 
-def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click_x, click_y, offset, is_zoomed):
+def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click_x, click_y, is_zoomed, center_pos=None):
 
     # 画像のサイズを取得
     image_height, image_width = image.shape[:2]
@@ -801,7 +801,12 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         crop_width = int(texture_width)
         crop_height = int(texture_height)
 
-        if offset == (0, 0):
+        if center_pos is not None:
+             # 中心座標指定
+            crop_x = center_pos[0] - crop_width // 2
+            crop_y = center_pos[1] - crop_height // 2
+
+        else:
             # 既にズーム済み（scale == 1.0）なら位置を維持
             if abs(scale - 1.0) < 0.01:
                 crop_x = disp_info[0]
@@ -810,26 +815,22 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
                 # クリック位置を中心にする
                 crop_x = disp_info[0] + click_image_x - crop_width // 2
                 crop_y = disp_info[1] + click_image_y - crop_height // 2
-        else:
-            # スクロール
-            crop_x = disp_info[0]
-            crop_y = disp_info[1]
 
         # クロップ
-        result, disp_info = crop_image_info(image, (crop_x, crop_y, crop_width, crop_height, 1.0), crop_rect, offset)
+        result, disp_info = crop_image_info(image, (crop_x, crop_y, crop_width, crop_height, 1.0), crop_rect)
     
     return result, disp_info
 
 
-def crop_image_info(image, disp_info, crop_rect, offset=(0, 0)):
+def crop_image_info(image, disp_info, crop_rect):
     
     # 情報取得
     image_height, image_width = image.shape[:2]
     disp_x, disp_y, disp_width, disp_height, scale = disp_info
 
-    # オフセット適用
-    x = int(disp_x + offset[0])
-    y = int(disp_y + offset[1])
+    # オフセット適用は削除（呼び出し側で計算済み）
+    x = int(disp_x)
+    y = int(disp_y)
 
     # 画像の範囲外にならないように調整
     x = int(max(crop_rect[0], min(x, crop_rect[2] - disp_width)))

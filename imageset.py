@@ -1,5 +1,6 @@
 
 import cv2
+import time
 import numpy as np
 import rawpy
 import logging
@@ -76,6 +77,7 @@ class ImageSet:
         self.file_path = None
         self.img = None
         self.flag = None
+        self.color_space = 'ProPhoto RGB'
 
     def _black(self, in_img, black_level):
         in_img[in_img < black_level] = black_level
@@ -103,6 +105,7 @@ class ImageSet:
 
 
     def _load_raw_preview(self, raw, file_path, exif_data, param):
+        t0 = time.perf_counter()
         try:
             # exifのプレビューを展開
             preview_base64 = exif_data.get('PreviewImage', None)
@@ -114,13 +117,23 @@ class ImageSet:
             else:
                 raise ValueError(f"Unsupported thumbnail format.")
 
+            t1 = time.perf_counter()
+            logging.info(f"PERF: Preview image decoded. {t1-t0:.4f}s Size: {img.size}")
+
+
             # float32へ
             img_array = core.convert_to_float32(img_array)
 
             # 色空間変換
-            import cores.colour_functions as colour_functions
-            img_array = colour_functions.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
-                                apply_cctf_encoding=False, apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
+            #スキップ
+            #import cores.colour_functions as colour_functions
+            #img_array = colour_functions.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
+            #                    apply_cctf_encoding=False, apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
+            import cores.color as color
+            img_array = color.rgb_gamma_decode(img_array, 'sRGB') # ガンマ補正だけは必須
+            self.color_space = 'sRGB'
+            t2 = time.perf_counter()
+            logging.info(f"PERF: Color conversion took {t2-t1:.4f}s")
             
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
@@ -130,6 +143,8 @@ class ImageSet:
 
             # RAW画像のサイズに合わせてリサイズ
             img_array = cv2.resize(img_array, (width, height))
+            t3 = time.perf_counter()
+            logging.info(f"PERF: Resize took {t3-t2:.4f}s. Target size: {width}x{height}")
 
             # 自動露出調整値を適当に設定する
             param['rgb_or_raw'] = 'rgb'
@@ -144,6 +159,8 @@ class ImageSet:
 
             # 描画用に設定
             self.img = img_array
+            
+            logging.info(f"PERF: _load_raw_preview finished. Shape: {img_array.shape}")
 
         except Exception as e:
             logging.error(f"raw error {file_path} {e}")

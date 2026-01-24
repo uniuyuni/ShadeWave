@@ -155,6 +155,8 @@ if __name__ == '__main__':
             self.crop_image = None
             self.is_zoomed = False
             self.drag_start_point = None
+            self.drag_center_start = None
+            self.drag_scale = 1.0
             self.primary_param = {}
             self.primary_effects = effects.create_effects(
                 lens_modifier_callback=self.lens_modifier_callback,
@@ -171,7 +173,9 @@ if __name__ == '__main__':
             Clock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
             
-            self.apply_draw_image_offset = None
+            self.pipeline_version = 0
+            
+            self.apply_draw_image_center = None
             self.draw_event = threading.Event()
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
             self.apply_thread.start()
@@ -244,19 +248,20 @@ if __name__ == '__main__':
             self.reset_param(self.primary_param)
             self.ids['mask_editor2'].clear_mask()
         
-        def start_draw_image_and_crop(self, imgset, offset=(0, 0)):
+        def start_draw_image_and_crop(self, imgset, center_pos=None):
             if self.imgset == imgset:
                 self.crop_image = None
-                self.start_draw_image(offset)
+                self.start_draw_image(center_pos)
 
-        def sync_draw_image_and_crop(self, imgset, offset=(0, 0)):
+        def sync_draw_image_and_crop(self, imgset):
             if self.imgset == imgset:
                 self.crop_image = None
                 self.pipeline_version += 1
-                self.draw_image_core(offset)
+                self.draw_image_core()
 
         @mainthread
         def blit_image(self, img, dt=0):
+            print(f"[PERF] blit_image: Start. Time: {time.time()}")
             # Texture Resizing logic
             is_dither = config.get_config('display_output_dither')
             is_downscale = config.get_config('display_output_downscale')
@@ -290,17 +295,19 @@ if __name__ == '__main__':
             #logging.debug(f"draw_histogram_view")
             self.ids["histogram"].draw_histogram_from_data(hist_data)
 
-        def draw_image_core(self, offset=(0, 0)):
+        def draw_image_core(self, center_pos=None):
             if (self.imgset is not None) and (self.imgset.img is not None):
 
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, offset, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=self.imgset.flag, is_drag=self.drag_start_point is not None)
+                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=self.imgset.flag, is_drag=self.drag_start_point is not None, center_pos=center_pos)
+                print(f"[PERF] draw_image_core: process_pipeline finished. Time: {time.time()}")
                 if img is None:
                     return
 
                 img = np.array(img)
                 utils.print_nan_inf(img, "output")
 
-                img = colour_functions.RGB_to_RGB(img, 'ProPhoto RGB', config.get_config('display_color_gamut'), config.get_config('cat'),
+                src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
+                img = colour_functions.RGB_to_RGB(img, src_space, config.get_config('display_color_gamut'), config.get_config('cat'),
                                         apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
                 # ヒストグラム表示
@@ -327,18 +334,17 @@ if __name__ == '__main__':
         def draw_image(self):
             while self.apply_thread is not None:
 
-                if self.apply_draw_image_offset is not None:
-                    offset = self.apply_draw_image_offset
-                    self.apply_draw_image_offset = None
-
-                    self.draw_image_core(offset)
-
                 self.draw_event.wait()
                 self.draw_event.clear()
+
+                center_pos = self.apply_draw_image_center
+                self.apply_draw_image_center = None
+
+                self.draw_image_core(center_pos)
             
-        def start_draw_image(self, offset=(0, 0)):
+        def start_draw_image(self, center_pos=None):
             self.pipeline_version += 1
-            self.apply_draw_image_offset = offset
+            self.apply_draw_image_center = center_pos
             self.processor.set_pipeline_version(self.pipeline_version)
             self.draw_event.set()
         
@@ -551,6 +557,7 @@ if __name__ == '__main__':
         
         @mainthread
         def on_select(self, card):
+            print(f"[PERF] on_select: Start. Time: {time.time()}")
             # ロード開始
             self.loading = True
             # 前の設定を保存
@@ -569,6 +576,7 @@ if __name__ == '__main__':
         
         @mainthread
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
+            print(f"[PERF] on_fcs_get_file: Called. Flag: {flag}, Time: {time.time()}")
             print(f"Load image SHAPE: {imgset.img.shape} FLAG: {imgset.flag}, Proc: {flag}")
 
             if flag == 0 or flag == -2:
@@ -585,6 +593,7 @@ if __name__ == '__main__':
                 # １回目の時だけパラメータを反映して、編集できる様にする
                 self.primary_param.clear()
                 self.primary_param.update(param)
+                print(f"[PERF] on_fcs_get_file: Merged Params. Time: {time.time()}")
                 self.set2widget_all(self.primary_effects, self.primary_param)
                 
                 # 特別あつかいでエディタを起動できるなら起動する
@@ -638,20 +647,58 @@ if __name__ == '__main__':
                 # ドラッグ操作
                 elif self.is_zoomed == True:
                     self.drag_start_point = touch.pos
+                    
+                    # ドラッグ開始時の中心位置を計算して保存
+                    disp_info = params.get_disp_info(self.primary_param)
+                    if disp_info is not None:
+                        dx, dy, dw, dh, scale = disp_info
+                        self.drag_center_start = (dx + dw/2, dy + dh/2)
             
             return False
 
         def on_image_touch_move(self, touch):
             if self.collide_point(*touch.pos):
                 if self.is_zoomed == True:
-                    if self.drag_start_point != None and self.is_press_space == True:
-                        scale = max(self.primary_param['original_img_size'])/config.get_config('preview_size')
-                        offset_x = -(touch.pos[0] - self.drag_start_point[0]) * scale
-                        offset_y =  (touch.pos[1] - self.drag_start_point[1]) * scale
-                        self.drag_start_point = touch.pos
+                    if self.drag_start_point != None and self.is_press_space == True and self.drag_center_start is not None:
+                        # 表示倍率を取得
+                        disp_info = params.get_disp_info(self.primary_param)
+                        if disp_info is not None:
+                            scale = disp_info[4]
+                        else:
+                            scale = 1.0
+                        
+                        if scale == 0: scale = 1.0
+
+                        try:
+                            # macos.pyのdpi_scaleはキャッシュを使っているので重くない
+                            dpi = device.dpi_scale()
+                        except:
+                            dpi = 1.0
+
+                        scale = scale * dpi
+                        
+                        # 画面上の移動量
+                        diff_screen_x = (touch.pos[0] - self.drag_start_point[0])
+                        diff_screen_y = (touch.pos[1] - self.drag_start_point[1])
+
+                        # 画像上の移動量に変換
+                        offset_x = -diff_screen_x / scale
+                        offset_y = diff_screen_y / scale # KivyはY軸上向き、画像座標系の移動としては...
+                        
+                        # 検証：
+                        # Kivy Y上移動(diff_y > 0) -> ビューポート中心は上にズレてほしい？
+                        # いえ、ハンドツールで紙を上にずらすと、見える範囲は下に移ります。
+                        # つまり、中心座標のYは増えるはずです。
+                        # new_cy = start_cy + offset_y
+                        # offset_y > 0 なら new_cy > start_cy (下へ移動)。
+                        # 正しい。
+
+                        # 新しい中心位置の計算
+                        new_cx = self.drag_center_start[0] + offset_x
+                        new_cy = self.drag_center_start[1] + offset_y 
 
                         effects.reeffect_all(self.primary_effects, 1)
-                        self.start_draw_image_and_crop(self.imgset, (offset_x, offset_y))
+                        self.start_draw_image_and_crop(self.imgset, center_pos=(new_cx, new_cy))
 
             return False
                     
@@ -659,6 +706,9 @@ if __name__ == '__main__':
             if self.is_zoomed == True:
                 if self.drag_start_point != None:
                     self.drag_start_point = None
+                    self.drag_center_start = None
+                    # パイプライン処理を再開
+                    self.start_draw_image_and_crop(self.imgset)
 
             return False
 
@@ -916,6 +966,7 @@ if __name__ == '__main__':
             if self.apply_thread is not None:
                 t = self.apply_thread
                 self.apply_thread = None
+                self.draw_event.set()  # 待機中のスレッドを起こす
                 t.join()
 
         def resize(self):
