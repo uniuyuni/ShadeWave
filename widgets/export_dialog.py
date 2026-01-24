@@ -12,7 +12,7 @@ from functools import partial
 import json
 
 import utils.kvutils as kvutils
-import macos
+import macos as device
 
 import widgets.param_slider
 import widgets.float_input
@@ -165,7 +165,7 @@ class ExportDialog(ModalView):
         pass
 
     def browse_output(self):
-        macos.FileChooser(title="Select Folder", mode="dir", filters=[("Jpeg Files", "*.jpg")], on_selection=self._handle_for_dir_selection).run()
+        device.FileChooser(title="Select Folder", mode="dir", filters=[("Jpeg Files", "*.jpg")], on_selection=self._handle_for_dir_selection).run()
 
     def cancel(self):
         self.dismiss()

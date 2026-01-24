@@ -8,7 +8,7 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.properties import (
     ObjectProperty, NumericProperty, BooleanProperty, StringProperty
 )
-from kivy.graphics import Color, Line
+from kivy.graphics import Color, Line, PushMatrix, PopMatrix, Scale
 from kivy.clock import mainthread
 from kivymd.uix.button import MDRaisedButton
 from kivy.uix.image import Image as KivyImage
@@ -17,6 +17,7 @@ import cv2
 
 from cores.distortion_correction.lens_distortion import correct_lens_distortion, detect_lens_distortion
 import params
+import macos as device
 
 
 class LensDistortionWidget(FloatLayout):
@@ -134,6 +135,7 @@ class LensDistortionWidget(FloatLayout):
             ny = int(round(base_grid / aspect))
         
         with self.canvas.after:
+            PushMatrix()
             Color(1, 1, 1, 0.5)  # 白色半透明
             
             # 縦線
@@ -153,6 +155,8 @@ class LensDistortionWidget(FloatLayout):
                 kx1, ky1 = params.tcg_to_window(-0.5, tcg_y, self, self.texture_size, self.tcg_info)
                 kx2, ky2 = params.tcg_to_window(0.5, tcg_y, self, self.texture_size, self.tcg_info)
                 Line(points=[kx1, ky1, kx2, ky2], width=1)
+            
+            PopMatrix()
     
     def _clear_grid(self):
         """グリッドをクリア"""

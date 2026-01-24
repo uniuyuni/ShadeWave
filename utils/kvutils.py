@@ -2,13 +2,15 @@
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
 from kivymd.uix.scrollview import MDScrollView
-from screeninfo import get_monitors
+#from screeninfo import get_monitors
+import macos as device
 
 def get_root_widget(widget):
     while widget.parent is not widget:
         widget = widget.parent
     return widget.children[0]
 
+"""
 def get_current_display():
     # 現在のウィンドウの左上座標
     win_x, win_y = KVWindow.left, KVWindow.top
@@ -28,6 +30,7 @@ def get_current_display():
             return {"display": i, "width": m.width, "height": m.height, "is_primary": m.is_primary}
     
     return None
+"""
 
 def get_entire_widget_tree(root, delay=0.1):
     """全ウィジェット取得（未表示含む）"""
@@ -86,11 +89,9 @@ def traverse_widget(root):
             if isinstance(child, MDScrollView):
                 child.children[0].height = child.children[0].minimum_height
 
-def dpi_scale():
-    return KVWindow.dpi / 96
 
 def dpi_scale_width(ref):
-    return ref * dpi_scale()
+    return ref * device.dpi_scale()
 
 def dpi_scale_height(ref):
-    return ref * dpi_scale()
+    return ref * device.dpi_scale()

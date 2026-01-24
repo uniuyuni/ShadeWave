@@ -101,8 +101,8 @@ class Operation:
         self.diff = [
             [key, self.backup[key], self.update[key]]
             for key in self.backup.keys() & self.update.keys()
-            if self.backup[key] != self.update[key]
-            #if self.backup[key] is not self.update[key]
+            if (not (self.backup[key] == self.update[key]).all() if isinstance(self.backup[key], np.ndarray)
+                else self.backup[key] != self.update[key])
         ]
         if len(self.diff) == 0:
             return None

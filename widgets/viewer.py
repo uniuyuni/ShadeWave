@@ -345,7 +345,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
             ok = self.collide_point(x, y)
             if ok == True and card.exif_data is not None:
                 pass
-                #macos.fadvice(card.file_path, True)
+                #device.fadvice(card.file_path, True)
                 #self.cache_system.register_for_preload(card.file_path, card.exif_data)
 
     def get_drag_files(self):

@@ -45,7 +45,8 @@ import config
 import utils.utils as utils
 from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
-
+import macos as device
+ 
 class TextInputDialog(Popup):
     def __init__(self, callback, **kwargs):
         super().__init__(**kwargs)
@@ -283,10 +284,6 @@ class BaseMask(Widget):
         self.editor.start_draw_image()
     
     def draw_mask_to_fbo(self, absolute=False):
-        if not self.editor.disp_info:
-            logging.warning(f"{self.__class__.__name__}: disp_infoが未設定。")
-            return
-
         if self.active == True or absolute == True:
             mask_image = self.get_mask_image()
             # イメージを描画してもらう
@@ -321,10 +318,10 @@ class BaseMask(Widget):
 
     def _apply_mask_space(self, image):
         open_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space')
-        image = expand_mask.adjust_foreground_only(image, open_space * self.editor.disp_info[4], False)
+        image = expand_mask.adjust_foreground_only(image, open_space * params.get_disp_info(self.editor.tcg_info)[4], False)
 
         close_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space')
-        image = expand_mask.adjust_holes_only(image, close_space * self.editor.disp_info[4], False)
+        image = expand_mask.adjust_holes_only(image, close_space * params.get_disp_info(self.editor.tcg_info)[4], False)
         
         return image
 
@@ -2043,13 +2040,14 @@ class SegmentMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            segment_mask = core.rotation(segment_mask, rotate_rad, flip)
-            segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
+            segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip)
+            #segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-            cx, cy ,cw, ch, scale = self.editor.disp_info
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
+            cx, cy ,cw, ch, scale = disp_info
+            #cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
             segment_mask = cv2.resize(segment_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[1]-(oy+nh)), (ox, self.editor.texture_size[0]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
             segment_mask = self._apply_extened_params(segment_mask)
@@ -2221,8 +2219,9 @@ class DepthMapMask(BaseMask):
             depth_map_mask = core.rotation(depth_map_mask, rotate_rad, flip)
             depth_map_mask = core.crop_image_with_disp_info(depth_map_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-            cx, cy ,cw, ch, scale = self.editor.disp_info
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], disp_info)
+            cx, cy ,cw, ch, scale = disp_info
+            cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
             depth_map_mask = cv2.resize(depth_map_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
             depth_map_mask = np.pad(depth_map_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
 
@@ -2398,13 +2397,14 @@ class FaceMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            faces_mask = core.rotation(faces_mask, rotate_rad, flip)
-            faces_mask = core.crop_image_with_disp_info(faces_mask, disp_info)
+            faces_mask = core.rotation(faces_mask, np.rad2deg(rotate_rad), flip)
+            #faces_mask = core.crop_image_with_disp_info(faces_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-            cx, cy ,cw, ch, scale = self.editor.disp_info
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
+            cx, cy ,cw, ch, scale = disp_info
+            #cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
             faces_mask = cv2.resize(faces_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            faces_mask = np.pad(faces_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+            faces_mask = np.pad(faces_mask, ((oy, self.editor.texture_size[1]-(oy+nh)), (ox, self.editor.texture_size[0]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
             faces_mask = self._apply_extened_params(faces_mask)
@@ -2597,13 +2597,14 @@ class TargetTextMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            segment_mask = core.rotation(segment_mask, rotate_rad, flip)
-            segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
+            segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip)
+            #segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], self.editor.disp_info)
-            cx, cy ,cw, ch, scale = self.editor.disp_info
+            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
+            cx, cy ,cw, ch, scale = disp_info
+            #cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
             segment_mask = cv2.resize(segment_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[1]-(oy+nh)), (ox, self.editor.texture_size[0]-(ox+nw))), constant_values=0)
 
             # ルミノシティマスクを作成
             segment_mask = self._apply_extened_params(segment_mask)
@@ -2636,8 +2637,6 @@ class TargetTextMask(BaseMask):
 class MaskEditor2(FloatLayout, LayerCtrl):
     mask_list = ListProperty([])
     active_mask = ObjectProperty(None, allownone=True)
-    disp_info = Property((0, 0, 0, 0, 1))
-    param_crop_rect = Property((0, 0, 0, 0))
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2707,7 +2706,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         self.update()
 
     def get_hash_items(self):
-        return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'], self.tcg_info['flip_mode'], (0, 0)) # self.tcg_info['matrix'])
+        return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'] + self.tcg_info['rotation2'], self.tcg_info['flip_mode'], (0, 0)) # self.tcg_info['matrix'])
 
     def __set_image_info(self):
         for mask in reversed(self.mask_list):
@@ -2846,7 +2845,10 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     def set_draw_mask(self, is_draw_mask):
         if is_draw_mask == False:
             if self.rectangle is not None:
-                self.mask_container.canvas.before.remove(self.rectangle)
+                try:
+                    self.mask_container.canvas.before.remove(self.rectangle)
+                except:
+                    pass
                 self.rectangle = None
         mask = self.get_active_mask()
         if mask is not None:
@@ -2874,10 +2876,11 @@ class MaskEditor2(FloatLayout, LayerCtrl):
                 texture.blit_buffer(la_img.tobytes(), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.flip_vertical()
                 px, py = self.to_window(*self.pos)
-                marginx, marginy = (self.size[0]-self.texture_size[0])/2, (self.size[1]-self.texture_size[1])/2
+                scale = device.dpi_scale()
+                marginx, marginy = (self.size[0]-self.texture_size[0]*scale)/2, (self.size[1]-self.texture_size[1]*scale)/2
                 px, py = px+marginx, py+marginy
                 Color(1, 0, 0, 0.4)
-                self.rectangle = Rectangle(texture=texture, pos=(px, py), size=self.texture_size)
+                self.rectangle = Rectangle(texture=texture, pos=(px, py), size=(self.texture_size[0]*scale, self.texture_size[1]*scale))
 
                 # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
 
@@ -3099,11 +3102,11 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     
     def window_to_tcg_scale(self, x, y):
         # ワールド座標にスケーリングだけ適用する
-        return params.window_to_tcg_scale(x, y, self.tcg_info)
+        return params.window_to_tcg_scale((x, y), self.tcg_info)
     
     def tcg_to_window_scale(self, x, y):
         # TCG座標にスケーリングだけ適用する
-        return params.tcg_to_window_scale(x, y, self.tcg_info)
+        return params.tcg_to_window_scale((x, y), self.tcg_info)
 
     def window_to_tcg(self, cx, cy):
         # ワールド座標からTCG座標に変換する

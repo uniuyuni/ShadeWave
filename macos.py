@@ -1,12 +1,8 @@
 
 import AppKit
 import fcntl
-
-#load_framework(INCLUDE.AppKit)
-#NSURL = autoclass('NSURL')
-#NSOpenPanel = autoclass('NSOpenPanel')
-#NSSavePanel = autoclass('NSSavePanel')
-#NSOKButton = 1
+from AppKit import NSScreen, NSApplication, NSEvent
+from Quartz import CGDisplayScreenSize, CGDisplayPixelsWide, CGDisplayPixelsHigh
 
 class FileChooser:
     '''A native implementation of file chooser dialogs using Apple's API
@@ -114,3 +110,158 @@ def fadvice(file_path, use_cache=True):
         
         # シーケンシャルアクセスの場合、先読みを有効化
         fcntl.fcntl(fd, 45, 1 if use_cache else 0)  # F_RDAHEAD の値は macOS でのみ有効
+
+
+def get_screens_info():
+    """
+    NSScreenを使用して全ディスプレイ情報を取得
+    スクリーンID、解像度（ポイント/ピクセル）、表示位置、スケールファクタ、物理サイズ(mm)を含む
+    """
+    screens = NSScreen.screens()
+    results = []
+    
+    for i, screen in enumerate(screens):
+        # スクリーンID
+        screen_number = screen.deviceDescription().get('NSScreenNumber', 0)
+        display_id = int(screen_number)
+        
+        # 表示位置とサイズ（ポイント）
+        frame = screen.frame()
+        
+        # 実際のピクセル解像度
+        backing_frame = screen.convertRectToBacking_(frame)
+        
+        # スケールファクタ
+        scale_factor = screen.backingScaleFactor()
+        
+        # 物理サイズ（mm）をQuartzから取得
+        try:
+            screen_size = CGDisplayScreenSize(display_id)
+            width_mm = screen_size.width
+            height_mm = screen_size.height
+        except:
+            # 取得できない場合は0
+            width_mm = 0
+            height_mm = 0
+        
+        # 物理ピクセル解像度をQuartzから取得（より正確）
+        try:
+            phys_pixels_wide = CGDisplayPixelsWide(display_id)
+            phys_pixels_high = CGDisplayPixelsHigh(display_id)
+        except:
+            # 取得できない場合はバッキングフレームから計算
+            phys_pixels_wide = backing_frame.size.width
+            phys_pixels_high = backing_frame.size.height
+        
+        results.append({
+            # 基本情報
+            'id': display_id,
+            'index': i,
+            'is_primary': (i == 0),
+            
+            # 表示位置
+            'x': int(frame.origin.x),
+            'y': int(frame.origin.y),
+                        
+            # 物理解像度（ピクセル）
+            'width_pixels': int(phys_pixels_wide),
+            'height_pixels': int(phys_pixels_high),
+            
+            # 表示解像度（ポイント）
+            'width_points': int(frame.size.width),
+            'height_points': int(frame.size.height),
+
+            # スケールファクタ
+            'scale': float(scale_factor),
+            
+            # 物理サイズ（mm）
+            'width_mm': float(width_mm),
+            'height_mm': float(height_mm)
+        })
+    
+    return results
+
+def print_screens_info(screens):
+    """ディスプレイ情報を見やすく表示"""
+    print("=" * 100)
+    print(f"{'No.':<3} {'ID':<10} {'位置':<10} {'解像度（ポイント）':<9} {'解像度（ピクセル）':<9} {'Scale':<7} {'物理サイズ(mm)':<16}")
+    print("-" * 100)
+    
+    for screen in screens:
+        pos = f"({screen['x']},{screen['y']})"
+        points_res = f"{screen['width_points']}×{screen['height_points']}"
+        pixels_res = f"{screen['width_pixels']}×{screen['height_pixels']}"
+        scale = f"{screen['scale']}x"
+        phys_size = f"{screen['width_mm']:.0f}×{screen['height_mm']:.0f}"
+        
+        print(f"{screen['index']:<3} "
+              f"{screen['id']:<10} "
+              f"{pos:<12} "
+              f"{points_res:<18} "
+              f"{pixels_res:<18} "
+              f"{scale:<7} "
+              f"{phys_size:<16}")
+
+def calculate_ppi(width_px, height_px, width_mm, height_mm):
+    """PPIを計算"""
+    import math
+    
+    # 対角線のピクセル数
+    diag_px = math.sqrt(width_px**2 + height_px**2)
+    
+    # 対角線のインチ数（mmをインチに変換: 1インチ = 25.4mm）
+    diag_inch = math.sqrt((width_mm/25.4)**2 + (height_mm/25.4)**2)
+    
+    # PPI (対角線ベース)
+    return diag_px / diag_inch if diag_inch > 0 else 0
+
+_screens = get_screens_info()
+
+def get_self_window_position():
+    """
+    最もシンプルなバージョン - 座標のみ
+    """
+    # NSApp を使用（NSApplication.sharedApplication() と同じ）
+    app = NSApplication.sharedApplication()
+    
+    window = app.mainWindow()
+    
+    #if window:
+    if False:
+        frame = window.frame()
+        return (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height)
+
+    # ウィンドウが見つからない場合はマウスカーソルの位置を返す
+    mouse_location = NSEvent.mouseLocation()
+    return (mouse_location.x, mouse_location.y, 0, 0)
+
+def dpi_scale():
+    display = get_current_display()
+    return _screens[display['display']]['scale']
+
+def get_current_display():
+    global _screens
+
+    # 現在のウィンドウの左下座標
+    win_x, win_y, _, _ = get_self_window_position()
+
+    for m in _screens:
+        if m['is_primary'] == True:
+            primary = m
+            break
+
+    for i, m in enumerate(_screens):
+        # Yの反転
+        my = 0
+        if m['y'] != 0:
+            my = primary['height_points'] if m['y'] > 0 else -m['height_points']
+
+        if m['x'] <= win_x < m['x'] + m['width_points'] and my <= win_y < my + m['height_points']:
+            return {"display": i, "width": m['width_points'], "height": m['height_points'], "is_primary": m['is_primary']}
+    
+    return {"display": primary['index'], "width": primary['width_points'], "height": primary['height_points'], "is_primary": primary['is_primary']}
+
+# 使用例
+if __name__ == "__main__":
+    print("全ディスプレイ情報（詳細版）:")
+    print_screens_info(_screens)

@@ -2,10 +2,10 @@
 import torch
 import numpy as np
 import cv2
-from SAM3.model_builder import build_sam3_image_model
-from SAM3.model.box_ops import box_xywh_to_cxcywh
-from SAM3.model.sam3_image_processor import Sam3Processor
-from SAM3.visualization_utils import normalize_bbox
+from SAM3.sam3.model_builder import build_sam3_image_model
+from SAM3.sam3.model.box_ops import box_xywh_to_cxcywh
+from SAM3.sam3.model.sam3_image_processor import Sam3Processor
+from SAM3.sam3.visualization_utils import normalize_bbox
 
 RESIZE_FACTOR = 1.0
 

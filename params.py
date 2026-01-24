@@ -10,6 +10,7 @@ import config
 import define
 import effects
 import utils.utils as utils
+import macos as device
 
 SPECIAL_PARAM = [
     # for set_image_param
@@ -378,6 +379,7 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info, normalize=True):
     cx, cy = center_rotate_invert(cx, cy, tcg_info)
     if normalize:
         cx, cy = norm_param(tcg_info, (cx, cy))
+    cx, cy = cx / device.dpi_scale(), cy / device.dpi_scale()
     return (cx, cy)
 
 def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
@@ -391,6 +393,7 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     normalize: 正規化するかどうか
     戻り値: ウインドウ座標
     """
+    cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
     disp_info = get_disp_info(tcg_info)
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     if normalize:
@@ -408,13 +411,17 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     cx, cy = cx + wx, cy + wy
     return (cx, cy)
 
-def window_to_tcg_scale(x, y, tcg_info):
+def window_to_tcg_scale(x, tcg_info):
     # ワールド座標にスケーリングだけ適用する
-    return (x / tcg_info['disp_info'][4], y / tcg_info['disp_info'][4])
+    if isinstance(x, (tuple, list)):
+        return (x[0] / tcg_info['disp_info'][4] / device.dpi_scale(), x[1] / tcg_info['disp_info'][4] / device.dpi_scale())
+    return x / tcg_info['disp_info'][4] / device.dpi_scale()
 
-def tcg_to_window_scale(x, y, tcg_info):
+def tcg_to_window_scale(x, tcg_info):
     # TCG座標にスケーリングだけ適用する
-    return (x * tcg_info['disp_info'][4], y * tcg_info['disp_info'][4])
+    if isinstance(x, (tuple, list)):
+        return (x[0] * tcg_info['disp_info'][4] * device.dpi_scale(), x[1] * tcg_info['disp_info'][4] * device.dpi_scale())
+    return x * tcg_info['disp_info'][4]
 
 def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
     """

@@ -46,7 +46,7 @@ if __name__ == '__main__':
     import pipeline
     import utils.utils as utils
     import utils.kvutils as kvutils
-    import macos
+    import macos as device
     import cores.hlsrgb as hlsrgb
     import cores.film_emulator as film_emulator
     import cores.lens_simulator as lens_simulator
@@ -664,7 +664,7 @@ if __name__ == '__main__':
 
         def on_select_press(self):
             self.save_current_sidecar()
-            macos.FileChooser(title="Select Folder", mode="dir", filters=[("Jpeg Files", "*.jpg")], on_selection=self.handle_for_dir_selection).run()
+            device.FileChooser(title="Select Folder", mode="dir", filters=[("Jpeg Files", "*.jpg")], on_selection=self.handle_for_dir_selection).run()
 
         def on_export_press(self):
             self.save_current_sidecar()
@@ -839,7 +839,7 @@ if __name__ == '__main__':
         #--------------------------------
 
         def on_lut_select_folder(self):
-            macos.FileChooser(title="Select LUT Folder", mode="dir", filters=[("CUBE Files", "*.cube")], on_selection=self.handle_for_lut).run()
+            device.FileChooser(title="Select LUT Folder", mode="dir", filters=[("CUBE Files", "*.cube")], on_selection=self.handle_for_lut).run()
 
         def handle_for_lut(self, selection):
             if selection is not None:
@@ -923,7 +923,7 @@ if __name__ == '__main__':
             if self.imgset is not None and self.imgset.img is not None:
                 h, w = self.imgset.img.shape[:2]
                 self.preview_size = [kvutils.dpi_scale_width(w), kvutils.dpi_scale_height(h)]
-                self.ids["transform_wrapper"].scale = kvutils.dpi_scale()
+                self.ids["transform_wrapper"].scale = device.dpi_scale()
                 self.ids["transform_wrapper"].center = self.ids['preview_widget'].center
                 
         def on_key_down(self, window, key, scancode, codepoint, modifier):
@@ -967,7 +967,7 @@ if __name__ == '__main__':
             # Start worker after config is loaded
             self.main_widget.async_worker.start()
 
-            display = kvutils.get_current_display()
+            display = device.get_current_display()
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
             KVWindow.left = (display["width"] - display["width"] * 0.9) // 2
             KVWindow.top = (display["height"] - display["height"] * 0.9) // 2

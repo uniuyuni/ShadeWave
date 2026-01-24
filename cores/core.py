@@ -728,7 +728,7 @@ def crop_size_and_offset_from_texture(texture_width, texture_height, disp_info):
 def crop_image_with_disp_info(image, disp_info):
     # スケーリング
     org_h, org_w = image.shape[:2]
-    cx, cy, cw, ch = int(disp_info[0]), int(disp_info[1]), int(disp_info[2]), int(disp_info[3])
+    cx, cy, cw, ch = int(disp_info[0] * disp_info[4]), int(disp_info[1] * disp_info[4]), int(disp_info[2] * disp_info[4]), int(disp_info[3] * disp_info[4])
 
     # 切り抜き
     result = image[cy:cy+ch, cx:cx+cw]
@@ -1814,6 +1814,7 @@ def apply_zero_wrap(img, param):
     disp_info = params.get_disp_info(param)
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
+    height, width = img.shape[:2]
     wrap = np.ones((height, width), dtype=np.float32)
     preview_width = config.get_config('preview_width')
     preview_height = config.get_config('preview_height')

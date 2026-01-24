@@ -25,6 +25,7 @@ import pipeline
 import params
 import utils.utils as utils
 import utils.aiutils as aiutils
+import macos as device
 from enums import EffectMode, ExecutionMode
 
 class EffectConfig():
@@ -1042,7 +1043,7 @@ class CropEffect(Effect):
 
             input_width, input_height = param['original_img_size']
             x1, y1, x2, y2 = params.get_crop_rect(param)
-            scale = config.get_config('preview_size')/max(input_width, input_height)
+            scale = config.get_config('preview_size') * device.dpi_scale() / max(input_width, input_height)
             self.crop_editor = CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
             self.crop_editor.set_editing_callback(self._crop_editing)
             widget.ids["preview_widget"].add_widget(self.crop_editor)

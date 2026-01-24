@@ -5,7 +5,7 @@ from kivy.app import App as KVApp
 from kivy.uix.image import Image as KVImage
 from kivy.graphics import Color as KVColor, Rectangle as KVRectangle, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Scale as KVScale, Translate as KVTranslate
 
-import utils.kvutils as kvutils
+import macos as device
 
 class HistogramWidget(KVImage):
     
@@ -79,8 +79,8 @@ class HistogramWidget(KVImage):
         fixed_h = 128 + 64                  # 192
         
         # Calculate scaling factors
-        scale_x = kvutils.dpi_scale() * 0.5 * (self.width / kvutils.dpi_scale_width(256))
-        scale_y = kvutils.dpi_scale() * 0.5
+        scale_x = device.dpi_scale() * 0.5 * (self.width / (device.dpi_scale() * 256))
+        scale_y = device.dpi_scale() * 0.5
 
         with self.canvas:
             KVPushMatrix()
