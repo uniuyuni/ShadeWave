@@ -141,8 +141,8 @@ class ImageSet:
             # クロップとexifデータの回転
             _, _, width, height = self._delete_exif_orientation(exif_data)
 
-            # RAW画像のサイズに合わせてリサイズ
-            img_array = cv2.resize(img_array, (width, height))
+            # RAW画像のサイズに合わせてリサイズ（INTER_AREAは縮小時にノイズを低減）
+            img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)
             t3 = time.perf_counter()
             logging.info(f"PERF: Resize took {t3-t2:.4f}s. Target size: {width}x{height}")
 
@@ -255,10 +255,10 @@ class ImageSet:
             param['rgb_or_raw'] = 'raw'
             param['auto_exposure'] = -Ev # 補正は逆方向
             
-            # サイズを合わせる
+            # サイズを合わせる（INTER_AREAは縮小時にノイズを低減）
             #if img_array.shape[1] != width or img_array.shape[0] != height:
             if half == True:
-                img_array = cv2.resize(img_array, (width, height))        
+                img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)        
 
             # 情報の設定
             params.set_image_param(param, img_array)

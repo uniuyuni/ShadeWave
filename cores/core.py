@@ -106,7 +106,7 @@ def invert_TempTint2RGB(temp, tint, Y, reference_temp=5000.0):
 
 #--------------------------------------------------
 
-def rotation(img, angle, flip_mode=0, matrix=None, inter_mode=0, border_mode="reflect"):
+def rotation(img, angle, flip_mode=0, matrix=None, inter_mode='bilinear', border_mode="reflect"):
     # 元の画像の高さと幅を取得
     height, width = img.shape[:2]
     
@@ -168,13 +168,13 @@ def rotation(img, angle, flip_mode=0, matrix=None, inter_mode=0, border_mode="re
         
         # こっちはパースペクティブ
         img_affine = cv2.warpPerspective(img, final_matrix, (size, size),
-                                    flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
+                                    flags=cv2.INTER_BICUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
     else:
         # 回転と中心補正を同時に行う
         img_affine = cv2.warpAffine(img, trans, (size, size),
-                                    flags=cv2.INTER_LANCZOS4 if inter_mode == 0 else cv2.INTER_LINEAR, 
+                                    flags=cv2.INTER_BICUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR, 
                                     borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
     return img_affine
@@ -782,7 +782,7 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
     if not is_zoomed:
         # リサイズ
         dx, dy, dw, dh, _ = disp_info
-        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_AREA)
 
         # リサイズした画像を中央に配置
         result = np.pad(resized_img, ((offset_y, texture_height-(offset_y+new_height)), (offset_x, texture_width-(offset_x+new_width)), (0, 0)), mode="constant")
@@ -1842,7 +1842,6 @@ def apply_zero_wrap(img, param):
     disp_info = params.get_disp_info(param)
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
-    height, width = img.shape[:2]
     wrap = np.ones((height, width), dtype=np.float32)
     preview_width = config.get_config('preview_width')
     preview_height = config.get_config('preview_height')

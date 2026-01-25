@@ -125,7 +125,6 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = is_zoomed
     efconfig.mode = EffectMode.PREVIEW
-    efconfig.bypass_rotation = False #True if efconfig.mode == EffectMode.PREVIEW and current_tab == 'Ge' else False
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
     
     # Initialize basic input hash
@@ -188,7 +187,6 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True
     efconfig.mode = EffectMode.EXPORT
-    efconfig.bypass_rotation = False
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
 
     # 背景レイヤー

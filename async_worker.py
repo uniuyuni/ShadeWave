@@ -231,6 +231,15 @@ class AsyncWorker:
         """
         self.stop()
         
+        # Clear active SHMs (tasks are cancelled)
+        for task_id, shm in list(self.active_shms):
+            try:
+                shm.close()
+                shm.unlink()
+            except:
+                pass
+        self.active_shms.clear()
+        
         # Recreate queues to avoid corruption
         self.input_queue = Queue()
         self.result_queue = Queue()
@@ -349,6 +358,15 @@ class AsyncWorker:
         # Better strategy: Do not drop tasks, let them process (fast fail) or just consume inputs.
         # Or, track task_id and cleaning up.
         pass
+
+    def has_pending_tasks(self):
+        """
+        処理中のタスクがあるかどうかを判定
+        Returns:
+            bool: 処理中のタスクがある場合はTrue
+        """
+        # キューに待機中のタスクがあるか、または実行中のタスクがあるかをチェック
+        return not self.input_queue.empty() or len(self.active_shms) > 0
 
     def poll_results(self):
         """

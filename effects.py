@@ -743,158 +743,136 @@ class GeometryEffect(Effect):
         control_points = self._get_param(param, 'control_points') # dict
         crop_enable = self._get_param(param, 'crop_enable')
 
-        bypass = getattr(efconfig, 'bypass_rotation', False)
-        if bypass:
-            param_hash = hash((crop_enable))
-        else:
-            # list, convert to tuple for hashing
-            fps_hash = tuple(tuple(x) for x in four_points) if four_points else None
-            lines_hash = tuple(tuple(tuple(p) for p in line) for line in reference_lines) if reference_lines else None
-            cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
-            mesh_hash = tuple(mesh_size)
-            
-            param_hash = hash((ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
+        # list, convert to tuple for hashing
+        fps_hash = tuple(tuple(x) for x in four_points) if four_points else None
+        lines_hash = tuple(tuple(tuple(p) for p in line) for line in reference_lines) if reference_lines else None
+        cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
+        mesh_hash = tuple(mesh_size)
+        
+        param_hash = hash((ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         
         if self.hash != param_hash:
-            if bypass:
-                # Bypass rotation but maintain Square Output (Padding)
+            params.set_matrix(param, None)
+
+            # レンズ歪み補正
+            if lens_distortion_strength != 0:
+                img = correct_lens_distortion(
+                        img,
+                        strength=lens_distortion_strength,
+                        scale=lens_distortion_scale / 100.0 + 1.0,
+                        interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                        grid_size=2 if efconfig.mode == EffectMode.EXPORT else 4,
+                )
+
+            # 回転
+            img = core.rotation(img, ang + ang2, flp,
+                    inter_mode='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    border_mode="reflect" if crop_enable == False else "constant")
+
+            org_size = (img.shape[1], img.shape[0])
+            #resize = (config.get_config('preview_size'), config.get_config('preview_size'))
+            #img = cv2.resize(img, resize)
+
+            # 台形補正
+            if correct_horizontal != 0 or correct_vertical != 0:
+                # Focal Length Mapping:
+                # 0-100 Slider -> Multiplier.
+                # Assuming 0 is Wide (High persp), 100 is Tele (Low persp).
+                # Previous default was max(w,h) which corresponds to freq standard lens.
+                # Let's say Slider=20 -> 1.0x (Standard)
+                # Slider=0 -> 0.5x (Super Wide)
+                # Slider=100 -> 5.0x (Super Tele)
+                
+                # Using a linear mapping for simplicity first:
+                # val 20 -> 1.0
+                # val 0 -> 0.5 (delta -20 -> -0.5 => 1 unit = 0.5/20 = 0.025)
+                # val 100 -> 1.0 + (80 * 0.025) = 1.0 + 2.0 = 3.0
+                
+                # So: multiplier = 0.5 + (focal_length* 0.025)
+                # 0 -> 0.5
+                # 20 -> 1.0
+                # 100 -> 3.0
+                base_f = np.max(img.shape[:2])
+                multiplier = 0.5 + (focal_length * 0.025)
+                f_pixel = base_f * multiplier
+                img, H = correct_trapezoid(
+                        img,
+                        horizontal=correct_horizontal * 0.5, # 効果が強すぎた
+                        vertical=correct_vertical * 0.5,
+                        focal_length=f_pixel,
+                        interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                )
+                
                 h, w = img.shape[:2]
-                size = max(w, h)
+                half_size = max(w, h) / 2
+                params.add_matrix(param, H, offset=(half_size, half_size))
+            
+            # 4点補正
+            reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+            if four_points != [] and four_points != reset_points:
+
+                # 座標をテクスチャ座標へ変換
+                tcg_info = params.param_to_tcg_info(param)
+                src_point = []
+                for cx, cy in four_points:
+                    src_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
+                dst_point = []
+                for cx, cy in reset_points:
+                    dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
+
+                img, H = correct_four_points(
+                        img,
+                        src_point,
+                        dst_point,
+                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                )
                 
-                if w == size and h == size:
-                    self.diff = img
-                else:
-                    top = (size - h) // 2
-                    bottom = size - h - top
-                    left = (size - w) // 2
-                    right = size - w - left
-                    
-                    
-                    bmode = cv2.BORDER_REFLECT if crop_enable == False else cv2.BORDER_CONSTANT
-                    self.diff = cv2.copyMakeBorder(img, top, bottom, left, right, bmode)
-            else:
-                params.set_matrix(param, None)
-
-                # レンズ歪み補正
-                if lens_distortion_strength != 0:
-                    img = correct_lens_distortion(
-                            img,
-                            strength=lens_distortion_strength,
-                            scale=lens_distortion_scale / 100.0 + 1.0,
-                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                            grid_size=2 if efconfig.mode == EffectMode.EXPORT else 4,
-                    )
-
-                # 回転
-                img = core.rotation(img, ang + ang2, flp,
-                        inter_mode=0 if efconfig.mode == EffectMode.EXPORT else 1,
-                        border_mode="reflect" if crop_enable == False else "constant")
-
-                org_size = (img.shape[1], img.shape[0])
-                #resize = (config.get_config('preview_size'), config.get_config('preview_size'))
-                #img = cv2.resize(img, resize)
-
-                # 台形補正
-                if correct_horizontal != 0 or correct_vertical != 0:
-                    # Focal Length Mapping:
-                    # 0-100 Slider -> Multiplier.
-                    # Assuming 0 is Wide (High persp), 100 is Tele (Low persp).
-                    # Previous default was max(w,h) which corresponds to freq standard lens.
-                    # Let's say Slider=20 -> 1.0x (Standard)
-                    # Slider=0 -> 0.5x (Super Wide)
-                    # Slider=100 -> 5.0x (Super Tele)
-                    
-                    # Using a linear mapping for simplicity first:
-                    # val 20 -> 1.0
-                    # val 0 -> 0.5 (delta -20 -> -0.5 => 1 unit = 0.5/20 = 0.025)
-                    # val 100 -> 1.0 + (80 * 0.025) = 1.0 + 2.0 = 3.0
-                    
-                    # So: multiplier = 0.5 + (focal_length* 0.025)
-                    # 0 -> 0.5
-                    # 20 -> 1.0
-                    # 100 -> 3.0
-                    base_f = np.max(img.shape[:2])
-                    multiplier = 0.5 + (focal_length * 0.025)
-                    f_pixel = base_f * multiplier
-                    img, H = correct_trapezoid(
-                            img,
-                            horizontal=correct_horizontal * 0.5, # 効果が強すぎた
-                            vertical=correct_vertical * 0.5,
-                            focal_length=f_pixel,
-                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    )
-                    
-                    h, w = img.shape[:2]
-                    half_size = max(w, h) / 2
-                    params.add_matrix(param, H, offset=(half_size, half_size))
-                
-                # 4点補正
-                reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
-                if four_points != [] and four_points != reset_points:
-
-                    # 座標をテクスチャ座標へ変換
-                    tcg_info = params.param_to_tcg_info(param)
-                    src_point = []
-                    for cx, cy in four_points:
-                        src_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
-                    dst_point = []
-                    for cx, cy in reset_points:
-                        dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
-
-                    img, H = correct_four_points(
-                            img,
-                            src_point,
-                            dst_point,
-                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    )
-                    
-                    if H is not None:
-                        # 座標系変換 (Left-Top Origin -> Center Origin)
-                        h, w = img.shape[:2]
-                        half_size = max(w, h) / 2
-                        params.add_matrix(param, H, offset=(half_size, half_size))
-
-                # Lines
-                if len(reference_lines) > 0:
-                    img, H = correct_with_lines(
-                            img,
-                            reference_lines,
-                            tcg_info=params.param_to_tcg_info(param),
-                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    )
-
+                if H is not None:
                     # 座標系変換 (Left-Top Origin -> Center Origin)
                     h, w = img.shape[:2]
                     half_size = max(w, h) / 2
                     params.add_matrix(param, H, offset=(half_size, half_size))
 
-                # Mesh           
-                if control_points:
-                    # Ensure keys are tuples
-                    cp = {}
-                    for k, v in control_points.items():
-                        if isinstance(k, str):
-                            try:
-                                parts = k.strip('()').split(',')
-                                key = (int(parts[0]), int(parts[1]))
-                            except:
-                                continue
-                        else:
-                            key = tuple(k)
-                        cp[key] = tuple(v)
-                        
-                    tcg_info = params.param_to_tcg_info(param)
-                    img = warp_mesh(
+            # Lines
+            if len(reference_lines) > 0:
+                img, H = correct_with_lines(
                         img,
-                        mesh_size if mesh_size else (4, 4),
-                        cp,
-                        tcg_info=tcg_info,
-                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear'
-                    )
+                        reference_lines,
+                        tcg_info=params.param_to_tcg_info(param),
+                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                )
 
-                #img = cv2.resize(img, org_size)
-                self.diff = img
+                # 座標系変換 (Left-Top Origin -> Center Origin)
+                h, w = img.shape[:2]
+                half_size = max(w, h) / 2
+                params.add_matrix(param, H, offset=(half_size, half_size))
 
+            # Mesh           
+            if control_points:
+                # Ensure keys are tuples
+                cp = {}
+                for k, v in control_points.items():
+                    if isinstance(k, str):
+                        try:
+                            parts = k.strip('()').split(',')
+                            key = (int(parts[0]), int(parts[1]))
+                        except:
+                            continue
+                    else:
+                        key = tuple(k)
+                    cp[key] = tuple(v)
+                    
+                tcg_info = params.param_to_tcg_info(param)
+                img = warp_mesh(
+                    img,
+                    mesh_size if mesh_size else (4, 4),
+                    cp,
+                    tcg_info=tcg_info,
+                    interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear'
+                )
+
+            #img = cv2.resize(img, org_size)
+            self.diff = img
             self.hash = param_hash
         
         return self.diff

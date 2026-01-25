@@ -31,9 +31,6 @@ if __name__ == '__main__':
     from functools import partial
     import cores.colour_functions as colour_functions
     import logging
-    logging.getLogger("watchfiles").setLevel(logging.WARNING)
-    logging.getLogger("numba").setLevel(logging.WARNING)
-    logging.getLogger("pyvips").setLevel(logging.WARNING)
     import re
     import time
     import multiprocessing
@@ -79,6 +76,13 @@ if __name__ == '__main__':
     #Config.set('graphics', 'width', 1200)
     #Config.set('graphics', 'height', 800)
     Config.set('kivy', 'kivy_clock', 'interrupt')
+
+    # ログレベルの設定
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("numba").setLevel(logging.WARNING)
+    logging.getLogger("pyvips").setLevel(logging.WARNING)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.WARNING)
 
 if __name__ != '__main__':
     class ImportBlocker:
@@ -144,6 +148,7 @@ if __name__ == '__main__':
     class MainWidget(MDBoxLayout):
         loading = KVBooleanProperty(False)
         preview_size = KVListProperty([100, 100])
+        is_processing = KVBooleanProperty(False)
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -214,6 +219,15 @@ if __name__ == '__main__':
                 for msg in self.async_worker.poll_messages():
                     if msg['type'] == 'waitinfo':
                         waitinfo.set_text(msg['tag'], msg['text'], self)
+            
+            # 処理状態の更新
+            if self.async_worker:
+                has_tasks = self.async_worker.has_pending_tasks()
+                queue_empty = self.async_worker.input_queue.empty()
+                active_count = len(self.async_worker.active_shms)
+                if self.is_processing != has_tasks:
+                    logging.info(f"is_processing changed: {self.is_processing} -> {has_tasks} (queue_empty={queue_empty}, active_shms={active_count})")
+                    self.is_processing = has_tasks
 
         def on_kv_post(self, *args, **kwargs):
             super(MainWidget, self).on_kv_post(*args, **kwargs)
