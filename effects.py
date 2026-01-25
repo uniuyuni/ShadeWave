@@ -184,6 +184,9 @@ class RemoveChromaticAberrationEffect(Effect):
     def get_param_dict(self, param):
         return {
             'rca_enabled': False,
+            'rca_purple_amount': 20,
+            'rca_fringe_width': 20,
+            'rca_edge_threshold': 10,
         }
         
     def __init__(self, **kwargs):
@@ -192,12 +195,21 @@ class RemoveChromaticAberrationEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids["switch_rca"].active = self._get_param(param, 'rca_enabled')
-
+        widget.ids["slider_rca_purple_amount"].value = self._get_param(param, 'rca_purple_amount')
+        widget.ids["slider_rca_fringe_width"].value = self._get_param(param, 'rca_fringe_width')
+        widget.ids["slider_rca_edge_threshold"].value = self._get_param(param, 'rca_edge_threshold')
+    
     def set2param(self, param, widget):
         param['rca_enabled'] = widget.ids["switch_rca"].active
+        param['rca_purple_amount'] = widget.ids["slider_rca_purple_amount"].value
+        param['rca_fringe_width'] = widget.ids["slider_rca_fringe_width"].value
+        param['rca_edge_threshold'] = widget.ids["slider_rca_edge_threshold"].value
 
     def make_diff(self, img, param, efconfig):
         rca_enabled = self._get_param(param, 'rca_enabled')
+        rca_purple_amount = self._get_param(param, 'rca_purple_amount')
+        rca_fringe_width = self._get_param(param, 'rca_fringe_width')
+        rca_edge_threshold = self._get_param(param, 'rca_edge_threshold')
         if rca_enabled == False or efconfig.loading_flag != -1:
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
@@ -205,7 +217,7 @@ class RemoveChromaticAberrationEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((rca_enabled))
+            param_hash = hash((rca_enabled, rca_purple_amount, rca_fringe_width, rca_edge_threshold))
 
             # Async Processing Logic
             handled, result = self.try_async_execution(img, param, efconfig, param_hash)
@@ -214,7 +226,7 @@ class RemoveChromaticAberrationEffect(Effect):
 
             needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
             if needed:
-                self.diff = remove_chromatic_aberration(img)
+                self.diff = remove_chromatic_aberration(img, purple_amount=rca_purple_amount/10, fringe_width=rca_fringe_width, edge_threshold=rca_edge_threshold/1000, min_saturation=0.1)
                 self.hash = combined_hash
         
         return self.diff

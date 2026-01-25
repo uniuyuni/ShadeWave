@@ -9,7 +9,7 @@ Major improvements:
 """
 
 import numpy as np
-from scipy.ndimage import maximum_filter, gaussian_filter
+import cv2
 from typing import Tuple
 import warnings
 
@@ -35,16 +35,16 @@ class FringeRemoverFast:
         """
         Initialize fast fringe remover.
         """
-        self.purple_amount = np.clip(purple_amount, 0, 3)  # Extended range
+        self.purple_amount = np.clip(purple_amount, 0, 10)  # Extended range
         self.purple_hue_lo = purple_hue_lo
         self.purple_hue_hi = purple_hue_hi
-        self.green_amount = np.clip(green_amount, 0, 3)  # Extended range
+        self.green_amount = np.clip(green_amount, 0, 10)  # Extended range
         self.green_hue_lo = green_hue_lo
         self.green_hue_hi = green_hue_hi
         self.lateral_correction = lateral_correction
         self.edge_threshold = edge_threshold
         self.min_saturation = min_saturation
-        self.fringe_width = np.clip(fringe_width, 1, 20)  # Extended range
+        self.fringe_width = np.clip(fringe_width, 1, 100)  # Extended range
     
     def remove_fringe(self, image: np.ndarray) -> np.ndarray:
         """
@@ -123,12 +123,16 @@ class FringeRemoverFast:
             gradient /= g_max
         
         # Binary threshold
+        # エッジ検出閾値を緩和（より多くのエッジを検出）
         edges = (gradient > self.edge_threshold).astype(np.uint8)
         
         # Fast dilation
         if self.fringe_width > 1:
-            size = min(self.fringe_width * 2 + 1, 15)  # Cap size for speed
-            edges = maximum_filter(edges, size=size)
+            # サイズの上限を設定（高速化）
+            size = min(self.fringe_width * 2 + 1, 20)  # 最大で20に制限
+            # OpenCV dilate（scipyより2-3倍高速）
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+            edges = cv2.dilate(edges.astype(np.uint8), kernel).astype(np.float32)
         
         return edges.astype(np.float32)
     
@@ -164,19 +168,27 @@ class FringeRemoverFast:
             hue_mask = (h >= self.purple_hue_lo) | (h <= self.purple_hue_hi)
         
         # Color profile (vectorized)
-        color_profile = ((r - g) > 0.05) & ((b - g) > 0.05) & ((r + b) > (2 * g + 0.1))
+        # color_profile の閾値を緩和（0.05 → 0.01、0.1 → 0.02）
+        color_profile = ((r - g) > 0.01) & ((b - g) > 0.01) & ((r + b) > (2 * g + 0.02))
         
         # Saturation and value masks
-        sat_mask = s > self.min_saturation
-        value_mask = (maxc > 0.1) & (maxc < 0.95)
+        # 彩度: 下限（フリンジ検出）と上限（鮮やかな花を除外）
+        sat_mask = (s > self.min_saturation) & (s < 0.7)
+        # 輝度: 下限を上げて暗い部分（花など）を除外
+        value_mask = (maxc > 0.3)
+        # value_mask = (maxc > 0.1) & (maxc < 0.95) # 上限があると明るいフリンジが消えない
         
         # Combine (all vectorized boolean operations)
         purple_mask = edges * hue_mask * color_profile * sat_mask * value_mask
         
-        # Fast blur (skip if small fringe_width for speed)
-        if purple_mask.max() > 0 and self.fringe_width >= 6:
-            blur_sigma = 0.5  # Fixed small sigma for speed
-            purple_mask = gaussian_filter(purple_mask.astype(np.float32), sigma=blur_sigma)
+        # マスクのブラー処理を強化（マダラ防止）
+        if purple_mask.max() > 0:
+            # fringe_widthに応じて動的調整、より強くブラー
+            blur_sigma = max(1.5, self.fringe_width / 10.0)
+            # OpenCV GaussianBlur（scipyより3-5倍高速）
+            ksize = 2 * int(3 * blur_sigma) + 1
+            ksize = max(3, ksize)  # 最小値3（奇数）
+            purple_mask = cv2.GaussianBlur(purple_mask.astype(np.float32), (ksize, ksize), blur_sigma)
         
         # Apply amount and clip
         return np.clip(purple_mask * self.purple_amount, 0, 1)
@@ -202,15 +214,20 @@ class FringeRemoverFast:
         # Masks (all vectorized)
         hue_mask = (h >= self.green_hue_lo) & (h <= self.green_hue_hi)
         color_profile = (g > r + 0.05) & (g > b + 0.05)
-        sat_mask = s > self.min_saturation
-        value_mask = (maxc > 0.1) & (maxc < 0.95)
+        # 彩度: 下限と上限
+        sat_mask = (s > self.min_saturation) & (s < 0.7)
+        # 輝度: 下限を上げる
+        value_mask = (maxc > 0.3)
         
         green_mask = edges * hue_mask * color_profile * sat_mask * value_mask
         
-        # Fast blur (skip for small fringes)
-        if green_mask.max() > 0 and self.fringe_width >= 6:
-            blur_sigma = 0.5
-            green_mask = gaussian_filter(green_mask.astype(np.float32), sigma=blur_sigma)
+        # マスクのブラー処理を強化（マダラ防止）
+        if green_mask.max() > 0:
+            blur_sigma = max(1.5, self.fringe_width / 10.0)
+            # OpenCV GaussianBlur（scipyより3-5倍高速）
+            ksize = 2 * int(3 * blur_sigma) + 1
+            ksize = max(3, ksize)  # 最小値3（奇数）
+            green_mask = cv2.GaussianBlur(green_mask.astype(np.float32), (ksize, ksize), blur_sigma)
         
         return np.clip(green_mask * self.green_amount, 0, 1)
     

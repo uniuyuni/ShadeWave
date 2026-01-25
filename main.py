@@ -318,7 +318,7 @@ if __name__ == '__main__':
                 # プレビュー表示
                 img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                 img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
-                np.clip(img_draw, 0, 1, out=img_draw)
+                img_draw = np.clip(img_draw, 0, 1)
                                 
                 #描画をスケジューリング
                 self.blit_image(img_draw)
@@ -332,15 +332,18 @@ if __name__ == '__main__':
                 """
 
         def draw_image(self):
+            last_processed_version = -1
             while self.apply_thread is not None:
 
-                self.draw_event.wait()
-                self.draw_event.clear()
+                if last_processed_version >= self.pipeline_version:
+                    self.draw_event.wait(timeout=0.1)
+                    self.draw_event.clear()
 
-                center_pos = self.apply_draw_image_center
-                self.apply_draw_image_center = None
-
-                self.draw_image_core(center_pos)
+                current_version = self.pipeline_version
+                if last_processed_version < current_version:
+                    center_pos = self.apply_draw_image_center
+                    self.draw_image_core(center_pos)
+                    last_processed_version = current_version
             
         def start_draw_image(self, center_pos=None):
             self.pipeline_version += 1

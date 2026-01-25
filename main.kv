@@ -1476,6 +1476,11 @@
                                     ParamChipText:
                                         text: "Apply"
 
+                            VSeparator:
+ 
+                            HeadLabel:
+                                text: ' Fringe Removal'
+
                             ParamBoxLayout:
                                 ParamLabel:
                                     text: "RCA"
@@ -1490,6 +1495,37 @@
                                     on_release: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
                                     ParamChipText:
                                         text: "Apply"
+
+                            ParamSlider:
+                                id: slider_rca_purple_amount
+                                text: "Purple Amount"
+                                min: 1
+                                max: 100
+                                value: 20
+                                step: 1
+                                on_slider: root.apply_effects_lv(0, 'remove_chromatic_aberration')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                            ParamSlider:
+                                id: slider_rca_fringe_width
+                                text: "Fringe Width"
+                                min: 1
+                                max: 100
+                                value: 20
+                                step: 1
+                                on_slider: root.apply_effects_lv(0, 'remove_chromatic_aberration')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                            ParamSlider:
+                                id: slider_rca_edge_threshold
+                                text: "Edge Threshold"
+                                min: 1
+                                max: 100
+                                value: 10
+                                step: 1
+                                on_slider: root.apply_effects_lv(0, 'remove_chromatic_aberration')
+                                on_before_edit: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                on_after_edit: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
 
                             VSpacer:
 
