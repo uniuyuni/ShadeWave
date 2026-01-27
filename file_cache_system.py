@@ -38,12 +38,22 @@ def _task_callback(file_callbacks, shared_resources, future):
                 logging.info(f"FCS: Converted {file_path} to memmap. Backing: {backing}")
 
         # キャッシュに追加
-        shared_resources['cache'][file_path] = (imgset, exif_data, param.copy())
+        # 既存のキャッシュがある場合はHistoryを維持する
+        current_history = None
+        if file_path in shared_resources['cache']:
+            try:
+                # 既存のキャッシュからHistoryを取得
+                # 形式: (imgset, exif_data, param, history)
+                current_history = shared_resources['cache'][file_path][3]
+            except Exception:
+                pass
+
+        shared_resources['cache'][file_path] = (imgset, exif_data, param.copy(), current_history)
 
         # コールバックを実行
         callback = file_callbacks.get(file_path, None)
         if callback:
-            callback(file_path, imgset, exif_data, param, flag)
+            callback(file_path, imgset, exif_data, param, current_history, flag)
             logging.info(f"FCS Callback executed for {file_path}, flag={flag}")
 
     except Exception as e:
@@ -177,7 +187,7 @@ class FileCacheSystem:
                 self.file_callbacks[file_path] = callback
 
             logging.info(f"FCS Preload registry hit: {file_path}")
-            exif_data, param, imgset = self.preload_registry[file_path]
+            exif_data, param, imgset, history = self.preload_registry[file_path]
             
             # まだ読み込みスレッドが開始されていなければ開始
             if file_path not in self.active_processes:
@@ -188,14 +198,18 @@ class FileCacheSystem:
         # キャッシュにある場合
         if file_path in self.cache:
             logging.info(f"FCS Cache hit: {file_path}")
-            imgset, exif_data, param = self.cache[file_path]
+            imgset, exif_data, param, history = self.cache[file_path]
             
             # コールバックが指定されていればすぐに呼び出す
             if callback:
                 if file_path not in self.file_callbacks:
                     self.file_callbacks.clear() # 他のファイルなら消す
                 
-                callback(file_path, imgset, exif_data, param.copy(), 0)
+                callback(file_path, imgset, exif_data, param.copy(), history, 0)
+
+                # 読み込み完了済みなら完了通知も送る
+                if getattr(imgset, 'flag', 0) == -1:
+                    callback(file_path, imgset, exif_data, param.copy(), history, -1)
                 
             result = (exif_data, imgset)
                         
@@ -233,7 +247,7 @@ class FileCacheSystem:
         imgset.param = param
         
         # 先行読み込み登録
-        self.preload_registry[file_path] = (exif_data, param, imgset)
+        self.preload_registry[file_path] = (exif_data, param, imgset, None)
         logging.info(f"Registered {file_path} for preload")
         
         # 優先度が高い場合はすぐに読み込みを開始
@@ -243,6 +257,10 @@ class FileCacheSystem:
             # 優先度が低い場合は自動的にキューを処理
             self.process_preload_queue(max_concurrent_loads=self.max_concurrent_loads)
 
+    def set_history(self, file_path, history):
+        if file_path in self.cache:
+            imgset, exif_data, param, _ = self.cache[file_path]
+            self.cache[file_path] = (imgset, exif_data, param, history)
     def _start_loading_thread(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, imgset=None):
         """読み込みスレッドを開始する内部関数"""
         if param is None:
@@ -367,7 +385,7 @@ class FileCacheSystem:
         
         for file_path in files_to_load:
             if file_path not in self.active_processes:  # 既に進行中でないことを確認
-                exif_data, param, imgset = self.preload_registry[file_path]
+                exif_data, param, imgset, _ = self.preload_registry[file_path]
                 self._start_loading_process(file_path, exif_data, param, imgset)
                 logging.info(f"FCS Starting loading processes for {file_path}")
         

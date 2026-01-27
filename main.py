@@ -582,13 +582,13 @@ if __name__ == '__main__':
 
             if card is not None:
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
-                exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5))
+                exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
 
                 # とりあえずEXIF表示
                 self._set_exif_data(exif_data)
         
         @mainthread
-        def on_fcs_get_file(self, file_path, imgset, exif_data, param, flag):
+        def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, flag):
             print(f"[PERF] on_fcs_get_file: Called. Flag: {flag}, Time: {time.time()}")
             print(f"Load image SHAPE: {imgset.img.shape} FLAG: {imgset.flag}, Proc: {flag}")
 
@@ -612,6 +612,16 @@ if __name__ == '__main__':
                 # 特別あつかいでエディタを起動できるなら起動する
                 self.apply_effects_lv(1, 'distortion')
                 self.apply_effects_lv(0, 'crop')
+
+                # ヒストリーの設定
+                if history_obj is None:
+                    self.history = history.History()
+                    self.cache_system.set_history(file_path, self.history)
+                else:
+                    self.history = history_obj
+
+                self.history_panel.set_history(self.history)
+
 
             # 読み込み終わり
             if flag < 0:

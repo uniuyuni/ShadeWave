@@ -226,8 +226,7 @@ def get_self_window_position():
     
     window = app.mainWindow()
     
-    #if window:
-    if False:
+    if window:
         frame = window.frame()
         return (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height)
 
