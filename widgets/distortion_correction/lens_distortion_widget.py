@@ -15,7 +15,7 @@ from kivy.uix.image import Image as KivyImage
 import numpy as np
 import cv2
 
-from cores.distortion_correction.lens_distortion import correct_lens_distortion, detect_lens_distortion
+from cores.distortion_correction.lens_distortion import detect_lens_distortion
 import params
 import macos as device
 

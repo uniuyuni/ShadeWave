@@ -168,13 +168,13 @@ def rotation(img, angle, flip_mode=0, matrix=None, inter_mode='bilinear', border
         
         # こっちはパースペクティブ
         img_affine = cv2.warpPerspective(img, final_matrix, (size, size),
-                                    flags=cv2.INTER_BICUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR,
+                                    flags=cv2.INTER_CUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
     else:
         # 回転と中心補正を同時に行う
         img_affine = cv2.warpAffine(img, trans, (size, size),
-                                    flags=cv2.INTER_BICUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR, 
+                                    flags=cv2.INTER_CUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR, 
                                     borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
 
     return img_affine
@@ -309,7 +309,7 @@ def apply_lens_distortion(image, map_x, map_y, scale=1.0, interpolation='linear'
 def highlight_compress(image):
     import cores.aces_tonemapping as aces_tonemapping
     
-    return aces_tonemapping.aces_tonemapping(image, 1.0, config.get_config('gpu_device'))
+    return aces_tonemapping.aces_tonemapping(image, 0.7, config.get_config('gpu_device'))
 
 def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96), opacity=0.5) -> np.ndarray:
     """
@@ -433,7 +433,7 @@ def apply_level_adjustment(image, black_level, midtone_level, white_level):
     #normalized = np.minimum(normalized, 1.0)
     
     # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
-    result = np.power(normalized, gamma)
+    result = np.power(normalized, gamma).astype(np.float32)
     
     return result
 
@@ -1399,7 +1399,7 @@ def _vectorized_circular_smooth_step(hue_map, center, width, fade_width):
     return result
 
 @lock_numba
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
+@njit("f4[:,:,:](f4[:,:,:],f4[:,:],f4[:])", parallel=True, fastmath=True)
 def _adjust_hls_with_weight(hls_img, weight, adjust):
     h, w, c = hls_img.shape
     output = np.empty_like(hls_img)
@@ -1409,7 +1409,7 @@ def _adjust_hls_with_weight(hls_img, weight, adjust):
     s_factor = 1.0 + adjust[2]
     
     for i in prange(h):
-        for j in prange(w):
+        for j in range(w):
             w_val = weight[i, j]
             
             # 色相調整
@@ -1446,7 +1446,7 @@ def _adjust_hls_with_weight(hls_img, weight, adjust):
     return output
 
 @lock_numba
-@njit(parallel=True, fastmath=False, cache=True, boundscheck=False, error_model="numpy")
+@njit("f4[:,:](f4[:,:,:],f4,f4[:],f4[:],f4[:],f4[:])", parallel=True, fastmath=False)
 def _calculate_elliptical_weight(hls_img, center_h, width_h, fade_h, l_range, s_range):
     h, w, _ = hls_img.shape
     weight_map = np.zeros((h, w), dtype=np.float32)
@@ -1842,6 +1842,7 @@ def apply_zero_wrap(img, param):
     disp_info = params.get_disp_info(param)
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
+    width, height = min(width, img.shape[1]), min(height, img.shape[0]) # 安全策
     wrap = np.ones((height, width), dtype=np.float32)
     preview_width = config.get_config('preview_width')
     preview_height = config.get_config('preview_height')

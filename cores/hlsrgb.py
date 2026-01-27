@@ -100,7 +100,7 @@ KG = 0.7152
 KB = 0.0722
 
 @lock_numba
-@njit(fastmath=True)
+@njit("f4[:,:,:](f4[:,:,:])", parallel=True, fastmath=True)
 def rgb_to_hlc_gain(rgb):
     """
     RGB(HDR) -> HLC+Gain変換 (線形YCbCr風、Gain = max(R,G,B))
@@ -121,7 +121,7 @@ def rgb_to_hlc_gain(rgb):
     H_img, W = rgb.shape[0], rgb.shape[1]
     hlcg = np.empty((H_img, W, 4), dtype=np.float32)
     
-    for i in range(H_img): # なぜかクラッシュするからprangeが使えない
+    for i in prange(H_img): # なぜかクラッシュするからprangeが使えない
         for j in range(W):
             r, g, b = rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2]
             
@@ -175,7 +175,7 @@ def rgb_to_hlc_gain(rgb):
     return hlcg
 
 @lock_numba
-@njit(parallel=True, fastmath=True)
+@njit("f4[:,:,:](f4[:,:,:])", parallel=True, fastmath=True)
 def hlc_gain_to_rgb(hlcg):
     """
     HLC+Gain -> RGB(HDR)変換

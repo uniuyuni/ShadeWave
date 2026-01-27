@@ -1,7 +1,5 @@
 
 import numpy as np
-#import jax.numpy as jnp
-#from jax import jit
 
 def __naive_sigmoid(x, gain, mid):    
     return 1.0 / (1.0 + np.exp((mid - x) * gain))

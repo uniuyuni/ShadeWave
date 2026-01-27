@@ -368,7 +368,8 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info, normalize=True):
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     wx, wy = widget.to_window(*widget.pos)
     cx, cy = cx - wx, cy - wy
-    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
+    cx, cy = cx / device.dpi_scale(), cy / device.dpi_scale()
+    margin_x, margin_y = (widget.size[0] / device.dpi_scale() - texture_size[0])/2, (widget.size[1] / device.dpi_scale() - texture_size[1])/2
     cx, cy = cx - margin_x, cy - margin_y
     cx, cy = cx, texture_size[1] - cy
     _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
@@ -379,7 +380,6 @@ def window_to_tcg(cx, cy, widget, texture_size, tcg_info, normalize=True):
     cx, cy = center_rotate_invert(cx, cy, tcg_info)
     if normalize:
         cx, cy = norm_param(tcg_info, (cx, cy))
-    cx, cy = cx / device.dpi_scale(), cy / device.dpi_scale()
     return (cx, cy)
 
 def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
@@ -393,7 +393,6 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     normalize: 正規化するかどうか
     戻り値: ウインドウ座標
     """
-    cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
     disp_info = get_disp_info(tcg_info)
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
     if normalize:
@@ -401,12 +400,13 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     cx, cy = center_rotate(cx, cy, tcg_info)
     cx, cy = cx + imax, cy + imax
     cx, cy = cx - disp_info[0], cy - disp_info[1]
-    cx, cy = cx * disp_info[4], cy * disp_info[4]        
+    cx, cy = cx * disp_info[4], cy * disp_info[4]
     _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
     cx, cy = cx + offset_x, cy + offset_y
     cx, cy = cx, texture_size[1] - cy
-    margin_x, margin_y = (widget.size[0]-texture_size[0])/2, (widget.size[1]-texture_size[1])/2
+    margin_x, margin_y = (widget.size[0] / device.dpi_scale() - texture_size[0])/2, (widget.size[1] / device.dpi_scale() - texture_size[1])/2
     cx, cy = cx + margin_x, cy + margin_y
+    cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
     wx, wy = widget.to_window(*widget.pos)
     cx, cy = cx + wx, cy + wy
     return (cx, cy)
@@ -421,6 +421,12 @@ def tcg_to_window_scale(x, tcg_info):
     # TCG座標にスケーリングだけ適用する
     if isinstance(x, (tuple, list)):
         return (x[0] * tcg_info['disp_info'][4] * device.dpi_scale(), x[1] * tcg_info['disp_info'][4] * device.dpi_scale())
+    return x * tcg_info['disp_info'][4] * device.dpi_scale()
+
+def tcg_to_image_scale(x, tcg_info):
+    # TCG座標にスケーリングだけ適用する
+    if isinstance(x, (tuple, list)):
+        return (x[0] * tcg_info['disp_info'][4], x[1] * tcg_info['disp_info'][4])
     return x * tcg_info['disp_info'][4]
 
 def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):

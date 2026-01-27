@@ -101,7 +101,7 @@ class ControlPoint(Widget):
         self.editor = editor
         with self.canvas:
             PushMatrix()
-            self.editor.push_scissor()
+            self.scissor = self.editor.push_scissor()
             self.translate = Translate()
             #self.rotate = Rotate(angle=0, origin=(0, 0))            
             self.color_instruction = Color(*self.color)
@@ -116,6 +116,7 @@ class ControlPoint(Widget):
         cx, cy = self.editor.tcg_to_window(self.center_x, self.center_y)
         self.translate.x = cx
         self.translate.y = cy
+        self.editor.set_scissor(self.scissor)
         #self.size = self.editor.window_to_tcg_scale(20, 20) # sizeをセットすると何故かcenterの値がおかしくなるのでコメントアウト
 
     def update_color(self, *args):
@@ -262,8 +263,8 @@ class BaseMask(Widget):
         if len(self.control_points) > 0:
             cp_center = self.control_points[0]
             cp_center.property('ctrl_center').dispatch(cp_center)
-            #cp_center.ctrl_center[0] += float(np.finfo(np.float32).eps)
-            #cp_center.ctrl_center[0] -= float(np.finfo(np.float32).eps)
+            self.is_draw_mask = True
+            self.update_mask()
 
     def update_control_points(self):
         pass
@@ -572,7 +573,7 @@ class CircularGradientMask(BaseMask):
 
         with self.canvas:
             PushMatrix()
-            self.editor.push_scissor()
+            self.scissor = self.editor.push_scissor()
             self.translate = Translate(*self.center)
             self.rotate = Rotate(angle=0, origin=(0, 0))
             Color(*self.color)
@@ -780,6 +781,7 @@ class CircularGradientMask(BaseMask):
             return
 
         with self.canvas:            
+            self.editor.set_scissor(self.scissor)
             cx, cy = self.editor.tcg_to_window(*self.center)
             self.translate.x, self.translate.y = cx, cy
             self.rotate.angle = math.degrees(self.editor.get_rotate_rad(self.rotate_rad))
@@ -800,8 +802,8 @@ class CircularGradientMask(BaseMask):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_texture(*self.center)
-        inner_axes = self.editor.tcg_to_window_scale(self.inner_radius_x, self.inner_radius_y)
-        outer_axes = self.editor.tcg_to_window_scale(self.outer_radius_x, self.outer_radius_y)
+        inner_axes = self.editor.tcg_to_image_scale(self.inner_radius_x, self.inner_radius_y)
+        outer_axes = self.editor.tcg_to_image_scale(self.outer_radius_x, self.outer_radius_y)
         rotate_rad = self.editor.get_rotate_rad(self.rotate_rad)
         invert = not effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
 
@@ -1014,7 +1016,7 @@ class GradientMask(BaseMask):
 
         with self.canvas:
             PushMatrix()
-            self.editor.push_scissor()
+            self.scissor = self.editor.push_scissor()
             self.translate = Translate(*self.center)
             self.rotate = Rotate(angle=0, origin=(0, 0))
             Color(*self.color)
@@ -1203,6 +1205,7 @@ class GradientMask(BaseMask):
             return
 
         with self.canvas:
+            self.editor.set_scissor(self.scissor)
             if self.initializing:
                 tx, ty = self.editor.tcg_to_window(*self.start_point)
                 #self.line_color.rgba = self.color
@@ -1452,11 +1455,11 @@ class FullMask(BaseMask):
 class FreeDrawMask(BaseMask):
 
     class Line:
-        def __init__(self, is_eracing=False, size=10, soft=1.5, **kwargs):
+        def __init__(self, is_erasing=False, size=10, soft=1.2):
+            self.is_erasing = is_erasing
             self.size = size
             self.soft = soft
             self.points = []
-            self.is_erasing = is_eracing
 
         def add_point(self, x, y):
             self.points.append((x, y))
@@ -1468,11 +1471,11 @@ class FreeDrawMask(BaseMask):
 
         self.lines = []  # 複数の線を保持
         self.current_line = None
-        self.brush_size = 100
+        self.brush_size = 300
 
         with self.canvas:
             PushMatrix()
-            self.editor.push_scissor()
+            self.scissor = self.editor.push_scissor()
             self.translate = Translate(0, 0)
             self.rotate = Rotate(angle=0, origin=(0, 0))
             self.brush_color = Color((0, 1, 1, 1))
@@ -1480,7 +1483,10 @@ class FreeDrawMask(BaseMask):
             self.editor.pop_scissor()
             PopMatrix()
 
+        Window.bind(mouse_pos=self.on_mouse_pos)
+
     def start(self):
+        self.brush_color.rgba = (1, 1, 1, 1)
         Window.bind(mouse_pos=self.on_mouse_pos)
 
     def end(self):
@@ -1498,12 +1504,21 @@ class FreeDrawMask(BaseMask):
         
         param = effects.delete_default_param_all(self.effects, self.effects_param)
         param = params.delete_special_param(param)
+
+        lines = []
+        for line in self.lines:
+            lines.append({
+                'is_erasing': line.is_erasing,
+                'size': line.size,
+                'soft': line.soft,
+                'points': copy.deepcopy(line.points)
+            })
         
         dict = {
             'type': MaskType.FREEDRAW,
             'name': self.name,
             'center': [cx, cy],
-            'lines': copy.deepcopy(self.lines),
+            'lines': lines,
             'effects_param': param
         }
         return dict
@@ -1512,7 +1527,19 @@ class FreeDrawMask(BaseMask):
         self.initializing = False
         self.name = dict['name']
         cx, cy = dict['center']
-        self.lines = dict['lines']
+
+        lines = []
+        for line in dict['lines']:
+            lineobj = FreeDrawMask.Line(
+                is_erasing=line['is_erasing'],
+                size=line['size'],
+                soft=line['soft'],
+            )
+            for point in line['points']:
+                lineobj.add_point(*point)
+            lines.append(lineobj)
+        self.lines = lines
+
         self.effects_param.update(dict['effects_param'])
         self.center = params.denorm_param(self.effects_param, (cx, cy))
 
@@ -1532,10 +1559,10 @@ class FreeDrawMask(BaseMask):
             if self.editor.collide_point(*touch.pos):
                 # 描画中または消去中はブラシサイズを変更できない
                 if self.current_line is None:
-                    if touch.button == 'scrolldown':
+                    if touch.button == 'scrollup':
                         self.brush_size = max(10, self.brush_size - 10)
-                    elif touch.button == 'scrollup':
-                        self.brush_size = min(100, self.brush_size + 10)
+                    elif touch.button == 'scrolldown':
+                        self.brush_size = min(2000, self.brush_size + 10)
                         
                     self.update_brush_cursor(touch.pos[0], touch.pos[1])
 
@@ -1550,9 +1577,8 @@ class FreeDrawMask(BaseMask):
 
         # 右クリックで消去モード、左クリックで描画モード
         is_erasing = (touch.button == 'right')            
-        cx, cy = self.editor.window_to_tcg(*touch.pos)
         self.current_line = FreeDrawMask.Line(is_erasing, self.brush_size)
-        self.current_line.add_point(cx, cy)
+        self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
         self.editor.set_active_mask(self)
         self.lines.append(self.current_line)
 
@@ -1568,9 +1594,7 @@ class FreeDrawMask(BaseMask):
 
     def on_touch_move(self, touch):
         if self.current_line is not None:
-            cx, cy = self.editor.window_to_tcg(*touch.pos)
-            self.current_line.add_point(cx, cy)
-
+            self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
             self.update_mask()
             self.editor.start_draw_image()        
 
@@ -1597,13 +1621,15 @@ class FreeDrawMask(BaseMask):
         self.add_widget(cp_center)
 
     def update_brush_cursor(self, x, y):
-        self.translate.x, self.translate.y = x - self.brush_size / 2, y - self.brush_size / 2
-        self.brush_cursor.ellipse = (0, 0, self.brush_size, self.brush_size)
+        brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
+        self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
+        self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
 
     def update_mask(self):
         if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
             return
         
+        self.editor.set_scissor(self.scissor)
         self.rotate.angle = math.degrees(self.editor.get_rotate_rad(0))
 
         if self.is_draw_mask == True:
@@ -1621,11 +1647,17 @@ class FreeDrawMask(BaseMask):
         npoint = 0
         for line in self.lines:
             npoint += len(line.points)
+        copy_lines = []
+        for i, src_line in enumerate(self.lines):
+            copy_line = FreeDrawMask.Line(src_line.is_erasing, self.editor.tcg_to_image_scale(src_line.size, 0)[0], src_line.soft)
+            for point in src_line.points:
+                copy_line.add_point(*self.editor.tcg_to_texture(*point))
+            copy_lines.append(copy_line)
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, nline, npoint))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
              
-            mask = self.draw_line(image_size, self.lines)
+            mask = self.draw_line(image_size, copy_lines)
 
             # ルミナンスとマスクを作成
             mask = self._apply_extened_params(mask)
@@ -1637,28 +1669,20 @@ class FreeDrawMask(BaseMask):
     
     def create_natural_brush(self, size, softness=1.2):
         """自然なブラシを作成"""
-        brush_size = int(size * 2)  # 直径
-        brush_radius = size
+        brush_size = int(size)
+        brush_radius = brush_size // 2
         center = (brush_size // 2, brush_size // 2)
-        
-        # 基本の円形ブラシ
-        y, x = np.ogrid[:brush_size, :brush_size]
-        distances = np.sqrt((x - center[0])**2 + (y - center[1])**2)
-        
-        # ガウシアンっぽい自然な減衰
-        brush = np.zeros((brush_size, brush_size), dtype=np.float32)
-        
-        # 中心から外側への自然な減衰
-        mask = distances <= brush_radius
-        normalized_dist = distances / brush_radius
-        
-        # より自然なフォールオフ（ガウシアン＋べき乗の組み合わせ）
-        intensity = np.exp(-2.0 * normalized_dist**2)  # ガウシアン成分
-        intensity *= (1 - normalized_dist**(1/softness))  # ソフトエッジ成分
-        intensity = np.maximum(0, intensity)
-        
-        brush[mask] = intensity[mask]
-        return brush
+
+        # カーネルサイズを計算
+        kernel = np.zeros((brush_size, brush_size), np.float32)
+        # カーネルに円を描く
+        cv2.circle(kernel, (brush_radius, brush_radius), brush_radius // 2, 1, -1)
+
+        # カーネルをガウシアンぼかし
+        kz = int(max(1, brush_radius * softness)) | 1
+        kernel = cv2.GaussianBlur(kernel, (kz, kz), 0)
+
+        return kernel
     
     def safe_array_slice(self, array, y_min, y_max, x_min, x_max):
         """安全な配列スライス（境界チェック付き）"""
@@ -1731,6 +1755,7 @@ class FreeDrawMask(BaseMask):
                 # 描画モード
                 image[img_y_min_clipped:img_y_max_clipped, 
                      img_x_min_clipped:img_x_max_clipped] = np.minimum(1, target_region + brush_part)
+                     
         except (IndexError, ValueError) as e:
             # エラーが発生した場合は無視して続行
             pass
@@ -1741,16 +1766,16 @@ class FreeDrawMask(BaseMask):
             return
         
         # ブラシを作成
-        brush = self.create_natural_brush(brush_size / 2, softness)
+        brush = self.create_natural_brush(brush_size, softness)
         
         # 単一点の場合
         if len(points) == 1:
-            p = self.editor.tcg_to_texture(*points[0])
+            p = points[0]
             self.apply_brush_at_point(image, int(p[0]), int(p[1]), brush, is_erasing)
             return
         
         # 複数点の場合は補間して滑らかに
-        texture_points = [self.editor.tcg_to_texture(*p) for p in points]
+        texture_points = points
         
         for i in range(len(texture_points) - 1):
             p1 = texture_points[i]
@@ -1767,11 +1792,7 @@ class FreeDrawMask(BaseMask):
                 x = p1[0] + t * (p2[0] - p1[0])
                 y = p1[1] + t * (p2[1] - p1[1])
                 
-                # 速度に基づく不透明度調整（速く動かすと薄くなる）
-                speed_factor = min(1.0, 10.0 / max(1.0, distance))
-                opacity = 0.3 + 0.7 * speed_factor
-                
-                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, opacity)
+                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, 0.5)
     
     def draw_line(self, image_size, lines):
         """改良された線描画メソッド"""
@@ -1785,25 +1806,16 @@ class FreeDrawMask(BaseMask):
             
             # 各線を描画
             for line in lines:
-                if not hasattr(line, 'points') or len(line.points) == 0:
+                if len(line.points) == 0:
                     continue
                 
-                try:
-                    # 線のパラメータを安全に取得
-                    brush_size = getattr(line, 'size', 50)
-                    brush_soft = getattr(line, 'soft', 1.2)
-                    is_erasing = getattr(line, 'is_erasing', False)
-                    
-                    # パラメータの範囲チェック
-                    brush_size = max(1, min(200, brush_size))
-                    brush_soft = max(0.1, min(5.0, brush_soft))
-                    
-                    # 滑らかな線を描画
-                    self.draw_smooth_line(image, line.points, brush_size, brush_soft, is_erasing)
-                    
-                except Exception as e:
-                    # 個別の線でエラーが発生しても他の線は描画を続ける
-                    continue
+                # 線のパラメータを安全に取得
+                is_erasing = line.is_erasing
+                brush_size = line.size
+                brush_soft = line.soft
+                
+                # 滑らかな線を描画
+                self.draw_smooth_line(image, line.points, brush_size, brush_soft, is_erasing)
             
             return image
             
@@ -1830,9 +1842,9 @@ class SegmentMask(BaseMask):
 
         with self.canvas:
             PushMatrix()
+            self.scissor = self.editor.push_scissor()
             # center位置への移動
             self.translate = Translate(0, 0)
-            self.editor.push_scissor()
             Color(*self.color)
             self.rect_line = Line(points=[], close=True, width=2)
             self.editor.pop_scissor()
@@ -1970,6 +1982,7 @@ class SegmentMask(BaseMask):
             return
 
         with self.canvas:
+            self.editor.set_scissor(self.scissor)
             cx, cy = self.center
             crx, cry = self.corner
 
@@ -2427,7 +2440,7 @@ class FaceMask(BaseMask):
         
         # マスク画像を作成
         if FaceMask.__faces == 0:
-            return np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+            return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
 
         result = facer_helper.draw_face_mask(FaceMask.__faces, exclude_names)
 
@@ -2665,7 +2678,15 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             self.active_mask.end()
 
     def push_scissor(self):
-        ScissorPush(x=int(self.pos[0]), y=int(self.pos[1]), width=int(self.size[0]), height=int(self.size[1]))
+        scissor = ScissorPush()
+        self.set_scissor(scissor)
+        return scissor
+
+    def set_scissor(self, scissor):
+        scissor.x = int(self.pos[0])
+        scissor.y = int(self.pos[1])
+        scissor.width = int(self.size[0])
+        scissor.height = int(self.size[1])
 
     def pop_scissor(self):
         ScissorPop()
@@ -2719,7 +2740,6 @@ class MaskEditor2(FloatLayout, LayerCtrl):
     def _update(self, dt=0):
         # 既存のマスクに対する更新を処理
         for mask in reversed(self.mask_list):
-            #pass    # 無限ループ対策
             mask.update()
 
     def serialize(self):
@@ -3108,16 +3128,25 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         # TCG座標にスケーリングだけ適用する
         return params.tcg_to_window_scale((x, y), self.tcg_info)
 
+    def tcg_to_image_scale(self, x, y):
+        # TCG座標にスケーリングだけ適用する
+        return params.tcg_to_image_scale((x, y), self.tcg_info)
+
     def window_to_tcg(self, cx, cy):
         # ワールド座標からTCG座標に変換する
-        return params.window_to_tcg(cx, cy, self, self.texture_size, self.tcg_info, normalize=False)
+        cx, cy = params.window_to_tcg(cx, cy, self, self.texture_size, self.tcg_info, normalize=False)
+        return (cx, cy)
 
     def tcg_to_window(self, cx, cy):
         # TCG座標をウィンドウ座標に変換する
+
         return params.tcg_to_window(cx, cy, self, self.texture_size, self.tcg_info, normalize=False)
 
     def tcg_to_texture(self, cx, cy):
+        #cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
+        #return params.tcg_to_ref_image(cx, cy, self.original_image_rgb, self.tcg_info, apply_disp_info=True)
         # TCG座標をテクスチャ座標に変換する
+        #cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
         disp_info = params.get_disp_info(self.tcg_info)
         imax = max(self.tcg_info['original_img_size'][0]/2, self.tcg_info['original_img_size'][1]/2)
         cx, cy = params.center_rotate(cx, cy, self.tcg_info)

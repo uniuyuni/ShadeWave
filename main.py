@@ -30,11 +30,17 @@ if __name__ == '__main__':
     import threading
     from functools import partial
     import cores.colour_functions as colour_functions
-    import logging
     import re
     import time
     import multiprocessing
     import math
+    import logging
+    # ログレベルの設定
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("numba").setLevel(logging.WARNING)
+    logging.getLogger("pyvips").setLevel(logging.WARNING)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    #logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.WARNING)
 
     import define
     import cores.core as core
@@ -73,16 +79,7 @@ if __name__ == '__main__':
     from kivy.config import Config
     Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
     Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
-    #Config.set('graphics', 'width', 1200)
-    #Config.set('graphics', 'height', 800)
     Config.set('kivy', 'kivy_clock', 'interrupt')
-
-    # ログレベルの設定
-    logging.getLogger("watchfiles").setLevel(logging.WARNING)
-    logging.getLogger("numba").setLevel(logging.WARNING)
-    logging.getLogger("pyvips").setLevel(logging.WARNING)
-    logging.getLogger("PIL").setLevel(logging.WARNING)
-    logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.WARNING)
 
 if __name__ != '__main__':
     class ImportBlocker:
@@ -136,13 +133,14 @@ if __name__ == '__main__':
 
     # プリコンパイル
     def precompile():
-        rgb = np.zeros((32, 32, 3), dtype=np.float32)
-        msk = np.ones((32, 32), dtype=np.float32)
+        pass
+        #rgb = np.zeros((32, 32, 3), dtype=np.float32)
+        #msk = np.ones((32, 32), dtype=np.float32)
 
-        hls = hlsrgb.rgb_to_hlc_gain(rgb)
-        hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
+        #hls = hlsrgb.rgb_to_hlc_gain(rgb)
+        #hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
 
-        core.apply_mask(rgb, msk, rgb)
+        #core.apply_mask(rgb, msk, rgb)
 
 
     class MainWidget(MDBoxLayout):
@@ -263,12 +261,12 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].clear_mask()
         
         def start_draw_image_and_crop(self, imgset, center_pos=None):
-            if self.imgset == imgset:
+            if self.imgset is imgset:
                 self.crop_image = None
                 self.start_draw_image(center_pos)
 
         def sync_draw_image_and_crop(self, imgset):
-            if self.imgset == imgset:
+            if self.imgset is imgset:
                 self.crop_image = None
                 self.pipeline_version += 1
                 self.draw_image_core()
@@ -721,7 +719,7 @@ if __name__ == '__main__':
                     
         def on_image_touch_up(self, touch):
             if self.is_zoomed == True:
-                if self.drag_start_point != None:
+                if self.drag_start_point != None and touch.is_touch == False:
                     self.drag_start_point = None
                     self.drag_center_start = None
                     # パイプライン処理を再開

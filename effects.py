@@ -626,6 +626,7 @@ class DistortionEffect(Effect):
                     effect_type=self.effect_type,
                     brush_size=widget.ids["slider_distortion_brush_size"].value,
                     strength=widget.ids["slider_distortion_strength"].value)
+            self.distortion_painter.set_primary_param(param)
             widget.ids["preview_widget"].add_widget(self.distortion_painter)
 
             self.is_initial_open = 1
@@ -3110,18 +3111,5 @@ def delete_default_param_all(effects, param):
         for l in dict.values():
             l.delete_default_param(param2)
     return param2
-
-
-if __name__ == '__main__':
-    param = {'test1': 0, 'test2': 0}
-
-    for p in {'test1': 0, 'test2': 1}.items():
-        try:
-            if param[p[0]] == p[1]:
-                del param[p[0]]
-        except:
-            pass
-
-    print(param)
 
 

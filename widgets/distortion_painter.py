@@ -484,7 +484,7 @@ class DistortionEngine:
 class DistortionCanvas(FloatLayout):
     STRENGTH_SCALE = 0.002
 
-    brush_size = NumericProperty(60)
+    brush_size = NumericProperty(300)
     strength = NumericProperty(50)
     effect_type = StringProperty('forward_warp')
     last_touch_pos = ListProperty([0, 0])
@@ -588,13 +588,13 @@ class DistortionCanvas(FloatLayout):
             ScissorPush(x=int(self.pos[0]), y=int(self.pos[1]), width=int(self.size[0]), height=int(self.size[1]))
             self.translate = Translate(0, 0)
             self.brush_color = Color((0, 1, 1, 1))
-            brush_size = self.brush_size * device.dpi_scale()
+            brush_size = params.tcg_to_window_scale(self.brush_size, self.tcg_info)
             self.brush_cursor = Line(ellipse=(0, 0, brush_size, brush_size), width=2)
             ScissorPop()
             PopMatrix()
 
     def _update_brush_cursor(self, x, y):
-        brush_size = self.brush_size * device.dpi_scale()
+        brush_size = params.tcg_to_window_scale(self.brush_size, self.tcg_info)
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
 
@@ -625,7 +625,7 @@ class DistortionCanvas(FloatLayout):
             # 記録データ作成
             record = {
                     "x": tcg_x, "y": tcg_y,
-                    "size": params.window_to_tcg_scale(self.brush_size, self.tcg_info),
+                    "size": self.brush_size,
                     "strength": strength,
                     "effect": self.effect_type,
                     "direction": (0, 0),
@@ -665,7 +665,7 @@ class DistortionCanvas(FloatLayout):
             # 記録データ作成
             record = {
                     "x": tcg_x, "y": tcg_y,
-                    "size": params.window_to_tcg_scale(self.brush_size, self.tcg_info),
+                    "size": self.brush_size,
                     "strength": strength,
                     "effect": self.effect_type,
                     "direction": direction,
@@ -707,11 +707,10 @@ class DistortionCanvas(FloatLayout):
             effect_type = record['effect']
             direction = record['direction']
 
-            img_x, img_y = params.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True)
             # 変形
             self.current_image = self.engine.apply_effect(
-                center=(img_x, img_y),
-                radius=params.tcg_to_window_scale(brush_size, self.tcg_info),
+                center=params.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True),
+                radius=params.tcg_to_image_scale(brush_size, self.tcg_info),
                 strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
                 effect_type=effect_type,
                 direction=direction,
@@ -757,7 +756,7 @@ class DistortionCanvas(FloatLayout):
         for action in recorded:
             engine.apply_effect(
                 center=params.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info, True),
-                radius=params.tcg_to_window_scale(action['size'], tcg_info),
+                radius=params.tcg_to_image_scale(action['size'], tcg_info),
                 strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
                 effect_type=action.get('effect', 'forward_warp'),
                 direction=action['direction'],
