@@ -1597,6 +1597,7 @@ class FreeDrawMask(BaseMask):
             self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
             self.update_mask()
             self.editor.start_draw_image()        
+            return True
 
         return super().on_touch_move(touch)
 
@@ -1606,6 +1607,7 @@ class FreeDrawMask(BaseMask):
             # マスクを更新
             self.update_mask()
             self.editor.start_draw_image()        
+            return True
         
         return super().on_touch_up(touch)
 
@@ -1696,7 +1698,7 @@ class FreeDrawMask(BaseMask):
         
         return array[y_min:y_max, x_min:x_max], (y_min, y_max, x_min, x_max)
     
-    def apply_brush_at_point(self, image, x, y, brush, is_erasing=False, opacity=1.0):
+    def apply_brush_at_point(self, image, x, y, brush, is_erasing=False, opacity=1.0, blend_mode='max'):
         """指定位置にブラシを適用（安全な境界チェック付き）"""
         if brush.size == 0:
             return
@@ -1747,12 +1749,16 @@ class FreeDrawMask(BaseMask):
             target_region = image[img_y_min_clipped:img_y_max_clipped, 
                                 img_x_min_clipped:img_x_max_clipped]
             
-            if is_erasing:
+            if blend_mode == 'max':
+                # 最大値（上書き）モード - 積算防止用
+                image[img_y_min_clipped:img_y_max_clipped, 
+                     img_x_min_clipped:img_x_max_clipped] = np.maximum(target_region, brush_part)
+            elif is_erasing:
                 # 消しゴムモード
                 image[img_y_min_clipped:img_y_max_clipped, 
                      img_x_min_clipped:img_x_max_clipped] = np.maximum(0, target_region - brush_part)
             else:
-                # 描画モード
+                # 描画モード（加算）
                 image[img_y_min_clipped:img_y_max_clipped, 
                      img_x_min_clipped:img_x_max_clipped] = np.minimum(1, target_region + brush_part)
                      
@@ -1760,7 +1766,7 @@ class FreeDrawMask(BaseMask):
             # エラーが発生した場合は無視して続行
             pass
     
-    def draw_smooth_line(self, image, points, brush_size, softness, is_erasing=False):
+    def draw_smooth_line(self, image, points, brush_size, softness, is_erasing=False, blend_mode='add'):
         """滑らかな線を描画"""
         if len(points) == 0:
             return
@@ -1771,11 +1777,14 @@ class FreeDrawMask(BaseMask):
         # 単一点の場合
         if len(points) == 1:
             p = points[0]
-            self.apply_brush_at_point(image, int(p[0]), int(p[1]), brush, is_erasing)
+            self.apply_brush_at_point(image, int(p[0]), int(p[1]), brush, is_erasing, blend_mode=blend_mode)
             return
         
         # 複数点の場合は補間して滑らかに
         texture_points = points
+        
+        # ブレンドモードに応じた不透明度設定
+        opacity = 1.0 if blend_mode == 'max' else 0.5
         
         for i in range(len(texture_points) - 1):
             p1 = texture_points[i]
@@ -1785,17 +1794,17 @@ class FreeDrawMask(BaseMask):
             distance = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
             
             # 補間点数を距離に応じて調整（密度を一定に保つ）
-            steps = max(1, int(distance / (brush_size * 0.2)))
+            steps = max(1, int(distance / (brush_size * 0.05)))
             
             for j in range(steps + 1):
                 t = j / max(1, steps)
                 x = p1[0] + t * (p2[0] - p1[0])
                 y = p1[1] + t * (p2[1] - p1[1])
                 
-                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, 0.5)
+                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, opacity, blend_mode=blend_mode)
     
     def draw_line(self, image_size, lines):
-        """改良された線描画メソッド"""
+        """改良された線描画メソッド（BBox最適化版）"""
         try:
             # 画像の初期化（透明背景）
             width, height = image_size
@@ -1813,9 +1822,43 @@ class FreeDrawMask(BaseMask):
                 is_erasing = line.is_erasing
                 brush_size = line.size
                 brush_soft = line.soft
+
+                # バウンディングボックスの計算
+                pts = np.array(line.points)
+                min_x = np.min(pts[:, 0]) - brush_size
+                max_x = np.max(pts[:, 0]) + brush_size
+                min_y = np.min(pts[:, 1]) - brush_size
+                max_y = np.max(pts[:, 1]) + brush_size
+
+                # 画像範囲でクリップ
+                min_x = max(0, int(min_x))
+                max_x = min(width, int(max_x))
+                min_y = max(0, int(min_y))
+                max_y = min(height, int(max_y))
                 
-                # 滑らかな線を描画
-                self.draw_smooth_line(image, line.points, brush_size, brush_soft, is_erasing)
+                if min_x >= max_x or min_y >= max_y:
+                    continue
+
+                patch_w = max_x - min_x
+                patch_h = max_y - min_y
+
+                # ストローク用の一時バッファをBBoxサイズで作成
+                stroke_buffer = np.zeros((patch_h, patch_w), dtype=np.float32)
+                
+                # ポイントをローカル座標に変換して描画
+                local_points = []
+                for p in line.points:
+                    local_points.append((p[0] - min_x, p[1] - min_y))
+
+                # 滑らかな線を一時バッファに描画（MAXモード）
+                self.draw_smooth_line(stroke_buffer, local_points, brush_size, brush_soft, False, blend_mode='max')
+
+                # ストロークバッファをメイン画像に合成
+                target_region = image[min_y:max_y, min_x:max_x]
+                if is_erasing:
+                    image[min_y:max_y, min_x:max_x] = np.maximum(0, target_region - stroke_buffer)
+                else:
+                    image[min_y:max_y, min_x:max_x] = np.minimum(1, target_region + stroke_buffer)
             
             return image
             
@@ -2692,7 +2735,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         ScissorPop()
     
     def set_ref_image(self, crop_image, original_image=None):
-        if self.crop_image_rgb is None:
+        if self.crop_image_rgb is not crop_image:
             self.crop_image_rgb = crop_image
             self.crop_image_hls = None
 

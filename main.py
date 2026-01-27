@@ -157,9 +157,9 @@ if __name__ == '__main__':
             self.click_y = 0        
             self.crop_image = None
             self.is_zoomed = False
-            self.drag_start_point = None
             self.drag_center_start = None
-            self.drag_scale = 1.0
+            self.is_press_space = False
+
             self.primary_param = {}
             self.primary_effects = effects.create_effects(
                 lens_modifier_callback=self.lens_modifier_callback,
@@ -174,8 +174,6 @@ if __name__ == '__main__':
             # self.async_worker.start() # Start explicitly after config init
             self.processor = pipeline.AsyncPipelineManager(self.async_worker)
             Clock.schedule_interval(self.update_async_results, 0.1)
-            self.pipeline_version = 0
-            
             self.pipeline_version = 0
             
             self.apply_draw_image_center = None
@@ -310,7 +308,7 @@ if __name__ == '__main__':
         def draw_image_core(self, center_pos=None):
             if (self.imgset is not None) and (self.imgset.img is not None):
 
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=self.imgset.flag, is_drag=self.drag_start_point is not None, center_pos=center_pos)
+                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=self.imgset.flag, is_drag=self.is_press_space, center_pos=center_pos)
                 print(f"[PERF] draw_image_core: process_pipeline finished. Time: {time.time()}")
                 if img is None:
                     return
@@ -649,6 +647,7 @@ if __name__ == '__main__':
                     self.is_zoomed = not self.is_zoomed
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
+                        self.drag_center_start = None
                         disp_info = core.convert_rect_to_info(params.get_crop_rect(self.primary_param), config.get_config('preview_size')/max(self.primary_param['original_img_size']))
                         params.set_disp_info(self.primary_param, disp_info)
 
@@ -660,9 +659,7 @@ if __name__ == '__main__':
                     self.start_draw_image_and_crop(self.imgset)
 
                 # ドラッグ操作
-                elif self.is_zoomed == True:
-                    self.drag_start_point = touch.pos
-                    
+                elif self.is_zoomed == True:                    
                     # ドラッグ開始時の中心位置を計算して保存
                     disp_info = params.get_disp_info(self.primary_param)
                     if disp_info is not None:
@@ -674,39 +671,18 @@ if __name__ == '__main__':
         def on_image_touch_move(self, touch):
             if self.collide_point(*touch.pos):
                 if self.is_zoomed == True:
-                    if self.drag_start_point != None and self.is_press_space == True and self.drag_center_start is not None:
+                    if self.is_press_space == True and self.drag_center_start is not None:
                         # 表示倍率を取得
                         disp_info = params.get_disp_info(self.primary_param)
-                        if disp_info is not None:
-                            scale = disp_info[4]
-                        else:
-                            scale = 1.0
-                        
-                        if scale == 0: scale = 1.0
-
-                        try:
-                            # macos.pyのdpi_scaleはキャッシュを使っているので重くない
-                            dpi = device.dpi_scale()
-                        except:
-                            dpi = 1.0
-
-                        scale = scale * dpi
+                        scale = disp_info[4] * device.dpi_scale()
                         
                         # 画面上の移動量
-                        diff_screen_x = (touch.pos[0] - self.drag_start_point[0])
-                        diff_screen_y = (touch.pos[1] - self.drag_start_point[1])
+                        diff_screen_x = touch.pos[0] - touch.opos[0]
+                        diff_screen_y = touch.pos[1] - touch.opos[1]
 
                         # 画像上の移動量に変換
                         offset_x = -diff_screen_x / scale
                         offset_y = diff_screen_y / scale # KivyはY軸上向き、画像座標系の移動としては...
-                        
-                        # 検証：
-                        # Kivy Y上移動(diff_y > 0) -> ビューポート中心は上にズレてほしい？
-                        # いえ、ハンドツールで紙を上にずらすと、見える範囲は下に移ります。
-                        # つまり、中心座標のYは増えるはずです。
-                        # new_cy = start_cy + offset_y
-                        # offset_y > 0 なら new_cy > start_cy (下へ移動)。
-                        # 正しい。
 
                         # 新しい中心位置の計算
                         new_cx = self.drag_center_start[0] + offset_x
@@ -719,11 +695,8 @@ if __name__ == '__main__':
                     
         def on_image_touch_up(self, touch):
             if self.is_zoomed == True:
-                if self.drag_start_point != None and touch.is_touch == False:
-                    self.drag_start_point = None
+                if self.drag_center_start is not None:
                     self.drag_center_start = None
-                    # パイプライン処理を再開
-                    self.start_draw_image_and_crop(self.imgset)
 
             return False
 
@@ -996,6 +969,8 @@ if __name__ == '__main__':
             print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
 
             if key == 32:
+                if self.is_press_space == False:
+                    self.sync_draw_image_and_crop(self.imgset)
                 self.is_press_space = True
                 return True
 
@@ -1012,6 +987,7 @@ if __name__ == '__main__':
         def on_key_up(self, window, key, *args):
             if key == 32:
                 self.is_press_space = False
+                self.sync_draw_image_and_crop(self.imgset)
                 return True
         
     class MainApp(MDApp):
