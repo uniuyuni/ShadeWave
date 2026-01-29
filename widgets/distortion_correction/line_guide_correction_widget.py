@@ -7,7 +7,7 @@ KivyMDベースのGUIウィジェット
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.widget import Widget as KVWidget
 from kivy.properties import ListProperty as KVListProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty
-from kivy.graphics import Color, Line
+from kivy.graphics import Color as KVColor, Line as KVLine
 from kivy.clock import mainthread as kvmainthread
 from kivymd.uix.button import MDRaisedButton, MDFlatButton
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -71,7 +71,7 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         button_layout.add_widget(self.clear_btn)
 
         self.apply_btn = MDRaisedButton(text="Apply")
-        self.apply_btn.bind(on_press=lambda x: self._apply())
+        self.apply_btn.bind(on_press=lambda x: self.apply_lines())
         button_layout.add_widget(self.apply_btn)
 
         self.revert_btn = MDRaisedButton(text="Revert")
@@ -111,6 +111,11 @@ class LineGuideCorrectionWidget(KVFloatLayout):
             # 外部(Effect)に渡すときは、単純なリストとして渡す
             # warp_correction.correct_with_lines は lines だけ受け取るようになった
             self.on_callback('apply', self)
+        
+    def apply_lines(self):
+        """ラインを適用"""
+        self._apply()
+        self._redraw_lines()
 
     def _on_key_down(self, window, key, scancode, codepoint, modifiers):
         """キー入力処理"""
@@ -290,18 +295,18 @@ class LineGuideCorrectionWidget(KVFloatLayout):
                 wx2, wy2 = self._get_window_pos(p2[0], p2[1])
                 
                 if i == self.selected_line_index:
-                    Color(*COLOR_SELECTED)
+                    KVColor(*COLOR_SELECTED)
                 else:
-                    Color(*COLOR_NORMAL)
+                    KVColor(*COLOR_NORMAL)
                     
-                Line(points=[wx1, wy1, wx2, wy2], width=LINE_WIDTH)
+                KVLine(points=[wx1, wy1, wx2, wy2], width=LINE_WIDTH)
                 
                 # 端点（コントロールポイント）
-                Color(1,1,1,1) if (i==self.selected_line_index and self.selected_point_index==0) else Color(*COLOR_NORMAL)
-                Line(circle=(wx1, wy1, POINT_SIZE), width=1.2)
+                KVColor(1,1,1,1) if (i==self.selected_line_index and self.selected_point_index==0) else KVColor(*COLOR_NORMAL)
+                KVLine(circle=(wx1, wy1, POINT_SIZE), width=1.2)
                 
-                Color(1,1,1,1) if (i==self.selected_line_index and self.selected_point_index==1) else Color(*COLOR_NORMAL)
-                Line(circle=(wx2, wy2, POINT_SIZE), width=1.2)
+                KVColor(1,1,1,1) if (i==self.selected_line_index and self.selected_point_index==1) else KVColor(*COLOR_NORMAL)
+                KVLine(circle=(wx2, wy2, POINT_SIZE), width=1.2)
 
             # 作成中のライン
             if temp_line:
@@ -311,8 +316,8 @@ class LineGuideCorrectionWidget(KVFloatLayout):
                 wx1, wy1 = self._get_window_pos(p1[0], p1[1])
                 wx2, wy2 = self._get_window_pos(p2[0], p2[1])
                 
-                Color(*COLOR_SELECTED)
-                Line(points=[wx1, wy1, wx2, wy2], width=LINE_WIDTH, dash_length=5, dash_offset=5)
+                KVColor(*COLOR_SELECTED)
+                KVLine(points=[wx1, wy1, wx2, wy2], width=LINE_WIDTH, dash_length=5, dash_offset=5)
                  
     @kvmainthread
     def update_preview(self, *args):
@@ -324,9 +329,10 @@ class LineGuideCorrectionWidget(KVFloatLayout):
             "reference_lines": list(self.lines_tcg),
         }
     
-    def set_correction_params(self, params: dict):
+    def set_correction_params(self, param: dict):
         """パラメータを設定"""
-        self.lines_tcg = params.get('reference_lines', [])
+        self.tcg_info = params.param_to_tcg_info(param)
+        self.lines_tcg = param.get('reference_lines', [])
         #self._redraw_lines()
 
     def on_lines_change(self):

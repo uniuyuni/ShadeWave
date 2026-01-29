@@ -358,7 +358,11 @@ if __name__ == '__main__':
             self.apply_draw_image_center = center_pos
             self.processor.set_pipeline_version(self.pipeline_version)
             self.draw_event.set()
-        
+
+        def sync_draw_image(self):
+            self.pipeline_version += 1
+            self.draw_image_core()
+                
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
 
@@ -380,7 +384,9 @@ if __name__ == '__main__':
                 case 'start':
                     self.begin_history_effect_ctrl(0, 'geometry')
                 case 'update' | 'apply':
-                    self.apply_effects_lv(0, 'geometry')
+                    self.apply_effects_lv(0, 'geometry', sync=True)
+                    # Update widget with new params (especially matrix for correct display)
+                    #widget.set_correction_params(self.primary_param)
                 case 'end':
                     self.primary_param.update(widget.get_correction_params())
                     self.end_history_effect_ctrl(0, 'geometry')
@@ -409,7 +415,7 @@ if __name__ == '__main__':
 
             return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
-        def apply_effects_lv(self, lv, effect):
+        def apply_effects_lv(self, lv, effect, sync=False):
             if self.run_set2widget_all == True:
                 return
                 
@@ -417,7 +423,10 @@ if __name__ == '__main__':
             current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             #self.apply_rotation_flip_for_wrapper()
-            self.start_draw_image()
+            if sync == False:
+                self.start_draw_image()
+            else:
+                self.sync_draw_image()
 
         def set_effect_param(self, lv, effect, arg):
             if self.run_set2widget_all == True:
@@ -898,10 +907,14 @@ if __name__ == '__main__':
             if current.text == "Ge":
                 self.is_zoomed = False
 
+            else:
+                self.primary_effects[0]['geometry'].close_geometry_editor(self)
+
             if self.imgset is not None:
                 self.apply_effects_lv(0, "geometry")
                 self.apply_effects_lv(0, "crop")
                 self.apply_effects_lv(1, "distortion")
+
 
 
         def set_lut_path(self, path):

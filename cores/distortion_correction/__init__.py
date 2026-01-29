@@ -6,13 +6,14 @@
 
 from .lens_distortion import correct_lens_distortion, detect_lens_distortion
 
-from .trapezoid_correction_3d import correct_trapezoid_3d as correct_trapezoid
+from .trapezoid_correction_3d import correct_trapezoid_3d as correct_trapezoid, calculate_trapezoid_homography
 
-from .four_point_correction import correct_four_points, detect_rectangle
+from .four_point_correction import correct_four_points, detect_rectangle, calculate_four_point_homography
 
 from .warp_correction import (
     warp_mesh,
     correct_with_lines,
+    calculate_lines_homography,
     get_mesh_coordinates
 )
 
@@ -25,11 +26,14 @@ __all__ = [
     'detect_lens_distortion',
     # 台形補正（3D回転ベース）
     'correct_trapezoid',
+    'calculate_trapezoid_homography',
     # 4点補正
     'correct_four_points',
+    'calculate_four_point_homography',
     'detect_rectangle',
     # ワープ補正
     'warp_mesh',
     'correct_with_lines',
+    'calculate_lines_homography',
     'get_mesh_coordinates',
 ]

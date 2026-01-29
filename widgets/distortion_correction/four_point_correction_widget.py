@@ -7,10 +7,10 @@ KivyMDベースのGUIウィジェット
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.scatter import Scatter as KVScatter
 from kivy.properties import ListProperty as KVListProperty, StringProperty as KVStringProperty
-from kivy.graphics import Color, Line, PushMatrix, PopMatrix, Translate, Ellipse
-from kivy.clock import mainthread as kvmainthread
+from kivy.graphics import Color as KVColor, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Translate as KVTranslate, Ellipse as KVEllipse
 from kivymd.uix.button import MDRaisedButton
 from kivy.uix.image import Image as KVImage
+from kivy.clock import mainthread as kvmainthread
 import numpy as np
 import cv2
 
@@ -115,9 +115,10 @@ class FourPointCorrectionWidget(KVFloatLayout):
     
     def _revert_corners(self, *args):
         backup = self.corner_positions_tcg.copy()
-        self._reset_corners()
-        self._apply_corners()
-        self.corner_positions_tcg = backup
+        self._reset_corners() # Reset UI and Params to Identity
+        self._apply_corners() # Apply restored state to Params
+        self.corner_positions_tcg = backup # Restore backup to internal state
+        self._sync_tcg_to_kivy() # Restore UI handles
     
     def get_correction_params(self) -> dict:
         """
@@ -128,14 +129,17 @@ class FourPointCorrectionWidget(KVFloatLayout):
         """
         return {"four_points": list(self.corner_positions_tcg)}
     
-    def set_correction_params(self, params: dict):
+    def set_correction_params(self, param: dict):
         """
         パラメータを設定（TCG座標系）
         
         Args:
-            params: dict、{"four_points": [(x,y), ...]}
+            param: dict、{"four_points": [(x,y), ...]}
         """
-        four_points = params.get('four_points', [])
+        # マトリックス情報などを最新化
+        self.tcg_info = params.param_to_tcg_info(param)
+        
+        four_points = param.get('four_points', [])
         if four_points != []:
             self.corner_positions_tcg = four_points
             self._sync_tcg_to_kivy()
@@ -150,7 +154,6 @@ class FourPointCorrectionWidget(KVFloatLayout):
         """TCG座標をKivy座標に同期してハンドルを更新"""
         self.updating_handles = True
         try:
-            
             # 既存ハンドル数チェック
             if len(self.handles) != 4:
                 for handle in self.handles:
@@ -191,11 +194,10 @@ class FourPointCorrectionWidget(KVFloatLayout):
         
         # 円形を描画
         with handle.canvas:
-            #PushMatrix()
-            #self.translate = Translate(0, 0)
-            Color(0.2, 0.6, 1.0, 0.8)  # 青色
-            Ellipse(pos=(0, 0), size=(40, 40))
-            #PopMatrix()
+            #KVPushMatrix()
+            KVColor(0.2, 0.6, 1.0, 0.8)  # 青色
+            KVEllipse(pos=(0, 0), size=(40, 40))
+            #KVPopMatrix()
         
         # 位置を設定
         handle.center = pos
@@ -244,7 +246,7 @@ class FourPointCorrectionWidget(KVFloatLayout):
             return
         
         with self.canvas.after:
-            Color(1, 1, 1, 1)  # 白色
+            KVColor(1, 1, 1, 1)  # 白色
             
             # 4点を結ぶ線
             points = []
@@ -254,4 +256,4 @@ class FourPointCorrectionWidget(KVFloatLayout):
             # 最初の点に戻る
             points.extend([self.handles[0].center_x, self.handles[0].center_y])
             
-            Line(points=points, width=2)
+            KVLine(points=points, width=2)

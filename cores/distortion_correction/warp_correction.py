@@ -225,33 +225,12 @@ def correct_with_lines(
     
     h, w = image.shape[:2]
     
-    # 正規化座標からピクセル座標への変換
-    # これらは歪んだ画像上での実際の線の位置
-    pixel_lines = []
-    for line in reference_lines:
-        p1_norm, p2_norm = line
-        p1_pixel = params.tcg_to_ref_image(p1_norm[0], p1_norm[1], image, tcg_info)
-        p2_pixel = params.tcg_to_ref_image(p2_norm[0], p2_norm[1], image, tcg_info)
-        pixel_lines.append((p1_pixel, p2_pixel))
-    
-    # 各線が垂直か水平かを判定し、対応点を生成
-    src_points, dst_points = _generate_correspondence_points_improved(pixel_lines, w, h)
-    
-    if len(src_points) < 4:
-        raise ValueError("ホモグラフィ計算に十分な対応点が得られませんでした")
-    
-    # ホモグラフィ行列を計算
-    src_points = np.array(src_points, dtype=np.float32)
-    dst_points = np.array(dst_points, dtype=np.float32)
-    
-    # 点が4つの場合は直接計算、それ以上ならRANSAC
-    if len(src_points) == 4:
-        H = cv2.getPerspectiveTransform(src_points, dst_points)
-    else:
-        H, mask = cv2.findHomography(src_points, dst_points, cv2.RANSAC, 5.0)
+    H = calculate_lines_homography(reference_lines, w, h, tcg_info)
     
     if H is None:
-        raise ValueError("ホモグラフィ行列の計算に失敗しました")
+        # 計算できなかった場合（線が不足など）は元の画像を返す
+        # correct_with_linesの仕様上、線が1本の場合はNoneを返す
+        return image, None
     
     # 補間方法の選択
     interp_flags = {
@@ -273,6 +252,81 @@ def correct_with_lines(
     )
     
     return corrected, H
+
+def calculate_lines_homography(
+    reference_lines: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+    width: int,
+    height: int,
+    tcg_info: Dict = None
+) -> Optional[np.ndarray]:
+    """
+    参照線からホモグラフィ行列を計算する
+    
+    Returns
+    -------
+    Optional[np.ndarray]
+        ホモグラフィ行列 (3x3) または None
+    """
+    # エッジケース: 線が0本
+    if len(reference_lines) == 0:
+        return None
+    
+    # エッジケース: 線が1本の場合は計算不可（仕様）
+    if len(reference_lines) == 1:
+        return None
+    
+    # エッジケース: 線が5本以上の場合は最後の4本のみを使用
+    if len(reference_lines) > 4:
+        reference_lines = reference_lines[-4:]
+    
+    # 正規化座標からピクセル座標への変換
+    # これらは歪んだ画像上での実際の線の位置
+    # Note: tcg_to_ref_image requires an 'image' argument for shape property usually,
+    # but params.tcg_to_ref_image signature is (cx, cy, ref_img, tcg_info).
+    # It uses ref_img.shape. We need to mock it or update tcg_to_ref_image to check shape from tcg_info?
+    # Actually params.tcg_to_ref_image uses ref_img.shape if apply_disp_info is True or for sizing.
+    # In GeometryEffect context, we might not have the image object.
+    # But here we pass width/height.
+    # We should create a dummy object with shape property or modify tcg_to_ref_image?
+    # Converting to pixel coordinates:
+    # It basically maps normalized to pixel based on tcg_info['original_img_size'] and matrix.
+    # Let's check params.py again.
+    
+    class DummyImage:
+        def __init__(self, w, h):
+            self.shape = (h, w, 3)
+            
+    dummy_img = DummyImage(width, height)
+
+    pixel_lines = []
+    for line in reference_lines:
+        p1_norm, p2_norm = line
+        p1_pixel = params.tcg_to_ref_image(p1_norm[0], p1_norm[1], dummy_img, tcg_info)
+        p2_pixel = params.tcg_to_ref_image(p2_norm[0], p2_norm[1], dummy_img, tcg_info)
+        pixel_lines.append((p1_pixel, p2_pixel))
+    
+    # 各線が垂直か水平かを判定し、対応点を生成
+    src_points, dst_points = _generate_correspondence_points_improved(pixel_lines, width, height)
+    
+    if len(src_points) < 4:
+        # raise ValueError("ホモグラフィ計算に十分な対応点が得られませんでした")
+        return None
+    
+    # ホモグラフィ行列を計算
+    src_points = np.array(src_points, dtype=np.float32)
+    dst_points = np.array(dst_points, dtype=np.float32)
+    
+    # 点が4つの場合は直接計算、それ以上ならRANSAC
+    if len(src_points) == 4:
+        H = cv2.getPerspectiveTransform(src_points, dst_points)
+    else:
+        H, mask = cv2.findHomography(src_points, dst_points, cv2.RANSAC, 5.0)
+    
+    if H is None:
+        # raise ValueError("ホモグラフィ行列の計算に失敗しました")
+        return None
+        
+    return H
 
 def _classify_line_orientation(p1: Tuple[float, float], p2: Tuple[float, float]) -> str:
     """

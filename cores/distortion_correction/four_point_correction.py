@@ -45,9 +45,7 @@ def correct_four_points(
     height, width = image.shape[:2]
     
     # マップ生成
-
-    # 逆変換行列（出力座標 -> 元座標）を求めるため (dst, src) の順
-    H = cv2.getPerspectiveTransform(dst_points, src_points)
+    H = calculate_four_point_homography(src_points, dst_points)
     
     # メッシュグリッド生成 (shape: (H, W))
     # indexing='xy' (デフォルト) で X(幅方向), Y(高さ方向) のグリッドを作成
@@ -86,6 +84,26 @@ def correct_four_points(
     
     # 順変換行列を返す (Src -> Dst)
     return corrected, np.linalg.inv(H)
+
+def calculate_four_point_homography(src_points: np.ndarray, dst_points: np.ndarray) -> np.ndarray:
+    """
+    4点からホモグラフィ行列（逆変換: dst -> src）を計算する
+    
+    Args:
+        src_points: 画像座標系の4点 [(x, y), ...] (変換前)
+        dst_points: 画像座標系の4点 [(x, y), ...] (変換後)
+        
+    Returns:
+        H: 3x3 行列 (dst -> src)
+    """
+    # 逆変換行列（出力座標 -> 元座標）を求めるため (dst, src) の順
+    # これにより、出力画像の各ピクセルが入力画像のどこに対応するかを求める
+    if not isinstance(dst_points, np.ndarray):
+        dst_points = np.array(dst_points, dtype=np.float32)
+    if not isinstance(src_points, np.ndarray):
+        src_points = np.array(src_points, dtype=np.float32)
+        
+    return cv2.getPerspectiveTransform(dst_points, src_points)
 
 def detect_rectangle(
     image: np.ndarray,

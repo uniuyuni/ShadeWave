@@ -17,7 +17,8 @@ import cores.highlight_recovery as highlight_recovery
 import cores.hlsrgb as hlsrgb
 from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
 from cores.distortion_correction import (
-    correct_lens_distortion, correct_trapezoid, correct_four_points, correct_with_lines, warp_mesh
+    correct_lens_distortion, correct_trapezoid, correct_four_points, correct_with_lines, warp_mesh,
+    calculate_trapezoid_homography, calculate_four_point_homography, calculate_lines_homography
 )
 import cores.cross_filter as cross_filter
 import config
@@ -713,8 +714,77 @@ class GeometryEffect(Effect):
             if self.geometry_editor is not None:
                     param.update(self.geometry_editor.get_correction_params())
 
+            # Update Matrix Param based on current params (Visual Fix)
+            self._update_matrix_param(param)
+
             type = get_selected()
             self._open_geometry_editor(widget, type, param)
+
+    def _update_matrix_param(self, param):
+        """
+        画像処理を行わずにパラメータのみからマトリックスを計算・更新する
+        """
+        params.set_matrix(param, None)
+
+        # パラメータ取得
+        correct_horizontal = self._get_param(param, 'correct_horizontal')
+        correct_vertical = self._get_param(param, 'correct_vertical')
+        focal_length = self._get_param(param, 'focal_length')
+        #ang = self._get_param(param, 'rotation')
+        #ang2 = self._get_param(param, 'rotation2')
+        four_points = self._get_param(param, 'four_points')
+        reference_lines = self._get_param(param, 'reference_lines')
+        
+        # 基準サイズ（回転後を想定して max(w, h) の正方形）
+        w_org, h_org = param['original_img_size']
+        size = max(w_org, h_org)
+        half_size = size / 2
+
+        # 台形補正
+        if correct_horizontal != 0 or correct_vertical != 0:
+            multiplier = 0.5 + (focal_length * 0.025)
+            f_pixel = size * multiplier
+            
+            H = calculate_trapezoid_homography(
+                size, size,
+                horizontal=correct_horizontal * 0.5,
+                vertical=correct_vertical * 0.5,
+                focal_length=f_pixel,
+            )
+            params.add_matrix(param, H, offset=(half_size, half_size))
+        
+        # 4点補正
+        reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+        if four_points != [] and four_points != reset_points:
+            # 座標変換用のダミー画像サイズ
+            # Note: tcg_info内のmatrixはここまで（台形補正）の結果を含んでいる必要がある
+            # params.add_matrixでparam['matrix']は更新されている
+            tcg_info = params.param_to_tcg_info(param)
+            
+            class DummyShape:
+                def __init__(self, s): self.shape = (s, s, 3)
+            dummy_img = DummyShape(size)
+
+            src_point = []
+            for cx, cy in four_points:
+                src_point.append(params.tcg_to_ref_image(cx, cy, dummy_img, tcg_info))
+            dst_point = []
+            for cx, cy in reset_points:
+                dst_point.append(params.tcg_to_ref_image(cx, cy, dummy_img, tcg_info))
+
+            # dst -> src (Inverse)
+            H_inv = calculate_four_point_homography(src_point, dst_point)
+            # src -> dst (Forward)
+            H = np.linalg.inv(H_inv)
+            
+            params.add_matrix(param, H, offset=(half_size, half_size))
+
+        # Lines
+        if len(reference_lines) > 0:
+            tcg_info = params.param_to_tcg_info(param)
+            H = calculate_lines_homography(reference_lines, size, size, tcg_info=tcg_info)
+            if H is not None:
+                params.add_matrix(param, H, offset=(half_size, half_size))
 
     def set2param2(self, param, arg):
         if arg == 'hflip':
@@ -760,6 +830,8 @@ class GeometryEffect(Effect):
         param_hash = hash((ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         
         if self.hash != param_hash:
+            self.hash = param_hash
+            
             params.set_matrix(param, None)
 
             # レンズ歪み補正
@@ -777,9 +849,10 @@ class GeometryEffect(Effect):
                     inter_mode='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     border_mode="reflect" if crop_enable == False else "constant")
 
-            org_size = (img.shape[1], img.shape[0])
-            #resize = (config.get_config('preview_size'), config.get_config('preview_size'))
-            #img = cv2.resize(img, resize)
+            tcg_info = params.param_to_tcg_info(param)
+            # 基準サイズ（回転後を想定して max(w, h) の正方形）
+            size = max(img.shape[0], img.shape[1])
+            half_size = size / 2
 
             # 台形補正
             if correct_horizontal != 0 or correct_vertical != 0:
@@ -800,27 +873,25 @@ class GeometryEffect(Effect):
                 # 0 -> 0.5
                 # 20 -> 1.0
                 # 100 -> 3.0
+                # --- Trapezoid Correction ---
                 base_f = np.max(img.shape[:2])
                 multiplier = 0.5 + (focal_length * 0.025)
-                f_pixel = base_f * multiplier
+                f_pixel = base_f * multiplier # Focal len in pixels
+
                 img, H = correct_trapezoid(
                         img,
-                        horizontal=correct_horizontal * 0.5, # 効果が強すぎた
+                        horizontal=correct_horizontal * 0.5, 
                         vertical=correct_vertical * 0.5,
                         focal_length=f_pixel,
                         interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                 )
-                
-                h, w = img.shape[:2]
-                half_size = max(w, h) / 2
                 params.add_matrix(param, H, offset=(half_size, half_size))
-            
+                            
             # 4点補正
             reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
             if four_points != [] and four_points != reset_points:
 
                 # 座標をテクスチャ座標へ変換
-                tcg_info = params.param_to_tcg_info(param)
                 src_point = []
                 for cx, cy in four_points:
                     src_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
@@ -834,25 +905,16 @@ class GeometryEffect(Effect):
                         dst_point,
                         interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                 )
+                params.add_matrix(param, H, offset=(half_size, half_size))
                 
-                if H is not None:
-                    # 座標系変換 (Left-Top Origin -> Center Origin)
-                    h, w = img.shape[:2]
-                    half_size = max(w, h) / 2
-                    params.add_matrix(param, H, offset=(half_size, half_size))
-
             # Lines
-            if len(reference_lines) > 0:
+            if len(reference_lines) > 0: 
                 img, H = correct_with_lines(
-                        img,
-                        reference_lines,
-                        tcg_info=params.param_to_tcg_info(param),
-                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    img,
+                    reference_lines,
+                    tcg_info=tcg_info, # correct_with_lines内部でtcg_info使うので渡す
+                    interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                 )
-
-                # 座標系変換 (Left-Top Origin -> Center Origin)
-                h, w = img.shape[:2]
-                half_size = max(w, h) / 2
                 params.add_matrix(param, H, offset=(half_size, half_size))
 
             # Mesh           
@@ -870,7 +932,6 @@ class GeometryEffect(Effect):
                         key = tuple(k)
                     cp[key] = tuple(v)
                     
-                tcg_info = params.param_to_tcg_info(param)
                 img = warp_mesh(
                     img,
                     mesh_size if mesh_size else (4, 4),
@@ -879,9 +940,7 @@ class GeometryEffect(Effect):
                     interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear'
                 )
 
-            #img = cv2.resize(img, org_size)
             self.diff = img
-            self.hash = param_hash
         
         return self.diff
 
@@ -922,6 +981,7 @@ class GeometryEffect(Effect):
 
             if self.geometry_editor is not None:
                 self.geometry_editor.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+                self.geometry_editor.type = type # 消す時必要
                 widget.ids['preview_widget'].add_widget(self.geometry_editor)
 
         # Update parameters and image if applicable
@@ -951,6 +1011,13 @@ class GeometryEffect(Effect):
                 self.geometry_editor.set_correction_params(param)
                 # Bind callback
                 self.geometry_editor.set_callback(self._editor_update_callback)
+
+    def close_geometry_editor(self, widget):
+        if self.geometry_editor is not None:
+            btn_id = f"btn_{self.geometry_editor.type.lower().replace(' ', '_')}"
+            widget.ids[btn_id].state = 'normal'
+            widget.ids['preview_widget'].remove_widget(self.geometry_editor)
+            self.geometry_editor = None
 
 # クロップ
 class CropEffect(Effect):

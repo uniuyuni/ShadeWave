@@ -2014,6 +2014,7 @@
                                         ref_height: 20
                                         text: "Lens"
                                         group: 'distortion'
+                                        state: 'normal'
                                         on_press: root.apply_effects_lv(0, "geometry")
                                     ToggleButton:
                                         id: btn_trapezoid
@@ -2021,13 +2022,15 @@
                                         ref_height: 20
                                         text: "Trapezoid"
                                         group: 'distortion'
+                                        state: 'normal'
                                         on_press: root.apply_effects_lv(0, "geometry")
                                     ToggleButton:
-                                        id: btn_four_points
+                                        id: btn_lines
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         ref_height: 20
-                                        text: "Four Points"
+                                        text: "Lines"
                                         group: 'distortion'
+                                        state: 'normal'
                                         on_press: root.apply_effects_lv(0, "geometry")
 
                                 ParamBoxLayout:
@@ -2039,13 +2042,15 @@
                                         ref_height: 20
                                         text: "Mesh"
                                         group: 'distortion'
+                                        state: 'normal'
                                         on_press: root.apply_effects_lv(0, "geometry")
                                     ToggleButton:
-                                        id: btn_lines
+                                        id: btn_four_points
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         ref_height: 20
-                                        text: "Lines"
+                                        text: "Four Points"
                                         group: 'distortion'
+                                        state: 'normal'
                                         on_press: root.apply_effects_lv(0, "geometry")
 
                                 ParamSlider:
