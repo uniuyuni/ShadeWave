@@ -12,9 +12,12 @@ from utils import kvutils
 import re
 
 
-class HistoryItem(MDOneLineListItem, KVRecycleDataViewBehavior):
+class HistoryItem(KVBoxLayout, KVRecycleDataViewBehavior):
     active = KVBooleanProperty(True)
     selected = KVBooleanProperty(False)
+    col1_text = KVStringProperty("")
+    col2_text = KVStringProperty("")
+    col3_text = KVStringProperty("")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -27,7 +30,9 @@ class HistoryItem(MDOneLineListItem, KVRecycleDataViewBehavior):
         ret = super().refresh_view_attrs(rv, index, data)
         self.active = data.get('active', True)
         self.index = index
-        self.ids['_lbl_primary'].color = (.8, .8, .8, 1) if self.active == True else (.4, .4, .4, 1)
+        self.col1_text = data.get('col1_text', "")
+        self.col2_text = data.get('col2_text', "")
+        self.col3_text = data.get('col3_text', "")
         
         # Force height update on refresh
         if self.ref_height:
@@ -82,7 +87,7 @@ class HistoryContentPanel(KVBoxLayout):
         rv.scroll_y = max(0, min(1, pos_ratio))
 
     def set_history(self, history):
-        op_dict_list = [{'text': 'Load', 'active': True}]
+        op_dict_list = [{'col1_text': 'Load', 'col2_text': '', 'col3_text': '', 'active': True}]
         active_index = 0
         for i, op in enumerate(history.operations):
             is_active = i <= history.current_index
@@ -114,12 +119,15 @@ class HistoryContentPanel(KVBoxLayout):
             return str(value)
 
         # バックアップとアップデートで共通のキーかつ値が違うものを抽出
+        if not op.diff:
+             return {'col1_text': op.name, 'col2_text': '', 'col3_text': '', 'active': is_active}
+
         result = op.diff[0]
         bps = _format_value(result[1])
         ups = _format_value(result[2])
-        list_item = f"{self._format_string(result[0], 25)} {bps}, {ups}"
-
-        return {'text': list_item, 'active': is_active}
+        col1 = self._format_string(result[0])
+        
+        return {'col1_text': col1, 'col2_text': bps, 'col3_text': ups, 'active': is_active}
 
     def set_active_index(self, index):
         pass
@@ -136,12 +144,12 @@ class HistoryContentPanel(KVBoxLayout):
             d = f"{decimal_part:.2f}".split('.')[1]
             return f"{integer_part: 4d}.{d}"
 
-    def _format_string(self, text, n):
+    def _format_string(self, text):
         """
         正規表現を使用した簡潔なバージョン
         """
         if not text:
-            return " " * n
+            return ""
         
         # アンダースコアをスペースに変換し、次の文字を大文字にする
         # 正規表現でアンダースコア+次の文字を検出して処理
@@ -150,8 +158,7 @@ class HistoryContentPanel(KVBoxLayout):
         # 先頭文字を大文字にする
         result = result[0].upper() + result[1:] if result else ""
         
-        # n文字に成形
-        return result.ljust(n)[:n]
+        return result
 
 def create_history_content_panel(callback):
     return HistoryContentPanel(callback)

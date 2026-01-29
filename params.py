@@ -1,5 +1,5 @@
 
-
+import os
 import numpy as np
 import json
 import math
@@ -449,8 +449,9 @@ def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
             or not (    np.isclose(disp_info[2], tcg_info['original_img_size'][0])
                     and np.isclose(disp_info[3], tcg_info['original_img_size'][1]))
             or np.isclose(disp_info[4], 1.0)
-           ):
-            # Geometryモード時、クロップ時または拡大表示時
+#            or (ref_img.shape[1] == tcg_info['original_img_size'][0] and ref_img.shape[0] == tcg_info['original_img_size'][1])
+        ):
+            # Geometryモード時、クロップ時または拡大表示時とエクスポート時
             cx, cy = cx - disp_info[0], cy - disp_info[1]
             # クロップ時の表示空白
             cx = cx + (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2

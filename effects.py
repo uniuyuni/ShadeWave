@@ -542,15 +542,22 @@ class DistortionEffect(Effect):
     def get_param_dict(self, param):
         return {
             'distortion_recorded': [],
+            'distortion_brush_size': 300,
+            'distortion_strength': 50,
         }    
 
     def set2widget(self, widget, param):
+        widget.ids["slider_distortion_brush_size"].set_slider_value(self._get_param(param, 'distortion_brush_size'))
+        widget.ids["slider_distortion_strength"].set_slider_value(self._get_param(param, 'distortion_strength'))
+        
         if self.distortion_painter is not None:
             self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
             self.distortion_painter.remap_recorded()
 
     def set2param(self, param, widget):
         distortion_enable = False if widget.ids["effects"].current_tab.text != "Li" else True
+        param['distortion_brush_size'] = widget.ids["slider_distortion_brush_size"].value
+        param['distortion_strength'] = widget.ids["slider_distortion_strength"].value
 
         # エディタを開く
         if distortion_enable == True:
@@ -561,8 +568,8 @@ class DistortionEffect(Effect):
             self._close_distortion_painter(param, widget)
 
         if self.distortion_painter is not None:
-            self.distortion_painter.set_brush_size(widget.ids["slider_distortion_brush_size"].value)
-            self.distortion_painter.set_strength(widget.ids["slider_distortion_strength"].value)
+            self.distortion_painter.set_brush_size(param['distortion_brush_size'])
+            self.distortion_painter.set_strength(param['distortion_strength'])
 
             # クロップ範囲をリセット
             if widget.ids["button_distortion_reset"].state == "down":

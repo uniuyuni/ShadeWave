@@ -182,7 +182,8 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
 def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     
     # 環境設定
-    disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), 1)
+    disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), 1) # 倍率１で作成
+    params.set_disp_info(primary_param, disp_info) # コピーしとく
     efconfig = effects.EffectConfig()
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = True

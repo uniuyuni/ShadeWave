@@ -6,14 +6,11 @@
     ref_height: 10  # ここで縦幅を調整
 
 <HistoryItem>:
-    _txt_bot_pad: 1
-    _txt_left_pad: 0
-    _txt_right_pad: 0
-    _txt_top_pad: 0
-    on_kv_post:
-        #self.ids._lbl_primary.font_name = 'Courier New'
-        self.ids._lbl_primary.font_size = '10pt'
-
+    ref_height: 20
+    height: kvutils.dpi_scale_height(self.ref_height)
+    size_hint_y: None
+    orientation: 'horizontal'
+    
     canvas.before:
         Color:
             rgba: (0, 1, 1, 0.3) if self.selected else (0, 0, 0, 1)
@@ -21,9 +18,36 @@
             pos: self.pos
             size: self.size
 
-    size_hint_y: None
-    ref_height: 20
-    height: kvutils.dpi_scale_height(self.ref_height)
+    Label:
+        text: root.col1_text
+        size_hint_x: 0.5
+        text_size: self.size
+        halign: 'left'
+        valign: 'middle'
+        color: (.8, .8, .8, 1) if root.active else (.4, .4, .4, 1)
+        font_size: '9pt'
+        padding_x: '5dp'
+        shorten: True
+        shorten_from: 'right'
+
+    Label:
+        text: root.col2_text
+        size_hint_x: 0.25
+        text_size: self.size
+        halign: 'right'
+        valign: 'middle'
+        color: (.8, .8, .8, 1) if root.active else (.4, .4, .4, 1)
+        font_size: '9pt'
+
+    Label:
+        text: root.col3_text
+        size_hint_x: 0.25
+        text_size: self.size
+        halign: 'right'
+        valign: 'middle'
+        color: (.8, .8, .8, 1) if root.active else (.4, .4, .4, 1)
+        font_size: '9pt'
+        padding_x: '5dp'
 
 <SelectableRecycleBoxLayout>:
 

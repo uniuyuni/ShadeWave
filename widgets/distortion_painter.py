@@ -705,7 +705,7 @@ class DistortionCanvas(KVFloatLayout):
             brush_size = record['size']
             strength = record['strength']
             effect_type = record['effect']
-            direction = record['direction']
+            direction = tuple(record['direction'])
 
             # 変形
             self.current_image = self.engine.apply_effect(
@@ -759,7 +759,7 @@ class DistortionCanvas(KVFloatLayout):
                 radius=params.tcg_to_image_scale(action['size'], tcg_info),
                 strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
                 effect_type=action.get('effect', 'forward_warp'),
-                direction=action['direction'],
+                direction=tuple(action['direction']),
                 original_image=None,
             )
 
