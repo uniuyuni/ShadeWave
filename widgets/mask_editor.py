@@ -6,7 +6,7 @@ from kivy.uix.image import Image as KVImage
 from kivy.graphics import Rectangle as KVRectangle, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix
 from kivy.properties import NumericProperty as KVNumericProperty
 from kivy.graphics.texture import Texture as KVTexture
-from kivy.clock import Clock
+from kivy.clock import Clock as KVClock
 
 import cv2
 import numpy as np
@@ -33,7 +33,7 @@ class MaskEditor(KVImage):
         self.effect_ctrl_param = kwargs.get('effect_ctrl_param', None)
         self.touch_up_callback = kwargs.get('touch_up_callback', None)
 
-        Clock.schedule_once(self.create_ui, -1)
+        KVClock.schedule_once(self.create_ui, -1)
 
     def create_ui(self, dt):
         self.pos = self.parent.pos
@@ -45,7 +45,7 @@ class MaskEditor(KVImage):
         self.mask = np.zeros((self.canvas_height, self.canvas_width, 4), dtype=np.uint8)
 
     def delay_update_canvas(self, *args):
-        Clock.schedule_once(self.update_canvas, 0.1)
+        KVClock.schedule_once(self.update_canvas, 0.1)
 
     def update_canvas(self, *args):
         # Update canvas with the current mask

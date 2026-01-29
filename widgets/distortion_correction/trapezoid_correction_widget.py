@@ -4,19 +4,19 @@
 KivyMDベースのGUIウィジェット
 """
 
-from kivy.uix.floatlayout import FloatLayout
-from kivy.properties import BooleanProperty
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
+from kivy.properties import BooleanProperty as KVBooleanProperty
 from kivy.graphics import Color, Line
-from kivy.clock import mainthread
+from kivy.clock import mainthread as kvmainthread
 
 import params
 
 
-class TrapezoidCorrectionWidget(FloatLayout):
+class TrapezoidCorrectionWidget(KVFloatLayout):
     """台形補正Widget（水平・垂直）"""
     
     # プロパティ
-    show_guides = BooleanProperty(True)
+    show_guides = KVBooleanProperty(True)
     
     def __init__(self, texture_size, param, **kwargs):
         super().__init__(**kwargs)
@@ -43,7 +43,7 @@ class TrapezoidCorrectionWidget(FloatLayout):
         if self.on_callback:
             self.on_callback('end', self)
     
-    @mainthread
+    @kvmainthread
     def update_preview(self, *args):
         # ガイド線を描画
         if self.show_guides:

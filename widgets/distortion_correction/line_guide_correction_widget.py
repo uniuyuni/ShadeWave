@@ -4,14 +4,14 @@
 KivyMDベースのGUIウィジェット
 """
 
-from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.widget import Widget
-from kivy.properties import ListProperty, StringProperty, NumericProperty
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
+from kivy.uix.widget import Widget as KVWidget
+from kivy.properties import ListProperty as KVListProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty
 from kivy.graphics import Color, Line
-from kivy.clock import mainthread
+from kivy.clock import mainthread as kvmainthread
 from kivymd.uix.button import MDRaisedButton, MDFlatButton
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivy.uix.image import Image as KivyImage
+from kivy.uix.image import Image as KVImage
 import numpy as np
 import cv2
 
@@ -19,12 +19,12 @@ from cores.distortion_correction.warp_correction import correct_with_lines
 import params
 
 
-class LineGuideCorrectionWidget(FloatLayout):
+class LineGuideCorrectionWidget(KVFloatLayout):
     """ラインガイド補正Widget"""
     
-    lines_tcg = ListProperty([])  # [((x1,y1), (x2,y2)), ...]
-    interpolation = StringProperty('bicubic')
-    preview_scale = NumericProperty(0.25)
+    lines_tcg = KVListProperty([])  # [((x1,y1), (x2,y2)), ...]
+    interpolation = KVStringProperty('bicubic')
+    preview_scale = KVNumericProperty(0.25)
     
     def __init__(self, texture_size, param, **kwargs):
         super().__init__(**kwargs)
@@ -35,7 +35,7 @@ class LineGuideCorrectionWidget(FloatLayout):
         self.on_callback = None
         
         # 線描画用のオーバーレイWidget
-        self.draw_overlay = Widget()
+        self.draw_overlay = KVWidget()
         self.add_widget(self.draw_overlay)
         
         # 状態変数
@@ -45,8 +45,8 @@ class LineGuideCorrectionWidget(FloatLayout):
         self.start_new_line_point = None
         
         # キーボードイベント
-        from kivy.core.window import Window
-        Window.bind(on_key_down=self._on_key_down)
+        from kivy.core.window import Window as KVWindow
+        KVWindow.bind(on_key_down=self._on_key_down)
 
         # タッチイベントをバインド
         self.draw_overlay.bind(
@@ -314,7 +314,7 @@ class LineGuideCorrectionWidget(FloatLayout):
                 Color(*COLOR_SELECTED)
                 Line(points=[wx1, wy1, wx2, wy2], width=LINE_WIDTH, dash_length=5, dash_offset=5)
                  
-    @mainthread
+    @kvmainthread
     def update_preview(self, *args):
         pass
     

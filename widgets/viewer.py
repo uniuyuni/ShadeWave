@@ -18,8 +18,8 @@ from kivy.uix.label import Label as KVLabel
 from kivymd.uix.card import MDCard
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
-from kivy.clock import mainthread
-from kivy.metrics import dp
+from kivy.clock import mainthread as kvmainthread
+from kivy.metrics import dp as kv_dp
 
 from widgets.draggable_widget import DraggableWidget
 
@@ -31,7 +31,7 @@ class ThumbnailCard(MDCard):
     file_path = KVStringProperty()
     thumb_source = KVProperty(None, force_dispatch=True)
     rating = KVNumericProperty(0)
-    grid_width = KVNumericProperty(dp(180))
+    grid_width = KVNumericProperty(kv_dp(180))
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -62,7 +62,7 @@ class ThumbnailCard(MDCard):
         # 表示サイズ補正
         kvutils.traverse_widget(self)
 
-    @mainthread
+    @kvmainthread
     def set_image(self, exif, thumb):
         self.exif_data = exif
         self.thumb_source = thumb
@@ -77,8 +77,8 @@ class ThumbnailCard(MDCard):
 class ViewerWidget(MDBoxLayout, DraggableWidget):
     last_selected = KVObjectProperty(None, allownone=True)
     cols = KVNumericProperty(4)
-    grid_width = KVNumericProperty(dp(180))
-    thumb_width = KVNumericProperty(dp(160))
+    grid_width = KVNumericProperty(kv_dp(180))
+    thumb_width = KVNumericProperty(kv_dp(160))
     do_scroll_x = KVBooleanProperty(True)
     do_scroll_y = KVBooleanProperty(False)
 
@@ -108,7 +108,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                         action_type_map.get(action)(path)
             time.sleep(1)
 
-    @mainthread
+    @kvmainthread
     def _added_file(self, file_path):
         if self.is_supported_image(file_path):
             # 挿入インデックスを求める
@@ -124,7 +124,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
             self.load_images({file_path: card})
             self.cols += 1
 
-    @mainthread
+    @kvmainthread
     def _deleted_file(self, file_path):
         if self.is_supported_image(file_path):
             file_list = [card.file_path for card in self.cards]
@@ -337,7 +337,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
         self.cache_system = cache_system
         self.ids['scroll'].bind(scroll_x=self._request_current_view_cards)
     
-    @mainthread
+    @kvmainthread
     def _request_current_view_cards(self, instance, value):
         for card in self.cards:
             x, y = card.to_window(*card.pos)
@@ -372,7 +372,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
 # テストアプリケーション
 class ViewerApp(MDApp):
     def build(self):
-        viewer = ViewerWidget(grid_width=dp(120), thumb_width=dp(160))
+        viewer = ViewerWidget(grid_width=kv_dp(120), thumb_width=kv_dp(160))
 
         viewer.set_path("/Users/uniuyuni/PythonProjects/platypus/picture")  # 画像フォルダーのパスを指定
 

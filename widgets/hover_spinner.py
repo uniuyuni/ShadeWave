@@ -1,16 +1,16 @@
 
-from kivy.app import App
-from kivy.uix.spinner import Spinner
-from kivy.uix.boxlayout import BoxLayout
-from kivy.core.window import Window
-from kivy.properties import ObjectProperty
+from kivy.app import App as KVApp
+from kivy.uix.spinner import Spinner as KVSpinner
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.core.window import Window as KVWindow
+from kivy.properties import ObjectProperty as KVObjectProperty
 
-class HoverSpinner(Spinner):
-    hovered_item = ObjectProperty(None, allownone=True)
+class HoverSpinner(KVSpinner):
+    hovered_item = KVObjectProperty(None, allownone=True)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        Window.bind(mouse_pos=self.on_mouse_pos)
+        KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
     def on_mouse_pos(self, window, pos):
         # ドロップダウンが開いている場合のアイテムホバー検出
@@ -28,9 +28,9 @@ class HoverSpinner(Spinner):
             self.hovered_item = None
             print(f"Cursor left Spinner")
 
-class Hover_SpinnerApp(App):
+class Hover_SpinnerApp(KVApp):
     def build(self):
-        layout = BoxLayout()
+        layout = KVBoxLayout()
         spinner = HoverSpinner(
             values=("Option 1", "Option 2", "Option 3"),
             size_hint=(None, None),

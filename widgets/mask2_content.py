@@ -2,7 +2,7 @@
 from kivy.uix.recycleview.views import RecycleDataViewBehavior as KVRecycleDataViewBehavior
 from kivy.properties import StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty
 from kivymd.uix.expansionpanel import MDExpansionPanel, MDExpansionPanelOneLine
-from kivy.uix.recycleboxlayout import RecycleBoxLayout
+from kivy.uix.recycleboxlayout import RecycleBoxLayout as KVRecycleBoxLayout
 from kivy.uix.behaviors import FocusBehavior
 from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivymd.uix.list import OneLineListItem as MDOneLineListItem
@@ -73,14 +73,14 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
             self.mask_ref.editor.dispatch('on_structure_change')
 
     def show_add_mask_popup(self, maskop):
-        from kivy.uix.popup import Popup
-        from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.button import Button
+        from kivy.uix.popup import Popup as KVPopup
+        from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+        from kivy.uix.button import Button as KVButton
         from functools import partial
         import widgets.mask_editor2 as me2
 
-        content = BoxLayout(orientation='vertical')
-        popup = Popup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(0.25, 0.4))
+        content = KVBoxLayout(orientation='vertical')
+        popup = KVPopup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(0.25, 0.4))
         
         types = [
             ('Circle', me2.MaskType.CIRCULAR),
@@ -94,7 +94,7 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         ]
 
         for name, type_key in types:
-            btn = Button(text=name)
+            btn = KVButton(text=name)
             btn.bind(on_release=partial(self._add_child_mask, type_key, maskop, popup))
             content.add_widget(btn)
         
@@ -106,7 +106,7 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         new_mask = self.mask_ref.editor.add_mask(type_key, maskop,self.mask_ref.editor.get_mask_list().index(self.mask_ref)+1)
         self.mask_ref.add_mask(new_mask, maskop) # CompositMask.add_mask -> dispatch event
 
-class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior, RecycleBoxLayout):
+class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior, KVRecycleBoxLayout):
     pass
 
 class Mask2ContentPanel(KVBoxLayout):

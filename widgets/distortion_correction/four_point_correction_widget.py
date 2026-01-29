@@ -4,25 +4,25 @@
 KivyMDベースのGUIウィジェット
 """
 
-from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.scatter import Scatter
-from kivy.properties import ListProperty, StringProperty
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
+from kivy.uix.scatter import Scatter as KVScatter
+from kivy.properties import ListProperty as KVListProperty, StringProperty as KVStringProperty
 from kivy.graphics import Color, Line, PushMatrix, PopMatrix, Translate, Ellipse
-from kivy.clock import mainthread
+from kivy.clock import mainthread as kvmainthread
 from kivymd.uix.button import MDRaisedButton
-from kivy.uix.image import Image as KivyImage
+from kivy.uix.image import Image as KVImage
 import numpy as np
 import cv2
 
 from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
 import params
 
-class FourPointCorrectionWidget(FloatLayout):
+class FourPointCorrectionWidget(KVFloatLayout):
     """4点自由補正Widget"""
     
     # プロパティ
-    corner_positions_tcg = ListProperty([])  # TCG座標系
-    interpolation = StringProperty('bicubic')
+    corner_positions_tcg = KVListProperty([])  # TCG座標系
+    interpolation = KVStringProperty('bicubic')
     
     def __init__(self, texture_size, param, **kwargs):
         super().__init__(**kwargs)
@@ -141,11 +141,11 @@ class FourPointCorrectionWidget(FloatLayout):
             self._sync_tcg_to_kivy()
             self.update_preview()
     
-    @mainthread
+    @kvmainthread
     def update_preview(self, *args):
         pass
 
-    @mainthread
+    @kvmainthread
     def _sync_tcg_to_kivy(self, *args):
         """TCG座標をKivy座標に同期してハンドルを更新"""
         self.updating_handles = True
@@ -181,7 +181,7 @@ class FourPointCorrectionWidget(FloatLayout):
             
     def _create_handle(self, index: int, pos: tuple):
         """ハンドルを作成"""
-        handle = Scatter(
+        handle = KVScatter(
             size=(40, 40),
             size_hint=(None, None), # 重要: タッチ判定を制限する
             do_rotation=False,

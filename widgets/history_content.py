@@ -1,10 +1,9 @@
 
 from kivy.uix.recycleview.views import RecycleDataViewBehavior as KVRecycleDataViewBehavior
 from kivy.properties import StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
-from kivymd.uix.expansionpanel import MDExpansionPanel, MDExpansionPanelOneLine
-from kivy.uix.recycleboxlayout import RecycleBoxLayout
-from kivy.uix.behaviors import FocusBehavior
-from kivy.uix.recycleview.layout import LayoutSelectionBehavior
+from kivy.uix.recycleboxlayout import RecycleBoxLayout as KVRecycleBoxLayout
+from kivy.uix.behaviors import FocusBehavior as KVFocusBehavior
+from kivy.uix.recycleview.layout import LayoutSelectionBehavior as KVLayoutSelectionBehavior
 from kivymd.uix.list import OneLineListItem as MDOneLineListItem
 from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
@@ -12,8 +11,6 @@ from utils import kvutils
 
 import re
 
-class HistoryCustomHeader(MDExpansionPanelOneLine):
-    pass
 
 class HistoryItem(MDOneLineListItem, KVRecycleDataViewBehavior):
     active = KVBooleanProperty(True)
@@ -56,7 +53,7 @@ class HistoryItem(MDOneLineListItem, KVRecycleDataViewBehavior):
             if self.parent is not None:
                 self.parent.parent.parent.callback(index-1)
 
-class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior, RecycleBoxLayout):
+class SelectableRecycleBoxLayout(KVFocusBehavior, KVLayoutSelectionBehavior, KVRecycleBoxLayout):
     pass
 
 class HistoryContentPanel(KVBoxLayout):    
@@ -158,15 +155,3 @@ class HistoryContentPanel(KVBoxLayout):
 
 def create_history_content_panel(callback):
     return HistoryContentPanel(callback)
-    """
-    content = HistoryContentPanel()
-    header = HistoryCustomHeader(text="History")
-
-    # ExpansionPanelを作成して追加
-    panel = MDExpansionPanel(
-        content=content,
-        panel_cls=header
-    )
-
-    return panel
-    """

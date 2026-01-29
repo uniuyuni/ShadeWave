@@ -6,8 +6,8 @@ from kivy.graphics import Color as KVColor, Line as KVLine, PushMatrix as KVPush
 from kivy.properties import NumericProperty as KVNumericProperty, ListProperty as KVListProperty
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.label import Label as KVLabel
-from kivy.metrics import dp
-from kivy.clock import Clock, mainthread
+from kivy.metrics import dp as kvdp
+from kivy.clock import Clock as KVClock, mainthread as kvmainthread
 
 from enum import Enum
 from typing import List, Tuple
@@ -17,13 +17,13 @@ import cores.core as core
 
 
 class CropEditor(KVFloatLayout):
-    input_width = KVNumericProperty(dp(400))
-    input_height = KVNumericProperty(dp(300))
+    input_width = KVNumericProperty(kvdp(400))
+    input_height = KVNumericProperty(kvdp(300))
     input_angle = KVNumericProperty(0)
     scale = KVNumericProperty(1.0)
     crop_rect = KVListProperty([0, 0, 0, 0])
-    corner_threshold = KVNumericProperty(dp(10))
-    edge_threshold = KVNumericProperty(dp(10))  # 辺のドラッグ判定用の閾値を追加
+    corner_threshold = KVNumericProperty(kvdp(10))
+    edge_threshold = KVNumericProperty(kvdp(10))  # 辺のドラッグ判定用の閾値を追加
     aspect_ratio = KVNumericProperty(0)
 
     def __init__(self, **kwargs):
@@ -74,7 +74,7 @@ class CropEditor(KVFloatLayout):
                   aspect_ratio=self.update_crop_size,
                   input_angle=self.update_crop_size)
         
-        Clock.schedule_once(self.create_ui, -1)
+        KVClock.schedule_once(self.create_ui, -1)
 
     def create_ui(self, dt):
         self.pos = self.parent.pos
@@ -1046,8 +1046,8 @@ class CropApp(KVApp):
     def build(self):
         root = KVFloatLayout()
         # ここで縦横サイズとスケールを指定
-        crop_editor = CropEditor(input_width=dp(800), input_height=dp(600), input_angle=30, scale=0.8, aspect_ratio=0, crop_rect=(0, dp(100), dp(800), (dp(100)+dp(400))))
-        crop_editor.pos = (dp(100), dp(100))
+        crop_editor = CropEditor(input_width=kvdp(800), input_height=kvdp(600), input_angle=30, scale=0.8, aspect_ratio=0, crop_rect=(0, kvdp(100), kvdp(800), (kvdp(100)+kvdp(400))))
+        crop_editor.pos = (kvdp(100), kvdp(100))
         root.add_widget(crop_editor)
         return root
 

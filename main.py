@@ -10,25 +10,30 @@ if __name__ == '__main__':
         pass
     except ImportError:
         pass
-    
+
     import tkinter as tk
-    
+
     # tk.Tk()で落ちるのを回避するためのパッチ
     #matplotlib.use('tkagg')
     tk = tk.Tk()
     tk.withdraw()
     tk.destroy()
 
+    from kivy.config import Config
+    Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
+    Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
+    Config.set('kivy', 'kivy_clock', 'interrupt')
+
     from kivymd.app import MDApp
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivy.core.window import Window as KVWindow
     from kivy.graphics.texture import Texture as KVTexture
     from kivy.properties import BooleanProperty as KVBooleanProperty, ListProperty as KVListProperty
-    from kivy.clock import Clock, mainthread
+    from kivy.clock import Clock as KVClock, mainthread as kvmainthread
     from kivy.graphics.transformation import Matrix as KVMatrix
 
     import threading
-    from functools import partial
+
     import cores.colour_functions as colour_functions
     import re
     import time
@@ -50,7 +55,7 @@ if __name__ == '__main__':
     import utils.utils as utils
     import utils.kvutils as kvutils
     import macos as device
-    import cores.hlsrgb as hlsrgb
+
     import cores.film_emulator as film_emulator
     import cores.lens_simulator as lens_simulator
     import config
@@ -60,7 +65,6 @@ if __name__ == '__main__':
     import waitinfo
     import history
 
-    import widgets.distortion_correction as distortion_correction
     import widgets.metainfo
     import widgets.float_input
     import widgets.param_slider
@@ -75,11 +79,6 @@ if __name__ == '__main__':
     import widgets.mask2_content as mask2_content
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
     import widgets.collapsible_box
-
-    from kivy.config import Config
-    Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
-    Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
-    Config.set('kivy', 'kivy_clock', 'interrupt')
 
 if __name__ != '__main__':
     class ImportBlocker:
@@ -119,7 +118,6 @@ cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
 
 if __name__ == '__main__':
-
     def pillow_init():
         import PIL.Image as PILImage
         import PIL.Jpeg2KImagePlugin
@@ -173,7 +171,7 @@ if __name__ == '__main__':
             self.async_worker = AsyncWorker()
             # self.async_worker.start() # Start explicitly after config init
             self.processor = pipeline.AsyncPipelineManager(self.async_worker)
-            Clock.schedule_interval(self.update_async_results, 0.1)
+            KVClock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
             
             self.apply_draw_image_center = None
@@ -241,7 +239,7 @@ if __name__ == '__main__':
             self.ids['history_box'].add_widget(self.history_panel)
             #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
 
-    
+
         def empty_image(self):
             self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
             self.texture.flip_vertical()
@@ -269,7 +267,7 @@ if __name__ == '__main__':
                 self.pipeline_version += 1
                 self.draw_image_core()
 
-        @mainthread
+        @kvmainthread
         def blit_image(self, img, dt=0):
             print(f"[PERF] blit_image: Start. Time: {time.time()}")
             # Texture Resizing logic
@@ -300,7 +298,7 @@ if __name__ == '__main__':
             import signals
             signals.blit_image.emit()
 
-        @mainthread
+        @kvmainthread
         def draw_histogram_view(self, hist_data):
             #logging.debug(f"draw_histogram_view")
             self.ids["histogram"].draw_histogram_from_data(hist_data)
@@ -338,7 +336,7 @@ if __name__ == '__main__':
                         self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
                 except:
                     pass  # 未スケジュール時は無視
-                self.enabledelay = Clock.schedule_once(partial(self.blit_image, img_draw), -1)
+                self.enabledelay = KVClock.schedule_once(partial(self.blit_image, img_draw), -1)
                 """
 
         def draw_image(self):
@@ -400,10 +398,10 @@ if __name__ == '__main__':
             if lv is not None:
                 composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
                 if lv == 3:
-                     # Mask2パラメータは常に自分自身
+                    # Mask2パラメータは常に自分自身
                     pass
                 else: 
-                     # それ以外は親のCompositMaskへ（自分がCompositMaskなら自分へ）
+                    # それ以外は親のCompositMaskへ（自分がCompositMaskなら自分へ）
                     if not mask.is_composit():
                         composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
                         if composit_mask is not None:
@@ -568,7 +566,7 @@ if __name__ == '__main__':
                     # 失敗時はファイルを削除
                     params.delete_empty_param_json(self.imgset.file_path)
         
-        @mainthread
+        @kvmainthread
         def on_select(self, card):
             print(f"[PERF] on_select: Start. Time: {time.time()}")
             # ロード開始
@@ -587,7 +585,7 @@ if __name__ == '__main__':
                 # とりあえずEXIF表示
                 self._set_exif_data(exif_data)
         
-        @mainthread
+        @kvmainthread
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, flag):
             print(f"[PERF] on_fcs_get_file: Called. Flag: {flag}, Time: {time.time()}")
             print(f"Load image SHAPE: {imgset.img.shape} FLAG: {imgset.flag}, Proc: {flag}")
@@ -1019,7 +1017,7 @@ if __name__ == '__main__':
             # Start worker after config is loaded
             self.main_widget.async_worker.start()
 
-            display = device.get_current_display()
+            display = device.get_current_display(KVWindow.left, KVWindow.top)
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
             KVWindow.left = (display["width"] - display["width"] * 0.9) // 2
             KVWindow.top = (display["height"] - display["height"] * 0.9) // 2

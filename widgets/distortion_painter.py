@@ -1,15 +1,15 @@
 
-from kivy.core.window import Window
-from kivy.app import App
-from kivy.uix.widget import Widget
-from kivy.uix.floatlayout import FloatLayout
+from kivy.core.window import Window as KVWindow
+from kivy.app import App as KVApp
+from kivy.uix.widget import Widget as KVWidget
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.graphics import (
     Color, Line, PushMatrix, PopMatrix, Translate,
     ScissorPush, ScissorPop,
 )
-from kivy.graphics.texture import Texture
-from kivy.properties import StringProperty, NumericProperty, ListProperty
-from kivy.clock import Clock
+from kivy.graphics.texture import Texture as KVTexture
+from kivy.properties import StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ListProperty as KVListProperty
+from kivy.clock import Clock as KVClock
 import cv2
 import numpy as np
 import os
@@ -481,13 +481,13 @@ class DistortionEngine:
                 
         return new_grid
 
-class DistortionCanvas(FloatLayout):
+class DistortionCanvas(KVFloatLayout):
     STRENGTH_SCALE = 0.002
 
-    brush_size = NumericProperty(300)
-    strength = NumericProperty(50)
-    effect_type = StringProperty('forward_warp')
-    last_touch_pos = ListProperty([0, 0])
+    brush_size = KVNumericProperty(300)
+    strength = KVNumericProperty(50)
+    effect_type = KVStringProperty('forward_warp')
+    last_touch_pos = KVListProperty([0, 0])
     
     def __init__(self, image_widget=None, recorded=[], callback=None, **kwargs):
         super().__init__(**kwargs)
@@ -507,7 +507,7 @@ class DistortionCanvas(FloatLayout):
 
         self.bind(parent=self.on_parent_changed)
 
-        Clock.schedule_once(self._set_brush_cursor, -1)
+        KVClock.schedule_once(self._set_brush_cursor, -1)
 
     def on_parent_changed(self, instance, parent):
         if parent:
@@ -519,10 +519,10 @@ class DistortionCanvas(FloatLayout):
 
     def on_parent(self, instance, parent):
         if parent is not None:
-            Window.bind(mouse_pos=self.on_mouse_pos)
+            KVWindow.bind(mouse_pos=self.on_mouse_pos)
         else:
             self.brush_color.rgba = (0, 0, 0, 0)
-            Window.unbind(mouse_pos=self.on_mouse_pos)
+            KVWindow.unbind(mouse_pos=self.on_mouse_pos)
 
     def load_image(self, path):
         if not os.path.exists(path):
@@ -578,7 +578,7 @@ class DistortionCanvas(FloatLayout):
         self._update_brush_cursor(pos[0], pos[1])
 
     def _set_brush_cursor(self, dt):
-        if isinstance(self.parent, Widget):
+        if isinstance(self.parent, KVWidget):
             self.pos = self.parent.pos
             self.size = self.parent.size
 
@@ -604,7 +604,7 @@ class DistortionCanvas(FloatLayout):
 
         if self.is_update_texture:
             # OpenCV画像をKivyテクスチャに変換
-            self.full_quality_texture = Texture.create(size=(self.current_image.shape[1], self.current_image.shape[0]))
+            self.full_quality_texture = KVTexture.create(size=(self.current_image.shape[1], self.current_image.shape[0]))
             self.full_quality_texture.flip_vertical()
             self.full_quality_texture.blit_buffer(self.current_image.tobytes(), colorfmt='rgb', bufferfmt='float')
             self.needs_full_update = False
@@ -620,7 +620,7 @@ class DistortionCanvas(FloatLayout):
             self.last_touch_pos = [tcg_x, tcg_y]
             self.last_touch_time = time.time()  # 現在のシステム時間を使用
 
-            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
+            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in KVWindow.modifiers else self.strength
 
             # 記録データ作成
             record = {
@@ -660,7 +660,7 @@ class DistortionCanvas(FloatLayout):
                 self.process_buffer()
                 self.last_touch_time = current_time
 
-            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in Window.modifiers else self.strength
+            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in KVWindow.modifiers else self.strength
 
             # 記録データ作成
             record = {
@@ -722,7 +722,7 @@ class DistortionCanvas(FloatLayout):
         
         # テクスチャ更新をスケジュール（パフォーマンスのため遅延処理）
         if self.update_event is None:
-            self.update_event = Clock.schedule_once(self.delayed_texture_update, 0.01)
+            self.update_event = KVClock.schedule_once(self.delayed_texture_update, 0.01)
         
         # バッファクリア
         self.points_buffer = []
@@ -807,7 +807,7 @@ class DistortionCanvas(FloatLayout):
         return params.window_to_tcg(cx, cy, self, texture_size, self.tcg_info)
 
     
-class Distortion_PainterApp(App):
+class Distortion_PainterApp(KVApp):
     def build(self):
         widget = DistortionCanvas()
 

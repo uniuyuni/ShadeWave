@@ -5,7 +5,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from kivy.clock import Clock
+from kivy.clock import Clock as KVClock
 
 class _ProcessingDialog():
 
@@ -165,13 +165,13 @@ def wait_prosessing(process, *args, **kwargs):
     if threading.current_thread() is threading.main_thread():
         return wait_threading(process, *args, **kwargs)
     
-    Clock.schedule_once(show_processing_dialog)
-    event = Clock.schedule_interval(update_processing_dialog, 0.04)
+    KVClock.schedule_once(show_processing_dialog)
+    event = KVClock.schedule_interval(update_processing_dialog, 0.04)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(process, *args, **kwargs)
         while not future.done():
             time.sleep(0.5)
         result = future.result()
-    Clock.unschedule(event)
-    Clock.schedule_once(hide_processing_dialog)
+    KVClock.unschedule(event)
+    KVClock.schedule_once(hide_processing_dialog)
     return result

@@ -1,23 +1,23 @@
 
-from kivy.clock import Clock
-from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ObjectProperty
-from kivy.uix.boxlayout import BoxLayout
-from kivy.lang import Builder
+from kivy.clock import Clock as KVClock
+from kivy.properties import StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.lang import Builder as KVBuilder
 
 import utils.kvutils as kvutils
 
-class CollapsibleBox(BoxLayout):
-    title = StringProperty("Title")
-    icon = StringProperty("")
-    is_expanded = BooleanProperty(True)
-    content_height = NumericProperty(0) 
+class CollapsibleBox(KVBoxLayout):
+    title = KVStringProperty("Title")
+    icon = KVStringProperty("")
+    is_expanded = KVBooleanProperty(True)
+    content_height = KVNumericProperty(0) 
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.orientation = "vertical"
         self.size_hint_y = None
 
-        Clock.schedule_interval(self._update_content_height, 0.1)
+        KVClock.schedule_interval(self._update_content_height, 0.1)
         
     def on_kv_post(self, base_widget):
         kvutils.traverse_widget(self)

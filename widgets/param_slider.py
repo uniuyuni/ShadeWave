@@ -27,7 +27,6 @@ class ParamSlider(KVBoxLayout):
         self.reset_value = self.value
         self.ids['label'].text = self.text
         #self.ids['label'].width = self.label_width
-        self.ids['slider'].value = self.value
         self.ids['slider'].max = self.max
         self.ids['slider'].min = self.min
         self.ids['slider'].value = self.value
@@ -84,7 +83,7 @@ class ParamSlider(KVBoxLayout):
         return False
 
     def set_slider_value(self, value):
-        from kivy.event import EventDispatcher
+        from kivy.event import EventDispatcher as KVEventDispatcher
         self.disabled = True
         self.ids['slider'].value = value
         self.disabled = False

@@ -6,10 +6,10 @@ from kivymd.uix.slider import MDSlider
 from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.gridlayout import MDGridLayout
-from kivy.properties import ListProperty, NumericProperty
+from kivy.properties import ListProperty as KVListProperty, NumericProperty as KVNumericProperty
 from kivy.graphics import Color, Ellipse, Quad
-from kivy.metrics import dp
-from kivy.clock import Clock
+from kivy.metrics import dp as kvdp
+from kivy.clock import Clock as KVClock
 from kivy.lang import Builder as KVBuilder
 from kivy.config import Config as KVConfig
 from colorsys import rgb_to_hls, hls_to_rgb
@@ -18,15 +18,15 @@ import math
 import widgets.param_slider
 
 class CWColorPreview(MDCard):
-    color = ListProperty([0.5, 0.5, 0.5, 1])
+    color = KVListProperty([0.5, 0.5, 0.5, 1])
 
 class CWColorWheel(MDBoxLayout):
-    selected_color = ListProperty([0, 0.5, 0])
-    hue = NumericProperty(0)
-    lightness = NumericProperty(0.5)
-    saturation = NumericProperty(0)  # 初期値を0に変更
-    before_edit = NumericProperty(0)
-    after_edit = NumericProperty(0)
+    selected_color = KVListProperty([0, 0.5, 0])
+    hue = KVNumericProperty(0)
+    lightness = KVNumericProperty(0.5)
+    saturation = KVNumericProperty(0)  # 初期値を0に変更
+    before_edit = KVNumericProperty(0)
+    after_edit = KVNumericProperty(0)
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -34,10 +34,10 @@ class CWColorWheel(MDBoxLayout):
         with self.canvas.after:
             # 選択位置のマーカー
             self.marker_color = Color(1, 1, 1, 1)
-            self.marker_size = dp(10)
+            self.marker_size = kvdp(10)
             self.marker = Ellipse(size=(self.marker_size, self.marker_size))
         
-        Clock.schedule_once(self.draw_wheel)
+        KVClock.schedule_once(self.draw_wheel)
         self.bind(pos=self.update_wheel, size=self.update_wheel)
         self._ignore_next_up = False
         self._single_tap_event = None
@@ -94,7 +94,7 @@ class CWColorWheel(MDBoxLayout):
             self.update_marker()    
             
     def update_wheel(self, *args):
-        Clock.schedule_once(self.draw_wheel)
+        KVClock.schedule_once(self.draw_wheel)
     
     def update_marker(self):
         angle = self.hue * 2 * math.pi
@@ -119,7 +119,7 @@ class CWColorWheel(MDBoxLayout):
                 else:
                     self._ignore_next_up = True
                     touch_info = {'x': touch.pos[0], 'y': touch.pos[1]}
-                    self._single_tap_event = Clock.schedule_once(
+                    self._single_tap_event = KVClock.schedule_once(
                         lambda dt: self.on_single_tap(touch_info),
                         KVConfig.getint('postproc', 'double_tap_time') * 0.001 + 0.1
                     )
@@ -193,9 +193,9 @@ class CWColorWheel(MDBoxLayout):
         self.update_marker()
 
 class CWColorPicker(MDCard):
-    current_color = ListProperty([0, 0.5, 0])
-    before_edit = NumericProperty(0)
-    after_edit = NumericProperty(0)
+    current_color = KVListProperty([0, 0.5, 0])
+    before_edit = KVNumericProperty(0)
+    after_edit = KVNumericProperty(0)
 
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)

@@ -4,24 +4,24 @@ import cv2
 import copy
 
 from kivymd.app import MDApp
-from kivy.uix.boxlayout import BoxLayout
-from kivy.clock import Clock
-from kivy.graphics.texture import Texture
-from kivy.properties import ObjectProperty
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.clock import Clock as KVClock
+from kivy.graphics.texture import Texture as KVTexture
+from kivy.properties import ObjectProperty as KVObjectProperty
 
 from cores.lens_ghost import create_ghost
 from widget.param_slider import ParamSlider
 
-class GhostEditor(BoxLayout):
-    image_widget = ObjectProperty(None)
-    param_container = ObjectProperty(None)
+class GhostEditor(KVBoxLayout):
+    image_widget = KVObjectProperty(None)
+    param_container = KVObjectProperty(None)
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.light_source = [(300, 200)]
         self.base_image = self.create_base_image()
         self.processed_image = None
-        Clock.schedule_once(self.init_ui, 0.1)
+        KVClock.schedule_once(self.init_ui, 0.1)
         self.update_event = None
 
     def create_base_image(self, size=(700, 500)):
@@ -73,7 +73,7 @@ class GhostEditor(BoxLayout):
     def on_param_change(self, instance, value):
         if self.update_event:
             self.update_event.cancel()
-        self.update_event = Clock.schedule_once(lambda dt: self.update_image(), 0.1)
+        self.update_event = KVClock.schedule_once(lambda dt: self.update_image(), 0.1)
 
     def update_image(self):
         params = {}
@@ -90,7 +90,7 @@ class GhostEditor(BoxLayout):
         
         buf = (processed * 255).astype(np.uint8)
         buf = cv2.flip(buf, 0)
-        texture = Texture.create(size=(buf.shape[1], buf.shape[0]), colorfmt='rgb')
+        texture = KVTexture.create(size=(buf.shape[1], buf.shape[0]), colorfmt='rgb')
         texture.blit_buffer(buf.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
         self.image_widget.texture = texture
 

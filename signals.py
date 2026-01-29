@@ -15,9 +15,9 @@ class Signal():
             func(*args)
     
     def delay_emit(self, *args):
-        from kivy.clock import Clock
+        from kivy.clock import Clock as KVClock
 
-        Clock.schedule_once(lambda dt: self.emit(*args), 0)
+        KVClock.schedule_once(lambda dt: self.emit(*args), 0)
 
 
 blit_image = Signal()

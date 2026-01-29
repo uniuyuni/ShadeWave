@@ -4,14 +4,14 @@
 KivyMDベースのGUIウィジェット
 """
 
-from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.properties import (
-    ObjectProperty, NumericProperty, BooleanProperty, StringProperty
+    ObjectProperty as KVObjectProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, StringProperty as KVStringProperty
 )
 from kivy.graphics import Color, Line, PushMatrix, PopMatrix, Scale
-from kivy.clock import mainthread
+from kivy.clock import mainthread as kvmainthread
 from kivymd.uix.button import MDRaisedButton
-from kivy.uix.image import Image as KivyImage
+from kivy.uix.image import Image as KVImage
 import numpy as np
 import cv2
 
@@ -20,14 +20,14 @@ import params
 import macos as device
 
 
-class LensDistortionWidget(FloatLayout):
+class LensDistortionWidget(KVFloatLayout):
     """レンズ歪み補正Widget"""
     
     # プロパティ
-    source_image = ObjectProperty(None)
-    strength = NumericProperty(0)
-    scale = NumericProperty(1.0)  # スケールパラメータ
-    show_grid = BooleanProperty(True)
+    source_image = KVObjectProperty(None)
+    strength = KVNumericProperty(0)
+    scale = KVNumericProperty(1.0)  # スケールパラメータ
+    show_grid = KVBooleanProperty(True)
     
     def __init__(self, texture_size, param, **kwargs):
         super().__init__(**kwargs)
@@ -68,7 +68,7 @@ class LensDistortionWidget(FloatLayout):
         if self.on_callback:
             self.on_callback('end', self)
     
-    @mainthread
+    @kvmainthread
     def update_preview(self, *args):
         """プレビューを更新（リアルタイム）"""
         # グリッドを描画

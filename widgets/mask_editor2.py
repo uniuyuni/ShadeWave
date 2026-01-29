@@ -15,26 +15,26 @@ import logging
 import importlib
 from functools import partial
 
-from kivy.app import App
-from kivy.core.window import Window
-from kivy.uix.widget import Widget
-from kivy.uix.image import Image
-from kivy.uix.button import Button
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.floatlayout import FloatLayout
+from kivy.app import App as KVApp
+from kivy.core.window import Window as KVWindow
+from kivy.uix.widget import Widget as KVWidget
+from kivy.uix.image import Image as KVImage
+from kivy.uix.button import Button as KVButton
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.properties import (
-    NumericProperty, ObjectProperty, ListProperty,
-    StringProperty, BooleanProperty, Property
+    NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, ListProperty as KVListProperty,
+    StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, Property as KVProperty
 )
 from kivy.graphics import (
-    Color, Ellipse, Line, PushMatrix, PopMatrix, Rotate, Translate,
-    Rectangle, ScissorPush, ScissorPop,
+    Color as KVColor, Ellipse as KVEllipse, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Rotate as KVRotate, Translate as KVTranslate,
+    Rectangle as KVRectangle, ScissorPush as KVScissorPush, ScissorPop as KVScissorPop,
 )
-from kivy.graphics.texture import Texture
-from kivy.clock import Clock
-from kivy.uix.label import Label
-from kivy.uix.popup import Popup
-from kivy.uix.textinput import TextInput
+from kivy.graphics.texture import Texture as KVTexture
+from kivy.clock import Clock as KVClock
+from kivy.uix.label import Label as KVLabel
+from kivy.uix.popup import Popup as KVPopup
+from kivy.uix.textinput import TextInput as KVTextInput
 
 import cores.core as core
 import cores.expand_mask as expand_mask
@@ -47,7 +47,7 @@ from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 import macos as device
  
-class TextInputDialog(Popup):
+class TextInputDialog(KVPopup):
     def __init__(self, callback, **kwargs):
         super().__init__(**kwargs)
         self.title = "Input Target Text in English"
@@ -55,14 +55,14 @@ class TextInputDialog(Popup):
         self.height = 240
         self.ref_height = 240
         
-        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        self.text_input = TextInput(multiline=False, size_hint_y=None, height=50)
+        layout = KVBoxLayout(orientation='vertical', padding=10, spacing=10)
+        self.text_input = KVTextInput(multiline=False, size_hint_y=None, height=50)
         self.ref_height = 50
         self.text_input.bind(on_text_validate=lambda x: self.save(callback))
         
-        btn_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
+        btn_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
         btn_layout.ref_height = 40
-        save_button = Button(text='OK')
+        save_button = KVButton(text='OK')
         save_button.bind(on_press=lambda x: self.save(callback))
         btn_layout.add_widget(save_button)
         
@@ -75,7 +75,7 @@ class TextInputDialog(Popup):
         if not text or text.isspace():
             text = "All"
         self.dismiss()
-        Clock.schedule_once(lambda dt: callback(text), 0.5)
+        KVClock.schedule_once(lambda dt: callback(text), 0.5)
 
 class MaskType(str, Enum):
     COMPOSIT = 'composit'
@@ -89,25 +89,25 @@ class MaskType(str, Enum):
     TARGET_TEXT = 'target_text'
 
 # コントロールポイントのクラス
-class ControlPoint(Widget):
-    touching = BooleanProperty(False)
-    is_center = BooleanProperty(False)  # 中心のコントロールポイントかどうか
-    color = ListProperty([0, 0, 0])  # デフォルトの色
-    ctrl_center = ListProperty([0, 0])
-    type = ListProperty(['c', 0])
+class ControlPoint(KVWidget):
+    touching = KVBooleanProperty(False)
+    is_center = KVBooleanProperty(False)  # 中心のコントロールポイントかどうか
+    color = KVListProperty([0, 0, 0])  # デフォルトの色
+    ctrl_center = KVListProperty([0, 0])
+    type = KVListProperty(['c', 0])
 
     def __init__(self, editor, **kwargs):
         super().__init__(**kwargs)
         self.editor = editor
         with self.canvas:
-            PushMatrix()
+            KVPushMatrix()
             self.scissor = self.editor.push_scissor()
-            self.translate = Translate()
-            #self.rotate = Rotate(angle=0, origin=(0, 0))            
-            self.color_instruction = Color(*self.color)
-            self.circle = Ellipse(pos=(-10, -10), size=(20, 20))
+            self.translate = KVTranslate()
+            #self.rotate = KVRotate(angle=0, origin=(0, 0))            
+            self.color_instruction = KVColor(*self.color)
+            self.circle = KVEllipse(pos=(-10, -10), size=(20, 20))
             self.editor.pop_scissor()
-            PopMatrix()
+            KVPopMatrix()
         self.center = (0, 0)
         #self.update_graphics()
         self.bind(center=self.update_graphics, color=self.update_color)
@@ -143,12 +143,12 @@ class ControlPoint(Widget):
         return False
 
 # マスクのベースクラス
-class BaseMask(Widget):
-    color = ListProperty([1, 0, 0, 0.5])  # デフォルトの半透明赤色
-    selected = BooleanProperty(False)
-    active = BooleanProperty(False)
-    name = StringProperty("Mask")
-    mask_id = StringProperty(str(uuid.uuid4()))
+class BaseMask(KVWidget):
+    color = KVListProperty([1, 0, 0, 0.5])  # デフォルトの半透明赤色
+    selected = KVBooleanProperty(False)
+    active = KVBooleanProperty(False)
+    name = KVStringProperty("Mask")
+    mask_id = KVStringProperty(str(uuid.uuid4()))
 
     def __init__(self, editor, **kwargs):
         super().__init__(**kwargs)
@@ -560,11 +560,11 @@ class CompositMask(BaseMask):
 
 # 円形グラデーションマスクのクラス
 class CircularGradientMask(BaseMask):
-    inner_radius_x = NumericProperty(0)
-    inner_radius_y = NumericProperty(0)
-    outer_radius_x = NumericProperty(0)
-    outer_radius_y = NumericProperty(0)
-    rotate_rad = NumericProperty(0)
+    inner_radius_x = KVNumericProperty(0)
+    inner_radius_y = KVNumericProperty(0)
+    outer_radius_x = KVNumericProperty(0)
+    outer_radius_y = KVNumericProperty(0)
+    rotate_rad = KVNumericProperty(0)
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -572,15 +572,15 @@ class CircularGradientMask(BaseMask):
         self.initializing = True  # 初期配置中かどうか
 
         with self.canvas:
-            PushMatrix()
+            KVPushMatrix()
             self.scissor = self.editor.push_scissor()
-            self.translate = Translate(*self.center)
-            self.rotate = Rotate(angle=0, origin=(0, 0))
-            Color(*self.color)
-            self.outer_line = Line(ellipse=(0, 0, 0, 0), width=2) # 外側の円
-            self.inner_line = Line(ellipse=(0, 0, 0, 0), width=2) # 内側の円
+            self.translate = KVTranslate(*self.center)
+            self.rotate = KVRotate(angle=0, origin=(0, 0))
+            KVColor(*self.color)
+            self.outer_line = KVLine(ellipse=(0, 0, 0, 0), width=2) # 外側の円
+            self.inner_line = KVLine(ellipse=(0, 0, 0, 0), width=2) # 内側の円
             self.editor.pop_scissor()
-            PopMatrix()
+            KVPopMatrix()
 
         #self.update_mask()
 
@@ -1006,8 +1006,8 @@ class CircularGradientMask(BaseMask):
     
 # GradientMask クラス
 class GradientMask(BaseMask):
-    start_point = ListProperty([0, 0])    # グラデーションの開始点
-    end_point = ListProperty([0, 0])      # グラデーションの終点
+    start_point = KVListProperty([0, 0])    # グラデーションの開始点
+    end_point = KVListProperty([0, 0])      # グラデーションの終点
     
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -1015,16 +1015,16 @@ class GradientMask(BaseMask):
         self.initializing = True  # 初期配置中かどうか
 
         with self.canvas:
-            PushMatrix()
+            KVPushMatrix()
             self.scissor = self.editor.push_scissor()
-            self.translate = Translate(*self.center)
-            self.rotate = Rotate(angle=0, origin=(0, 0))
-            Color(*self.color)
-            self.start_line = Line(points=(0, 0, 0, 0), width=2)
-            self.center_line = Line(points=(0, 0, 0, 0), width=2)
-            self.end_line = Line(points=(0, 0, 0, 0), width=2)
+            self.translate = KVTranslate(*self.center)
+            self.rotate = KVRotate(angle=0, origin=(0, 0))
+            KVColor(*self.color)
+            self.start_line = KVLine(points=(0, 0, 0, 0), width=2)
+            self.center_line = KVLine(points=(0, 0, 0, 0), width=2)
+            self.end_line = KVLine(points=(0, 0, 0, 0), width=2)
             self.editor.pop_scissor()
-            PopMatrix()
+            KVPopMatrix()
 
         self.rotate_rad = 0
         #self.update_mask()
@@ -1335,9 +1335,9 @@ class FullMask(BaseMask):
         self.center = (0, 0)
 
         with self.canvas:
-            PushMatrix()
-            self.translate = Translate(*self.center)
-            PopMatrix()
+            KVPushMatrix()
+            self.translate = KVTranslate(*self.center)
+            KVPopMatrix()
 
         #self.update_mask()
 
@@ -1474,24 +1474,24 @@ class FreeDrawMask(BaseMask):
         self.brush_size = 300
 
         with self.canvas:
-            PushMatrix()
+            KVPushMatrix()
             self.scissor = self.editor.push_scissor()
-            self.translate = Translate(0, 0)
-            self.rotate = Rotate(angle=0, origin=(0, 0))
-            self.brush_color = Color((0, 1, 1, 1))
-            self.brush_cursor = Line(ellipse=(0, 0, self.brush_size, self.brush_size), width=2)
+            self.translate = KVTranslate(0, 0)
+            self.rotate = KVRotate(angle=0, origin=(0, 0))
+            self.brush_color = KVColor((0, 1, 1, 1))
+            self.brush_cursor = KVLine(ellipse=(0, 0, self.brush_size, self.brush_size), width=2)
             self.editor.pop_scissor()
-            PopMatrix()
+            KVPopMatrix()
 
-        Window.bind(mouse_pos=self.on_mouse_pos)
+        KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
     def start(self):
         self.brush_color.rgba = (1, 1, 1, 1)
-        Window.bind(mouse_pos=self.on_mouse_pos)
+        KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
     def end(self):
         self.brush_color.rgba = (0, 0, 0, 0)
-        Window.unbind(mouse_pos=self.on_mouse_pos)
+        KVWindow.unbind(mouse_pos=self.on_mouse_pos)
 
     def clear(self):
         self.lines = []
@@ -1870,7 +1870,7 @@ class FreeDrawMask(BaseMask):
 # セグメントマスクのクラス
 class SegmentMask(BaseMask):
     __processor = None
-    corner = ListProperty([0, 0])
+    corner = KVListProperty([0, 0])
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -1884,14 +1884,14 @@ class SegmentMask(BaseMask):
         self.segment_mask_cache_hash = None
 
         with self.canvas:
-            PushMatrix()
+            KVPushMatrix()
             self.scissor = self.editor.push_scissor()
             # center位置への移動
-            self.translate = Translate(0, 0)
-            Color(*self.color)
-            self.rect_line = Line(points=[], close=True, width=2)
+            self.translate = KVTranslate(0, 0)
+            KVColor(*self.color)
+            self.rect_line = KVLine(points=[], close=True, width=2)
             self.editor.pop_scissor()
-            PopMatrix()
+            KVPopMatrix()
 
         #self.update_mask()
 
@@ -2148,9 +2148,9 @@ class DepthMapMask(BaseMask):
         self.depth_map_mask_cache_hash = None
 
         with self.canvas:
-            PushMatrix()
-            self.translate = Translate(*self.center)
-            PopMatrix()
+            KVPushMatrix()
+            self.translate = KVTranslate(*self.center)
+            KVPopMatrix()
 
         #self.update_mask()
 
@@ -2316,9 +2316,9 @@ class FaceMask(BaseMask):
         self.faces_mask_cache_hash = None
 
         with self.canvas:
-            PushMatrix()
-            self.translate = Translate(*self.center)
-            PopMatrix()
+            KVPushMatrix()
+            self.translate = KVTranslate(*self.center)
+            KVPopMatrix()
 
         #self.update_mask()
 
@@ -2510,9 +2510,9 @@ class TargetTextMask(BaseMask):
         self.target_text = ""
 
         with self.canvas:
-            PushMatrix()
-            self.translate = Translate(*self.center)
-            PopMatrix()
+            KVPushMatrix()
+            self.translate = KVTranslate(*self.center)
+            KVPopMatrix()
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -2690,15 +2690,15 @@ class TargetTextMask(BaseMask):
 
 
 # メインのエディタークラス
-class MaskEditor2(FloatLayout, LayerCtrl):
-    mask_list = ListProperty([])
-    active_mask = ObjectProperty(None, allownone=True)
+class MaskEditor2(KVFloatLayout, LayerCtrl):
+    mask_list = KVListProperty([])
+    active_mask = KVObjectProperty(None, allownone=True)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.register_event_type('on_structure_change')
 
-        self.mask_container = Widget()
+        self.mask_container = KVWidget()
         self.add_widget(self.mask_container)
         self.rectangle = None
 
@@ -2721,7 +2721,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             self.active_mask.end()
 
     def push_scissor(self):
-        scissor = ScissorPush()
+        scissor = KVScissorPush()
         self.set_scissor(scissor)
         return scissor
 
@@ -2732,7 +2732,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         scissor.height = int(self.size[1])
 
     def pop_scissor(self):
-        ScissorPop()
+        KVScissorPop()
     
     def set_ref_image(self, crop_image, original_image=None):
         if self.crop_image_rgb is not crop_image:
@@ -2778,7 +2778,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             effects.reeffect_all(mask.effects)
         
     def update(self):
-        Clock.schedule_once(self._update, 0)
+        KVClock.schedule_once(self._update, 0)
 
     def _update(self, dt=0):
         # 既存のマスクに対する更新を処理
@@ -2935,15 +2935,15 @@ class MaskEditor2(FloatLayout, LayerCtrl):
                 la_img = np.empty((h, w, 2), dtype=np.float32)
                 la_img[..., 0] = 1.0  # Luminance = White
                 la_img[..., 1] = glayimg  # Alpha = Mask Value
-                texture = Texture.create(size=(w, h), colorfmt='luminance_alpha', bufferfmt='float')
+                texture = KVTexture.create(size=(w, h), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.blit_buffer(la_img.tobytes(), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.flip_vertical()
                 px, py = self.to_window(*self.pos)
                 scale = device.dpi_scale()
                 marginx, marginy = (self.size[0]-self.texture_size[0]*scale)/2, (self.size[1]-self.texture_size[1]*scale)/2
                 px, py = px+marginx, py+marginy
-                Color(1, 0, 0, 0.4)
-                self.rectangle = Rectangle(texture=texture, pos=(px, py), size=(self.texture_size[0]*scale, self.texture_size[1]*scale))
+                KVColor(1, 0, 0, 0.4)
+                self.rectangle = KVRectangle(texture=texture, pos=(px, py), size=(self.texture_size[0]*scale, self.texture_size[1]*scale))
 
                 # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
 
@@ -2985,13 +2985,13 @@ class MaskEditor2(FloatLayout, LayerCtrl):
             if mask.on_touch_down(touch):
                 return True
         """
-        return FloatLayout.on_touch_down(self, touch)
+        return KVFloatLayout.on_touch_down(self, touch)
         
     def on_touch_up(self, touch):
         if self.disabled == True:
             return False
         
-        result = FloatLayout.on_touch_up(self, touch)
+        result = KVFloatLayout.on_touch_up(self, touch)
 
         # こっちを後でやらないとまだコントロールポイントが作られてない
         if self.created_mask is not None:
@@ -3225,7 +3225,7 @@ class MaskEditor2(FloatLayout, LayerCtrl):
         return (cx, cy)
 
 # アプリケーションクラス
-class MaskEditor2App(App):
+class MaskEditor2App(KVApp):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -3244,10 +3244,10 @@ class MaskEditor2App(App):
              image_path = 'your_image.jpg'
 
         # KVファイルをロード
-        from kivy.lang import Builder
-        Builder.load_file(os.path.join(os.path.dirname(__file__), 'mask2_content.kv'))
+        from kivy.lang import Builder as KVBuilder
+        KVBuilder.load_file(os.path.join(os.path.dirname(__file__), 'mask2_content.kv'))
 
-        box0 = BoxLayout(orientation='horizontal') # 全体を横並びに
+        box0 = KVBoxLayout(orientation='horizontal') # 全体を横並びに
         
         # エディタ部
         editor = MaskEditor2()
@@ -3260,7 +3260,7 @@ class MaskEditor2App(App):
         side_panel.size_hint_x = 0.3
         box0.add_widget(side_panel)
 
-        Clock.schedule_once(partial(editor.imread, image_path), 0.5)
+        KVClock.schedule_once(partial(editor.imread, image_path), 0.5)
 
         return box0
 

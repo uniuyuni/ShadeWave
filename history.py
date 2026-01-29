@@ -3,9 +3,6 @@ import uuid
 from typing import List, Dict, Any
 import numpy as np
 import logging
-from enum import Enum
-
-from kivymd.app import MDApp
 
 class LayerCtrl:
     def update_layer(self, op, type, index, op_type, param):
@@ -192,4 +189,5 @@ class History:
         return info
 
 def get_history_ctrl():
+    from kivymd.app import MDApp
     return MDApp.get_running_app().main_widget

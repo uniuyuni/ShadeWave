@@ -1,12 +1,12 @@
 
 import numpy as np
 from scipy.interpolate import splprep, splev
-from kivy.app import App
-from kivy.uix.widget import Widget
-from kivy.uix.label import Label
+from kivy.app import App as KVApp
+from kivy.uix.widget import Widget as KVWidget
+from kivy.uix.label import Label as KVLabel
 from kivy.graphics import Color, Line, Ellipse, Translate, PushMatrix, PopMatrix
-from kivy.uix.boxlayout import BoxLayout
-from kivy.properties import NumericProperty
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.properties import NumericProperty as KVNumericProperty
 import logging
 
 import utils.kvutils as kvutils
@@ -32,14 +32,14 @@ class DraggablePoint():
         return False
 
 
-class CurveWidget(Widget):
-    curve = NumericProperty(0)
-    start_x = NumericProperty(0.0)
-    start_y = NumericProperty(0.0)
-    end_x = NumericProperty(1.0)
-    end_y = NumericProperty(1.0)
-    before_edit = NumericProperty(-1)
-    after_edit = NumericProperty(-1)
+class CurveWidget(KVWidget):
+    curve = KVNumericProperty(0)
+    start_x = KVNumericProperty(0.0)
+    start_y = KVNumericProperty(0.0)
+    end_x = KVNumericProperty(1.0)
+    end_y = KVNumericProperty(1.0)
+    before_edit = KVNumericProperty(-1)
+    after_edit = KVNumericProperty(-1)
 
     def __init__(self, **kwargs):
         super(CurveWidget, self).__init__(**kwargs)
@@ -197,11 +197,11 @@ class CurveWidget(Widget):
             self.points.append(self.end_point)
         self.__update_curve()
 
-class ToneCurveApp(App):
+class ToneCurveApp(KVApp):
 
     def build(self):
-        root = BoxLayout()
-        label = Label()
+        root = KVBoxLayout()
+        label = KVLabel()
         label.text = "Tone Curve"
         root.add_widget(label)
         tone_curve_widget = CurveWidget(size_hint=(1, 1))

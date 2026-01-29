@@ -4,12 +4,12 @@
 KivyMDベースのGUIウィジェット
 """
 
-from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.widget import Widget
-from kivy.uix.button import Button
-from kivy.properties import ListProperty, DictProperty
+from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
+from kivy.uix.widget import Widget as KVWidget
+from kivy.uix.button import Button as KVButton
+from kivy.properties import ListProperty as KVListProperty, DictProperty as KVDictProperty
 from kivy.graphics import Color, Line
-from kivy.clock import mainthread
+from kivy.clock import mainthread as kvmainthread
 from kivymd.uix.button import MDRaisedButton, MDIconButton, MDTextButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -19,12 +19,12 @@ import cv2
 from cores.distortion_correction.warp_correction import get_mesh_coordinates
 import params
 
-class MeshWarpWidget(FloatLayout):
+class MeshWarpWidget(KVFloatLayout):
     """メッシュワープWidget"""
     
     # プロパティ
-    mesh_size = ListProperty([4, 4]) # [rows, cols]
-    control_offsets_tcg = DictProperty({}) # {(row, col): (off_x, off_y)}
+    mesh_size = KVListProperty([4, 4]) # [rows, cols]
+    control_offsets_tcg = KVDictProperty({}) # {(row, col): (off_x, off_y)}
     
     def __init__(self, texture_size, param, **kwargs):
         super().__init__(**kwargs)
@@ -35,7 +35,7 @@ class MeshWarpWidget(FloatLayout):
         self.on_callback = None
         
         # 描画用オーバーレイ
-        self.draw_overlay = Widget()
+        self.draw_overlay = KVWidget()
         self.add_widget(self.draw_overlay)
         
         # 状態変数

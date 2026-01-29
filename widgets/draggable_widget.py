@@ -1,8 +1,8 @@
 
 import os
-from kivy.app import App
-from kivy.uix.widget import Widget
-from kivy.core.window import Window
+from kivy.app import App as KVApp
+from kivy.uix.widget import Widget as KVWidget
+from kivy.core.window import Window as KVWindow
 from PIL import Image as PILImage
 import io
 
@@ -33,7 +33,7 @@ def ndarray_to_nsimage(arr):
     ns_image.addRepresentation_(rep)
     return ns_image
 
-class DraggableWidget(Widget):
+class DraggableWidget(KVWidget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         """
@@ -131,7 +131,7 @@ class DraggableWidget(Widget):
 
     def convert_kivy_to_macos_pos(self, pos, offset):
         # Kivyの座標（左下原点）→ macOS座標（左上原点）
-        return (pos[0] + offset, Window.height - pos[1])
+        return (pos[0] + offset, KVWindow.height - pos[1])
 
     @objc_method
     def draggingSession_sourceOperationMaskForDraggingContext_(self, session, context):
@@ -146,9 +146,9 @@ class DraggableWidget(Widget):
             print("ドロップ成功")
 
 
-class DragDropApp(App):
+class DragDropApp(KVApp):
     def build(self):
-        Window.size = (400, 400)
+        KVWindow.size = (400, 400)
         return DraggableWidget()
 
 if __name__ == '__main__':

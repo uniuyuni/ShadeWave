@@ -238,11 +238,12 @@ def dpi_scale():
     display = get_current_display()
     return _screens[display['display']]['scale']
 
-def get_current_display():
+def get_current_display(win_x=0, win_y=0):
     global _screens
 
     # 現在のウィンドウの左下座標
-    win_x, win_y, _, _ = get_self_window_position()
+    if win_x == 0 and win_y == 0:
+        win_x, win_y, _, _ = get_self_window_position()
 
     for m in _screens:
         if m['is_primary'] == True:

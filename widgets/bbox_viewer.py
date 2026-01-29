@@ -1,10 +1,10 @@
 
-from kivy.app import App
-from kivy.uix.widget import Widget
-from kivy.graphics import Color, Line, PopMatrix, PushMatrix, PushMatrix, PopMatrix
-from kivy.core.window import Window
+from kivy.app import App as KVApp
+from kivy.uix.widget import Widget as KVWidget
+from kivy.graphics import Color, Line, PopMatrix, PushMatrix
+from kivy.core.window import Window as KVWindow
 
-class BoundingBoxViewer(Widget):
+class BoundingBoxViewer(KVWidget):
     def __init__(self, size=(800, 600), initial_view=(0, 0, 1000, 800, 1.0), on_delete=None, **kwargs):
         super().__init__(**kwargs)
 
@@ -36,10 +36,10 @@ class BoundingBoxViewer(Widget):
         self.bind(pos=self.on_pos_change)
 
         # キーボードイベントをバインド
-        Window.bind(on_key_down=self.on_key_down)
+        KVWindow.bind(on_key_down=self.on_key_down)
 
     def __del__(self):
-        Window.unbind(on_key_down=self.on_key_down)
+        KVWindow.unbind(on_key_down=self.on_key_down)
 
         
     def set_boxes(self, boxes):
@@ -259,10 +259,10 @@ class BoundingBoxViewer(Widget):
         self.redraw()
 
 
-class BoundingBoxApp(App):
+class BoundingBoxApp(KVApp):
     def build(self):
-        from kivy.uix.floatlayout import FloatLayout
-        from kivy.uix.button import Button
+        from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
+        from kivy.uix.button import Button as KVButton
         
         def on_delete(index, box):
             print(f"Deleted box {index}: {box}")
@@ -277,7 +277,7 @@ class BoundingBoxApp(App):
         ]
         
         # FloatLayoutを作成してテスト
-        layout = FloatLayout()
+        layout = KVFloatLayout()
         
         viewer = BoundingBoxViewer(
             size=(400, 300),  # ビューの最大表示サイズ
@@ -291,7 +291,7 @@ class BoundingBoxApp(App):
         viewer.set_boxes(test_boxes)
         
         # テスト用ボタンを追加
-        btn = Button(
+        btn = KVButton(
             text='Change View',
             size_hint=(None, None),
             size=(100, 50),

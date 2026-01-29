@@ -1,13 +1,13 @@
 
 from kivymd.app import MDApp
-from kivy.uix.boxlayout import BoxLayout
-from kivy.core.window import Window
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty, DictProperty
-from kivy.uix.popup import Popup
-from kivy.uix.modalview import ModalView
-from kivy.uix.textinput import TextInput
-from kivy.uix.button import Button
-from kivy.metrics import dp
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.core.window import Window as KVWindow
+from kivy.properties import StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, DictProperty as KVDictProperty
+from kivy.uix.popup import Popup as KVPopup
+from kivy.uix.modalview import ModalView as KVModalView
+from kivy.uix.textinput import TextInput as KVTextInput
+from kivy.uix.button import Button as KVButton
+from kivy.metrics import dp as kv_dp
 from functools import partial
 import json
 
@@ -17,7 +17,7 @@ import macos as device
 import widgets.param_slider
 import widgets.float_input
 
-class PresetNameDialog(Popup):
+class PresetNameDialog(KVPopup):
     def __init__(self, save_callback, **kwargs):
         super().__init__(**kwargs)
         self.title = "Save Preset"
@@ -26,21 +26,21 @@ class PresetNameDialog(Popup):
         self.bind(pos=self.on_popup_resize)
         #self.bind(size=self.on_popup_resize)
         
-        layout = BoxLayout(orientation='vertical')
+        layout = KVBoxLayout(orientation='vertical')
         #layout.pos_hint = {'left': 0, 'top': 0}
         layout.ref_padding = kvutils.dpi_scale_width(5)
 
-        self.preset_name = TextInput(multiline=False, size_hint_y=None)
+        self.preset_name = KVTextInput(multiline=False, size_hint_y=None)
         self.preset_name.ref_height = kvutils.dpi_scale_height(14)
 
-        button_layout = BoxLayout(orientation='horizontal')
+        button_layout = KVBoxLayout(orientation='horizontal')
 
-        cancel_button = Button(text='Cancel', size_hint_y=None)
+        cancel_button = KVButton(text='Cancel', size_hint_y=None)
         cancel_button.ref_height = kvutils.dpi_scale_height(15)
         cancel_button.bind(on_press=lambda x: self.dismiss())
         button_layout.add_widget(cancel_button)
 
-        save_button = Button(text='Save', size_hint_y=None)
+        save_button = KVButton(text='Save', size_hint_y=None)
         save_button.ref_height = kvutils.dpi_scale_height(15)
         save_button.bind(on_press=lambda x: self.save_preset(save_callback))        
         button_layout.add_widget(save_button)
@@ -57,23 +57,23 @@ class PresetNameDialog(Popup):
     def on_popup_resize(self, instance, value):
         kvutils.traverse_widget(instance)
 
-class ExportConfirmDialog(Popup):
+class ExportConfirmDialog(KVPopup):
 
     def __init__(self, callback, preset, **kwargs):
         super().__init__(**kwargs)
 
         self.title = "Target file already exsists"
         self.size_hint = (None, None)
-        self.size = (dp(400), dp(300))
+        self.size = (kv_dp(400), kv_dp(300))
         
-        layout = BoxLayout(orientation='vertical', padding=dp(5), spacing=dp(5))
-        rename_button = Button(text='Rename')
+        layout = KVBoxLayout(orientation='vertical', padding=kv_dp(5), spacing=kv_dp(5))
+        rename_button = KVButton(text='Rename')
         rename_button.bind(on_press=lambda x: self._on_callback(callback('Rename', preset)))
         layout.add_widget(rename_button)
-        cancel_button = Button(text='Cancel')
+        cancel_button = KVButton(text='Cancel')
         cancel_button.bind(on_press=lambda x: self._on_callback(None))
         layout.add_widget(cancel_button)
-        overwrite_button = Button(text='Overwrite')
+        overwrite_button = KVButton(text='Overwrite')
         overwrite_button.bind(on_press=lambda x: self._on_callback(callback('Overwrite', preset)))
         layout.add_widget(overwrite_button)
 
@@ -84,33 +84,33 @@ class ExportConfirmDialog(Popup):
         if callback is not None:
             callback()
 
-class ExportDialog(ModalView):
+class ExportDialog(KVModalView):
     # File format properties
-    format_value = StringProperty('.JPG')
-    quality_value = NumericProperty(90)
+    format_value = KVStringProperty('.JPG')
+    quality_value = KVNumericProperty(90)
     
     # Size properties
-    size_mode = StringProperty('Original')
-    size_value = StringProperty('')
+    size_mode = KVStringProperty('Original')
+    size_value = KVStringProperty('')
     
     # Sharpening property
-    sharpen_value = NumericProperty(0)
+    sharpen_value = KVNumericProperty(0)
     
     # Metadata property
-    include_metadata = BooleanProperty(True)
-    include_gps = BooleanProperty(True)
+    include_metadata = KVBooleanProperty(True)
+    include_gps = KVBooleanProperty(True)
 
     # Dhithering property
-    dithering = BooleanProperty(True)
+    dithering = KVBooleanProperty(True)
     
     # Output path
-    output_path = StringProperty('')
+    output_path = KVStringProperty('')
 
     # Color Space
-    icc_profile = StringProperty('sRGB IEC61966-2.1')
+    icc_profile = KVStringProperty('sRGB IEC61966-2.1')
 
     # Presets
-    presets = DictProperty()
+    presets = KVDictProperty()
 
     def __init__(self, callback, **kwargs):
         super(ExportDialog, self).__init__(**kwargs)
@@ -255,7 +255,7 @@ class ExportDialog(ModalView):
 
 
 
-class DummyWidget(BoxLayout):
+class DummyWidget(KVBoxLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -269,7 +269,7 @@ class Export_DialogApp(MDApp):
         self.theme_cls.theme_style = 'Dark'
         self.theme_cls.primary_palette = 'Blue'
 
-        Window.size = (dp(300), dp(200))
+        KVWindow.size = (kv_dp(300), kv_dp(200))
 
         return DummyWidget()
 
