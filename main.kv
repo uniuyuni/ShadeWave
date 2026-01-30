@@ -15,6 +15,7 @@
 
 #:set clear_color 0, 0, 0, 0
 #:set dark_color 0.08, 0.08, 0.08, 1
+#:set tabbed_panel_color 0.35, 0.35, 0.35, 1
 
 <DistortionEffectButton@ToggleButton>:
     group: 'effect'
@@ -62,6 +63,7 @@
     height: self.parent.width
     ref_tab_width: 80
     ref_tab_height: 20
+    ref_padding: 8
     do_default_tab: False
     on_kv_post: self.switch_to(root.tab_list[0]) if root.tab_list else None
 
@@ -355,13 +357,15 @@
                     IconTabbedPanelItem:
                         text: 'Ba'
                         icon_source: 'assets/Basic.png'
+                        background_color: tabbed_panel_color
 
-                        MDScrollView:
+                        ScrollView:
 
-                            BoxLayout:
+                            MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' White Balance'
@@ -575,6 +579,9 @@
                                     on_after_edit: root.end_history_effect_ctrl(2, 'clahe')
 
                                 VSeparator:
+
+                                HeadLabel:
+                                    text: ' Saturation'
                                 
                                 ParamSlider:
                                     text: "Saturation"
@@ -605,16 +612,19 @@
 
                                 TabbedPanel:
                                     size_hint_y: None
-                                    ref_height: 22*3+20+22+6
-                                    ref_tab_width: 40
+                                    ref_height: 22*3+20+22+12
+                                    ref_tab_width: 25
                                     ref_tab_height: 25
                                     do_default_tab: False
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Red.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+
                                             HeadLabel:
                                                 text: ' Red'
                                             ParamSlider:
@@ -650,9 +660,12 @@
                         
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Orange.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+
                                             HeadLabel:
                                                 text: ' Orange'
                                             ParamSlider:
@@ -688,9 +701,12 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Yellow.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+                                            
                                             HeadLabel:
                                                 text: ' Yellow'
                                             ParamSlider:
@@ -726,9 +742,12 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Green.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+                                            
                                             HeadLabel:
                                                 text: ' Green'
                                             ParamSlider:
@@ -764,9 +783,12 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Cyan.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+                                            
                                             HeadLabel:
                                                 text: ' Cyan'
                                             ParamSlider:
@@ -802,9 +824,12 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Blue.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+                                            
                                             HeadLabel:
                                                 text: ' Blue'
                                             ParamSlider:
@@ -840,9 +865,12 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Purple.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+                                            
                                             HeadLabel:
                                                 text: ' Purple'
                                             ParamSlider:
@@ -878,9 +906,12 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Magenta.png'
+                                        background_color: tabbed_panel_color
 
-                                        BoxLayout:
+                                        MDBoxLayout:
                                             orientation: "vertical"
+                                            md_bg_color: dark_color
+                                            
                                             HeadLabel:
                                                 text: ' Magenta'
                                             ParamSlider:
@@ -1020,13 +1051,15 @@
                     IconTabbedPanelItem:
                         text: 'Cu'
                         icon_source: 'assets/Curves.png'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
-                            BoxLayout:
+                            MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Tone Curve'
@@ -1241,6 +1274,7 @@
                     IconTabbedPanelItem:
                         text: 'Ex'
                         icon_source: 'assets/Extra.png'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -1248,6 +1282,7 @@
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Noise Reduction'
@@ -1541,9 +1576,10 @@
                                 VSpacer:
 
                     IconTabbedPanelItem:
+                        text: 'Ef'
                         id: effect
                         icon_source: 'assets/Effect.png'
-                        text: 'Ef'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -1551,6 +1587,7 @@
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Film Simulation'
@@ -1588,6 +1625,8 @@
                                     on_slider: root.apply_effects_lv(2, 'film_emulation')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'film_emulation')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'film_emulation')
+
+                                VSeparator:
 
                                 HeadLabel:
                                     text: ' Lens Simulator'
@@ -1894,9 +1933,10 @@
                                 VSpacer:
 
                     IconTabbedPanelItem:
+                        text: 'Ge'
                         id: geometry
                         icon_source: 'assets/Geometry.png'
-                        text: 'Ge'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -1904,6 +1944,7 @@
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Rotation'
@@ -2117,6 +2158,7 @@
                     IconTabbedPanelItem:
                         text: 'Lo'
                         icon_source: 'assets/Looks.png'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2124,6 +2166,7 @@
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Face'
@@ -2184,6 +2227,7 @@
                     IconTabbedPanelItem:
                         text: 'M2'
                         icon_source: 'assets/Mask2.png'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2192,6 +2236,7 @@
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Settings'
@@ -2429,6 +2474,7 @@
                     IconTabbedPanelItem:
                         text: 'Li'
                         icon_source: 'assets/Liquify.png'
+                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2436,6 +2482,7 @@
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
+                                md_bg_color: dark_color
 
                                 HeadLabel:
                                     text: ' Distortion'

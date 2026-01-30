@@ -1,9 +1,14 @@
 
 from kivymd.app import MDApp
+from kivymd.uix.button import MDRectangleFlatButton
+from kivymd.uix.behaviors.toggle_behavior import MDToggleButton
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
 
 import widgets.float_input
+
+class RectangleToggleButton(MDRectangleFlatButton, MDToggleButton):
+    pass
 
 class ParamSlider(KVBoxLayout):
     text = KVStringProperty()

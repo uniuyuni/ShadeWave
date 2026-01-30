@@ -2012,14 +2012,14 @@ class HighlightCompressEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["switch_highlight_compress"].active = True if self._get_param(param, 'highlight_compress') == 1 else False
+        widget.ids["switch_highlight_compress"].active = self._get_param(param, 'highlight_compress')
 
     def set2param(self, param, widget):
-        param['highlight_compress'] = 1 if widget.ids["switch_highlight_compress"].active == True else 0
+        param['highlight_compress'] = widget.ids["switch_highlight_compress"].active
 
     def make_diff(self, rgb, param, efconfig):
         hc = self._get_param(param, 'highlight_compress')
-        if hc <= 0:
+        if hc == False:
             self.diff = None
             self.hash = None
         else:        
@@ -2811,11 +2811,11 @@ class SolidColorEffect(Effect):
         widget.ids["cp_solid_color"].ids['slider_sat'].set_slider_value(s)
         widget.ids["slider_solid_color"].set_slider_value(self._get_param(param, 'solid_opacity'))
         # これを後にしないと値が上書きされる
-        widget.ids["switch_solid_color"].active = False if self._get_param(param, 'solid_color') == 0 else True
+        widget.ids["switch_solid_color"].active = self._get_param(param, 'solid_color')
         widget.ids["cp_solid_color"].set_slider_value((h, l, s))
 
     def set2param(self, param, widget):
-        param['solid_color'] = 0 if widget.ids["switch_solid_color"].active == False else 1
+        param['solid_color'] = widget.ids["switch_solid_color"].active
         param["solid_color_hue"] = widget.ids["cp_solid_color"].ids['slider_hue'].value
         param["solid_color_lum"] = widget.ids["cp_solid_color"].ids['slider_lum'].value
         param["solid_color_sat"] = widget.ids["cp_solid_color"].ids['slider_sat'].value
@@ -2827,7 +2827,7 @@ class SolidColorEffect(Effect):
         col = self._get_param(param, "solid_color_lum")
         cos = self._get_param(param, "solid_color_sat")
         coao = self._get_param(param, "solid_opacity")
-        if coa <= 0 or coao <= 0:
+        if coa == False or coao <= 0:
             self.diff = None
             self.hash = None
         else:        

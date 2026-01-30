@@ -109,7 +109,7 @@ class HistoryContentPanel(KVBoxLayout):
     def _make_op_dict(self, op, is_active):
         def _format_value(value):
             if isinstance(value, bool):
-                return str(value)
+                return "ON" if value else "OFF"
             elif isinstance(value, (int, float)):
                 return self._format_number(value)
             elif isinstance(value, list):

@@ -1,11 +1,31 @@
 
 #:include widgets/float_input.kv
 
-<HeadLabel@MDLabel>:
-    font_size: '10pt'
-    halign: 'left'
+<RectangleToggleButton>:
+    _no_ripple_effect: True
+    background_normal: 'black'
+    background_down: 0.3, 0.3, 0.3, 1
+    line_color: 1, 1, 1, 0.8
+
+<HeadLabel@BoxLayout>:
+    orientation: 'horizontal'
     size_hint_y: None
     ref_height: 18
+    text: 'Label'
+
+    RectangleToggleButton:
+        pos_hint: {'center_y': 0.5}
+        size_hint: None, None
+        ref_width: 12
+        ref_height: 12
+        state: 'down'
+
+    MDLabel:
+        text: root.text
+        font_size: '10pt'
+        halign: 'left'
+        #size_hint_y: None
+        #ref_height: 18
 
 <ParamBoxLayout@BoxLayout>:
     orientation: 'horizontal'
@@ -63,7 +83,9 @@
         
         Button:
             #size_hint_y: 1
+            background_down: 'black'
             on_press: root.on_button_press(root.ids['slider'].step)
         Button:
             #size_hint_y: 1
+            background_down: 'black'
             on_press: root.on_button_press(-root.ids['slider'].step)
