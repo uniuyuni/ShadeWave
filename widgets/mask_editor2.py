@@ -46,7 +46,33 @@ import utils.utils as utils
 from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 import macos as device
- 
+
+
+def create_cutout_mask_guided(image, rough_mask, radius=8, eps=0.001):
+    """
+    オブジェクト切り抜き用の高品質マスク作成
+    
+    Parameters:
+    - image: 元画像（BGR）
+    - rough_mask: AIが生成した粗いマスク（0-255 or 0-1）
+    - radius: フィルター半径（大きいほど広範囲に影響、推奨: 8-16）
+    - eps: 正則化パラメータ（小さいほどエッジ保存、推奨: 0.0001-0.01）
+    """
+    # ガイデッドフィルター適用
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    refined = cv2.ximgproc.guidedFilter(
+        guide=gray,
+        src=rough_mask,
+        radius=radius,
+        eps=eps
+    )
+    
+    # オプション: コントラスト調整でエッジを強調
+    #refined = np.clip((refined - 0.5) * 1.2 + 0.5, 0, 1)
+    
+    return refined
+
 class TextInputDialog(KVPopup):
     def __init__(self, callback, **kwargs):
         super().__init__(**kwargs)
@@ -2162,6 +2188,9 @@ class SegmentMask(BaseMask):
         # 推論実行 (Original画像に対して)
         mask_original = sam3_helper.predict_sam3_for_bbox(SegmentMask.__processor, img, bbox)
         
+        # マスクの調整        
+        mask_original = create_cutout_mask_guided(img, mask_original, radius=60, eps=0.0001)
+        
         if invert:
             mask_original = 1 - mask_original   
         
@@ -2520,6 +2549,9 @@ class FaceMask(BaseMask):
 
         result = facer_helper.draw_face_mask(FaceMask.__faces, exclude_names)
 
+        # マスクの調整        
+        result = create_cutout_mask_guided(img, result, radius=60, eps=0.0001)
+
         return result
 
     @staticmethod
@@ -2718,7 +2750,10 @@ class TargetTextMask(BaseMask):
         
         # 推論実行 (Original画像に対して)
         mask_original = sam3_helper.predict_sam3_for_text(TargetTextMask.__processor, img, text)
-        
+
+        # マスクの調整        
+        mask_original = create_cutout_mask_guided(img, mask_original, radius=60, eps=0.0001)
+
         if invert:
             mask_original = 1 - mask_original
         
