@@ -96,7 +96,7 @@
         BoxLayout:
             orientation: 'horizontal'
 
-            MDScrollView:
+            ScrollView:
                 size_hint_x: 0.2
                 do_scroll_x: False
                 bar_width: 10
@@ -132,11 +132,13 @@
                                         size: self.size
                                         pos: self.pos
                             
+                            VSpacer:
+                                ref_height: 4
+                            
                             BoxLayout:
                                 orientation: 'horizontal'
                                 size_hint_y: None
                                 ref_height: 22
-                                ref_padding: 4
                                 
                                 ToggleButton:
                                     id: toggle_underexposure
@@ -152,63 +154,70 @@
                                     on_state: root.start_draw_image()
 
                     CollapsibleBox:
-                        title: " Information"
+                        title: " Metadata"
                         icon: "assets/Metadata.png"
                         is_expanded: True
                         
-                        BoxLayout:
+                        ScrollView:
+                            do_scroll_x: False
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
                             size_hint_y: None
-                            orientation: "vertical"
-                            height: self.minimum_height
+                            ref_height: 200
 
-                            MetaInfo:
-                                id: exif_file_name
-                                key: "File Name"
-                            MetaInfo:
-                                id: exif_file_size
-                                key: "File Size"
-                            MetaInfo:
-                                id: exif_create_date
-                                key: "Create Date"
-                            MetaInfo:
-                                id: exif_image_size
-                                key: "Image Size"
-                            MetaInfo:
-                                id: exif_iso_speed
-                                key: "ISO"
-                            MetaInfo:
-                                id: exif_aperture
-                                key: "Aperture"
-                            MetaInfo:
-                                id: exif_shutter_speed
-                                key: "Shutter Speed"
-                            MetaInfo:
-                                id: exif_exposure_compensation
-                                key: "Exposure Comp."
-                            MetaInfo:
-                                id: exif_flash
-                                key: "Flash"
-                            MetaInfo:
-                                id: exif_white_balance
-                                key: "White Balance"
-                            MetaInfo:
-                                id: exif_focal_length
-                                key: "Focal Length"
-                            MetaInfo:
-                                id: exif_exposure_program
-                                key: "Exposure Program"
-                            MetaInfo:
-                                id: exif_make
-                                key: "Make"
-                            MetaInfo:
-                                id: exif_model
-                                key: "Model"
-                            MetaInfo:
-                                id: exif_lens_model
-                                key: "Lens Model"
-                            MetaInfo:
-                                id: exif_software
-                                key: "Software"
+                            BoxLayout:
+                                size_hint_y: None
+                                orientation: "vertical"
+                                height: self.minimum_height
+
+                                MetaInfo:
+                                    id: exif_file_name
+                                    key: "File Name"
+                                MetaInfo:
+                                    id: exif_file_size
+                                    key: "File Size"
+                                MetaInfo:
+                                    id: exif_create_date
+                                    key: "Create Date"
+                                MetaInfo:
+                                    id: exif_image_size
+                                    key: "Image Size"
+                                MetaInfo:
+                                    id: exif_iso_speed
+                                    key: "ISO"
+                                MetaInfo:
+                                    id: exif_aperture
+                                    key: "Aperture"
+                                MetaInfo:
+                                    id: exif_shutter_speed
+                                    key: "Shutter Speed"
+                                MetaInfo:
+                                    id: exif_exposure_compensation
+                                    key: "Exposure Comp."
+                                MetaInfo:
+                                    id: exif_flash
+                                    key: "Flash"
+                                MetaInfo:
+                                    id: exif_white_balance
+                                    key: "White Balance"
+                                MetaInfo:
+                                    id: exif_focal_length
+                                    key: "Focal Length"
+                                MetaInfo:
+                                    id: exif_exposure_program
+                                    key: "Exposure Program"
+                                MetaInfo:
+                                    id: exif_make
+                                    key: "Make"
+                                MetaInfo:
+                                    id: exif_model
+                                    key: "Model"
+                                MetaInfo:
+                                    id: exif_lens_model
+                                    key: "Lens Model"
+                                MetaInfo:
+                                    id: exif_software
+                                    key: "Software"
 
                     CollapsibleBox:
                         id: masks_box
@@ -367,12 +376,15 @@
                         icon_source: 'assets/Basic.png'
 
                         ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_white_balance
@@ -1138,13 +1150,16 @@
                         text: 'Cu'
                         icon_source: 'assets/Curves.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_tone_curves
@@ -1379,13 +1394,16 @@
                         text: 'Ex'
                         icon_source: 'assets/Extra.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_ai_noise_reduction
@@ -1711,13 +1729,16 @@
                         id: effect
                         icon_source: 'assets/Effect.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_film_simulation
@@ -2095,13 +2116,16 @@
                         id: geometry
                         icon_source: 'assets/Geometry.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     text: ' Rotation'
@@ -2322,13 +2346,16 @@
                         text: 'Lo'
                         icon_source: 'assets/Looks.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_face
@@ -2395,7 +2422,9 @@
                         text: 'M2'
                         icon_source: 'assets/Mask2.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 id: mask2_panel
@@ -2403,6 +2432,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_mask2_settings
@@ -2676,13 +2706,16 @@
                         text: 'Li'
                         icon_source: 'assets/Liquify.png'
 
-                        MDScrollView:
+                        ScrollView:
+                            bar_width: 10
+                            scroll_type: ['bars', 'content']
 
                             MDBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
+                                ref_padding: 4
 
                                 HeadLabel:
                                     id: switch_distortion

@@ -86,15 +86,15 @@ class HistogramWidget(KVImage):
             KVPushMatrix()
             KVTranslate(self.x, self.y)
             KVScale(scale_x, scale_y, 1)
-            
-            KVColor((0.8, 0.8, 0.8, 1))
-            KVLine(rectangle=(0, 0, 256+64+32, 128+64), width=1)
-            KVLine(rectangle=(0+256+64+32, 0, 128+32, 128+64), width=1)
-        
+                    
             self.__draw_histogram_bars(r_hist, max_value, (1, 0, 0, 0.6))
             self.__draw_histogram_bars(g_hist, max_value, (0, 1, 0, 0.6))
             self.__draw_histogram_bars(b_hist, max_value, (0, 0, 1, 0.6))
             self.__draw_histogram_bars(l_hist, max_value, (0.8, 0.8, 0.8, 1))#, offset_x_ref=256+64+32)  # Ref offset for luminance
+            
+            KVColor((0.8, 0.8, 0.8, 1))
+            KVLine(rectangle=(0, 0, 256+64+32, 128+64), width=1)
+            KVLine(rectangle=(0+256+64+32, 0, 128+32, 128+64), width=1)
             KVPopMatrix()
 
     def draw_histogram(self, pixels, blue_count, black_count):

@@ -59,10 +59,10 @@
     RecycleView:
         id: history_rv
         viewclass: 'HistoryItem'
-        do_scroll_y: False
+        do_scroll_x: False
         scroll_type: ['bars', 'content']
         size_hint_y: None
-        height: layout.minimum_height
+        ref_height: 200 #layout.minimum_height
 
         SelectableRecycleBoxLayout:
             id: layout
