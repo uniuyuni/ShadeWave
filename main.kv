@@ -368,7 +368,11 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_white_balance
                                     text: ' White Balance'
+                                    on_press: root.begin_history_effect_ctrl(2, 'color_temperature')
+                                    on_active: root.apply_effects_lv(2, 'color_temperature')
+                                    on_release: root.end_history_effect_ctrl(2, 'color_temperature')
 
                                 ParamSlider:
                                     id: slider_color_temperature
@@ -395,7 +399,11 @@
                                 VSeparator:
 
                                 HeadLabel:
-                                    text: ' Tone'
+                                    id: switch_exposure_contrast
+                                    text: ' Exposure & Contrast'
+                                    on_press: root.begin_history_effect_ctrl(2, ['exposure', 'contrast'])
+                                    on_active: root.apply_effects_lv(2, ['exposure', 'contrast'])
+                                    on_release: root.end_history_effect_ctrl(2, ['exposure', 'contrast'])
 
                                 ParamSlider:
                                     id: slider_exposure
@@ -421,6 +429,13 @@
                                     on_after_edit: root.end_history_effect_ctrl(2, 'contrast')
 
                                 VSeparator:
+
+                                HeadLabel:
+                                    id: switch_tone
+                                    text: ' Tone'
+                                    on_press: root.begin_history_effect_ctrl(2, 'tone')
+                                    on_active: root.apply_effects_lv(2, 'tone')
+                                    on_release: root.end_history_effect_ctrl(2, 'tone')
 
                                 ParamSlider:
                                     id: slider_highlight
@@ -480,7 +495,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_level
                                     text: ' Level'
+                                    on_press: root.begin_history_effect_ctrl(2, 'level')
+                                    on_active: root.apply_effects_lv(2, 'level')
+                                    on_release: root.end_history_effect_ctrl(2, 'level')
 
                                 ParamSlider:
                                     id: slider_black_level
@@ -521,7 +540,11 @@
                                 VSeparator:
                                 
                                 HeadLabel:
+                                    id: switch_precence
                                     text: ' Precence'
+                                    on_press: root.begin_history_effect_ctrl(2, ['clarity', 'texture', 'microcontrast', 'dehaze', 'clahe'])
+                                    on_active: root.apply_effects_lv(2, ['clarity', 'texture', 'microcontrast', 'dehaze', 'clahe'])
+                                    on_release: root.end_history_effect_ctrl(2, ['clarity', 'texture', 'microcontrast', 'dehaze', 'clahe'])
 
                                 ParamSlider:
                                     id: slider_clarity
@@ -568,7 +591,7 @@
                                     on_after_edit: root.end_history_effect_ctrl(2, 'dehaze')
 
                                 ParamSlider:
-                                    id: slider_clahe_intensity
+                                    id: slider_clahe
                                     text: "CLAHE"
                                     min: 0
                                     max: 100
@@ -581,7 +604,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_saturation
                                     text: ' Saturation'
+                                    on_press: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'saturation')
+                                    on_active: root.apply_effects_lv(2, 'vs_and_saturation')
+                                    on_release: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'saturation')
                                 
                                 ParamSlider:
                                     text: "Saturation"
@@ -608,7 +635,11 @@
                                 VSeparator:
                                                             
                                 HeadLabel:
+                                    id: switch_color_mixer
                                     text: ' Color Mixer'
+                                    on_press: root.begin_history_effect_ctrl(2, 'hls')
+                                    on_active: root.apply_effects_lv(2, 'hls')
+                                    on_release: root.end_history_effect_ctrl(2, 'hls')
 
                                 TabbedPanel:
                                     size_hint_y: None
@@ -626,7 +657,11 @@
                                             md_bg_color: dark_color
 
                                             HeadLabel:
+                                                id: switch_red
                                                 text: ' Red'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_red')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_red')
                                             ParamSlider:
                                                 id: slider_hls_red_hue
                                                 text: "Hue"
@@ -667,7 +702,11 @@
                                             md_bg_color: dark_color
 
                                             HeadLabel:
+                                                id: switch_orange
                                                 text: ' Orange'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_orange')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_orange')
                                             ParamSlider:
                                                 id: slider_hls_orange_hue
                                                 text: "Hue"
@@ -708,10 +747,14 @@
                                             md_bg_color: dark_color
                                             
                                             HeadLabel:
+                                                id: switch_yellow
                                                 text: ' Yellow'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_yellow')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_yellow')
                                             ParamSlider:
                                                 id: slider_hls_yellow_hue
-                                                text: "hue"
+                                                text: "Hue"
                                                 min: -180
                                                 max: 180
                                                 value: 0
@@ -749,7 +792,11 @@
                                             md_bg_color: dark_color
                                             
                                             HeadLabel:
+                                                id: switch_green
                                                 text: ' Green'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_green')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_green')
                                             ParamSlider:
                                                 id: slider_hls_green_hue
                                                 text: "Hue"
@@ -790,7 +837,11 @@
                                             md_bg_color: dark_color
                                             
                                             HeadLabel:
+                                                id: switch_cyan
                                                 text: ' Cyan'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_cyan')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_cyan')
                                             ParamSlider:
                                                 id: slider_hls_cyan_hue
                                                 text: "Hue"
@@ -831,7 +882,11 @@
                                             md_bg_color: dark_color
                                             
                                             HeadLabel:
+                                                id: switch_blue
                                                 text: ' Blue'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_blue')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_blue')
                                             ParamSlider:
                                                 id: slider_hls_blue_hue
                                                 text: "Hue"
@@ -872,7 +927,11 @@
                                             md_bg_color: dark_color
                                             
                                             HeadLabel:
+                                                id: switch_purple
                                                 text: ' Purple'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_purple')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_purple')
                                             ParamSlider:
                                                 id: slider_hls_purple_hue
                                                 text: "Hue"
@@ -913,7 +972,11 @@
                                             md_bg_color: dark_color
                                             
                                             HeadLabel:
+                                                id: switch_magenta
                                                 text: ' Magenta'
+                                                on_press: root.begin_history_effect_ctrl(2, 'hls', 'hls_magenta')
+                                                on_active: root.apply_effects_lv(2, 'hls')
+                                                on_release: root.end_history_effect_ctrl(2, 'hls', 'hls_magenta')
                                             ParamSlider:
                                                 id: slider_hls_magenta_hue
                                                 text: "Hue"
@@ -948,7 +1011,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_unsharp_mask
                                     text: ' Unsharp mask'
+                                    on_press: root.begin_history_effect_ctrl(2, 'unsharp_mask')
+                                    on_active: root.apply_effects_lv(2, 'unsharp_mask')
+                                    on_release: root.end_history_effect_ctrl(2, 'unsharp_mask')
 
                                 ParamSlider:
                                     id: slider_unsharp_mask_amount
@@ -975,7 +1042,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_vignette
                                     text: ' Vignette'
+                                    on_press: root.begin_history_effect_ctrl(4, 'vignette')
+                                    on_active: root.apply_effects_lv(4, 'vignette')
+                                    on_release: root.end_history_effect_ctrl(4, 'vignette')
 
                                 ParamSlider:
                                     id: slider_vignette_intensity
@@ -1013,38 +1084,54 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_lens_modifier
                                     text: ' Lens Modifier'
+                                    on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                    on_active: root.apply_effects_lv(0, 'lens_modifier')
+                                    on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
 
                                 MDGridLayout:
                                     size_hint_y: None
                                     ref_height: 40
                                     ref_width: 120
-                                    cols: 6
+                                    cols: 9
 
-                                    ParamLabel:          
-                                        text: "Color"
+                                    HSpacer:
+                                        size_hint_x: 0.19
                                     CheckBox:
                                         id: checkbox_color_modification
+                                        size_hint_x: 0.033
                                         active: True
+                                        on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                        on_active: root.apply_effects_lv(0, 'lens_modifier')
+                                        on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
+                                    ParamLabel:          
+                                        text: "Color"
+                                        size_hint_x: 0.11
+                                    HSpacer:
+                                        size_hint_x: 0.145
+                                    CheckBox:
+                                        id: checkbox_subpixel_distortion
+                                        active: True
+                                        size_hint_x: 0.033
                                         on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
                                         on_active: root.apply_effects_lv(0, 'lens_modifier')
                                         on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
                                     ParamLabel:          
                                         text: "Subpixel"
+                                        size_hint_x: 0.155
+                                    HSpacer:
+                                        size_hint_x: 0.115
                                     CheckBox:
-                                        id: checkbox_subpixel_distortion
+                                        id: checkbox_geometry_distortion
                                         active: True
+                                        size_hint_x: 0.033
                                         on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
                                         on_active: root.apply_effects_lv(0, 'lens_modifier')
                                         on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
                                     ParamLabel:          
                                         text: "Geometry"
-                                    CheckBox:
-                                        id: checkbox_geometry_distortion
-                                        active: True
-                                        on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
-                                        on_active: root.apply_effects_lv(0, 'lens_modifier')
-                                        on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
+                                        size_hint_x: 0.185
 
                                 VSpacer
 
@@ -1062,7 +1149,11 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
-                                    text: ' Tone Curve'
+                                    id: switch_tone_curves
+                                    text: ' Tone Curves'
+                                    on_press: root.begin_history_effect_ctrl(2, 'curves')
+                                    on_active: root.apply_effects_lv(2, 'curves')
+                                    on_release: root.end_history_effect_ctrl(2, 'curves')
 
                                 CurveTabbedPanel:
                                     default_tab: tab_all
@@ -1075,9 +1166,9 @@
                                             id: tonecurve
                                             start_y: 0.0
                                             end_y: 1.0
-                                            on_curve: root.apply_effects_lv(2, 'curve')
-                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'tonecurve')
-                                            on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'tonecurve')
+                                            on_curve: root.apply_effects_lv(2, 'curves')
+                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve')
+                                            on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve')
 
                                     TabbedPanelItem:
                                         text: 'Red'
@@ -1086,9 +1177,9 @@
                                             id: tonecurve_red
                                             start_y: 0.0
                                             end_y: 1.0
-                                            on_curve: root.apply_effects_lv(2, 'curve')
-                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'tonecurve_red')
-                                            on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'tonecurve_red')
+                                            on_curve: root.apply_effects_lv(2, 'curves')
+                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve_red')
+                                            on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve_red')
 
                                     TabbedPanelItem:
                                         text: 'Green'
@@ -1097,9 +1188,9 @@
                                             id: tonecurve_green
                                             start_y: 0.0
                                             end_y: 1.0
-                                            on_curve: root.apply_effects_lv(2, 'curve')
-                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'tonecurve_green')
-                                            on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'tonecurve_green')
+                                            on_curve: root.apply_effects_lv(2, 'curves')
+                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve_green')
+                                            on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve_green')
 
                                     TabbedPanelItem:
                                         text: 'Blue'
@@ -1108,14 +1199,18 @@
                                             id: tonecurve_blue
                                             start_y: 0.0
                                             end_y: 1.0
-                                            on_curve: root.apply_effects_lv(2, 'curve')
-                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'tonecurve_blue')
-                                            on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'tonecurve_blue')
+                                            on_curve: root.apply_effects_lv(2, 'curves')
+                                            on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve_blue')
+                                            on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve_blue')
                                     
                                 VSpacer:
                                 
                                 HeadLabel:
-                                    text: ' Color Grading'
+                                    id: switch_color_gradings
+                                    text: ' Color Gradings'
+                                    on_press: root.begin_history_effect_ctrl(2, 'curves')
+                                    on_active: root.apply_effects_lv(2, 'curves')
+                                    on_release: root.end_history_effect_ctrl(2, 'curves')
 
                                 CurveTabbedPanel:
                                     ref_tab_width: 100
@@ -1134,15 +1229,15 @@
                                                 id: grading1
                                                 start_y: 1.0
                                                 end_y: 0.0
-                                                on_curve: root.apply_effects_lv(2, 'curve')
-                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'grading1')
-                                                on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'grading1')
+                                                on_curve: root.apply_effects_lv(2, 'curves')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'grading1')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'grading1')
 
                                             CWColorPicker:
                                                 id: grading1_color_picker
-                                                on_current_color: root.apply_effects_lv(2, 'curve')
-                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'grading1')
-                                                on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'grading1')
+                                                on_current_color: root.apply_effects_lv(2, 'curves')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'grading1')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'grading1')
 
 
                                     TabbedPanelItem:
@@ -1157,21 +1252,25 @@
                                                 id: grading2
                                                 start_y: 0.0
                                                 end_y: 1.0
-                                                on_curve: root.apply_effects_lv(2, 'curve')
-                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'grading2')
-                                                on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'grading2')
+                                                on_curve: root.apply_effects_lv(2, 'curves')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'grading2')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'grading2')
 
                                             CWColorPicker:
                                                 id: grading2_color_picker
-                                                on_current_color: root.apply_effects_lv(2, 'curve')
-                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curve', 'grading2')
-                                                on_after_edit: root.end_history_effect_ctrl(2, 'curve', 'grading2')
+                                                on_current_color: root.apply_effects_lv(2, 'curves')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'grading2')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'grading2')
                                 
                                 VSpacer:
                                     ref_height: 4
 
                                 HeadLabel:
+                                    id: switch_color_curves
                                     text: ' Color Curves'
+                                    on_press: root.begin_history_effect_ctrl(2, 'vs_and_saturation')
+                                    on_active: root.apply_effects_lv(2, 'vs_and_saturation')
+                                    on_release: root.end_history_effect_ctrl(2, 'vs_and_saturation')
                                 
                                 CurveTabbedPanel:
                                     ref_tab_width: 100
@@ -1181,6 +1280,7 @@
                                         text: 'Hue vs Hue'
 
                                         HeadLabel:
+                                            id: switch_hue_vs_hue
                                             text: "Hue vs Hue"
                                         CurveWidget:
                                             id: HuevsHue
@@ -1194,6 +1294,7 @@
                                         text: 'Hue vs Lum'
 
                                         HeadLabel:
+                                            id: switch_hue_vs_lum
                                             text: "Hue vs Lum"
                                         CurveWidget:
                                             id: HuevsLum
@@ -1207,6 +1308,7 @@
                                         text: 'Hue vs Sat'
 
                                         HeadLabel:
+                                            id: switch_hue_vs_sat
                                             text: "Hue vs Sat"
                                         CurveWidget:
                                             id: HuevsSat
@@ -1221,6 +1323,7 @@
                                         text: 'Lum vs Lum'
 
                                         HeadLabel:
+                                            id: switch_lum_vs_lum
                                             text: "Lum vs Lum"
                                         CurveWidget:
                                             id: LumvsLum
@@ -1234,6 +1337,7 @@
                                         text: 'Lum vs Sat'
 
                                         HeadLabel:
+                                            id: switch_lum_vs_sat
                                             text: "Lum vs Sat"
                                         CurveWidget:
                                             id: LumvsSat
@@ -1247,6 +1351,7 @@
                                         text: 'Sat vs Lum'
 
                                         HeadLabel:
+                                            id: switch_sat_vs_lum
                                             text: "Sat vs Lum"
                                         CurveWidget:
                                             id: SatvsLum
@@ -1260,6 +1365,7 @@
                                         text: 'Sat vs Sat'
 
                                         HeadLabel:
+                                            id: switch_sat_vs_sat
                                             text: "Sat vs Sat"
                                         CurveWidget:
                                             id: SatvsSat
@@ -1285,7 +1391,11 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_ai_noise_reduction
                                     text: ' Noise Reduction'
+                                    on_press: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
+                                    on_active: root.apply_effects_lv(0, 'ai_noise_reduction')
+                                    on_release: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1295,7 +1405,7 @@
                                         size_hint_x: 0.55
                                         text: ""
                                     ParamChip:
-                                        id: switch_ai_noise_reduction
+                                        id: chip_ai_noise_reduction
                                         size_hint_x: None
                                         ref_width: 40
                                         on_press: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
@@ -1314,6 +1424,15 @@
                                     on_slider: root.apply_effects_lv(0, 'ai_noise_reduction')
                                     on_before_edit: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
                                     on_after_edit: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
+
+                                VSeparator:
+
+                                HeadLabel:
+                                    id: switch_light_noise_reduction
+                                    text: ' Light Noise Reduction'
+                                    on_press: root.begin_history_effect_ctrl(2, 'light_noise_reduction')
+                                    on_active: root.apply_effects_lv(2, 'light_noise_reduction')
+                                    on_release: root.end_history_effect_ctrl(2, 'light_noise_reduction')
 
                                 ParamSlider:
                                     id: slider_light_noise_reduction
@@ -1340,7 +1459,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_details
                                     text: ' Details'
+                                    on_press: root.begin_history_effect_ctrl(0, ['inpaint', 'subpixel_shift'])
+                                    on_active: root.apply_effects_lv(0, ['inpaint', 'subpixel_shift'])
+                                    on_release: root.end_history_effect_ctrl(0, ['inpaint', 'subpixel_shift'])
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1377,21 +1500,6 @@
 
                                 ParamBoxLayout:
                                     ParamLabel:
-                                        text: "Defocus"
-                                    VSpacer:
-                                        size_hint_x: 0.55
-                                    ParamChip:
-                                        id: switch_defocus
-                                        size_hint_x: None
-                                        ref_width: 40
-                                        on_press: root.begin_history_effect_ctrl(1, 'defocus')
-                                        on_active: root.apply_effects_lv(1, 'defocus')
-                                        on_release: root.end_history_effect_ctrl(1, 'defocus')
-                                        ParamChipText:
-                                            text: "AI"
-
-                                ParamBoxLayout:
-                                    ParamLabel:
                                         text: "Subpixel shift"
                                     VSpacer:
                                         size_hint_x: 0.55
@@ -1402,6 +1510,30 @@
                                         on_press: root.begin_history_effect_ctrl(0, 'subpixel_shift')
                                         on_active: root.apply_effects_lv(0, 'subpixel_shift')
                                         on_release: root.end_history_effect_ctrl(0, 'subpixel_shift')
+                                        ParamChipText:
+                                            text: "AI"
+
+                                VSeparator:
+
+                                HeadLabel:
+                                    id: switch_focus
+                                    text: ' Focus'
+                                    on_press: root.begin_history_effect_ctrl(1, ['defocus', 'deblur_filter'])
+                                    on_active: root.apply_effects_lv(1, ['defocus', 'deblur_filter'])
+                                    on_release: root.end_history_effect_ctrl(1, ['defocus', 'deblur_filter'])
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Defocus"
+                                    VSpacer:
+                                        size_hint_x: 0.55
+                                    ParamChip:
+                                        id: switch_defocus
+                                        size_hint_x: None
+                                        ref_width: 40
+                                        on_press: root.begin_history_effect_ctrl(1, 'defocus')
+                                        on_active: root.apply_effects_lv(1, 'defocus')
+                                        on_release: root.end_history_effect_ctrl(1, 'defocus')
                                         ParamChipText:
                                             text: "AI"
 
@@ -1419,7 +1551,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_lut
                                     text: ' LUT'
+                                    on_press: root.begin_history_effect_ctrl(2, 'lut')
+                                    on_active: root.apply_effects_lv(2, 'lut')
+                                    on_release: root.end_history_effect_ctrl(2, 'lut')
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1465,28 +1601,18 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_solid_color
                                     text: ' Solid Color'
+                                    on_press: root.begin_history_effect_ctrl(2, 'solid_color')
+                                    on_active: root.apply_effects_lv(2, 'solid_color')
+                                    on_release: root.end_history_effect_ctrl(2, 'solid_color')
 
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Solid Color"
-                                    VSpacer:
-                                        size_hint_x: 0.45
-                                    ParamChip:
-                                        id: switch_solid_color
-                                        size_hint_x: None
-                                        ref_width: 60
-                                        on_press: root.begin_history_effect_ctrl(2, 'solid_color')
-                                        on_active: root.apply_effects_lv(2, 'solid_color')
-                                        on_release: root.end_history_effect_ctrl(2, 'solid_color')
-                                        ParamChipText:
-                                            text: "Apply"
                                 ParamSlider:
                                     id: slider_solid_color
                                     text: "Opacity"
                                     min: 0
                                     max: 100
-                                    value: 50
+                                    value: 0
                                     step: 1
                                     on_slider: root.apply_effects_lv(2, 'solid_color')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'solid_color')
@@ -1504,7 +1630,11 @@
                                 VSeparator:
 
                                 HeadLabel:
-                                    text: ' Exception'
+                                    id: switch_global
+                                    text: ' Global'
+                                    on_press: root.begin_history_effect_ctrl(2, 'highlight_compress')
+                                    on_active: root.apply_effects_lv(2, 'highlight_compress')
+                                    on_release: root.end_history_effect_ctrl(2, 'highlight_compress')
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1525,7 +1655,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_fringe_removal
                                     text: ' Fringe Removal'
+                                    on_press: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                    on_active: root.apply_effects_lv(0, 'remove_chromatic_aberration')
+                                    on_release: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1590,7 +1724,11 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_film_simulation
                                     text: ' Film Simulation'
+                                    on_press: root.begin_history_effect_ctrl(2, 'film_emulation')
+                                    on_active: root.apply_effects_lv(2, 'film_emulation')
+                                    on_release: root.end_history_effect_ctrl(2, 'film_emulation')
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1629,7 +1767,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_lens_simulator
                                     text: ' Lens Simulator'
+                                    on_press: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_active: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_release: root.end_history_effect_ctrl(2, 'lens_simulator')
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1657,7 +1799,11 @@
                                 VSeparator:
 
                                 HeadLabel:
-                                    text: ' Filter'
+                                    id: switch_filters
+                                    text: ' Filters'
+                                    on_press: root.begin_history_effect_ctrl(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
+                                    on_active: root.apply_effects_lv(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
+                                    on_release: root.end_history_effect_ctrl(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
 
                                 ParamSlider:
                                     id: slider_lensblur_filter
@@ -1706,7 +1852,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_orton_effect
                                     text: ' Orton Effect'
+                                    on_press: root.begin_history_effect_ctrl(1, 'orton')
+                                    on_active: root.apply_effects_lv(1, 'orton')
+                                    on_release: root.end_history_effect_ctrl(1, 'orton')
 
                                 ParamSlider:
                                     id: slider_orton_radius
@@ -1742,7 +1892,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_glow_effect
                                     text: ' Glow Effect'
+                                    on_press: root.begin_history_effect_ctrl(2, 'glow')
+                                    on_active: root.apply_effects_lv(2, 'glow')
+                                    on_release: root.end_history_effect_ctrl(2, 'glow')
 
                                 ParamSlider:
                                     id: slider_glow_black
@@ -1780,7 +1934,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_grain
                                     text: ' Grain'
+                                    on_press: root.begin_history_effect_ctrl(4, 'grain')
+                                    on_active: root.apply_effects_lv(4, 'grain')
+                                    on_release: root.end_history_effect_ctrl(4, 'grain')
 
                                 ParamSlider:
                                     id: slider_grain_intensity
@@ -1836,7 +1994,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_cross_filter
                                     text: ' Cross Filter'
+                                    on_press: root.begin_history_effect_ctrl(0, 'cross_filter')
+                                    on_active: root.apply_effects_lv(0, 'cross_filter')
+                                    on_release: root.end_history_effect_ctrl(0, 'cross_filter')
 
                                 ParamSlider:
                                     id: slider_cross_filter_num_points
@@ -1947,6 +2109,7 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_rotation
                                     text: ' Rotation'
 
                                 ParamSlider:
@@ -1996,6 +2159,7 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_crop
                                     text: " Crop"
 
                                 ParamBoxLayout:
@@ -2043,6 +2207,7 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_distortion_correction
                                     text: " Distortion Correction"
 
                                 ParamBoxLayout:
@@ -2169,7 +2334,12 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_face
                                     text: ' Face'
+                                    on_press: root.begin_history_effect_ctrl(1, 'face')
+                                    on_active: root.apply_effects_lv(1, "face")
+                                    on_release: root.end_history_effect_ctrl(1, 'face')
+
                                 ParamSlider:
                                     id: slider_jawline_scale
                                     text: "Jawline"
@@ -2239,7 +2409,11 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_mask2_settings
                                     text: ' Settings'
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 MDGridLayout:
                                     size_hint_y: None
@@ -2264,7 +2438,12 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_mask2_depth
                                     text: ' Depth'
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
+
                                 ParamSlider:
                                     id: slider_mask2_depth_min
                                     text: "Min"
@@ -2289,7 +2468,12 @@
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
                                 HeadLabel:
+                                    id: switch_mask2_hue
                                     text: ' Hue'
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
+
                                 ParamSlider:
                                     id: slider_mask2_hue_distance
                                     text: "Distance"
@@ -2322,7 +2506,12 @@
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
                                 HeadLabel:
+                                    id: switch_mask2_lum
                                     text: ' Lum'
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
+
                                 ParamSlider:
                                     id: slider_mask2_lum_distance
                                     text: "Distance"
@@ -2355,7 +2544,12 @@
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
                                 HeadLabel:
+                                    id: switch_mask2_sat
                                     text: ' Sat'
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
+
                                 ParamSlider:
                                     id: slider_mask2_sat_distance
                                     text: "Distance"
@@ -2388,6 +2582,13 @@
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
                                 VSeparator:
+
+                                HeadLabel:
+                                    id: switch_mask2_options
+                                    text: " Option"
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 ParamSlider:
                                     id: slider_mask2_blur
@@ -2425,7 +2626,11 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_mask2_face
                                     text: ' Face'
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_active: root.apply_effects_lv(3, 'mask2')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 MDGridLayout:
                                     id: grid_mask2_face
@@ -2485,7 +2690,11 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
+                                    id: switch_distortion
                                     text: ' Distortion'
+                                    on_press: root.begin_history_effect_ctrl(1, 'distortion')
+                                    on_active: root.apply_effects_lv(1, 'distortion')
+                                    on_release: root.end_history_effect_ctrl(1, 'distortion')
 
                                 VSpacer:
 

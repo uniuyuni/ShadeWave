@@ -13,12 +13,12 @@ class LayerCtrl:
 
 class Operation:
 
-    def __init__(self, lv=0, effect=None, subname=None, mask_id=None, type="Effect"):
+    def __init__(self, lv=0, effect_list=None, subname=None, mask_id=None, type="Effect"):
         self.id = str(uuid.uuid4())
         self.type = type
         self.name = ""
         self.lv = lv
-        self.effect = effect
+        self.effect_list = effect_list if isinstance(effect_list, list) else [effect_list]
         self.effects = None
         self.effects_param = None
         self.subname = subname
@@ -49,15 +49,15 @@ class Operation:
         return self.update
     
     def set_backup(self, effects, param, subname=None):
-        self.name = effects[self.lv][self.effect].__class__.__name__
+        self.name = effects[self.lv][self.effect_list[0]].__class__.__name__
         self.effects = effects
         self.effects_param = param
 
         # パラメータ辞書を取得
         if subname is not None:
-            ef_dict = effects[self.lv][self.effect].get_param_dict(param, subname)
+            ef_dict = effects[self.lv][self.effect_list[0]].get_param_dict(param, subname)
         else:
-            ef_dict = effects[self.lv][self.effect].get_param_dict(param)
+            ef_dict = effects[self.lv][self.effect_list[0]].get_param_dict(param)
 
         # バックアップを作成
         for key in ef_dict.keys():
@@ -67,11 +67,11 @@ class Operation:
             else:
                 self.backup[key] = val
         
-        return (self.lv, self.effect)
+        return (self.lv, self.effect_list)
     
     def set_update(self, effects, param, subname=None):
-        if self.effect is None:
-            logging.warning("Operation.set_update effect is None.")
+        if self.effect_list is None:
+            logging.warning("Operation.set_update effect_list is None.")
             return None
             
         if self.effects_param is not param:
@@ -80,9 +80,9 @@ class Operation:
 
         # パラメータ辞書を取得
         if subname is not None:
-            ef_dict = effects[self.lv][self.effect].get_param_dict(param, subname)
+            ef_dict = effects[self.lv][self.effect_list[0]].get_param_dict(param, subname)
         else:
-            ef_dict = effects[self.lv][self.effect].get_param_dict(param)
+            ef_dict = effects[self.lv][self.effect_list[0]].get_param_dict(param)
         if ef_dict is None:
             return None
 
@@ -104,12 +104,13 @@ class Operation:
         if len(self.diff) == 0:
             return None
         
-        return (self.lv, self.effect)
+        return (self.lv, self.effect_list)
 
     def undo(self, widget):
         if self.type == "Effect":
             self.effects_param.update(self.backup)
-            self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
+            for effect in self.effect_list:
+                self.effects[self.lv][effect].set2widget(widget, self.effects_param)
 
         elif self.type == "Layer":
             self.layer_ctrl.update_layer(self.backup['op'], self.backup['index'], self.backup['op_type'], self.backup['dict'])
@@ -117,7 +118,8 @@ class Operation:
     def redo(self, widget):
         if self.type == "Effect":
             self.effects_param.update(self.update)
-            self.effects[self.lv][self.effect].set2widget(widget, self.effects_param)
+            for effect in self.effect_list:
+                self.effects[self.lv][effect].set2widget(widget, self.effects_param)
 
         elif self.type == "Layer":
             self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['op_type'], self.update['dict'])

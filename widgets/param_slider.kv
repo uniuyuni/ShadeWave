@@ -7,18 +7,23 @@
     background_down: 0.3, 0.3, 0.3, 1
     line_color: 1, 1, 1, 0.8
 
-<HeadLabel@BoxLayout>:
+<HeadLabel>:
     orientation: 'horizontal'
     size_hint_y: None
     ref_height: 18
     text: 'Label'
+    enabled: self.active
 
     RectangleToggleButton:
+        id: toggle
         pos_hint: {'center_y': 0.5}
         size_hint: None, None
         ref_width: 12
         ref_height: 12
-        state: 'down'
+        state: 'down' if root.enabled else 'normal'
+        on_state: root.press = self.state == 'down'
+        on_state: root.active = self.state == 'down'
+        on_release: root.release = self.state == 'down'
 
     MDLabel:
         text: root.text

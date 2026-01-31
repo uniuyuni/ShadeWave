@@ -420,7 +420,11 @@ if __name__ == '__main__':
                 return
                 
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
-            current_effects[lv][effect].set2param(current_param, self)
+            if isinstance(effect, list):
+                for e in effect:
+                    current_effects[lv][e].set2param(current_param, self)
+            else:
+                current_effects[lv][effect].set2param(current_param, self)
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             #self.apply_rotation_flip_for_wrapper()
             if sync == False:
@@ -498,16 +502,16 @@ if __name__ == '__main__':
             self.current_op.set_backup(current_effects, current_param, subname)
             return True
         
-        def end_history_effect_ctrl(self, lv, effect, subname=None):
+        def end_history_effect_ctrl(self, lv, effect_list, subname=None):
             if self.current_op is None:
-                logging.warning(f"MainWidget.end_history_effect_ctrl None. {effect}")
+                logging.warning(f"MainWidget.end_history_effect_ctrl None. {effect_list}")
                 return
             
-            if self.current_op.lv != lv or self.current_op.effect != effect:
-                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching. {effect}")
+            if self.current_op.lv != lv or self.current_op.effect_list != effect_list:
+                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching. {effect_list}")
 
             if self.current_op.subname != subname:
-                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching. {effect}")
+                logging.warning(f"MainWidget.end_history_effect_ctrl Unmatching. {effect_list}")
                 return
 
             current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id, lv=lv)

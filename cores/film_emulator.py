@@ -73,7 +73,7 @@ class FilmEmulator:
             [1.0 - abs(h_shift), h_shift if h_shift < 0 else 0, 0],
             [0, 1.0 - abs(h_shift), h_shift if h_shift > 0 else 0],
             [h_shift if h_shift > 0 else 0, 0, 1.0 - abs(h_shift)]
-        ])
+        ], dtype=np.float32)
         
         # 行列適用
         img = np.stack([
@@ -83,7 +83,7 @@ class FilmEmulator:
         ], axis=-1)
         
         # 彩度調整 (安全な範囲に制限)
-        sat_factor = np.clip(adjustment['saturation'], 0.5, 2.0)
+        sat_factor = np.clip(adjustment['saturation'], 0.5, 2.0).astype(np.float32)
         img = self.adjust_saturation(img, sat_factor)
         
         return img

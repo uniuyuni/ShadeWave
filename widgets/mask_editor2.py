@@ -301,46 +301,56 @@ class BaseMask(KVWidget):
         return bimg
 
     def get_hash_items(self):
-        return (effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
+        return (effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
+                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur'),
+                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_hue'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_distance'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_min'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_max'),
+                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_lum'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_distance'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_min'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_max'),
+                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_sat'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_distance',),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_min'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_max'))
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_max'),
+                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'))
 
     def _apply_mask_space(self, image):
-        open_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space')
-        image = expand_mask.adjust_foreground_only(image, open_space * params.get_disp_info(self.editor.tcg_info)[4], False)
+        switch_mask2_options = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options')
+        if switch_mask2_options == True:
+            open_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space')
+            image = expand_mask.adjust_foreground_only(image, open_space * params.get_disp_info(self.editor.tcg_info)[4], False)
 
-        close_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space')
-        image = expand_mask.adjust_holes_only(image, close_space * params.get_disp_info(self.editor.tcg_info)[4], False)
+            close_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space')
+            image = expand_mask.adjust_holes_only(image, close_space * params.get_disp_info(self.editor.tcg_info)[4], False)
         
         return image
 
     def _apply_depth_mask(self, image):
-        dmin = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min') / 255
-        dmax = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max') / 255
-        if (dmin != 0) or (1 != dmax):
-            dimg = np.where((image < dmin) | (dmax < image), 0, image)
-        else:
-            dimg = image
+        switch_mask2_depth = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth')
+        if switch_mask2_depth == True:
+            dmin = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min') / 255
+            dmax = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max') / 255
+            if (dmin != 0) or (1 != dmax):
+                image = np.where((image < dmin) | (dmax < image), 0, image)
 
-        return dimg
+        return image
     
     def _apply_mask_blur(self, image):
+        switch_mask2_options = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options')
         blur = effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur')
-        if blur != 0:
+        if switch_mask2_options == True and blur != 0:
             ksize = int(max(0, blur*2-1))
             image = core.gaussian_blur_cv(image, (ksize, ksize))
+
         return image
 
     def _draw_hls_mask(self, mask, hls_str):
@@ -415,13 +425,25 @@ class BaseMask(KVWidget):
         return mask
 
     def _draw_hue_mask(self, mask):
-        return self._draw_hls_mask(mask, 'hue')
+        switch_mask2_hue = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_hue')
+        if switch_mask2_hue == True:
+            return self._draw_hls_mask(mask, 'hue')
+        
+        return mask
 
     def _draw_lum_mask(self, mask):
-        return self._draw_hls_mask(mask, 'lum')
+        switch_mask2_lum = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_lum')
+        if switch_mask2_lum == True:
+            return self._draw_hls_mask(mask, 'lum')
+        
+        return mask
 
     def _draw_sat_mask(self, mask):
-        return self._draw_hls_mask(mask, 'sat')
+        switch_mask2_sat = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_sat')
+        if switch_mask2_sat == True:
+            return self._draw_hls_mask(mask, 'sat')
+        
+        return mask
 
 # マスクの合成マスク
 class CompositMask(BaseMask):
@@ -805,7 +827,10 @@ class CircularGradientMask(BaseMask):
         inner_axes = self.editor.tcg_to_image_scale(self.inner_radius_x, self.inner_radius_y)
         outer_axes = self.editor.tcg_to_image_scale(self.outer_radius_x, self.outer_radius_y)
         rotate_rad = self.editor.get_rotate_rad(self.rotate_rad)
-        invert = not effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+            invert = not effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
+        else:
+            invert = False
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, inner_axes, outer_axes, rotate_rad, invert))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
@@ -1236,8 +1261,9 @@ class GradientMask(BaseMask):
         center = self.editor.tcg_to_texture(*self.center)
         start_point = self.editor.tcg_to_texture(*self.start_point)
         end_point = self.editor.tcg_to_texture(*self.end_point)
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
-            start_point, end_point = end_point, start_point
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
+                start_point, end_point = end_point, start_point
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, center, start_point, end_point))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
@@ -2061,7 +2087,10 @@ class SegmentMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original_image(*self.center)
         corner = self.editor.tcg_to_original_image(*self.corner)
-        invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+            invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
+        else:
+            invert = False
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
@@ -2421,18 +2450,19 @@ class FaceMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original_image(*self.center)
         exclude_names = []
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_face') == False:
-            exclude_names.append('face')
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_brows') == False:
-            exclude_names.extend(['rb', 'lb'])
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_eyes') == False:
-            exclude_names.extend(['re', 'le'])
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_nose') == False:
-            exclude_names.append('nose')
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_mouth') == False:
-            exclude_names.append('imouth')
-        if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_lips') == False:
-            exclude_names.extend(['ulip', 'llip'])
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_face') == True:
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_face') == False:
+                exclude_names.append('face')
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_brows') == False:
+                exclude_names.extend(['rb', 'lb'])
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_eyes') == False:
+                exclude_names.extend(['re', 'le'])
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_nose') == False:
+                exclude_names.append('nose')
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_mouth') == False:
+                exclude_names.append('imouth')
+            if effects.Mask2Effect.get_param(self.effects_param, 'mask2_face_lips') == False:
+                exclude_names.extend(['ulip', 'llip'])
         faces_mask = None
 
         newhash = hash((image_size, tuple(exclude_names)))
@@ -2627,7 +2657,10 @@ class TargetTextMask(BaseMask):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_original_image(*self.center)
-        invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+            invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
+        else:
+            invert = False
         text = self.target_text
         segment_mask = None
 

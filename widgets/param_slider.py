@@ -10,6 +10,11 @@ import widgets.float_input
 class RectangleToggleButton(MDRectangleFlatButton, MDToggleButton):
     pass
 
+class HeadLabel(KVBoxLayout):
+    press = KVBooleanProperty(True)
+    active = KVBooleanProperty(True)
+    release = KVBooleanProperty(True)
+
 class ParamSlider(KVBoxLayout):
     text = KVStringProperty()
     min = KVNumericProperty(-100)
