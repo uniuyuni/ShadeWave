@@ -118,6 +118,7 @@ cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
 
 if __name__ == '__main__':
+
     def pillow_init():
         import PIL.Image as PILImage
         import PIL.Jpeg2KImagePlugin
@@ -128,17 +129,6 @@ if __name__ == '__main__':
         import PIL.BmpImagePlugin
         PILImage._initialized = 2
         PILImage.init()
-
-    # プリコンパイル
-    def precompile():
-        pass
-        #rgb = np.zeros((32, 32, 3), dtype=np.float32)
-        #msk = np.ones((32, 32), dtype=np.float32)
-
-        #hls = hlsrgb.rgb_to_hlc_gain(rgb)
-        #hls = core.adjust_hls_color_one(hls, 'red', 0, 18/100, 0)
-
-        #core.apply_mask(rgb, msk, rgb)
 
 
     class MainWidget(MDBoxLayout):
@@ -1076,9 +1066,6 @@ if __name__ == '__main__':
 
     # PILイメージプラグイン抑制
     pillow_init()
-
-    # プリコンパイル
-    precompile()
     
     # メインプロセスでマネージャーを作成
     cache_system = file_cache_system.FileCacheSystem(max_cache_size=100, max_concurrent_loads=20)

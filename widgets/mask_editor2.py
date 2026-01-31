@@ -2838,7 +2838,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         params.set_disp_info(self.tcg_info, disp_info) # これだけ引数の値を設定
 
         self.__set_image_info()
-        self.update()
+        #self.update()
 
     def get_hash_items(self):
         return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'] + self.tcg_info['rotation2'], self.tcg_info['flip_mode'], tuple(self.tcg_info['matrix'].flatten()))
@@ -2878,7 +2878,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             type = dict.get('type', None)
             mask = self._create_mask(type)
             mask.deserialize(dict)
-            mask.update()
+            #mask.update()
 
         self.dispatch('on_structure_change')
 

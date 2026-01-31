@@ -88,6 +88,8 @@ def mosaic_effect(image, block_size=16):
     result = image.copy()
 
     block_size = int(block_size)
+    if block_size <= 0:
+        return result
     
     # ブロック単位で平均色を計算
     for y in range(0, h, block_size):

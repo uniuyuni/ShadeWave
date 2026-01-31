@@ -3,6 +3,7 @@ import os
 import numpy as np
 import json
 import math
+import msgpack
 from datetime import datetime as dt
 
 import cores.core as core
@@ -286,20 +287,22 @@ def deserialize(dict, param, mask_editor2):
 
 def save_json(file_path, param, mask_editor2):
     if file_path is not None and is_empty_param(param, mask_editor2) == False:
-        file_path = file_path + '.json'
+        file_path = file_path + '.pmck'
         dict = serialize(param, mask_editor2)
         if dict is not None:
-            with open(file_path, 'w') as f:
-                json.dump(dict, f, cls=core.CompactNumpyEncoder)
+            with open(file_path, 'wb') as f:
+                f.write(msgpack.packb(dict, use_bin_type=True))
+                #json.dump(dict, f, cls=core.CompactNumpyEncoder)
             return True
     return False
 
 def load_json(file_path, param, mask_editor2):
     if file_path is not None:
-        file_path = file_path + '.json'
+        file_path = file_path + '.pmck'
         try:
-            with open(file_path, 'r') as f:
-                dict = json.load(f, object_hook=core.compact_numpy_decoder)
+            with open(file_path, 'rb') as f:
+                dict = msgpack.unpackb(f.read(), raw=False)
+                #dict = json.load(f, object_hook=core.compact_numpy_decoder)
                 # tupleがlistになってしまうのでtupleに戻す
                 try:
                     dict['primary_param']['crop_rect'] = tuple(dict['primary_param']['crop_rect'])
