@@ -2241,12 +2241,13 @@ class CLAHEEffect(Effect):
                 self.hash = param_hash
 
                 img = core.type_convert(img, np.ndarray)
-                clahe = cv2.createCLAHE(clipLimit=40.0, tileGridSize=(8,8))
-                target = np.empty_like(img, dtype=np.uint16)
-                img2 = (np.clip(img, 0, 1) * 65535).astype(np.uint16)
-                for i in range(3):
-                    target[..., i] = clahe.apply(img2[..., i])
-                target = target.astype(np.float32) / 65535
+                hlcg = hlsrgb.rgb_to_hlc_gain(img)
+                h, l, c, g = cv2.split(hlcg)
+                l = (l * 65535).astype(np.uint16)
+                l = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(l)
+                l = l.astype(np.float32) / 65535
+                hlcg = cv2.merge([h, l, c, g])
+                target = hlsrgb.hlc_gain_to_rgb(hlcg)
                 ci = ci / 100
                 self.diff = cv2.addWeighted(target, ci, img, 1.0 - ci, 0)
 

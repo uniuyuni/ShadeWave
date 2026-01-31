@@ -227,6 +227,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                     else:
                         with pyvips.Image.new_from_file(file_path) as vips_image:
                             thumb = np.array(vips_image)
+                            thumb = core.convert_to_float32(thumb)
             
                 thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)
                 thumb = cv2.resize(thumb, thumb_size)
@@ -249,7 +250,7 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                     elif orientation == 'Mirror horizontal and rotate 90 CW':
                         thumb = cv2.flip(thumb, 1)
                         thumb = cv2.rotate(thumb, cv2.ROTATE_90_CLOCKWISE)
-                thumb = thumb.astype(np.float32)/256.0
+                thumb = core.convert_to_float32(thumb)
                 thumb_data_list.append(thumb)
 
             return thumb_data_list

@@ -2291,7 +2291,7 @@ def setup_lensfun(img_size, exif_data):
         logging.info("focal_length or aperture is None")
         return
 
-    if distance == 'Unknown':
+    if distance == 'Unknown' or distance == 'Close':
         distance = 100
 
     import lensfunpy
