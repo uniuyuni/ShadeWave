@@ -1608,112 +1608,111 @@ def _adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0, mask_refer
     
     return current_hls
 
+HLS_COLOR_SETTING = {
+    'red': {
+        'center': 105.11,
+        'width': [15.0, 9.5],
+        'fade_width': [30.0, 18.9],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0.1, 0.05, 0.1],
+        'kernel_size': 64,
+    },
+    'orange': {
+        'center': 142.99,
+        'width': [9.5, 8.1],
+        'fade_width': [18.9, 16.3],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0.05, 0.1, 0.1],
+        'kernel_size': 64,
+    },
+    'yellow': {
+        'center': 175.55,
+        'width': [8.1, 12.4],
+        'fade_width': [16.3, 24.7],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0, 0.1, 0.05],
+        'kernel_size': 64,
+    },
+    'green': {
+        'center': 225.0,
+        'width': [12.4, 15.0],
+        'fade_width': [24.7, 30.0],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [-0.05, 0, 0.1],
+        'kernel_size': 64,
+    },
+    'cyan': {
+        'center': 285.11,
+        'width': [15.0, 17.6],
+        'fade_width': [30.0, 35.2],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0, -0.05, 0],
+        'kernel_size': 64,
+    },
+    'blue': {
+        'center': 355.55,
+        'width': [17.6, 6.5],
+        'fade_width': [35.2, 12.9],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0.05, 0, 0.15],
+        'kernel_size': 64,
+    },
+    'purple': {
+        'center': 21.37,
+        'width': [6.5, 5.9],
+        'fade_width': [12.9, 11.8],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0.1, 0.05, 0],
+        'kernel_size': 64,
+    },
+    'magenta': {
+        'center': 45.0,
+        'width': [5.9, 15.0],
+        'fade_width': [11.8, 30.0],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [0.05, 0.1, 0.05],
+        'kernel_size': 64,
+    },
+    'sky': {
+        'center': 320.0,
+        'width': [20.0, 20.0],
+        'fade_width': [30.0, 30.0],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [5, 0.2, 0.1],  # [色相, 輝度, 彩度]
+        'kernel_size': 64,
+    },
+    'skin': {
+        'center': 135.0,
+        'width': [15.0, 8.0],
+        'fade_width': [20.0, 10.0],
+        'l_range': (0.01, 1.0),
+        's_range': (0.02, 1.0),
+        'adjust': [-2, 0.1, -0.05],
+        'kernel_size': 32,
+    },
+    'enhance_red': {
+        'center': 105.11,  # 赤の中心値
+        'width': [15.0, 9.5],  # 完全適用幅 (±10度)
+        'fade_width': [30.0, 18.9],  # フェード幅 (10-22.5度でフェード)
+        'l_range': (0.1, 0.9),  # 明度の有効範囲
+        's_range': (0.2, 1.0),  # 彩度の有効範囲
+        'adjust': [0.1, 0.05, 0.1],  # [色相, 明度, 彩度] の調整値
+        'kernel_size': 128,
+    },
+}
 
 def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, reference_hls=None):
     # 色相の設定
-    COLOR_SETTING = {
-        'red': {
-            'center': 105.11,
-            'width': [15.0, 9.5],
-            'fade_width': [30.0, 18.9],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0.1, 0.05, 0.1],
-            'kernel_size': 64,
-        },
-        'orange': {
-            'center': 142.99,
-            'width': [9.5, 8.1],
-            'fade_width': [18.9, 16.3],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0.05, 0.1, 0.1],
-            'kernel_size': 64,
-        },
-        'yellow': {
-            'center': 175.55,
-            'width': [8.1, 12.4],
-            'fade_width': [16.3, 24.7],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0, 0.1, 0.05],
-            'kernel_size': 64,
-        },
-        'green': {
-            'center': 225.0,
-            'width': [12.4, 15.0],
-            'fade_width': [24.7, 30.0],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [-0.05, 0, 0.1],
-            'kernel_size': 64,
-        },
-        'cyan': {
-            'center': 285.11,
-            'width': [15.0, 17.6],
-            'fade_width': [30.0, 35.2],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0, -0.05, 0],
-            'kernel_size': 64,
-        },
-        'blue': {
-            'center': 355.55,
-            'width': [17.6, 6.5],
-            'fade_width': [35.2, 12.9],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0.05, 0, 0.15],
-            'kernel_size': 64,
-        },
-        'purple': {
-            'center': 21.37,
-            'width': [6.5, 5.9],
-            'fade_width': [12.9, 11.8],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0.1, 0.05, 0],
-            'kernel_size': 64,
-        },
-        'magenta': {
-            'center': 45.0,
-            'width': [5.9, 15.0],
-            'fade_width': [11.8, 30.0],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [0.05, 0.1, 0.05],
-            'kernel_size': 64,
-        },
-        'sky': {
-            'center': 320.0,
-            'width': [20.0, 20.0],
-            'fade_width': [30.0, 30.0],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [5, 0.2, 0.1],  # [色相, 輝度, 彩度]
-            'kernel_size': 64,
-        },
-        'skin': {
-            'center': 135.0,
-            'width': [15.0, 8.0],
-            'fade_width': [20.0, 10.0],
-            'l_range': (0.01, 1.0),
-            's_range': (0.02, 1.0),
-            'adjust': [-2, 0.1, -0.05],
-            'kernel_size': 32,
-        },
-        'enhance_red': {
-            'center': 105.11,  # 赤の中心値
-            'width': [15.0, 9.5],  # 完全適用幅 (±10度)
-            'fade_width': [30.0, 18.9],  # フェード幅 (10-22.5度でフェード)
-            'l_range': (0.1, 0.9),  # 明度の有効範囲
-            's_range': (0.2, 1.0),  # 彩度の有効範囲
-            'adjust': [0.1, 0.05, 0.1],  # [色相, 明度, 彩度] の調整値
-            'kernel_size': 128,
-        },
-    }
-
-    color_setting_one = [COLOR_SETTING[color_name]]
+    color_setting_one = [HLS_COLOR_SETTING[color_name]]
     color_setting_one[0]['adjust'] = [h, l, s]
     adjusted_hls = _adjust_hls_colors(hls_img, color_setting_one, resolution_scale, reference_hls)
 

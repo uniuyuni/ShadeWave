@@ -851,6 +851,11 @@ if __name__ == '__main__':
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = True
                 self._disable_mask2()
 
+        def set_mask2_hue_range(self, color_str):
+            # イベント発火させる代入
+            self.ids['slider_mask2_hue_min'].ids['slider'].value = core.HLS_COLOR_SETTING[color_str]['center'] - core.HLS_COLOR_SETTING[color_str]['width'][0] - core.HLS_COLOR_SETTING[color_str]['fade_width'][0]
+            self.ids['slider_mask2_hue_max'].ids['slider'].value = core.HLS_COLOR_SETTING[color_str]['center'] + core.HLS_COLOR_SETTING[color_str]['width'][1] + core.HLS_COLOR_SETTING[color_str]['fade_width'][1]
+
         #--------------------------------
 
         def _enable_inpaint_edit(self):

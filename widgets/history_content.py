@@ -82,7 +82,7 @@ class HistoryContentPanel(KVBoxLayout):
         if first_index <= index <= last_index+1:
             return  # 表示範囲内なので何もしない
         # 範囲外ならスクロール実施
-        items_count = len(rv.data)
+        items_count = 2 if len(rv.data) < 2 else len(rv.data)
         pos_ratio = 1 - (index / float(items_count - 1))
         rv.scroll_y = max(0, min(1, pos_ratio))
 
@@ -94,6 +94,7 @@ class HistoryContentPanel(KVBoxLayout):
             op_dict_list.append(self._make_op_dict(op, is_active))
             if is_active and active_index <= i:
                 active_index += 1
+        self.ids['history_rv'].data = []
         self.ids['history_rv'].data = op_dict_list
 
         layout = self.ids['history_rv'].children[0]
@@ -101,8 +102,9 @@ class HistoryContentPanel(KVBoxLayout):
         if active_index not in layout.selected_nodes:
             layout.selected_nodes.append(active_index)
             # 表示アイテム自体の 'selected' 属性も更新
-            if active_index < len(self.ids['history_rv'].view_adapter.views):
-                widget = self.ids['history_rv'].view_adapter.views[active_index]
+            views = self.ids['history_rv'].view_adapter.views
+            if len(views) > 0 and active_index >= min(views.keys()) and active_index <= max(views.keys()):
+                widget = views[active_index]
                 widget.selected = True
             self._scroll_to_index(self.ids['history_rv'], active_index)
 

@@ -2151,10 +2151,13 @@ class SegmentMask(BaseMask):
         
         # 画像の取得
         img = self.editor.get_original_image_rgb()
+
+        # バウンディングボックスの整数化
+        bbox = [int(x) for x in bbox]
         
         # バウンディングボックスの検証
         if bbox[0] == bbox[0] + bbox[2] or bbox[1] == bbox[1] + bbox[3]:
-            return np.zeros((self.editor.texture_size[1], self.editor.texture_size[0]), dtype=np.float32)
+            return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
         
         # 推論実行 (Original画像に対して)
         mask_original = sam3_helper.predict_sam3_for_bbox(SegmentMask.__processor, img, bbox)

@@ -86,6 +86,10 @@
     size_hint_y: None
     ref_height: 18
 
+<IconButton@ButtonBehavior+Image>:
+    background_normal: 'gray'
+    background_down: 'white'
+
 <MainWidget>:
     loading: True
     preview_valid_rect: [0, 0, 100, 100]
@@ -2530,6 +2534,64 @@
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Color"
+                                    IconButton:
+                                        source: "assets/Red.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('red')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Orange.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('orange')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Yellow.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('yellow')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Green.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('green')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Cyan.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('cyan')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Blue.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('blue')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Purple.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('purple')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Magenta.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('magenta')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                    IconButton:
+                                        source: "assets/Skin.png"
+                                        on_press:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.set_mask2_hue_range('skin')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 HeadLabel:
                                     id: switch_mask2_lum
