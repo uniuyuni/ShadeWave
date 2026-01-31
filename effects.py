@@ -697,6 +697,11 @@ class GeometryEffect(Effect):
 
     def get_param_dict(self, param):
         return {
+            'rotation': 0,
+            'rotation2': 0,
+            'flip_mode': 0,
+            'crop_enable': False,
+            'switch_distortion_correction': True,
             'lens_distortion_strength': 0,
             'lens_distortion_scale': 0,
             'correct_horizontal': 0,
@@ -706,31 +711,29 @@ class GeometryEffect(Effect):
             'reference_lines': [],
             'mesh_size': [4, 4],
             'control_points': {},
-            'rotation': 0,
-            'rotation2': 0,
-            'flip_mode': 0,
             'matrix': np.eye(3),
-            'crop_enable': False,
         }
 
     def set2widget(self, widget, param):
+        widget.ids["slider_rotation"].set_slider_value(self._get_param(param, 'rotation'))
+        widget.ids["switch_distortion_correction"].active = self._get_param(param, 'switch_distortion_correction')
         widget.ids["slider_lens_distortion_strength"].set_slider_value(self._get_param(param, 'lens_distortion_strength'))
         widget.ids["slider_lens_distortion_scale"].set_slider_value(self._get_param(param, 'lens_distortion_scale'))
         widget.ids["slider_correct_trapezoid_h"].set_slider_value(self._get_param(param, 'correct_horizontal'))
         widget.ids["slider_correct_trapezoid_v"].set_slider_value(self._get_param(param, 'correct_vertical'))
         widget.ids["slider_focal_length"].set_slider_value(self._get_param(param, 'focal_length'))
-        widget.ids["slider_rotation"].set_slider_value(self._get_param(param, 'rotation'))
 
         if self.geometry_editor is not None:
             self.geometry_editor.set_correction_params(param)
 
     def set2param(self, param, widget):
+        param['rotation'] = widget.ids["slider_rotation"].value
+        param['switch_distortion_correction'] = widget.ids["switch_distortion_correction"].active
         param['lens_distortion_strength'] = widget.ids["slider_lens_distortion_strength"].value
         param['lens_distortion_scale'] = widget.ids["slider_lens_distortion_scale"].value
         param['correct_horizontal'] = widget.ids["slider_correct_trapezoid_h"].value
         param['correct_vertical'] = widget.ids["slider_correct_trapezoid_v"].value
         param['focal_length'] = widget.ids["slider_focal_length"].value
-        param['rotation'] = widget.ids["slider_rotation"].value
     
         # crop_rect がないのはマスク
         if params.get_crop_rect(param) is not None:
@@ -758,6 +761,9 @@ class GeometryEffect(Effect):
         画像処理を行わずにパラメータのみからマトリックスを計算・更新する
         """
         params.set_matrix(param, None)
+
+        if self._get_param(param, 'switch_distortion_correction') == False:
+            return
 
         # パラメータ取得
         correct_horizontal = self._get_param(param, 'correct_horizontal')
@@ -840,19 +846,20 @@ class GeometryEffect(Effect):
 
 
     def make_diff(self, img, param, efconfig):
+        ang = self._get_param(param, 'rotation')
+        ang2 = self._get_param(param, 'rotation2')
+        flp = self._get_param(param, 'flip_mode')
+        crop_enable = self._get_param(param, 'crop_enable')
+        switch_distortion_correction = self._get_param(param, 'switch_distortion_correction')
         lens_distortion_strength = self._get_param(param, 'lens_distortion_strength')
         lens_distortion_scale = self._get_param(param, 'lens_distortion_scale')
         correct_horizontal = self._get_param(param, 'correct_horizontal')
         correct_vertical = self._get_param(param, 'correct_vertical')
         focal_length = self._get_param(param, 'focal_length')
-        ang = self._get_param(param, 'rotation')
-        ang2 = self._get_param(param, 'rotation2')
-        flp = self._get_param(param, 'flip_mode')
         four_points = self._get_param(param, 'four_points')
         reference_lines = self._get_param(param, 'reference_lines')
         mesh_size = self._get_param(param, 'mesh_size')
         control_points = self._get_param(param, 'control_points') # dict
-        crop_enable = self._get_param(param, 'crop_enable')
 
         # list, convert to tuple for hashing
         fps_hash = tuple(tuple(x) for x in four_points) if four_points else None
@@ -860,15 +867,14 @@ class GeometryEffect(Effect):
         cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
         mesh_hash = tuple(mesh_size)
         
-        param_hash = hash((ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
-        
+        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         if self.hash != param_hash:
             self.hash = param_hash
             
             params.set_matrix(param, None)
 
             # レンズ歪み補正
-            if lens_distortion_strength != 0:
+            if switch_distortion_correction == True and lens_distortion_strength != 0:
                 img = correct_lens_distortion(
                         img,
                         strength=lens_distortion_strength,
@@ -887,91 +893,92 @@ class GeometryEffect(Effect):
             size = max(img.shape[0], img.shape[1])
             half_size = size / 2
 
-            # 台形補正
-            if correct_horizontal != 0 or correct_vertical != 0:
-                # Focal Length Mapping:
-                # 0-100 Slider -> Multiplier.
-                # Assuming 0 is Wide (High persp), 100 is Tele (Low persp).
-                # Previous default was max(w,h) which corresponds to freq standard lens.
-                # Let's say Slider=20 -> 1.0x (Standard)
-                # Slider=0 -> 0.5x (Super Wide)
-                # Slider=100 -> 5.0x (Super Tele)
-                
-                # Using a linear mapping for simplicity first:
-                # val 20 -> 1.0
-                # val 0 -> 0.5 (delta -20 -> -0.5 => 1 unit = 0.5/20 = 0.025)
-                # val 100 -> 1.0 + (80 * 0.025) = 1.0 + 2.0 = 3.0
-                
-                # So: multiplier = 0.5 + (focal_length* 0.025)
-                # 0 -> 0.5
-                # 20 -> 1.0
-                # 100 -> 3.0
-                # --- Trapezoid Correction ---
-                base_f = np.max(img.shape[:2])
-                multiplier = 0.5 + (focal_length * 0.025)
-                f_pixel = base_f * multiplier # Focal len in pixels
-
-                img, H = correct_trapezoid(
-                        img,
-                        horizontal=correct_horizontal * 0.5, 
-                        vertical=correct_vertical * 0.5,
-                        focal_length=f_pixel,
-                        interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                )
-                params.add_matrix(param, H, offset=(half_size, half_size))
-                            
-            # 4点補正
-            reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
-            if four_points != [] and four_points != reset_points:
-
-                # 座標をテクスチャ座標へ変換
-                src_point = []
-                for cx, cy in four_points:
-                    src_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
-                dst_point = []
-                for cx, cy in reset_points:
-                    dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
-
-                img, H = correct_four_points(
-                        img,
-                        src_point,
-                        dst_point,
-                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                )
-                params.add_matrix(param, H, offset=(half_size, half_size))
-                
-            # Lines
-            if len(reference_lines) > 0: 
-                img, H = correct_with_lines(
-                    img,
-                    reference_lines,
-                    tcg_info=tcg_info, # correct_with_lines内部でtcg_info使うので渡す
-                    interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                )
-                params.add_matrix(param, H, offset=(half_size, half_size))
-
-            # Mesh           
-            if control_points:
-                # Ensure keys are tuples
-                cp = {}
-                for k, v in control_points.items():
-                    if isinstance(k, str):
-                        try:
-                            parts = k.strip('()').split(',')
-                            key = (int(parts[0]), int(parts[1]))
-                        except:
-                            continue
-                    else:
-                        key = tuple(k)
-                    cp[key] = tuple(v)
+            if switch_distortion_correction == True:
+                # 台形補正
+                if correct_horizontal != 0 or correct_vertical != 0:
+                    # Focal Length Mapping:
+                    # 0-100 Slider -> Multiplier.
+                    # Assuming 0 is Wide (High persp), 100 is Tele (Low persp).
+                    # Previous default was max(w,h) which corresponds to freq standard lens.
+                    # Let's say Slider=20 -> 1.0x (Standard)
+                    # Slider=0 -> 0.5x (Super Wide)
+                    # Slider=100 -> 5.0x (Super Tele)
                     
-                img = warp_mesh(
-                    img,
-                    mesh_size if mesh_size else (4, 4),
-                    cp,
-                    tcg_info=tcg_info,
-                    interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear'
-                )
+                    # Using a linear mapping for simplicity first:
+                    # val 20 -> 1.0
+                    # val 0 -> 0.5 (delta -20 -> -0.5 => 1 unit = 0.5/20 = 0.025)
+                    # val 100 -> 1.0 + (80 * 0.025) = 1.0 + 2.0 = 3.0
+                    
+                    # So: multiplier = 0.5 + (focal_length* 0.025)
+                    # 0 -> 0.5
+                    # 20 -> 1.0
+                    # 100 -> 3.0
+                    # --- Trapezoid Correction ---
+                    base_f = np.max(img.shape[:2])
+                    multiplier = 0.5 + (focal_length * 0.025)
+                    f_pixel = base_f * multiplier # Focal len in pixels
+
+                    img, H = correct_trapezoid(
+                            img,
+                            horizontal=correct_horizontal * 0.5, 
+                            vertical=correct_vertical * 0.5,
+                            focal_length=f_pixel,
+                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    )
+                    params.add_matrix(param, H, offset=(half_size, half_size))
+                                
+                # 4点補正
+                reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+                if four_points != [] and four_points != reset_points:
+
+                    # 座標をテクスチャ座標へ変換
+                    src_point = []
+                    for cx, cy in four_points:
+                        src_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
+                    dst_point = []
+                    for cx, cy in reset_points:
+                        dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
+
+                    img, H = correct_four_points(
+                            img,
+                            src_point,
+                            dst_point,
+                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    )
+                    params.add_matrix(param, H, offset=(half_size, half_size))
+                    
+                # Lines
+                if len(reference_lines) > 0: 
+                    img, H = correct_with_lines(
+                        img,
+                        reference_lines,
+                        tcg_info=tcg_info, # correct_with_lines内部でtcg_info使うので渡す
+                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    )
+                    params.add_matrix(param, H, offset=(half_size, half_size))
+
+                # Mesh           
+                if control_points:
+                    # Ensure keys are tuples
+                    cp = {}
+                    for k, v in control_points.items():
+                        if isinstance(k, str):
+                            try:
+                                parts = k.strip('()').split(',')
+                                key = (int(parts[0]), int(parts[1]))
+                            except:
+                                continue
+                        else:
+                            key = tuple(k)
+                        cp[key] = tuple(v)
+                        
+                    img = warp_mesh(
+                        img,
+                        mesh_size if mesh_size else (4, 4),
+                        cp,
+                        tcg_info=tcg_info,
+                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear'
+                    )
 
             self.diff = img
         

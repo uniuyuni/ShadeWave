@@ -32,7 +32,7 @@ class DraggablePoint():
         return False
 
 
-class CurveWidget(KVWidget):
+class CurveWidget(KVBoxLayout):
     curve = KVNumericProperty(0)
     start_x = KVNumericProperty(0.0)
     start_y = KVNumericProperty(0.0)
@@ -60,7 +60,7 @@ class CurveWidget(KVWidget):
     def on_touch_down(self, touch):
         if not self.collide_point(*touch.pos):
             return False
-        
+
         self.touch_self = True
         
         local_x = (touch.x - self.x)/self.width
@@ -89,6 +89,8 @@ class CurveWidget(KVWidget):
             self.before_edit = self.curve
             self.curve += 1
             return True
+        
+        return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
         if not self.collide_point(*touch.pos):
@@ -107,6 +109,7 @@ class CurveWidget(KVWidget):
             self.selected_point.x, self.selected_point.y = new_x, new_y
             self.__update_curve()
             self.curve += 1
+
         return True
 
     def on_touch_up(self, touch):
@@ -116,15 +119,16 @@ class CurveWidget(KVWidget):
                 self.after_edit = self.curve
             self.touch_self = False
             return True
-        return False
+
+        return super().on_touch_up(touch)
 
     def update_grid(self, instance, size):
         self.__update_points()
         self.__update_curve()
 
     def __update_curve(self):
-        self.canvas.clear()  # Clear the canvas before redrawing
-        with self.canvas:
+        self.canvas.before.clear()  # Clear the canvas before redrawing
+        with self.canvas.before:
             # ローカル座標系で描画するために変換行列をプッシュ
             PushMatrix()
             Translate(self.x, self.y)

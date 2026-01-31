@@ -13,9 +13,11 @@
     ref_height: 18
     text: 'Label'
     enabled: self.active
+    button_enabled: True
 
     RectangleToggleButton:
         id: toggle
+        disabled: not root.button_enabled
         pos_hint: {'center_y': 0.5}
         size_hint: None, None
         ref_width: 12

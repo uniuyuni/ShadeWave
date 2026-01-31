@@ -16,6 +16,7 @@
 #:set clear_color 0, 0, 0, 0
 #:set dark_color 0.08, 0.08, 0.08, 1
 #:set tabbed_panel_color 0.35, 0.35, 0.35, 1
+#:set tabbed_panel_down 'gray'
 
 <DistortionEffectButton@ToggleButton>:
     group: 'effect'
@@ -49,6 +50,8 @@
 <IconTabbedPanelItem@TabbedPanelItem>:
     icon_source: ''
     text: ''
+    background_color: tabbed_panel_color
+    background_down: tabbed_panel_down
     canvas.after:
         Color:
             rgba: 1, 1, 1, 1
@@ -57,11 +60,16 @@
             size: self.height * 0.7, self.height * 0.7
             source: root.icon_source
 
+<TextTabbedPanelItem@TabbedPanelItem>:
+    text: ''
+    background_color: tabbed_panel_color
+    background_down: tabbed_panel_down
+
 <CurveTabbedPanel@TabbedPanel>:
     size_hint: None, None
     width: self.parent.width
     height: self.parent.width
-    ref_tab_width: 80
+    ref_tab_width: 70
     ref_tab_height: 20
     ref_padding: 8
     do_default_tab: False
@@ -357,7 +365,6 @@
                     IconTabbedPanelItem:
                         text: 'Ba'
                         icon_source: 'assets/Basic.png'
-                        background_color: tabbed_panel_color
 
                         ScrollView:
 
@@ -650,7 +657,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Red.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -695,7 +701,6 @@
                         
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Orange.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -740,7 +745,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Yellow.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -785,7 +789,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Green.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -830,7 +833,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Cyan.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -875,7 +877,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Blue.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -920,7 +921,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Purple.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -965,7 +965,6 @@
 
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Magenta.png'
-                                        background_color: tabbed_panel_color
 
                                         MDBoxLayout:
                                             orientation: "vertical"
@@ -1138,7 +1137,6 @@
                     IconTabbedPanelItem:
                         text: 'Cu'
                         icon_source: 'assets/Curves.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -1157,8 +1155,8 @@
 
                                 CurveTabbedPanel:
                                     default_tab: tab_all
-
-                                    TabbedPanelItem:
+                                    
+                                    TextTabbedPanelItem:
                                         id: tab_all
                                         text: 'All'
 
@@ -1170,7 +1168,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Red'
 
                                         CurveWidget:
@@ -1181,7 +1179,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve_red')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve_red')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Green'
 
                                         CurveWidget:
@@ -1192,7 +1190,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'curves', 'tonecurve_green')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'tonecurve_green')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Blue'
 
                                         CurveWidget:
@@ -1216,7 +1214,7 @@
                                     ref_tab_width: 100
                                     default_tab: tab_grading1
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         id: tab_grading1
                                         text: 'Grading 1'
 
@@ -1240,7 +1238,7 @@
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'curves', 'grading1')
 
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Grading 2'
 
                                         BoxLayout:
@@ -1276,7 +1274,7 @@
                                     ref_tab_width: 100
                                     default_tab: tab_lum_vs_lum
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Hue vs Hue'
 
                                         HeadLabel:
@@ -1290,7 +1288,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsHue')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsHue')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Hue vs Lum'
 
                                         HeadLabel:
@@ -1304,7 +1302,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsLum')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsLum')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Hue vs Sat'
 
                                         HeadLabel:
@@ -1318,7 +1316,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsSat')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsSat')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         id: tab_lum_vs_lum
                                         text: 'Lum vs Lum'
 
@@ -1333,7 +1331,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'LumvsLum')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'LumvsLum')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Lum vs Sat'
 
                                         HeadLabel:
@@ -1347,7 +1345,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'LumvsSat')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'LumvsSat')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Sat vs Lum'
 
                                         HeadLabel:
@@ -1361,7 +1359,7 @@
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'SatvsLum')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'SatvsLum')
 
-                                    TabbedPanelItem:
+                                    TextTabbedPanelItem:
                                         text: 'Sat vs Sat'
 
                                         HeadLabel:
@@ -1380,7 +1378,6 @@
                     IconTabbedPanelItem:
                         text: 'Ex'
                         icon_source: 'assets/Extra.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -1713,7 +1710,6 @@
                         text: 'Ef'
                         id: effect
                         icon_source: 'assets/Effect.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2098,7 +2094,6 @@
                         text: 'Ge'
                         id: geometry
                         icon_source: 'assets/Geometry.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2109,8 +2104,8 @@
                                 md_bg_color: dark_color
 
                                 HeadLabel:
-                                    id: switch_rotation
                                     text: ' Rotation'
+                                    button_enabled: False
 
                                 ParamSlider:
                                     id: slider_rotation
@@ -2159,8 +2154,8 @@
                                 VSeparator:
 
                                 HeadLabel:
-                                    id: switch_crop
                                     text: " Crop"
+                                    button_enabled: False
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -2209,6 +2204,9 @@
                                 HeadLabel:
                                     id: switch_distortion_correction
                                     text: " Distortion Correction"
+                                    on_press: root.begin_history_effect_ctrl(0, 'geometry')
+                                    on_active: root.apply_effects_lv(0, 'geometry')
+                                    on_release: root.end_history_effect_ctrl(0, 'geometry')
 
                                 ParamBoxLayout:
 
@@ -2323,7 +2321,6 @@
                     IconTabbedPanelItem:
                         text: 'Lo'
                         icon_source: 'assets/Looks.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2397,7 +2394,6 @@
                     IconTabbedPanelItem:
                         text: 'M2'
                         icon_source: 'assets/Mask2.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 
@@ -2679,7 +2675,6 @@
                     IconTabbedPanelItem:
                         text: 'Li'
                         icon_source: 'assets/Liquify.png'
-                        background_color: tabbed_panel_color
 
                         MDScrollView:
 

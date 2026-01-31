@@ -1,2 +1,13 @@
 
 <CurveWidget>:
+    orientation: 'vertical'
+
+    BoxLayout:
+        HSpacer:
+            size_hint_x: 0.9
+        MDRoundFlatButton:
+            text: "Reset"
+            size_hint: None, None
+            ref_width: 60
+            ref_height: 20
+            on_touch_up: if self.collide_point(*args[1].pos) and args[1].button == 'right': root.set_point_list(None)
