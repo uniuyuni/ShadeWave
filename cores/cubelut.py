@@ -32,7 +32,6 @@ def read_lut(lut_path, clip=False):
 
 
 def apply_lut(image, lut, log=False):
-    #from colour.io.luts.iridas_cube import read_LUT_IridasCube, LUT3D, LUT3x1D
     
     """Opens the image at <image_path>, transforms it using the passed
     <lut> with trilinear interpolation, and saves the image at

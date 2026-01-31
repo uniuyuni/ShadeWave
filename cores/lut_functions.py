@@ -56,6 +56,8 @@ class LUT3D:
         """
         Apply 3D LUT to RGB values using trilinear interpolation.
         
+        Matches colour library behavior: clips input values to domain range.
+        
         Parameters:
             RGB: array shape (..., 3) - input RGB values
             interpolation: 'trilinear' (only trilinear supported for now)
@@ -74,11 +76,12 @@ class LUT3D:
         domain_min = self.domain[0]
         domain_max = self.domain[1]
         
-        # Normalize to [0, 1]
-        RGB_norm = (RGB_flat - domain_min) / (domain_max - domain_min)
+        # IMPORTANT: Clip to domain range (colour library behavior)
+        # This prevents extrapolation beyond the LUT's defined range
+        RGB_clipped = np.clip(RGB_flat, domain_min, domain_max)
         
-        # Note: Do NOT clip here to preserve HDR values (>1.0)
-        # Values outside [0, 1] will be extrapolated by the LUT
+        # Normalize to [0, 1]
+        RGB_norm = (RGB_clipped - domain_min) / (domain_max - domain_min)
         
         # Scale to grid coordinates
         grid_coords = RGB_norm * (self.size - 1)
@@ -90,28 +93,22 @@ class LUT3D:
     
     def _trilinear_interpolation(self, coords: np.ndarray) -> np.ndarray:
         """
-        Trilinear interpolation in 3D LUT with linear extrapolation.
-        
-        For values outside [0, size-1], uses linear extrapolation based on
-        the gradient at the boundary.
+        Trilinear interpolation in 3D LUT.
         
         Parameters:
-            coords: shape (N, 3) - coordinates, can be outside [0, size-1]
+            coords: shape (N, 3) - coordinates in [0, size-1]
         
         Returns:
-            values: shape (N, 3) - interpolated/extrapolated RGB values
+            values: shape (N, 3) - interpolated RGB values
         """
-        # Clamp coordinates to valid indices
-        # For extrapolation, we use the edge cells and adjust the fractional part
-        coords_clamped = np.clip(coords, 0, self.size - 1)
+        # Clamp to valid range (should already be in range due to domain clipping)
+        coords = np.clip(coords, 0, self.size - 1)
         
-        coords_floor = np.floor(coords_clamped).astype(np.int32)
+        coords_floor = np.floor(coords).astype(np.int32)
         coords_floor = np.clip(coords_floor, 0, self.size - 2)
         coords_ceil = coords_floor + 1
         
-        # Calculate fractional part for extrapolation
-        # If coords > size-1, frac will be > 1, enabling extrapolation
-        # If coords < 0, frac will be < 0, enabling extrapolation  
+        # Fractional part
         coords_frac = coords - coords_floor
         
         # Extract coordinates
@@ -132,7 +129,7 @@ class LUT3D:
         c110 = self.table[r1, g1, b0]
         c111 = self.table[r1, g1, b1]
         
-        # Trilinear interpolation/extrapolation
+        # Trilinear interpolation
         c00 = c000 * (1 - rd) + c100 * rd
         c01 = c001 * (1 - rd) + c101 * rd
         c10 = c010 * (1 - rd) + c110 * rd
