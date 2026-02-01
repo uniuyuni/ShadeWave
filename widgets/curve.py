@@ -183,13 +183,16 @@ class CurveWidget(KVBoxLayout):
     def is_init_curve(self, point_list):
         return True if len(point_list) == 2 and point_list[0][0] == self.start_x and point_list[0][1] == self.start_y and point_list[1][0] == self.end_x and point_list[1][1] == self.end_y else False
 
-    def set_point_list(self, point_list):
+    def set_point_list(self, point_list, history=False):
+        if history == True:
+            self.before_edit = self.curve
+
         if point_list is not None:
             point_list = sorted((pl[0], pl[1]) for pl in point_list)
             self.points = [DraggablePoint(x=pl[0], y=pl[1]) for pl in point_list]
             self.start_point = self.points[0]
             self.end_point = self.points[len(self.points)-1]
-            self.selected_point = None  
+            self.selected_point = None
         else:
             self.points = []
             self.selected_point = None
@@ -199,6 +202,11 @@ class CurveWidget(KVBoxLayout):
             self.end_point = DraggablePoint(x=self.end_x, y=self.end_y)
             self.points.append(self.start_point)
             self.points.append(self.end_point)
+        
+        if history == True:
+            self.curve += 1
+            self.after_edit = self.curve
+            
         self.__update_curve()
 
 class ToneCurveApp(KVApp):
