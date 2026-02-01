@@ -143,7 +143,7 @@ class FileCacheSystem:
         # アプリケーション起動時にワーカープロセスを起動しておくことで、
         # 最初の画像読み込み時のプロセス起動コストを回避
         for _ in range(self.ppe._max_workers):
-            self.ppe.submit(_warmup_worker).result()
+            self.ppe.submit(_warmup_worker)
         
         # 各共有リソースへの参照を設定
         self.cache = self.shared_resources['cache']
