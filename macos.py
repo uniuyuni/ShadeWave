@@ -1,8 +1,10 @@
 
 import AppKit
 import fcntl
-from AppKit import NSScreen, NSApplication, NSEvent
+from AppKit import NSScreen, NSApplication, NSEvent, NSBundle
 from Quartz import CGDisplayScreenSize, CGDisplayPixelsWide, CGDisplayPixelsHigh
+
+import define
 
 class FileChooser:
     '''A native implementation of file chooser dialogs using Apple's API
@@ -217,33 +219,38 @@ def calculate_ppi(width_px, height_px, width_mm, height_mm):
 
 _screens = get_screens_info()
 
-def get_self_window_position():
+def get_self_window_position(app_name=None):
     """
     最もシンプルなバージョン - 座標のみ
     """
-    # NSApp を使用（NSApplication.sharedApplication() と同じ）
-    app = NSApplication.sharedApplication()
-    
-    window = app.mainWindow()
+    if app_name:
+        window = get_window(app_name)
+    else:
+        window = app.mainWindow()
     
     if window:
         frame = window.frame()
-        return (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height)
+        screen_index = NSScreen.screens().index(window.screen())
+        return (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, screen_index)
 
     # ウィンドウが見つからない場合はマウスカーソルの位置を返す
     mouse_location = NSEvent.mouseLocation()
-    return (mouse_location.x, mouse_location.y, 0, 0)
+    return (mouse_location.x, mouse_location.y, 0, 0, None)
 
 def dpi_scale():
     display = get_current_display()
     return _screens[display['display']]['scale']
 
-def get_current_display(win_x=0, win_y=0):
+def get_current_display(win_x=0, win_y=0, win_display=None):
     global _screens
 
     # 現在のウィンドウの左下座標
     if win_x == 0 and win_y == 0:
-        win_x, win_y, _, _ = get_self_window_position()
+        win_x, win_y, _, _, win_display = get_self_window_position(define.APPNAME)
+    
+    # 所属しているディスプレイが取得できている場合は、それを返す
+    if win_display is not None:
+        return {"display": win_display, "width": _screens[win_display]['width_points'], "height": _screens[win_display]['height_points'], "is_primary": _screens[win_display]['is_primary']}
 
     for m in _screens:
         if m['is_primary'] == True:
@@ -260,6 +267,30 @@ def get_current_display(win_x=0, win_y=0):
             return {"display": i, "width": m['width_points'], "height": m['height_points'], "is_primary": m['is_primary']}
     
     return {"display": primary['index'], "width": primary['width_points'], "height": primary['height_points'], "is_primary": primary['is_primary']}
+
+def get_window(app_name):
+    app = NSApplication.sharedApplication()
+
+    # mainWindow() ではなく、windows() リストから探す
+    windows = app.windows()
+
+    if windows and windows.count() > 0:
+        # より確実に特定したい場合（例：特定のタイトルを持つウィンドウ）
+        for i in range(windows.count()):
+            win = windows.objectAtIndex_(i)
+            if win.title() == app_name:
+                return win
+    
+    return None
+
+def set_window_autosave(app_name, window_name):
+
+    target_window = get_window(app_name)
+    if target_window:
+        target_window.setFrameAutosaveName_(window_name)
+        return True
+
+    return False
 
 # 使用例
 if __name__ == "__main__":

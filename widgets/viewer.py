@@ -1,4 +1,3 @@
-
 import os
 import threading
 import base64
@@ -19,78 +18,104 @@ from kivymd.uix.card import MDCard
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
 from kivy.clock import mainthread as kvmainthread
-from kivy.metrics import dp as kv_dp
+from kivy.uix.recycleview import RecycleView
+from kivy.uix.recycleview.views import RecycleDataViewBehavior
 
-from widgets.draggable_widget import DraggableWidget
-
+import define
 import cores.core as core
 import utils.kvutils as kvutils
-import define
+from widgets.draggable_widget import DraggableWidget
 
-class ThumbnailCard(MDCard):
+class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     file_path = KVStringProperty()
-    thumb_source = KVProperty(None, force_dispatch=True)
+    thumb_source = KVObjectProperty(None, allownone=True, force_dispatch=True)
     rating = KVNumericProperty(0)
-    grid_width = KVNumericProperty(kv_dp(180))
+    selected = KVBooleanProperty(False)
+    ctx = KVObjectProperty(None)
+    index = KVNumericProperty(None)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
         self.exif_data = None
-
         self.orientation = 'vertical'
-        self.size_hint = (None, None)
-        self.ref_width = self.grid_width
-        self.ref_height = self.grid_width+40
+        self.size_hint = (None, 1)
         self.md_bg_color = [0.1, 0.1, 0.1, 1]
         self.radius = [5, 5, 5, 5]
         self.elevation = 2
 
         vbox = MDBoxLayout(orientation='vertical')
         vbox.ref_padding = 8
-        self.add_widget(vbox)
 
         # サムネイル表示
-        self.image = KVImage(source='assets/spinner.gif', size_hint_y=7, anim_delay=0.01)
+        self.image = KVImage(source='assets/spinner.gif', size_hint_y=0.7, anim_delay=0.01)
         vbox.add_widget(self.image)
 
         # ファイル名ラベル
-        name = os.path.basename(self.file_path)
-        self.label = KVLabel(text=name, bold=True, font_size='9pt', size_hint_y=3)
+        self.label = KVLabel(text="", bold=True, font_size='9pt', size_hint_y=0.3)
         vbox.add_widget(self.label)
 
-        # 表示サイズ補正
-        kvutils.traverse_widget(self)
+        self.add_widget(vbox)
 
-    @kvmainthread
-    def set_image(self, exif, thumb):
-        self.exif_data = exif
-        self.thumb_source = thumb
+        self.bind(file_path=self.update_filename)
+
+    def on_parent(self, instance, value):
+        self._set_width()
+    
+    def on_size(self, instance, value):
+        self._set_width()
+    
+    def _set_width(self):
+        if self.parent:
+            self.width = self.parent.height * 0.7
+
+    def update_filename(self, instance, value):
+        if value:
+            self.label.text = os.path.basename(value)
+
+    def refresh_view_attrs(self, rv, index, data):
+        """ Catch and handle the view changes """
+        self.index = index
+        self._set_width()
+        return super(ThumbnailCard, self).refresh_view_attrs(rv, index, data)
+
+    def on_selected(self, instance, value):
+        self.md_bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]
+
+    def on_thumb_source(self, instance, thumb):
+        if thumb is None:
+            self.image.source = 'assets/spinner.gif'
+            self.image.texture = None
+            return
+
         self.texture = KVTexture.create(size=(thumb.shape[1], thumb.shape[0]), colorfmt='rgb', bufferfmt='ushort')
         self.texture.flip_vertical()
         self.texture.blit_buffer(thumb.tobytes(), colorfmt='rgb', bufferfmt='float')
         self.image.source = ''
-        self.image.size = (thumb.shape[1], thumb.shape[0])
+        #self.image.size = (thumb.shape[1], thumb.shape[0])
         self.image.texture = self.texture
 
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            if self.ctx:
+                self.ctx.handle_selection(self.index, touch)
+                return True
+        return super().on_touch_down(touch)
 
-class ViewerWidget(MDBoxLayout, DraggableWidget):
-    last_selected = KVObjectProperty(None, allownone=True)
+class ViewerWidget(RecycleView, DraggableWidget):
+    last_selected_index = KVNumericProperty(None, allownone=True)
     cols = KVNumericProperty(4)
-    grid_width = KVNumericProperty(kv_dp(180))
-    thumb_width = KVNumericProperty(kv_dp(160))
-    do_scroll_x = KVBooleanProperty(True)
-    do_scroll_y = KVBooleanProperty(False)
+    thumb_width = KVNumericProperty(120*2)
+    
+    # Selection state
+    selected_indices = set()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
-        self.cards = []
-        self.selected_cards = set()
-
+        self.data = []
         self.watch_directory = None
+
         threading.Thread(target=self._watchfiles_thread, daemon=True).start()
-        
         KVWindow.bind(on_key_down=self.on_key_down)
 
     def _watchfiles_thread(self):
@@ -103,64 +128,76 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
         while True:
             watch_directory = self.watch_directory
             if watch_directory is not None:
-                for changes in watch(watch_directory):
-                    for action, path in changes:
-                        action_type_map.get(action)(path)
+                try:
+                    for changes in watch(watch_directory):
+                        for action, path in changes:
+                            if action in action_type_map:
+                                action_type_map[action](path)
+                except Exception:
+                    pass
             time.sleep(1)
 
     @kvmainthread
     def _added_file(self, file_path):
         if self.is_supported_image(file_path):
-            # 挿入インデックスを求める
-            file_list = [card.file_path for card in self.cards]
+            file_list = [d['file_path'] for d in self.data]
             if file_path in file_list:
-                return   # 既に存在するファイル
-            file_list.append(file_path)
-            file_list.sort()
-            index = file_list.index(file_path)
-
-            card = self.add_image_to_grid(file_path, self.cols - index)
-            self.cards.insert(index, card)
-            self.load_images({file_path: card})
-            self.cols += 1
+                return
+            
+            new_item = {
+                'file_path': file_path,
+                'thumb_source': None,
+                'exif_data': None,
+                'selected': False,
+                'ctx': self,
+            }
+            
+            idx = 0
+            for i, d in enumerate(self.data):
+                if d['file_path'] > file_path:
+                    idx = i
+                    break
+                idx = i + 1
+            
+            self.data.insert(idx, new_item)
+            self.load_images({file_path: idx})
 
     @kvmainthread
     def _deleted_file(self, file_path):
-        if self.is_supported_image(file_path):
-            file_list = [card.file_path for card in self.cards]
-            try:
-                index = file_list.index(file_path)
-                card = self.cards.pop(index)
-                self.ids['grid_layout'].remove_widget(card)
-                self.cols -= 1
-            except ValueError as e:
-                pass
+        for i, d in enumerate(self.data):
+            if d['file_path'] == file_path:
+                self.data.pop(i)
+                break
 
     def _modified_file(self, file_path):
         pass
-        #self._deleted_file(file_path)
-        #self._added_file(file_path)
 
     def set_path(self, directory):
-        self.cards = []
-        file_path_dict = {}
-        self.ids['grid_layout'].clear_widgets()
-        self.selected_cards.clear()
-        self.last_selected = None
-
-        # キャッシュに乗せる
-        #subprocess.run(["vmtouch", "-t", "-R", directory])
+        self.data = []
+        self.selected_indices.clear()
+        self.last_selected_index = None
 
         file_list = os.listdir(directory)
         file_list.sort()
-        for file_name in file_list:
-            file_path = os.path.join(directory, file_name)
+        
+        new_data = []
+        file_path_dict = {} # path -> index mapping for loader
+        
+        for i, file_name in enumerate(file_list):
             if self.is_supported_image(file_name):
-                card = self.add_image_to_grid(file_path)
-                self.cards.append(card)
-                file_path_dict[file_path] = card
-        self.cols = len(file_path_dict)
+                file_path = os.path.join(directory, file_name)
+                new_data.append({
+                    'file_path': file_path,
+                    'thumb_source': None,
+                    'exif_data': None,
+                    'selected': False,
+                    'ctx': self,
+                })
+                file_path_dict[file_path] = len(new_data) - 1
 
+        self.data = new_data
+        self.cols = max(1, len(self.data)) # Not used for logic, but might be used by UI binding?
+        
         self.load_images(file_path_dict)
         self.watch_directory = directory
 
@@ -169,44 +206,38 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
             threading.Thread(target=self.load_images_thread, args=(file_path_dict, 16), daemon=True).start()
 
     def load_images_thread(self, file_path_dict, chunk_size):
-
-        # 辞書のキーからファイルパスのリストを取得
         file_path_list = list(file_path_dict.keys())
         
-        # ファイルパスを指定した分割数で処理
         for i in range(0, len(file_path_list), chunk_size):
             chunk = file_path_list[i:i + chunk_size]
             
             with exiftool.ExifToolHelper(common_args=['-b', '-s']) as et:
                 exif_data_list = et.get_metadata(chunk)
         
-            # ここで exif_data_list を処理する
             thumb_data_list = self.process_exif_data(chunk, exif_data_list)
+            
+            updates = {}
+            for k in range(len(chunk)):
+                file_path = chunk[k]
+                if file_path not in file_path_dict: continue
+                idx = file_path_dict[file_path]
+                
+                if idx < len(self.data) and self.data[idx]['file_path'] == file_path:
+                    item = self.data[idx]
+                    item['thumb_source'] = thumb_data_list[k]
+                    item['exif_data'] = exif_data_list[k]
+                    updates[idx] = item
+            
+            self._apply_updates(updates)
 
-            for i in range(len(chunk)):
-                file_path = chunk[i]
-                thumb = thumb_data_list[i]
-                file_path_dict[file_path].set_image(exif_data_list[i], thumb)
-
-            self._request_current_view_cards(None, None)
-
-            """
-            if len(self.selected_cards) == 0 and len(file_path_dict) > 0:
-                card = list(file_path_dict.values())[0]
-                if card.exif_data is not None:
-                    self.active_card(card)
-                    self.last_selected = card
-            """
+    @kvmainthread
+    def _apply_updates(self, updates):
+        for idx, item in updates.items():
+            self.data[idx] = item
+        self.refresh_from_data()
 
     def is_supported_image(self, file_name):
         return file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB) or file_name.lower().endswith(define.SUPPORTED_FORMATS_RAW)
-
-    # @mainthread
-    def add_image_to_grid(self, file_path, index=0):
-        card = ThumbnailCard(file_path=file_path, grid_width=self.grid_width)
-        card.bind(on_touch_up=self.on_select)
-        self.ids['grid_layout'].add_widget(card, index=index)
-        return card
 
     def process_exif_data(self, file_path_list, exif_data_list):
         thumb_data_list = []
@@ -227,11 +258,12 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                     else:
                         with pyvips.Image.new_from_file(file_path) as vips_image:
                             thumb = np.array(vips_image)
-                            thumb = core.convert_to_float32(thumb)
-            
+                thumb = core.convert_to_float32(thumb)
+
                 thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)
                 thumb = cv2.resize(thumb, thumb_size)
 
+                # Orientation
                 orientation = exif_data.get('Orientation')
                 if orientation is not None:
                     if orientation == 'Rotate 180':
@@ -250,155 +282,132 @@ class ViewerWidget(MDBoxLayout, DraggableWidget):
                     elif orientation == 'Mirror horizontal and rotate 90 CW':
                         thumb = cv2.flip(thumb, 1)
                         thumb = cv2.rotate(thumb, cv2.ROTATE_90_CLOCKWISE)
-                thumb = core.convert_to_float32(thumb)
+                
                 thumb_data_list.append(thumb)
 
             return thumb_data_list
 
         except Exception as e:
             print(f"Error processing file {file_path}: {e}")
-            return None
-        
-    def active_card(self, card):
-        card.md_bg_color = [0.8, 0.8, 0.8, 1]  # 選択色に変更
-        self.selected_cards.add(card)
+            return [None]*len(file_path_list)
 
-    def deactive_card(self, card):
-        card.md_bg_color = [0.1, 0.1, 0.1, 1]  # デフォルト色に戻す
-        self.selected_cards.remove(card)
+    def handle_selection(self, index, touch):
+        # We also need to notify MainWidget about selection change
+        should_notify = False
         
-    def toggle_card(self, card):
-        if card in self.selected_cards:
-            self.deactive_card(card)
-        else:
-            self.active_card(card)
+        if not touch.is_mouse_scrolling and touch.button == 'left':
+            if 'shift' in KVWindow.modifiers and self.last_selected_index is not None:
+                if not( 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers ):
+                    self.clear_selection()
+                
+                start = min(self.last_selected_index, index)
+                end = max(self.last_selected_index, index)
+                
+                for i in range(start, end + 1):
+                    self.select_at(i)
+                should_notify = True
+                    
+            else:
+                if 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers:
+                    self.toggle_at(index)
+                    should_notify = True # Toggle always changes selection
+                else:
+                    self.clear_selection()
+                    self.select_at(index)
+                    should_notify = True
+                
+                self.last_selected_index = index
+            
+            if should_notify:
+                 self.notify_selection_change(index)
+
+    def notify_selection_change(self, index):
+        app = MDApp.get_running_app()
+        if app and hasattr(app, 'main_widget'):
+             # Create a mock card object for the newly selected item
+             # If multiple items selected, MainWidget usually takes the last one or iterates.
+             # MainWidget.on_select takes a single 'card' argument.
+             selected_data = self.data[index]
+             class MockCard:
+                 def __init__(self, d):
+                     self.file_path = d['file_path']
+                     self.exif_data = d['exif_data']
+             
+             app.main_widget.on_select(MockCard(selected_data))
+
+    def select_at(self, index):
+        if 0 <= index < len(self.data):
+            self.data[index]['selected'] = True
+            self.selected_indices.add(index)
+            self.refresh_from_data()
+
+    def toggle_at(self, index):
+        if 0 <= index < len(self.data):
+            val = not self.data[index]['selected']
+            self.data[index]['selected'] = val
+            if val: self.selected_indices.add(index)
+            else: self.selected_indices.discard(index)
+            self.refresh_from_data()
 
     def clear_selection(self):
-        for card in self.selected_cards:
-            card.md_bg_color = [0.1, 0.1, 0.1, 1]  # デフォルト色に戻す
-        self.selected_cards.clear()
+        for idx in self.selected_indices:
+            if idx < len(self.data):
+                self.data[idx]['selected'] = False
+        self.selected_indices.clear()
+        self.refresh_from_data()
 
-    def on_select(self, instance, touch):
-        if touch.grab_current is not instance:
-            return
-        
-        if instance.exif_data is not None and instance.collide_point(*touch.pos):
-            if touch.is_mouse_scrolling or (touch.button == 'left'):
-                if 'shift' in KVWindow.modifiers and self.last_selected:
-
-                    # 追加でないなら消去
-                    if not( 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers ):
-                        self.clear_selection()
-
-                    # シフトキーで範囲選択
-                    start_index = self.get_card_index(self.last_selected)
-                    end_index = self.get_card_index(instance)
-                    if start_index is not None and end_index is not None:
-                        for i in range(min(start_index, end_index), max(start_index, end_index) + 1):
-                            card = self.cards[i]
-                            self.active_card(card)
-
-                else:
-                    # 単独選択またはCmd/Ctrlでのトグル
-                    if 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers:
-                        self.toggle_card(instance)
-                    else:
-                        # すべてのラベルを非選択にしてから選択
-                        self.clear_selection()
-                        self.toggle_card(instance)
-
-                self.last_selected = instance
-
-
-    def on_key_down(self, window, key, scancode, codepoint, modifier):
-        if (key == 97 and ('ctrl' in modifier or 'meta' in modifier)):  # Aキー
-            self.clear_selection() # ２重登録禁止
-            for card in self.cards:
-                self.active_card(card)
-            return True
-
-    def get_card_index(self, card):
-        if card in self.cards:
-            return self.cards.index(card)
-        return None
-    
     def get_selected_cards(self):
-        return self.selected_cards
-    
-    def get_card(self, file_path):
-        file_list = [card.file_path for card in self.cards]
-        try:
-            index = file_list.index(file_path)
-            return self.cards[index]
+        res = []
+        class MockCard:
+             def __init__(self, d):
+                 self.file_path = d['file_path']
+                 self.exif_data = d['exif_data']
+                 self.thumb_source = d['thumb_source']
+        
+        for idx in self.selected_indices:
+            if idx < len(self.data):
+                res.append(MockCard(self.data[idx]))
+        return res
 
-        except ValueError as e:
-            return None
+    def get_card(self, file_path):
+        for d in self.data:
+            if d['file_path'] == file_path:
+                class MockCard:
+                     def __init__(self, d):
+                         self.file_path = d['file_path']
+                         self.exif_data = d['exif_data']
+                return MockCard(d)
+        return None
 
     def set_cache_system(self, cache_system):
         self.cache_system = cache_system
-        self.ids['scroll'].bind(scroll_x=self._request_current_view_cards)
-    
+        self.bind(scroll_x=self._request_current_view_cards)
+
     @kvmainthread
     def _request_current_view_cards(self, instance, value):
-        for card in self.cards:
-            x, y = card.to_window(*card.pos)
-            x, y = x + card.width/2, y + card.height/2
-            ok = self.collide_point(x, y)
-            if ok == True and card.exif_data is not None:
-                pass
-                #device.fadvice(card.file_path, True)
-                #self.cache_system.register_for_preload(card.file_path, card.exif_data)
+        pass
 
     def get_drag_files(self):
         file_paths = []
         for card in self.get_selected_cards():
-            file_paths.append((card.file_path, (card.thumb_source * 255).astype(np.uint8)))
+            if card.thumb_source is not None:
+                file_paths.append((card.file_path, (card.thumb_source * 255).astype(np.uint8)))
         return file_paths
 
     def _calc_resize_image(self, original_size, max_length):
         width, height = original_size
-
         if width > height:
-            # 幅が長辺の場合
             scale_factor = max_length / width
         else:
-            # 高さが長辺の場合
             scale_factor = max_length / height
+        return (int(width * scale_factor), int(height * scale_factor))
 
-        new_width = int(width * scale_factor)
-        new_height = int(height * scale_factor)
-
-        return (new_width, new_height)
-
-# テストアプリケーション
-class ViewerApp(MDApp):
-    def build(self):
-        viewer = ViewerWidget(grid_width=kv_dp(120), thumb_width=kv_dp(160))
-
-        viewer.set_path("/Users/uniuyuni/PythonProjects/platypus/picture")  # 画像フォルダーのパスを指定
-
-        return viewer
-
-    def on_start(self):
-        KVWindow.bind(on_resize=self.on_window_resize)
-        return super().on_start()
-
-    def on_window_resize(self, window, width, height):
-        # すべてのスケールが必要なウィジェットを更新
-        if self.root:
-            for child in kvutils.get_entire_widget_tree(self.root):
-                if hasattr(child, 'ref_width'):
-                    child.width = kvutils.dpi_scale_width(child.ref_width)
-                if hasattr(child, 'ref_height'):
-                    child.height = kvutils.dpi_scale_height(child.ref_height)
-                if hasattr(child, 'ref_padding'):
-                    child.padding = kvutils.dpi_scale_width(child.ref_padding)
-                if hasattr(child, 'ref_spacing'):
-                    child.spacing = kvutils.dpi_scale_width(child.ref_spacing)
-                if hasattr(child, 'ref_tab_width'):
-                    child.tab_width = kvutils.dpi_scale_width(child.ref_tab_width)
-                if hasattr(child, 'ref_tab_height'):
-                    child.tab_height = kvutils.dpi_scale_height(child.ref_tab_height)
-
-if __name__ == "__main__":
-    ViewerApp().run()
+    def on_key_down(self, window, key, scancode, codepoint, modifier):
+        if (key == 97 and ('ctrl' in modifier or 'meta' in modifier)):  # A
+            self.clear_selection()
+            for i in range(len(self.data)):
+                self.select_at(i)
+            # Notify MainWidget via last item?
+            if self.data:
+                self.notify_selection_change(len(self.data)-1)
+            return True

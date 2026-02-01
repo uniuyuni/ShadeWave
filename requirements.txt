@@ -30,3 +30,4 @@ git+https://github.com/uniuyuni/SAM3.git
 git+https://github.com/cszn/SCUNet.git
 numpy
 pyvips
+msgpack

@@ -229,7 +229,6 @@ if __name__ == '__main__':
             self.ids['history_box'].add_widget(self.history_panel)
             #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
 
-
         def empty_image(self):
             self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
             self.texture.flip_vertical()
@@ -719,7 +718,7 @@ if __name__ == '__main__':
             self.save_current_sidecar()
 
             dialog = ExportDialog(callback=self.handle_export_dialog)
-            dialog.bind(pos=MDApp.get_running_app().on_widget_pos)
+            dialog.bind(pos=MDApp.get_running_app()._widget_pos)
             dialog.open()
 
         def handle_export_dialog(self, preset):
@@ -1019,6 +1018,7 @@ if __name__ == '__main__':
             self.theme_cls.primary_palette = 'Blue'
             
             self.cache_system = cache_system
+            self._setup_window_handle = None
 
         def build(self):
             self.main_widget = MainWidget(self.cache_system)
@@ -1029,19 +1029,30 @@ if __name__ == '__main__':
             # Start worker after config is loaded
             self.main_widget.async_worker.start()
 
-            display = device.get_current_display(KVWindow.left, KVWindow.top)
+            # window setup
+            self._setup_window_handle = KVClock.schedule_interval(self._setup_window, 0.02)
+            
+            return self.main_widget
+    
+        def on_window_drawn(self, *args):
+            # window setup
+            if self._setup_window_handle is None:
+                self._setup_window_handle = KVClock.schedule_interval(self._setup_window, 0.01)
+
+        def _setup_window(self, dt):
+            if device.set_window_autosave(define.APPNAME, "PlatypusMainWindow"):
+                KVClock.unschedule(self._setup_window_handle)
+                self.on_window_resize(KVWindow, KVWindow.width, KVWindow.height)
+        
+        def on_start(self):
+            #KVWindow.bind(on_draw=self.on_window_drawn)
+            KVWindow.bind(on_resize=self.on_window_resize)
+            """
+            display = device.get_current_display()
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
             KVWindow.left = (display["width"] - display["width"] * 0.9) // 2
             KVWindow.top = (display["height"] - display["height"] * 0.9) // 2
-
-            # testcode
-            #self.main_widget.ids['viewer'].set_path(os.getcwd() + "/picture")
-
-            return self.main_widget
-        
-        def on_start(self):
-            KVWindow.bind(on_resize=self.on_window_resize)
-
+            """
             #close_splash_screen()
             return super().on_start()
 
@@ -1053,7 +1064,7 @@ if __name__ == '__main__':
             kvutils.traverse_widget(self.root)
             self.main_widget.resize()
 
-        def on_widget_pos(self, root, pos):
+        def _widget_pos(self, root, pos):
             kvutils.traverse_widget(root)
             self.main_widget.resize()
 

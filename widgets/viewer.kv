@@ -1,20 +1,14 @@
 
 <ViewerWidget>:
+    viewclass: 'ThumbnailCard'
+    scroll_type: ['bars', 'content']
+    bar_width: 0.008 * self.width
+    scroll_wheel_distance: 0.1 * self.width
     
-    RecycleView:
-        id: scroll
-        scroll_type: ['bars']
-        bar_width: 0.01 * self.width
-        scroll_wheel_distance: 0.1 * self.width
-        do_scroll_x: root.do_scroll_x
-        do_scroll_y: root.do_scroll_y
-
-        MDGridLayout:
-            id: grid_layout
-            cols: root.cols
-            size_hint: None, None
-            ref_height: self.minimum_height
-            ref_width: self.minimum_width
-            adaptive_height: False
-            #ref_padding: 0.01 * self.width
-            #ref_spacing: 0.005 * self.width
+    RecycleGridLayout:
+        cols: root.cols
+        default_size_hint: None, 1
+        default_size: None, None
+        size_hint_x: None
+        width: self.minimum_width
+        ref_padding: 6
