@@ -37,7 +37,7 @@ class CropEditor(KVFloatLayout):
         self.set_aspect_ratio(self.aspect_ratio)
 
         # スケール座標をローカル座標に変換
-        self._set_to_local_crop_rect(self.crop_rect)
+        self.set_to_local_crop_rect(self.crop_rect)
 
         scaled_width = self.input_width * self.scale
         scaled_height = self.input_height * self.scale
@@ -89,7 +89,7 @@ class CropEditor(KVFloatLayout):
         else:
             self.aspect_ratio = aspect_ratio
 
-    def _set_to_local_crop_rect(self, crop_rect):
+    def set_to_local_crop_rect(self, crop_rect):
 
         # 矩形のサイズを設定 (初期値は画像のサイズと同じ)
         if crop_rect == (0, 0, 0, 0):
@@ -154,9 +154,6 @@ class CropEditor(KVFloatLayout):
         gcd = math.gcd(w, h)
         self.label.text = str(w) + " x " + str(h) + "  " + str(w / gcd) + ":" + str(h / gcd)
 
-        if self.callback is not None:
-            self.callback()
-
     def update_centering(self, *args):
         # 中心に移動するためのトランスレーションを設定
         inwidth = self.input_width * self.scale
@@ -173,15 +170,21 @@ class CropEditor(KVFloatLayout):
     def on_touch_down(self, touch):
         self.corner_dragging = self.__get_dragging_corner(touch)
         if self.corner_dragging is not None:
+            if self.callback is not None:
+                self.callback("start", self)
             return True
 
         self.edge_dragging = self.__get_dragging_edge(touch)
         if self.edge_dragging is not None:
+            if self.callback is not None:
+                self.callback("start", self)
             return True
 
         if self.__is_inside_rect(touch):
             self.moving = True
             self.last_touch_pos = touch.pos
+            if self.callback is not None:
+                self.callback("start", self)
             return True
             
         return super(CropEditor, self).on_touch_down(touch)
@@ -205,11 +208,6 @@ class CropEditor(KVFloatLayout):
         return super(CropEditor, self).on_touch_move(touch)
 
     def on_touch_up(self, touch):
-        self.corner_dragging = None
-        self.edge_dragging = None
-        self.moving = False
-        self.last_touch_pos = None
-
         # 反転処理はここでやる
         x1, y1, x2, y2 = self.crop_rect
         if x1 > x2:
@@ -218,6 +216,20 @@ class CropEditor(KVFloatLayout):
             y1, y2 = y2, y1
         self.crop_rect = (x1, y1, x2, y2)
         
+        if (    self.callback is not None
+            and (
+                self.corner_dragging is not None
+                or self.edge_dragging is not None
+                or self.moving == True
+            )):
+            self.callback("update", self)
+            self.callback("end", self)
+        
+        self.corner_dragging = None
+        self.edge_dragging = None
+        self.moving = False
+        self.last_touch_pos = None
+
         return super(CropEditor, self).on_touch_up(touch)
 
     def __get_dragging_corner(self, touch):

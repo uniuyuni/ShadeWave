@@ -3,15 +3,25 @@ from kivy.app import App as KVApp
 from kivy.uix.spinner import Spinner as KVSpinner
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.core.window import Window as KVWindow
-from kivy.properties import ObjectProperty as KVObjectProperty
+from kivy.properties import ObjectProperty as KVObjectProperty, StringProperty as KVStringProperty
 
 class HoverSpinner(KVSpinner):
     hovered_item = KVObjectProperty(None, allownone=True)
+    value = KVStringProperty()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
+    def set_text(self, text):
+        self.disabled = True
+        self.text = text
+        self.disabled = False
+
+    def on_text(self, instance, value):
+        if self.disabled == False:
+            self.value = value
+        
     def on_mouse_pos(self, window, pos):
         # ドロップダウンが開いている場合のアイテムホバー検出
         if hasattr(self, '_dropdown') and self._dropdown and self.is_open:

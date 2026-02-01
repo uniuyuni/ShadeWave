@@ -1062,13 +1062,13 @@ class GeometryEffect(Effect):
 # クロップ
 class CropEffect(Effect):
 
-    def __init__(self, **kwargs):
+    def __init__(self, crop_callback=None, **kwargs):
         super().__init__(**kwargs)
         
         self.backup_img = None
 
         self.crop_editor = None
-        self.crop_editor_callback = None
+        self.crop_editor_callback = crop_callback
 
     def set_editing_callback(self, callback):
         self.crop_editor_callback = callback
@@ -1091,7 +1091,10 @@ class CropEffect(Effect):
         }
 
     def set2widget(self, widget, param):
-        widget.ids["spinner_acpect_ratio"].text = param.get('aspect_ratio', "None")
+        widget.ids["spinner_acpect_ratio"].set_text(param.get('aspect_ratio', "None"))
+
+        if self.crop_editor is not None:
+            self.crop_editor.set_to_local_crop_rect(params.get_crop_rect(param))
 
     def set2param(self, param, widget):
         param['crop_enable'] = False if widget.ids["effects"].current_tab.text != "Ge" else True
@@ -1117,6 +1120,10 @@ class CropEffect(Effect):
             # 自動クロップ
             if widget.ids["button_crop_auto"].state == "down":
                 self.auto_crop_editor(self.backup_img)
+
+            # クロップ情報を更新
+            if self.crop_editor is not None:
+                params.set_crop_rect(param, self.crop_editor.get_crop_rect())
 
     def make_diff(self, img, param, efconfig):
         ce = self._get_param(param, 'crop_enable')
@@ -1166,14 +1173,13 @@ class CropEffect(Effect):
             widget.ids["preview_widget"].remove_widget(self.crop_editor)
             self.crop_editor = None
 
-    def _crop_editing(self):
-        params.set_crop_rect(self.param, self.crop_editor.get_crop_rect())
+    def _crop_editing(self, proc, widget):
         if self.crop_editor_callback is not None:
-            self.crop_editor_callback()
+            self.crop_editor_callback(proc, widget)
 
     def reset_crop_editor(self):
         if self.crop_editor is not None:
-            self.crop_editor._set_to_local_crop_rect((0, 0, 0, 0))
+            self.crop_editor.set_to_local_crop_rect((0, 0, 0, 0))
             self.crop_editor.update_crop_size()
 
     def reset2_crop_editor(self, param):
@@ -1200,7 +1206,7 @@ class CropEffect(Effect):
                 aspect_ratio=aspect_ratio,
                 verbose=True
             )
-            self.crop_editor._set_to_local_crop_rect(bbox)
+            self.crop_editor.set_to_local_crop_rect(bbox)
 
     def finalize(self, param, widget):
         self._close_crop_editor(param, widget)
@@ -2886,8 +2892,8 @@ class LUTEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids["switch_lut"].active = self._get_param(param, 'switch_lut')
-        widget.ids["lut_spinner"].text = self._get_param(param, 'lut_name')
-        widget.ids["lut_to_log_spinner"].text = self._get_param(param, 'lut_to_log')
+        widget.ids["lut_spinner"].set_text(self._get_param(param, 'lut_name'))
+        widget.ids["lut_to_log_spinner"].set_text(self._get_param(param, 'lut_to_log'))
         widget.ids["slider_lut_intensity"].set_slider_value(self._get_param(param, 'lut_intensity'))
 
     def set2param(self, param, widget):
@@ -2942,7 +2948,7 @@ class LensSimulatorEffect(Effect):
  
     def set2widget(self, widget, param):
         widget.ids["switch_lens_simulator"].enabled = self._get_param(param, 'switch_lens_simulator')
-        widget.ids["spinner_lens_preset"].text = self._get_param(param, 'lens_preset')
+        widget.ids["spinner_lens_preset"].set_text(self._get_param(param, 'lens_preset'))
         widget.ids["slider_lens_intensity"].set_slider_value(self._get_param(param, 'lens_intensity'))
 
     def set2param(self, param, widget):
@@ -2982,7 +2988,7 @@ class FilmSimulationEffect(Effect):
  
     def set2widget(self, widget, param):
         widget.ids["switch_film_simulation"].enabled = self._get_param(param, 'switch_film_simulation')
-        widget.ids["spinner_film_preset"].text = self._get_param(param, 'film_preset')
+        widget.ids["spinner_film_preset"].set_text(self._get_param(param, 'film_preset'))
         widget.ids["slider_film_intensity"].set_slider_value(self._get_param(param, 'film_intensity'))
         widget.ids["slider_film_expired"].set_slider_value(self._get_param(param, 'film_expired'))
 
@@ -3346,7 +3352,7 @@ class VignetteEffect(Effect):
         return self.diff
     
 
-def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None):
+def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
@@ -3358,7 +3364,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['inpaint'] = InpaintEffect()
     lv0['cross_filter'] = CrossFilterEffect()
     lv0['geometry'] = GeometryEffect(geometry_callback=geometry_callback)
-    lv0['crop'] = CropEffect()
+    lv0['crop'] = CropEffect(crop_callback=crop_callback)
 
     lv1 = effects[1]
     lv1['distortion'] = DistortionEffect(distortion_callback=distortion_callback)

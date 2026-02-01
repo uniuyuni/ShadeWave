@@ -152,7 +152,8 @@ if __name__ == '__main__':
             self.primary_effects = effects.create_effects(
                 lens_modifier_callback=self.lens_modifier_callback,
                 distortion_callback=self.distortion_callback,
-                geometry_callback=self.geometry_callback)
+                geometry_callback=self.geometry_callback,
+                crop_callback=self.crop_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.inpaint_edit = None
             self.cache_system = cache_system
@@ -379,6 +380,15 @@ if __name__ == '__main__':
                 case 'end':
                     self.primary_param.update(widget.get_correction_params())
                     self.end_history_effect_ctrl(0, 'geometry')
+
+        def crop_callback(self, proc, widget):
+            match proc:
+                case 'start':
+                    self.begin_history_effect_ctrl(0, 'crop')
+                case 'update' | 'apply':
+                    params.set_crop_rect(self.primary_param, widget.get_crop_rect())
+                case 'end':
+                    self.end_history_effect_ctrl(0, 'crop')
 
         def _get_active_effects(self, mask_id=None, lv=None):
             if mask_id is None:

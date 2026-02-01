@@ -93,7 +93,6 @@ class ParamSlider(KVBoxLayout):
         return False
 
     def set_slider_value(self, value):
-        from kivy.event import EventDispatcher as KVEventDispatcher
         self.disabled = True
         self.ids['slider'].value = value
         self.disabled = False

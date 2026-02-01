@@ -1585,9 +1585,10 @@
                                         id: lut_spinner
                                         values: [ 'None', ]
                                         #on_hovered_item: root.apply_effects_lv(2, 'lut')
-                                        on_text: root.begin_history_effect_ctrl(2, 'lut')
-                                        on_text: root.apply_effects_lv(2, 'lut')
-                                        on_text: root.end_history_effect_ctrl(2, 'lut')
+                                        on_value:
+                                            root.begin_history_effect_ctrl(2, 'lut')
+                                            root.apply_effects_lv(2, 'lut')
+                                            root.end_history_effect_ctrl(2, 'lut')
                                     Button:
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         size_hint: 0.08, None
@@ -1613,9 +1614,10 @@
                                     ParamSpinner:
                                         id: lut_to_log_spinner
                                         values: [ 'None', 'slog3', 'logc4', 'clog3', 'redlog3g10', 'vlog', 'nlog', 'flog2', 'omlog400' ]
-                                        on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lut')
-                                        on_text: root.apply_effects_lv(2, 'lut')
-                                        on_text: root.end_history_effect_ctrl(2, 'lut')
+                                        on_value:
+                                            root.begin_history_effect_ctrl(2, 'lut')
+                                            root.apply_effects_lv(2, 'lut')
+                                            root.end_history_effect_ctrl(2, 'lut')
 
                                 VSeparator:
 
@@ -1761,7 +1763,7 @@
                                         values: [ 'None', ]
                                         on_hovered_item: root.apply_effects_lv(2, 'film_emulation')
                                         on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'film_emulation')
-                                        on_text:  root.end_history_effect_ctrl(2, 'film_emulation')
+                                        on_value: root.end_history_effect_ctrl(2, 'film_emulation')
                                         
                                 ParamSlider:
                                     id: slider_film_intensity
@@ -1804,7 +1806,7 @@
                                         values: [ 'None', ]
                                         on_hovered_item: root.apply_effects_lv(2, 'lens_simulator')
                                         on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lens_simulator')
-                                        on_text:  root.end_history_effect_ctrl(2, 'lens_simulator')
+                                        on_value: root.end_history_effect_ctrl(2, 'lens_simulator')
                                         
                                 ParamSlider:
                                     id: slider_lens_intensity
@@ -2225,7 +2227,10 @@
                                     ParamSpinner:
                                         id: spinner_acpect_ratio
                                         values: ["None", "1 / 1", "5 / 4", "3 / 2", "4 / 3", "16 / 9", "1.414 / 1", "148 / 100"]
-                                        on_text: root.apply_effects_lv(0, 'crop')
+                                        on_value:
+                                            root.begin_history_effect_ctrl(0, 'crop')
+                                            root.apply_effects_lv(0, 'crop')
+                                            root.end_history_effect_ctrl(0, 'crop')
 
                                 VSeparator:
 
