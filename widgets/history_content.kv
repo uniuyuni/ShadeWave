@@ -20,7 +20,7 @@
 
     Label:
         text: root.col1_text
-        size_hint_x: 0.5
+        size_hint_x: 0.45
         text_size: self.size
         halign: 'left'
         valign: 'middle'
@@ -28,7 +28,6 @@
         font_size: '9pt'
         padding_x: '5dp'
         shorten: True
-        shorten_from: 'right'
 
     Label:
         text: root.col2_text
@@ -38,16 +37,18 @@
         valign: 'middle'
         color: (.8, .8, .8, 1) if root.active else (.4, .4, .4, 1)
         font_size: '9pt'
+        shorten: True
 
     Label:
         text: root.col3_text
-        size_hint_x: 0.25
+        size_hint_x: 0.3
         text_size: self.size
         halign: 'right'
         valign: 'middle'
         color: (.8, .8, .8, 1) if root.active else (.4, .4, .4, 1)
         font_size: '9pt'
         padding_x: '5dp'
+        shorten: True
 
 <SelectableRecycleBoxLayout>:
 

@@ -109,6 +109,7 @@ class HistoryContentPanel(KVBoxLayout):
             self._scroll_to_index(self.ids['history_rv'], active_index)
 
     def _make_op_dict(self, op, is_active):
+        
         def _format_value(value):
             if isinstance(value, bool):
                 return "ON" if value else "OFF"
@@ -116,6 +117,8 @@ class HistoryContentPanel(KVBoxLayout):
                 return self._format_number(value)
             elif isinstance(value, list):
                 return f"{len(value)} pts"
+            elif isinstance(value, tuple):
+                return f"{value[0]}x{value[1]}"
             elif value is None:
                 return "2 pts"
             return str(value)
@@ -124,12 +127,109 @@ class HistoryContentPanel(KVBoxLayout):
         if not op.diff:
              return {'col1_text': op.name, 'col2_text': '', 'col3_text': '', 'active': is_active}
 
-        result = op.diff[0]
-        bps = _format_value(result[1])
-        ups = _format_value(result[2])
-        col1 = self._format_string(result[0])
+        # matrix操作の場合はバックアップを優先して表示
+        if len(op.diff) <= 1 or op.diff[0][0] is not "matrix":
+            result = op.diff[0]
+        else:
+            result = op.diff[1]
         
-        return {'col1_text': col1, 'col2_text': bps, 'col3_text': ups, 'active': is_active}
+        if result[2] is "Reset": # Reset操作の場合
+            title = "Reset"
+            bps = ""
+            ups = ""
+        elif result[0] is "crop_rect": # Crop操作の場合
+            title = "Crop"
+            maxsize = max(op.effects_param['original_img_size'])
+            bp_w = int((result[1][2] - result[1][0]) * maxsize)
+            bp_h = int((result[1][3] - result[1][1]) * maxsize)
+            up_w = int((result[2][2] - result[2][0]) * maxsize)
+            up_h = int((result[2][3] - result[2][1]) * maxsize)
+            bps = _format_value((bp_w, bp_h))
+            ups = _format_value((up_w, up_h))
+        elif result[0] is "flip_mode": # Flip操作の場合
+
+            def _format_flip(value):
+                if value == 0:
+                    return "Normal"
+                elif value == 1:
+                    return "Horizontal"
+                elif value == 2:
+                    return "Vertical"
+                elif value == 3:
+                    return "Both"
+                return str(value)
+
+            title = "Flip"
+            bps = _format_flip(result[1])
+            ups = _format_flip(result[2])
+        else:
+            REPLACE_TEXT = {
+                "color_temperature": "temperature",
+                "color_tint": "tint",
+                "hls_red_hue": "red_hue",
+                "hls_red_lum": "red_luminance",
+                "hls_red_sat": "red_saturation",
+                "hls_yellow_hue": "yellow_hue",
+                "hls_yellow_lum": "yellow_luminance",
+                "hls_yellow_sat": "yellow_saturation",
+                "hls_green_hue": "green_hue",
+                "hls_green_lum": "green_luminance",
+                "hls_green_sat": "green_saturation",
+                "hls_cyan_hue": "cyan_hue",
+                "hls_cyan_lum": "cyan_luminance",
+                "hls_cyan_sat": "cyan_saturation",
+                "hls_blue_hue": "blue_hue",
+                "hls_blue_lum": "blue_luminance",
+                "hls_blue_sat": "blue_saturation",
+                "hls_magenta_hue": "magenta_hue",
+                "hls_magenta_lum": "magenta_luminance",
+                "hls_magenta_sat": "magenta_saturation",
+                "vignette_radius_percent": "vignette_radius",
+                "tonecurve": "tone_curve",
+                "tonecurve_red": "tone_curve_red",
+                "tonecurve_green": "tone_curve_green",
+                "tonecurve_blue": "tone_curve_blue",
+                "grading1": "grading1_curve",
+                "grading1_hue": "grading1_hue",
+                "grading1_lum": "grading1_luminance",
+                "grading1_sat": "grading1_saturation",
+                "grading2": "grading2_curve",
+                "grading2_hue": "grading2_hue",
+                "grading2_lum": "grading2_luminance",
+                "grading2_sat": "grading2_saturation",
+                "HuevsHue": "Hue vs Hue",
+                "HuevsLum": "Hue vs Lum",
+                "HuevsSat": "Hue vs Sat",
+                "LumvsLum": "Lum vs Lum",
+                "LumvsSat": "Lum vs Sat",
+                "SatvsLum": "Sat vs Lum",
+                "SatvsSat": "Sat vs Sat",
+                "light_noise_reduction": "light_luminance_NR",
+                "light_color_noise_reduction": "light_color_NR",
+                "deblur_filter": "deblur",
+                "switch_lut": "switch_LUT",
+                "lut_name": "LUT_file",
+                "lut_intensity": "LUT_intensity",
+                "lut_to_log": "LUT_to_log",
+                "lensblur_filter": "lensblur",
+                "grain_color_noise_ratio": "grain_color_noise",
+                "cross_filter_num_points": "cross_points",
+                "cross_filter_length": "cross_length",
+                "cross_filter_angle": "cross_angle",
+                "cross_filter_threshold": "cross_threshold",
+                "cross_filter_intensity": "cross_intensity",
+                "cross_filter_spectral": "cross_spectral",
+                "cross_filter_thickness": "cross_thickness",
+                "cross_filter_distance": "cross_distance",
+                "cross_filter_random": "cross_random",
+                "rotation2": "Rotation_90",
+            }
+            title = REPLACE_TEXT[result[0]] if result[0] in REPLACE_TEXT else result[0]
+            title = self._format_string(title)
+            bps = _format_value(result[1])
+            ups = _format_value(result[2])
+        
+        return {'col1_text': title, 'col2_text': bps, 'col3_text': ups, 'active': is_active}
 
     def set_active_index(self, index):
         pass

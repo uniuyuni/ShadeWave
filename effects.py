@@ -1851,7 +1851,7 @@ class HLSEffect(Effect):
             return {
                 'switch_color_mixer': True,
             }
-        return self.hls_effects[subname].get_param_dict(param)
+        return self.effects[subname].get_param_dict(param)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1865,29 +1865,29 @@ class HLSEffect(Effect):
         effecs['hls_blue'] = HLSColorEffect('blue')
         effecs['hls_purple'] = HLSColorEffect('purple')
         effecs['hls_magenta'] = HLSColorEffect('magenta')
-        self.hls_effects = effecs
+        self.effects = effecs
 
     def delete_default_param(self, param):
         super().delete_default_param(param)
-        for n in self.hls_effects.values():
+        for n in self.effects.values():
             n.delete_default_param(param)
 
     def reeffect(self):
-        for n in self.hls_effects.values():
+        for n in self.effects.values():
             n.reeffect()
 
     def set2widget(self, widget, param):
         widget.ids['switch_color_mixer'].active = self._get_param(param, 'switch_color_mixer')
-        for n in self.hls_effects.values():
+        for n in self.effects.values():
             n.set2widget(widget, param)
 
     def set2param(self, param, widget):
         param['switch_color_mixer'] = widget.ids['switch_color_mixer'].active
-        for n in self.hls_effects.values():
+        for n in self.effects.values():
             n.set2param(param, widget)
 
     def make_diff(self, hls, param, efconfig):
-        self.diff = pipeline.pipeline_hls(hls, self.hls_effects, param, efconfig)
+        self.diff = pipeline.pipeline_hls(hls, self.effects, param, efconfig)
 
         return self.diff
     
@@ -3430,7 +3430,12 @@ def set2widget_all(widget, effects, param):
     for dict in effects:
         for l in dict.values():
             l.set2widget(widget, param)
-            #l.set2param(param, self)
+            l.reeffect()
+
+def set2param_all(effects, param, widget):
+    for dict in effects:
+        for l in dict.values():
+            l.set2param(param, widget)
             l.reeffect()
 
 def reeffect_all(effects, lv=0):
@@ -3451,4 +3456,13 @@ def delete_default_param_all(effects, param):
             l.delete_default_param(param2)
     return param2
 
-
+def get_default_param(effects, key, param):
+    for dict in effects:
+        for l in dict.values():
+            if hasattr(l, 'effects'):
+                for l2 in l.effects.values():
+                    if key in l2.get_param_dict(param):
+                        return l2.get_param_dict(param)[key]
+            if key in l.get_param_dict(param):
+                return l.get_param_dict(param)[key]
+    return None

@@ -244,7 +244,7 @@
                 FloatLayout:
                     id: preview_widget
                     pos_hint: {'x':0, 'y': 0}
-                    size_hint_y: 0.95
+                    size_hint: 1.0, 0.95
                     on_touch_down: root.on_image_touch_down(args[1])
                     on_touch_move: root.on_image_touch_move(args[1])
                     on_touch_up: root.on_image_touch_up(args[1])
@@ -355,7 +355,10 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Reset"
-                        on_press: root.on_reset_press()
+                        on_press:
+                            root.begin_history_effect_ctrl(0, None)
+                            root.on_reset_press()
+                        on_release: root.end_history_effect_ctrl(0, None)
                     ToggleButton:
                         id: preset
                         size_hint_x: None
@@ -2160,26 +2163,38 @@
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         ref_height: 20
                                         text: "L"
-                                        on_press: root.apply_effects_lv(0, 'crop')
-                                        on_press: root.set_effect_param(0, 'geometry', 90)
+                                        on_press:
+                                            root.begin_history_effect_ctrl(0, 'geometry')
+                                            root.set_effect_param(0, 'geometry', 90)
+                                            root.apply_effects_lv(0, 'crop')
+                                            root.end_history_effect_ctrl(0, 'geometry')
                                     Button:
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         ref_height: 20
                                         text: "R"
-                                        on_press: root.apply_effects_lv(0, 'crop')
-                                        on_press: root.set_effect_param(0, 'geometry', -90)
+                                        on_press:
+                                            root.begin_history_effect_ctrl(0, 'geometry')
+                                            root.set_effect_param(0, 'geometry', -90)
+                                            root.apply_effects_lv(0, 'crop')
+                                            root.end_history_effect_ctrl(0, 'geometry')
                                     Button:
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         ref_height: 20
                                         text: "H"
-                                        on_press: root.apply_effects_lv(0, 'crop')
-                                        on_press: root.set_effect_param(0, 'geometry', 'hflip')
+                                        on_press:
+                                            root.begin_history_effect_ctrl(0, 'geometry')
+                                            root.set_effect_param(0, 'geometry', 'hflip')
+                                            root.apply_effects_lv(0, 'crop')
+                                            root.end_history_effect_ctrl(0, 'geometry')
                                     Button:
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         ref_height: 20
                                         text: "V"
-                                        on_press: root.apply_effects_lv(0, 'crop')
-                                        on_press: root.set_effect_param(0, 'geometry', 'vflip')
+                                        on_press:
+                                            root.begin_history_effect_ctrl(0, 'geometry')
+                                            root.set_effect_param(0, 'geometry', 'vflip')
+                                            root.apply_effects_lv(0, 'crop')
+                                            root.end_history_effect_ctrl(0, 'geometry')
 
                                 VSeparator:
 

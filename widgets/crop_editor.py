@@ -1,22 +1,25 @@
 
-import numpy as np
-
 from kivy.app import App as KVApp
-from kivy.graphics import Color as KVColor, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Translate as KVTranslate, Rotate as KVRotate
+from kivy.graphics import Color as KVColor, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Translate as KVTranslate, Rotate as KVRotate, Rectangle as KVRectangle
 from kivy.properties import NumericProperty as KVNumericProperty, ListProperty as KVListProperty
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.label import Label as KVLabel
 from kivy.metrics import dp as kvdp
 from kivy.clock import Clock as KVClock, mainthread as kvmainthread
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 
+import numpy as np
 from enum import Enum
 from typing import List, Tuple
 import math
 
 import cores.core as core
+import macos as device
 
+_MIN_CROP_WIDTH = 32
+_MIN_CROP_HEIGHT = 32
 
-class CropEditor(KVFloatLayout):
+class CropEditor(KVBoxLayout):
     input_width = KVNumericProperty(kvdp(400))
     input_height = KVNumericProperty(kvdp(300))
     input_angle = KVNumericProperty(0)
@@ -43,14 +46,15 @@ class CropEditor(KVFloatLayout):
         scaled_height = self.input_height * self.scale
         with self.canvas:
             KVPushMatrix()
+            self.translate = KVTranslate()
+
+            KVPushMatrix()
             self.input_translate = KVTranslate(scaled_width/2, scaled_height/2)
             self.input_rotate = KVRotate(angle=self.input_angle)
             KVColor(0.5, 0.5, 0.5, 1)
             self.input_line = KVLine(rectangle=(-scaled_width/2, -scaled_height/2, scaled_width, scaled_height), width=1)
             KVPopMatrix()
 
-            KVPushMatrix()
-            self.translate = KVTranslate()
             # グリッド線用の色と線を追加
             KVColor(1, 1, 1, 0.5)
             self.grid_lines = []
@@ -71,9 +75,10 @@ class CropEditor(KVFloatLayout):
                   input_height=self.update_crop_size,
                   scale=self.update_crop_size,
                   size=self.update_centering,
+                  pos=self.update_centering,
                   aspect_ratio=self.update_crop_size,
                   input_angle=self.update_crop_size)
-        
+
         KVClock.schedule_once(self.create_ui, -1)
 
     def create_ui(self, dt):
@@ -156,13 +161,14 @@ class CropEditor(KVFloatLayout):
 
     def update_centering(self, *args):
         # 中心に移動するためのトランスレーションを設定
-        inwidth = self.input_width * self.scale
-        inheight = self.input_height * self.scale
-        inm = max(inwidth, inheight)
-        self.translate.x = self.pos[0] + (self.width - inm) / 2
-        self.translate.y = self.pos[1] + (self.height - inm) / 2
-        self.input_translate.x = self.translate.x + inm / 2
-        self.input_translate.y = self.translate.y + inm / 2
+        scaled_width = self.input_width * self.scale
+        scaled_height = self.input_height * self.scale
+        scaled_max = max(scaled_width, scaled_height)
+        wx, wy = self.to_window(*self.parent.pos) # 親座標じゃないとX方向にズレる（バグ？）
+        self.translate.x = wx + (self.width - scaled_max) / 2
+        self.translate.y = wy + (self.height - scaled_max) / 2
+        self.input_translate.x = scaled_max / 2
+        self.input_translate.y = scaled_max / 2
         self.input_rotate.angle = self.input_angle
 
         self.update_rect()
