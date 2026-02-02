@@ -13,6 +13,7 @@ import effects
 import utils.utils as utils
 import macos as device
 
+# 重要だがセーブしないパラメータ
 SPECIAL_PARAM = [
     # for set_image_param
     'original_img_size',
@@ -38,8 +39,12 @@ SPECIAL_PARAM = [
     'auto_exposure',
 ]
 
+# セーブするが、初期化時にリセットするパラメータ
 REMAIN_PARAM = [
     'crop_rect',
+    'color_modification',
+    'subpixel_distortion',
+    'geometry_distortion',
 ]
 
 # 正規化込みの読み出し、設定
@@ -202,6 +207,14 @@ def delete_not_special_param(param):
 
 def copy_special_param(tar, src):
     for key in SPECIAL_PARAM:
+        try:
+            val = src[key]
+            tar[key] = val
+        except KeyError:
+            pass
+
+def copy_remain_param(tar, src):
+    for key in REMAIN_PARAM:
         try:
             val = src[key]
             tar[key] = val

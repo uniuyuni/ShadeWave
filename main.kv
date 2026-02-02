@@ -355,10 +355,11 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Reset"
-                        on_press:
-                            root.begin_history_effect_ctrl(0, None)
-                            root.on_reset_press()
-                        on_release: root.end_history_effect_ctrl(0, None)
+                        on_press: root.begin_history_reset_all()
+                        on_release:
+                            root.reset_all()
+                            root.end_history_reset_all()
+
                     ToggleButton:
                         id: preset
                         size_hint_x: None

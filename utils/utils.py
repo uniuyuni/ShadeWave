@@ -238,6 +238,33 @@ def array_to_memmap(arr):
     # ファイルオブジェクトが開いている限り、OSが管理する一時ファイルとして存在する
     return mm, tfile
 
+def dict_equal_with_ndarray(dict1: dict, dict2: dict) -> bool:
+    """ndarrayを含む辞書を比較"""
+    
+    # キーが同じかチェック
+    if set(dict1.keys()) != set(dict2.keys()):
+        return False
+    
+    for key in dict1:
+        val1 = dict1[key]
+        val2 = dict2[key]
+        
+        # ndarrayの場合
+        if isinstance(val1, np.ndarray) and isinstance(val2, np.ndarray):
+            if not np.array_equal(val1, val2):
+                return False
+        
+        # 辞書の場合（再帰）
+        elif isinstance(val1, dict) and isinstance(val2, dict):
+            if not dict_equal_with_ndarray(val1, val2):
+                return False
+        
+        # その他の場合
+        elif val1 != val2:
+            return False
+    
+    return True
+
 if __name__ == '__main__':
 
     img = cv2.imread("your_image.jpg", cv2.IMREAD_UNCHANGED)

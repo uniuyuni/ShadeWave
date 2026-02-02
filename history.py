@@ -5,6 +5,8 @@ import numpy as np
 import logging
 
 import effects
+import params
+import utils.utils as utils
 
 class LayerCtrl:
     def update_layer(self, op, type, index, op_type, param):
@@ -31,6 +33,7 @@ class Operation:
     
     def set_backup_layer(self, layer_ctrl, op, index, op_type):
         self.layer_ctrl = layer_ctrl
+        self.name = "Layer"
         self.backup['op'] = op
         self.backup['index'] = index
         self.backup['op_type'] = op_type
@@ -114,6 +117,17 @@ class Operation:
         
         return (self.lv, self.effect_list)
 
+    def set_backup_all(self, param, mask_editor):
+        temp_param = params.serialize(param, mask_editor)
+        params.copy_special_param(temp_param['primary_param'], param)
+        self.name = "Reset"
+        self.backup['dict'] = temp_param
+
+    def check_backup_all(self, param, mask_editor):
+        temp_param = params.serialize(param, mask_editor)
+        params.copy_special_param(temp_param['primary_param'], param)
+        return utils.dict_equal_with_ndarray(self.backup['dict'], temp_param)
+
     def undo(self, widget):
         if self.type == "Effect":
             self.effects_param.update(self.backup)
@@ -125,6 +139,12 @@ class Operation:
 
         elif self.type == "Layer":
             self.layer_ctrl.update_layer(self.backup['op'], self.backup['index'], self.backup['op_type'], self.backup['dict'])
+        
+        elif self.type == "All":
+            widget.primary_param.clear()
+            dict = self.backup['dict']
+            if dict is not None:
+                params.deserialize(dict, widget.primary_param, widget.ids['mask_editor2'])
 
     def redo(self, widget):
         if self.type == "Effect":
@@ -144,6 +164,9 @@ class Operation:
 
         elif self.type == "Layer":
             self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['op_type'], self.update['dict'])
+
+        elif self.type == "All":
+            widget.reset_all()
 
 class History:
     """操作履歴マネージャー"""

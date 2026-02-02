@@ -501,6 +501,52 @@ if __name__ == '__main__':
                 self.history_panel.set_history(self.history)
                 self.current_op = None
 
+        def begin_history_reset_all(self):
+            self.current_op = history.Operation(type="All")
+            self.current_op.set_backup_all(self.primary_param, self.ids['mask_editor2'])
+
+        def end_history_reset_all(self):
+            if self.current_op is None:
+                return
+
+            if self.current_op.type != "All":
+                logging.warning(f"MainWidget.end_history_reset_all Type Unmatching. {self.current_op.type}")
+                return
+
+            if self.current_op.check_backup_all(self.primary_param, self.ids['mask_editor2']) == False:
+                self.history.append(self.current_op)
+                self.history_panel.set_history(self.history)
+                self.current_op = None
+
+        def reset_all(self):
+            
+            # セーブしないパラメータ（メタデータ等）と、維持するパラメータ（クロップ、色収差等）は維持する
+            temp_param = {}
+            params.copy_special_param(temp_param, self.primary_param)
+            params.copy_remain_param(temp_param, self.primary_param)
+            
+            self.primary_param.clear()
+            self.primary_param.update(temp_param)
+            
+            # 初期化パラメータ設定
+            params.set_image_param(self.primary_param, self.imgset.img)
+
+            # マスク関連全消去
+            self.ids['mask2'].state = 'normal' # マスクモードを抜けないとおかしくなる
+            self._disable_mask2()
+            self.ids['mask_editor2'].clear_mask()
+            
+            # クロップエディタ起動時はそれの初期化も行う
+            self.primary_effects[0]['crop'].reset2_crop_editor(self.primary_param)
+            self.primary_effects[0]['crop'].reset_crop_editor()
+            self.apply_effects_lv(0, 'crop') # 描画を走らせる
+
+            # これでファイルが消えるはず
+            self.save_current_sidecar()
+           
+            # UIと表示の更新
+            effects.set2widget_all(self, self.primary_effects, self.primary_param)
+
         def begin_history_effect_ctrl(self, lv, effect, subname=None):
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
             effect_list = effect if isinstance(effect, list) else [effect]
@@ -821,8 +867,11 @@ if __name__ == '__main__':
             params.set_temperature_to_param(self.primary_param, temp, tint, Y)
 
             # マスク関連全消去
+            is_mask2_enabled = self._is_mask2_enabled()
             self._disable_mask2()
             self.ids['mask_editor2'].clear_mask()
+            if is_mask2_enabled:
+                self._enable_mask2()
             
             # クロップエディタ起動時はそれの初期化も行う
             self.primary_effects[0]['crop'].reset2_crop_editor(self.primary_param)
@@ -837,6 +886,9 @@ if __name__ == '__main__':
 
         #--------------------------------
         # Mask2関連
+
+        def _is_mask2_enabled(self):
+            return self.ids['mask_editor2'].opacity == 1 and self.ids['mask_editor2'].disabled == False
 
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1
