@@ -180,7 +180,12 @@ if __name__ == '__main__':
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
-            
+
+        def on_start(self, *args, **kwargs):
+            #self.ids['preview_widget'].ref_size_hint_min = (config.get_config("preview_width"), config.get_config("preview_height"))
+            #self.ids['preview_widget'].ref_size_hint_max = (config.get_config("preview_width") * 1.1, config.get_config("preview_height") * 1.1)
+            pass
+
         def update_async_results(self, dt):
             if self.async_worker:
                 results = self.async_worker.poll_results()
@@ -1047,11 +1052,6 @@ if __name__ == '__main__':
             self._setup_window_handle = KVClock.schedule_interval(self._setup_window, 0.02)
             
             return self.main_widget
-    
-        def on_window_drawn(self, *args):
-            # window setup
-            if self._setup_window_handle is None:
-                self._setup_window_handle = KVClock.schedule_interval(self._setup_window, 0.01)
 
         def _setup_window(self, dt):
             if device.set_window_autosave(define.APPNAME, "PlatypusMainWindow"):
@@ -1059,7 +1059,8 @@ if __name__ == '__main__':
                 self.on_window_resize(KVWindow, KVWindow.width, KVWindow.height)
         
         def on_start(self):
-            #KVWindow.bind(on_draw=self.on_window_drawn)
+            self.main_widget.on_start()
+
             KVWindow.bind(on_resize=self.on_window_resize)
             """
             display = device.get_current_display()

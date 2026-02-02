@@ -3387,6 +3387,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
 
     lv2['exposure'] = ExposureEffect()
     lv2['contrast'] = ContrastEffect()
+    lv2['light_noise_reduction'] = LightNoiseReductionEffect()
     lv2['clarity'] = ClarityEffect()
     lv2['texture'] = TextureEffect()
     lv2['microcontrast'] = MicroContrastEffect()
@@ -3409,8 +3410,6 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv2['hls2rgb2'] = HLS2RGBEffect()
 
     lv2['curves'] = CurvesEffect()
-
-    lv2['light_noise_reduction'] = LightNoiseReductionEffect()
 
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()

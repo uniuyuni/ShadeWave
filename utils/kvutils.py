@@ -84,6 +84,10 @@ def traverse_widget(root):
                 child.tab_width = dpi_scale_width(child.ref_tab_width)
             if hasattr(child, 'ref_tab_height') and child.ref_tab_height:
                 child.tab_height = dpi_scale_height(child.ref_tab_height)
+            #if hasattr(child, 'ref_size_hint_min') and child.ref_size_hint_min:
+            #    child.size_hint_min = (dpi_scale_width(child.ref_size_hint_min[0]), dpi_scale_height(child.ref_size_hint_min[1]))
+            #if hasattr(child, 'ref_size_hint_max') and child.ref_size_hint_max:
+            #    child.size_hint_max = (dpi_scale_width(child.ref_size_hint_max[0]), dpi_scale_height(child.ref_size_hint_max[1]))
         
         for child in get_entire_widget_tree(root):
             if isinstance(child, MDScrollView):

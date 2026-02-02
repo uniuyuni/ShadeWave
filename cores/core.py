@@ -907,11 +907,11 @@ def get_luminance(img):
 def _apply_midtones(val, midtone):
     if midtone == 0: return val
     if midtone > 0:
-        midtone_scale = 4.0
+        midtone_scale = 16.0
         C = midtone / 100.0 * midtone_scale
         return math.log(1.0 + val * C) / math.log(1.0 + C)
     else:
-        midtone_scale = 4.0
+        midtone_scale = 16.0
         C = -midtone / 100.0 * midtone_scale
         if abs(C) < 1e-6: return val
         log1pC = math.log(1.0 + C)

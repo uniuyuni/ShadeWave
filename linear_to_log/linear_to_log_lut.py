@@ -25,7 +25,7 @@ class LogConverter:
         
         slog3 = np.where(
             linear >= 0.01125000,
-            (420 + np.log10((linear + 0.01) / (0.18 + 0.01)) * 261.5) / 1023,
+            (420 + np.log10((linear + 0.01) / (0.18 + 0.01), dtype=np.float32) * 261.5) / 1023,
             (linear * (171.2102946929 - 95) / 0.01125000 + 95) / 1023
         )
         
@@ -44,12 +44,12 @@ class LogConverter:
         a = (2**18 - 16) / 117.45  # 2233.00638...
         b = (1023 - 95) / 1023      # 0.90713...
         c = 95 / 1023               # 0.09287...
-        s = (7 * np.log(2) * 2**(7 - 14*c/b)) / (a * b)
+        s = (7 * np.log(2, dtype=np.float32) * 2**(7 - 14*c/b)) / (a * b)
         t = (2**(14*(-c/b) + 6) - 64) / a
         
         logc4 = np.where(
             linear >= t,
-            (np.log2(a * linear + 64) - 6) / 14 * b + c,
+            (np.log2(a * linear + 64, dtype=np.float32) - 6) / 14 * b + c,
             (linear - t) / s
         )
         
@@ -66,7 +66,7 @@ class LogConverter:
         clog3 = np.where(
             linear < 0.014,
             -0.42889912 * linear + 0.07623209,
-            0.36726845 * np.log10(linear * 14.98325 + 1) + 0.12783901
+            0.36726845 * np.log10(linear * 14.98325 + 1, dtype=np.float32) + 0.12783901
         )
         
         return np.clip(clog3, 0, 1)
@@ -95,7 +95,7 @@ class LogConverter:
         with np.errstate(divide='ignore', invalid='ignore'):
             redlog3g10 = np.where(
                 linear >= -c,
-                a * np.log10(b * (linear + c) + 1),
+                a * np.log10(b * (linear + c) + 1, dtype=np.float32),
                 15.1927 * (linear + c)
             )
         
@@ -118,7 +118,7 @@ class LogConverter:
         vlog = np.where(
             linear < cut1,
             5.6 * linear + 0.125,
-            c * np.log10(linear + b) + d
+            c * np.log10(linear + b, dtype=np.float32) + d
         )
         
         return np.clip(vlog, 0, 1)
@@ -169,7 +169,7 @@ class LogConverter:
         flog2 = np.where(
             linear < cut,
             (linear * 6.025 * 1023 / 1024 - 0.5) / 1023,
-            (c * np.log10(a * linear + b) + d)
+            (c * np.log10(a * linear + b, dtype=np.float32) + d)
         )
         
         return np.clip(flog2, 0, 1)
@@ -191,7 +191,7 @@ class LogConverter:
         d = 0.01  # log offset
         
         # Calculate linear section to match log at cut point
-        log_at_cut = (np.log10(cut * c + d) * a + b) / 1023
+        log_at_cut = (np.log10(cut * c + d, dtype=np.float32) * a + b) / 1023
         linear_slope = log_at_cut / cut
         
         omlog400 = np.where(

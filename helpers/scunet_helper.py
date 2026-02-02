@@ -20,7 +20,7 @@ _TILE_OVERLAP = 32*2
 
 def setup_scunet(is_color=True, device='cpu', is_half=False):
 
-    model_path = "checkpoints/SCUNet/scunet_color_real_gan.pth" if is_color else "checkpoints/SCUNet/scunet_gray_50.pth"
+    model_path = "checkpoints/SCUNet/scunet_color_real_psnr.pth" if is_color else "checkpoints/SCUNet/scunet_gray_50.pth"
 
     """モデルを初期化してロードする"""
     model = SCUNet(in_nc=1 if "gray" in model_path else 3, config=[4]*7, dim=64, input_resolution=_TILE_SIZE)
