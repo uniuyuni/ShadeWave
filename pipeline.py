@@ -601,6 +601,7 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
         if lv4reset == True:
             lv3[n].reeffect()
 
+        pre_diff = lv3[n].diff
         diff = lv3[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv3[n].apply_diff(rgb)
@@ -608,6 +609,9 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
         
         # Update upstream hash
         efconfig.upstream_hash = hash((efconfig.upstream_hash, n, getattr(lv3[n], 'hash', None)))
+        
+        if pre_diff is not diff:
+            lv4reset = True
 
     return rgb, lv4reset, efconfig.layer_status
 
@@ -625,20 +629,15 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
         if lv5reset == True:
             lv4[n].reeffect()
 
+        pre_diff = lv4[n].diff
         diff = lv4[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv4[n].apply_diff(rgb)
 
+        if pre_diff is not diff:
+            lv5reset = True
+
     return rgb
-
-def pipeline_hls(hls, effects, param, efconfig):
-    efconfig.hls_reference = hls.copy()
-    for i, n in enumerate(effects):
-        diff = effects[n].make_diff(hls, param, efconfig)
-        if diff is not None:
-            hls = effects[n].apply_diff(hls)
-
-    return hls
 
 def pipeline_curve(rgb, effects, param, efconfig):
     rgb2 = rgb.copy()

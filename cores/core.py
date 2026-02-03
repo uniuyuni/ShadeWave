@@ -1446,6 +1446,49 @@ def _adjust_hls_with_weight(hls_img, weight, adjust):
     return output
 
 @lock_numba
+@njit("f4[:,:,:](f4[:,:,:],f4[:,:,:])", parallel=True, fastmath=True)
+def _apply_hls_adjust_map(hls_img, total_adjust):
+    h, w, c = hls_img.shape
+    output = np.empty_like(hls_img)
+    
+    for i in prange(h):
+        for j in range(w):
+            # 累積調整値の取得
+            adj_h = total_adjust[i, j, 0]
+            adj_l = total_adjust[i, j, 1]
+            adj_s = total_adjust[i, j, 2]
+            
+            # --- 色相調整 ---
+            new_h = (hls_img[i, j, 0] + adj_h) % 360.0
+            
+            # --- 明度調整 (指数関数) ---
+            # L_new = L * (2.0 ** (2.0 * TotalAdjL))
+            l_factor = 2.0 ** (adj_l * 2.0)
+            new_l = hls_img[i, j, 1] * l_factor
+            
+            # --- 彩度調整 ---
+            if adj_s > 0.0:
+                 # Vibrance Boost
+                 new_s = hls_img[i, j, 2] + hls_img[i, j, 2] * (1.0 - hls_img[i, j, 2]) * adj_s * 2.0
+            else:
+                 # Linear Desaturation
+                 new_s = hls_img[i, j, 2] * (1.0 + adj_s)
+            
+            # 負の値のクリッピング (過剰な重複によるマイナス防止)
+            if new_s < 0.0: new_s = 0.0
+            
+            output[i, j, 0] = new_h
+            output[i, j, 1] = new_l
+            output[i, j, 2] = new_s
+            
+            # Extra Channels
+            if c > 3:
+                for k in range(3, c):
+                     output[i, j, k] = hls_img[i, j, k]
+                     
+    return output
+
+@lock_numba
 @njit("f4[:,:](f4[:,:,:],f4,f4[:],f4[:],f4[:],f4[:])", parallel=True, fastmath=False)
 def _calculate_elliptical_weight(hls_img, center_h, width_h, fade_h, l_range, s_range):
     h, w, _ = hls_img.shape
@@ -1538,7 +1581,7 @@ class ColorSetting:
         self.kernel_size = 3
 
 # メイン処理関数
-def _adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0, mask_reference=None):
+def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
 
     # Numba設定に変換
     numba_settings = []
@@ -1573,14 +1616,15 @@ def _adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0, mask_refer
     sigma = max(1.0, kernel_size / 2.0)
     kernel = _gaussian_kernel(kernel_size, sigma)
     
-    current_hls = hls_img
+    # 選択マスク計算用の画像
+    mask_source = hls_img
     
-    # 選択マスク計算用の画像 (Referenceがある場合はそちらを使う)
-    mask_source = mask_reference if mask_reference is not None else hls_img
-    
+    # 累積調整マップの初期化
+    h, w = hls_img.shape[:2]
+    total_adjust = np.zeros((h, w, 3), dtype=np.float32)
+
     for setting in numba_settings:
         # Elliptical Weighting (H, L, S combined Isotropically)
-        
         final_weight = _calculate_elliptical_weight(
             mask_source, 
             setting.center, 
@@ -1589,22 +1633,25 @@ def _adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0, mask_refer
             setting.l_range, 
             setting.s_range
         )
-        """
-        hue_map = hls_img[..., 0]
-        hue_weight = _vectorized_circular_smooth_step(hue_map, setting.center, setting.width, setting.fade_width)
-        
-        # 輝度/彩度重み計算
-        ls_weight = calculate_ls_weight_numba(hls_img, setting.l_range, setting.s_range)
-        
-        # 最終重み
-        final_weight = hue_weight * ls_weight
-        """
+
         # ガウシアンブラー適用
         if kernel_size > 1:
             final_weight = gaussian_blur_cv(final_weight, (kernel_size, kernel_size), 0)
         
-        # 重みを使って調整
-        current_hls = _adjust_hls_with_weight(current_hls, final_weight, setting.adjust)
+        # 調整値を累積加算（Broadcasting: (H,W) -> (H,W,1) * (3,) -> (H,W,3)）
+        # setting.adjust: [H, L, S]
+        
+        # NumbaでのBroadcastingがうまくいかない場合があるため、明示的にループまたはreshape
+        # _accumulate_adjust(total_adjust, final_weight, setting.adjust) のような関数でも良いが、
+        # ここはSimple Broadcastingを期待。もしエラーなら修正。
+        # Numba supports broadcasting.
+        
+        # reshape weight to (H,W,1)
+        w_expanded = final_weight.reshape(h, w, 1)
+        total_adjust += w_expanded * setting.adjust
+    
+    # 累積した調整値を一括適用
+    current_hls = _apply_hls_adjust_map(hls_img, total_adjust)
     
     return current_hls
 
@@ -1710,11 +1757,11 @@ HLS_COLOR_SETTING = {
     },
 }
 
-def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0, reference_hls=None):
+def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
     # 色相の設定
     color_setting_one = [HLS_COLOR_SETTING[color_name]]
     color_setting_one[0]['adjust'] = [h, l, s]
-    adjusted_hls = _adjust_hls_colors(hls_img, color_setting_one, resolution_scale, reference_hls)
+    adjusted_hls = adjust_hls_colors(hls_img, color_setting_one, resolution_scale)
 
     return np.array(adjusted_hls)
 
