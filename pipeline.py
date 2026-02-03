@@ -662,34 +662,45 @@ def pipeline_curve(rgb, effects, param, efconfig):
 
 def pipeline_vs_and_saturation(hls, effects, param, efconfig):
 
-    hls_h = hls[..., 0]
-    hls2_h = hls_h.copy()
-    hls_l = hls[..., 1]
-    hls2_l = hls_l.copy()
-    hls_s = hls[..., 2]
-    hls2_s = hls_s.copy()
+    hls_h = hls2_h = hls[..., 0]
+    hls_l = hls2_l = hls[..., 1]
+    hls_s = hls2_s = hls[..., 2]
 
     # Hのみ
-    diff = effects['HuevsHue'].make_diff(hls_h, param, efconfig)
-    if diff is not None: hls2_h = effects['HuevsHue'].apply_diff(hls2_h)
+    diff = effects['HuevsHue'].make_diff([hls_h, hls2_h], param, efconfig)
+    if diff is not None:
+        hls2_h = effects['HuevsHue'].apply_diff(hls2_h)
 
     #　Lのみ
-    diff = effects['HuevsLum'].make_diff(hls_l, param, efconfig)
-    if diff is not None: hls2_l = effects['HuevsLum'].apply_diff([hls_h, hls2_l])
-    diff = effects['LumvsLum'].make_diff(hls_l, param, efconfig)
-    if diff is not None: hls2_l = effects['LumvsLum'].apply_diff(hls2_l)
-    diff = effects['SatvsLum'].make_diff(hls_l, param, efconfig)
-    if diff is not None: hls2_l = effects['SatvsLum'].apply_diff([hls_s, hls2_l])
+    lum_list = [('HuevsLum', hls_h), ('LumvsLum', hls_l), ('SatvsLum', hls_s)]
+    lum_reset = False
+    for n, src in lum_list:
+        if lum_reset == True:
+            effects[n].reeffect()
+
+        pre_diff = effects[n].diff
+        # 最新の hls2_l を使用して引数を構築
+        diff = effects[n].make_diff([src, hls2_l], param, efconfig)
+        if diff is not None:
+            hls2_l = effects[n].apply_diff(hls2_l)
+
+        if pre_diff is not diff:
+            lum_reset = True
 
     # Sのみ
-    diff = effects['HuevsSat'].make_diff(hls_s, param, efconfig)
-    if diff is not None: hls2_s = effects['HuevsSat'].apply_diff([hls2_h, hls2_s])
-    diff = effects['LumvsSat'].make_diff(hls_s, param, efconfig)
-    if diff is not None: hls2_s = effects['LumvsSat'].apply_diff([hls_l, hls2_s])
-    diff = effects['SatvsSat'].make_diff(hls_s, param, efconfig)
-    if diff is not None: hls2_s = effects['SatvsSat'].apply_diff(hls2_s)
-    diff = effects['saturation'].make_diff(hls_s, param, efconfig)
-    if diff is not None: hls2_s = effects['saturation'].apply_diff(hls2_s)
+    sat_list = [('HuevsSat', hls_h), ('LumvsSat', hls_l), ('SatvsSat', hls_s), ('saturation', None)]
+    sat_reset = False
+    for n, src in sat_list:
+        if sat_reset == True:
+            effects[n].reeffect()
+
+        pre_diff = effects[n].diff
+        diff = effects[n].make_diff([src, hls2_s] if n != 'saturation' else hls2_s, param, efconfig)
+        if diff is not None:
+            hls2_s = effects[n].apply_diff(hls2_s)
+
+        if pre_diff is not diff:
+            sat_reset = True
     
     # チャンネル数が4以上の場合（Gainマップ等）、残りのチャンネルを結合
     channels = [hls2_h, hls2_l, hls2_s]

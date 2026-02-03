@@ -453,11 +453,11 @@ def calc_saturation(hsl_s, sat, vib):
     elif vib > 0.0:
         # 通常の計算
         vib = vib ** 2.0
-        final_s = np.log(1.0 + vib * hsl_s) / np.log(1.0 + vib)
+        final_s = np.log(1.0 + vib * hsl_s, dtype=np.float32) / np.log(1.0 + vib, dtype=np.float32)
     else:
         # 逆関数を使用
         vib = vib ** 2.0
-        final_s = (np.exp(hsl_s * np.log(1.0 + vib)) - 1.0) / vib
+        final_s = (np.exp(hsl_s * np.log(1.0 + vib, dtype=np.float32)) - 1.0) / vib
 
     # 彩度を適用
     final_s = final_s * sat

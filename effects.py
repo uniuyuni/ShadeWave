@@ -2688,7 +2688,7 @@ class HuevsHueEffect(Effect):
     def set2param(self, param, widget):
         param['HuevsHue'] = widget.ids["HuevsHue"].get_point_list()
 
-    def make_diff(self, hls_h, param, efconfig):
+    def make_diff(self, hls_hh, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         hh = self._get_param(param, "HuevsHue")
         if switch_color_curves == False or hh is None:
@@ -2700,13 +2700,10 @@ class HuevsHueEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(hh)
-                self.diff = ((lut - 0.5) * 2.0) * 360
+                lut = ((lut - 0.5) * 2.0) * 360
+                self.diff = core.apply_lut(hls_hh[0] / 360, lut, 1.0) + hls_hh[1]
 
         return self.diff
-
-    def apply_diff(self, hls_h):
-        hls_h = core.type_convert(hls_h, np.ndarray)
-        return core.apply_lut(hls_h / 360, self.diff, 1.0) + hls_h
 
 class HuevsLumEffect(Effect):
 
@@ -2722,7 +2719,7 @@ class HuevsLumEffect(Effect):
     def set2param(self, param, widget):
         param['HuevsLum'] = widget.ids["HuevsLum"].get_point_list()
 
-    def make_diff(self, hls_l, param, efconfig):
+    def make_diff(self, hls_hl, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         hl = self._get_param(param, "HuevsLum")
         if switch_color_curves == False or hl is None:
@@ -2734,13 +2731,10 @@ class HuevsLumEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(hl)
-                self.diff = 2.0 ** ((lut - 0.5) * 4.0)
+                lut = 2.0 ** ((lut - 0.5) * 4.0)
+                self.diff = core.apply_lut(hls_hl[0] / 360, lut, 1.0) * hls_hl[1]
 
         return self.diff
-
-    def apply_diff(self, hls_hl):
-        hls_hl = core.type_convert(hls_hl, np.ndarray)
-        return core.apply_lut(hls_hl[0] / 360, self.diff, 1.0) * hls_hl[1]
 
 class HuevsSatEffect(Effect):
 
@@ -2756,7 +2750,7 @@ class HuevsSatEffect(Effect):
     def set2param(self, param, widget):
         param['HuevsSat'] = widget.ids["HuevsSat"].get_point_list()
 
-    def make_diff(self, hls_s, param, efconfig):
+    def make_diff(self, hls_hs, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         hs = self._get_param(param, "HuevsSat")
         if switch_color_curves == False or hs is None:
@@ -2768,13 +2762,10 @@ class HuevsSatEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(hs)
-                self.diff = (lut - 0.5) * 2.0 + 1.0
+                lut = (lut - 0.5) * 2.0 + 1.0
+                self.diff = core.apply_lut(hls_hs[0] / 360.0, lut, 1.0) * hls_hs[1]
 
         return self.diff
-
-    def apply_diff(self, hls_hs):
-        hls_hs = core.type_convert(hls_hs, np.ndarray)
-        return core.apply_lut(hls_hs[0] / 360.0, self.diff, 1.0) * hls_hs[1]
 
 class LumvsLumEffect(Effect):
 
@@ -2790,7 +2781,7 @@ class LumvsLumEffect(Effect):
     def set2param(self, param, widget):
         param['LumvsLum'] = widget.ids["LumvsLum"].get_point_list()
 
-    def make_diff(self, hls_l, param, efconfig):
+    def make_diff(self, hls_ll, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         ll = self._get_param(param, "LumvsLum")
         if switch_color_curves == False or ll is None:
@@ -2802,13 +2793,10 @@ class LumvsLumEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(ll)
-                self.diff = 2.0 ** ((lut - 0.5) * 4.0)
+                lut = 2.0 ** ((lut - 0.5) * 4.0)
+                self.diff = core.apply_lut(hls_ll[0], lut, 1.0) * hls_ll[1]
 
         return self.diff
-
-    def apply_diff(self, hls_l):
-        hls_l = core.type_convert(hls_l, np.ndarray)
-        return core.apply_lut(hls_l, self.diff, 1.0) * hls_l
 
 class LumvsSatEffect(Effect):
 
@@ -2824,7 +2812,7 @@ class LumvsSatEffect(Effect):
     def set2param(self, param, widget):
         param['LumvsSat'] = widget.ids["LumvsSat"].get_point_list()
 
-    def make_diff(self, hls_l, param, efconfig):
+    def make_diff(self, hls_ls, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         ls = self._get_param(param, "LumvsSat")
         if switch_color_curves == False or ls is None:
@@ -2836,13 +2824,10 @@ class LumvsSatEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(ls)
-                self.diff = (lut - 0.5) * 2.0 + 1.0
+                lut = (lut - 0.5) * 2.0 + 1.0
+                self.diff = core.apply_lut(hls_ls[0], lut, 1.0) * hls_ls[1]
 
         return self.diff
-
-    def apply_diff(self, hls_ls):
-        hls_ls = core.type_convert(hls_ls, np.ndarray)
-        return core.apply_lut(hls_ls[0], self.diff, 1.0) * hls_ls[1]
 
 class SatvsLumEffect(Effect):
 
@@ -2858,7 +2843,7 @@ class SatvsLumEffect(Effect):
     def set2param(self, param, widget):
         param['SatvsLum'] = widget.ids["SatvsLum"].get_point_list()
 
-    def make_diff(self, hls_s, param, efconfig):
+    def make_diff(self, hls_sl, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         sl = self._get_param(param, "SatvsLum")
         if switch_color_curves == False or sl is None:
@@ -2870,13 +2855,10 @@ class SatvsLumEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(sl)
-                self.diff = 2.0 ** ((lut - 0.5) * 4.0)
+                lut = 2.0 ** ((lut - 0.5) * 4.0)
+                self.diff = core.apply_lut(hls_sl[0], lut, 1.0) * hls_sl[1]
 
         return self.diff
-
-    def apply_diff(self, hls_sl):
-        hls_sl = core.type_convert(hls_sl, np.ndarray)
-        return core.apply_lut(hls_sl[0], self.diff, 1.0) * hls_sl[1]
 
 class SatvsSatEffect(Effect):
 
@@ -2892,7 +2874,7 @@ class SatvsSatEffect(Effect):
     def set2param(self, param, widget):
         param['SatvsSat'] = widget.ids["SatvsSat"].get_point_list()
 
-    def make_diff(self, hls_s, param, efconfig):
+    def make_diff(self, hls_ss, param, efconfig):
         switch_color_curves = self._get_param(param, "switch_color_curves")
         ss = self._get_param(param, "SatvsSat")
         if switch_color_curves == False or ss is None:
@@ -2904,13 +2886,10 @@ class SatvsSatEffect(Effect):
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(ss)
-                self.diff = (lut - 0.5) * 2.0 + 1.0
+                lut = (lut - 0.5) * 2.0 + 1.0
+                self.diff = core.apply_lut(hls_ss[0], lut, 1.0) * hls_ss[1]
 
         return self.diff
-
-    def apply_diff(self, hls_s):
-        hls_s = core.type_convert(hls_s, np.ndarray)
-        return core.apply_lut(hls_s, self.diff, 1.0) * hls_s
 
 class SaturationEffect(Effect):
 
@@ -2942,13 +2921,9 @@ class SaturationEffect(Effect):
                 self.hash = param_hash
 
                 hls_s = core.type_convert(hls_s, np.ndarray)
-                hls2_s = core.calc_saturation(hls_s, sat, vib)
-                self.diff = np.divide(hls2_s, hls_s, where=hls_s!=0.0, dtype=np.float32)
+                self.diff = core.calc_saturation(hls_s, sat, vib)
         
         return self.diff
-    
-    def apply_diff(self, hls_s):
-        return hls_s * self.diff
 
 class AutoExposureEffect(Effect):
     # rgb_or_rawがrawの場合
