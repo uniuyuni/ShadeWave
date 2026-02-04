@@ -7,8 +7,6 @@ from kivy.properties import NumericProperty as KVNumericProperty, StringProperty
 
 import widgets.float_input
 
-class RectangleToggleButton(MDRectangleFlatButton, MDToggleButton):
-    pass
 
 class HeadLabel(KVBoxLayout):
     press = KVBooleanProperty(True)

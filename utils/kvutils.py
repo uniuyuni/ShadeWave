@@ -95,7 +95,11 @@ def traverse_widget(root):
 
 
 def dpi_scale_width(ref):
+    if isinstance(ref, (list)):
+        return [r * device.dpi_scale() for r in ref]
     return ref * device.dpi_scale()
 
 def dpi_scale_height(ref):
+    if isinstance(ref, (list)):
+        return [r * device.dpi_scale() for r in ref]
     return ref * device.dpi_scale()

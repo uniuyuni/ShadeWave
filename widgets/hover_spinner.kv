@@ -1,2 +1,14 @@
 
+<HoverSpinnerOption@SpinnerOption>:
+    size_hint_y: None
+    height: dp(22)
+    font_size: '9pt'
+    text_size: self.width - dp(20), None
+    shorten: True  # 長い場合省略（...表示）
+    shorten_from: 'right'
+
 <HoverSpinner>:
+    text_size: self.width - dp(20), None
+    shorten: True
+    shorten_from: 'right'
+    option_cls: "HoverSpinnerOption"

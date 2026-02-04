@@ -88,7 +88,16 @@
 
 <IconButton@ButtonBehavior+Image>:
     background_normal: 'gray'
-    background_down: 'white'
+    md_bg_color: 'gray'
+
+<IconToggleButton@MDIconButton+ToggleButtonBehavior>:
+    _no_ripple_effect: True
+    canvas.before:
+        Color:
+            rgba: [0.4, 0.4, 0.4, 1] if self.state == 'normal' else [1, 1, 1, 1]
+        Line:
+            rectangle: [self.x, self.y, self.width, self.height]
+            width: 1   
 
 <MainWidget>:
     loading: True
@@ -144,17 +153,29 @@
                                 size_hint_y: None
                                 ref_height: 22
                                 
-                                ToggleButton:
+                                IconToggleButton:
                                     id: toggle_underexposure
-                                    size_hint_x: None
-                                    ref_width: 50
-                                    text: "Under"
+                                    icon: 'arrow-bottom-left-bold-box'
+                                    font_size: '8pt'
+                                    icon_size: '21dp'
+                                    size_hint: None, None
+                                    ref_width: 30
+                                    ref_height: 22
+                                    ref_padding: 8, 4, 8, 6
                                     on_state: root.start_draw_image()
-                                ToggleButton:
+
+                                HSpacer:
+                                    ref_width: 4
+
+                                IconToggleButton:
                                     id: toggle_overexposure
-                                    size_hint_x: None
-                                    ref_width: 50
-                                    text: "Over"
+                                    icon: 'arrow-top-right-bold-box-outline'
+                                    font_size: '8pt'
+                                    icon_size: '21dp'
+                                    size_hint: None, None
+                                    ref_width: 30
+                                    ref_height: 22
+                                    ref_padding: 8, 4, 8, 6
                                     on_state: root.start_draw_image()
 
                     CollapsibleBox:
@@ -694,7 +715,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -738,7 +760,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -782,7 +805,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -826,7 +850,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -870,7 +895,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -914,7 +940,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -958,7 +985,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
@@ -1002,7 +1030,8 @@
                                                 min: -180
                                                 max: 180
                                                 value: 0
-                                                step: 1
+                                                step: 0.1
+                                                for_float: True
                                                 on_slider: root.apply_effects_lv(2, 'hls')
                                                 on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
                                                 on_after_edit: root.end_history_effect_ctrl(2, 'hls')
