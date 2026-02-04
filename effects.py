@@ -2151,7 +2151,7 @@ class ClarityEffect(Effect):
                 self.hash = param_hash
 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = local_contrast.apply_clarity_luminance(rgb, (con * 2 * efconfig.resolution_scale) / 100)
+                self.diff = local_contrast.apply_clarity(rgb, (con * efconfig.resolution_scale) / 100 if con > 0 else (con * efconfig.resolution_scale) / 200)
 
         return self.diff
 
@@ -2183,7 +2183,7 @@ class TextureEffect(Effect):
                 self.hash = param_hash
 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = local_contrast.apply_texture_advanced(rgb, (con * 0.5 * efconfig.resolution_scale) / 100)
+                self.diff = local_contrast.apply_texture(rgb, (con * efconfig.resolution_scale) / 200)
 
         return self.diff
     

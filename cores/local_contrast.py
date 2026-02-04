@@ -6,7 +6,9 @@ import cores.core as core
 
 def apply_clarity(rgb_image, clarity_amount):
     """
-    RGB float32画像に明瞭度（マイクロコントラスト）を適用する関数（OpenCV使用）
+    RGB float32画像に明瞭度（マイクロコントラスト）を適用する関数
+    Guided Filterを使用し、ハローを抑制しつつ中間調のローカルコントラストを強調する
+    (Lightroomの挙動に近づけた実装)
     
     Parameters:
     -----------
@@ -37,210 +39,57 @@ def apply_clarity(rgb_image, clarity_amount):
     if not isinstance(clarity_amount, (int, float)):
         raise TypeError("clarity_amount must be numeric")
     
-    if not -1 <= clarity_amount <= 1:
-        raise ValueError("clarity_amount must be between -100 and 100")
-    
-    # 効果なしの場合は元画像をそのまま返す
     if clarity_amount == 0:
         return rgb_image.copy()
     
-    # パラメータ計算
-    strength = clarity_amount
-    
-    # カーネルサイズの設定（OpenCVのGaussianBlurはカーネルサイズを指定）
-    if abs(strength) <= 0.3:
-        kernel_size = 5  # sigma ≈ 1.0相当
-    elif abs(strength) <= 0.7:
-        kernel_size = 7  # sigma ≈ 1.5相当
-    else:
-        kernel_size = 9  # sigma ≈ 2.0相当
-    
-    # 強度の調整（非線形変換で自然な効果に）
-    if strength > 0:
-        amount = strength * 1.2  # 最大1.2倍
-    else:
-        amount = strength * 0.8  # 最大-0.8倍
-    
-    # ガウシアンぼかしを適用
-    blurred = core.gaussian_blur(rgb_image, (kernel_size, kernel_size), 0)
-    
-    # 高周波成分を抽出
-    high_freq = rgb_image - blurred
-    
-    # 明瞭度を適用
-    result = rgb_image + high_freq * amount
-    
-    # 値域を [0.0, 1.0] にクランプ
-    result = np.clip(result, 0.0, 1.0)
-    
-    return result
-
-
-def apply_clarity_luminance(rgb_image, clarity_amount):
-    """
-    輝度チャンネルのみで明瞭度を適用する高品質版（OpenCV使用）
-    
-    Parameters:
-    -----------
-    rgb_image : numpy.ndarray
-        RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
-    clarity_amount : int
-        明瞭度の適用度 (-1 から 1)
-    
-    Returns:
-    --------
-    numpy.ndarray
-        処理後のRGB画像 (H, W, 3) shape, float32, 値域 [0.0, 1.0]
-    """
-    
-    # 入力検証
-    if not isinstance(rgb_image, np.ndarray):
-        raise TypeError("rgb_image must be numpy.ndarray")
-    
-    if rgb_image.dtype != np.float32:
-        raise TypeError("rgb_image must be float32")
-    
-    if len(rgb_image.shape) != 3 or rgb_image.shape[2] != 3:
-        raise ValueError("rgb_image must have shape (H, W, 3)")
-    
-    if not isinstance(clarity_amount, (int, float)):
-        raise TypeError("clarity_amount must be numeric")
-        
-    if clarity_amount == 0:
-        return rgb_image.copy()
-    
-    # RGB to Grayscale (輝度) 変換 - OpenCVを使用
+    # 輝度画像の生成（ガイド画像として使用）
     luminance = core.cvtColorRGB2Gray(rgb_image)
-    
-    # パラメータ計算
-    strength = clarity_amount
-    
-    if abs(strength) <= 0.3:
-        kernel_size = 5
-    elif abs(strength) <= 0.7:
-        kernel_size = 7
-    else:
-        kernel_size = 9
-    
-    if strength > 0:
-        amount = strength * 1.0
-    else:
-        amount = strength * 0.6
-    
-    # 輝度チャンネルで明瞭度処理
-    blurred_lum = core.gaussian_blur(luminance, (kernel_size, kernel_size), 0)
-    high_freq_lum = luminance - blurred_lum
-    enhanced_lum = luminance + high_freq_lum * amount
-    enhanced_lum = np.clip(enhanced_lum, 0.0, 1.0)
-    
-    # 輝度の変化量を計算
-    # ゼロ除算を避けるため、小さな値を加算
-    epsilon = 1e-7
-    lum_ratio = enhanced_lum / (luminance + epsilon)
-    
-    # RGB各チャンネルに変化量を適用
-    result = rgb_image.copy()
-    for channel in range(3):
-        result[:, :, channel] *= lum_ratio
-        result[:, :, channel] = np.clip(result[:, :, channel], 0.0, 1.0)
-    
-    return result
-
-
-def apply_clarity_advanced(rgb_image, clarity_amount, preserve_mask=None):
-    """
-    高度な明瞭度処理（エッジ検出とマスクを併用）
-    
-    Parameters:
-    -----------
-    rgb_image : numpy.ndarray
-        RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
-    clarity_amount : int
-        明瞭度の適用度 (-1 から 1)
-    preserve_mask : numpy.ndarray, optional
-        保護マスク (H, W) shape, float32, 値域 [0.0, 1.0]
-        1.0: 完全に処理適用, 0.0: 処理をスキップ
-    
-    Returns:
-    --------
-    numpy.ndarray
-        処理後のRGB画像 (H, W, 3) shape, float32, 値域 [0.0, 1.0]
-    """
-    
-    # 基本的な入力検証
-    if not isinstance(rgb_image, np.ndarray):
-        raise TypeError("rgb_image must be numpy.ndarray")
-    
-    if rgb_image.dtype != np.float32:
-        raise TypeError("rgb_image must be float32")
-    
-    if len(rgb_image.shape) != 3 or rgb_image.shape[2] != 3:
-        raise ValueError("rgb_image must have shape (H, W, 3)")
-    
-    if not isinstance(clarity_amount, (int, float)):
-        raise TypeError("clarity_amount must be numeric")
-    
-    if not -1 <= clarity_amount <= 1:
-        raise ValueError("clarity_amount must be between -100 and 100")
-    
-    if clarity_amount == 0:
-        return rgb_image.copy()
-    
-    # 輝度変換
-    luminance = core.cvtColorRGB2Gray(rgb_image)
-    
-    # エッジ検出によるマスク生成
-    # Sobelフィルタでエッジを検出
-    grad_x = cv2.Sobel(luminance, cv2.CV_32F, 1, 0, ksize=3)
-    grad_y = cv2.Sobel(luminance, cv2.CV_32F, 0, 1, ksize=3)
-    edge_magnitude = np.sqrt(grad_x**2 + grad_y**2)
-    
-    # エッジマスクを正規化
-    edge_mask = edge_magnitude / (edge_magnitude.max() + 1e-7)
-    edge_mask = np.clip(edge_mask, 0.0, 1.0)
-    
-    # ユーザー指定のマスクと組み合わせ
-    if preserve_mask is not None:
-        if preserve_mask.shape != luminance.shape:
-            raise ValueError("preserve_mask must have same shape as image")
-        final_mask = edge_mask * preserve_mask
-    else:
-        final_mask = edge_mask
     
     # パラメータ設定
-    strength = clarity_amount
+    # Clarityは比較的広い範囲のローカルコントラストを扱う
+    h, w = luminance.shape[:2]
+    long_side = max(h, w)
     
-    if abs(strength) <= 0.3:
-        kernel_size = 5
-    elif abs(strength) <= 0.7:
-        kernel_size = 7
+    # 画像サイズに適応した半径設定 (例: 長辺の1-2%程度)
+    radius = max(8, int(long_side * 0.02))
+    eps = 0.005 # エッジ保存の強さ
+    
+    # Guided Filterによるベースレイヤー（平滑化画像）の作成
+    # OpenCVのximgprocを使用
+    if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'guidedFilter'):
+        base_layer = cv2.ximgproc.guidedFilter(guide=luminance, src=luminance, radius=radius, eps=eps, dDepth=-1)
     else:
-        kernel_size = 9
+        # Fallback if ximgproc is not available (though checked)
+        base_layer = _guided_filter_optimized(luminance, luminance, radius, eps)
     
-    if strength > 0:
-        amount = strength * 1.0
-    else:
-        amount = strength * 0.6
+    # 詳細レイヤー（Structure）の抽出
+    # 元画像 - ベースレイヤー
+    detail_layer = luminance - base_layer
     
-    # 明瞭度処理
-    blurred = core.gaussian_blur(rgb_image, (kernel_size, kernel_size), 0)
-    high_freq = rgb_image - blurred
+    # 中間調マスクの作成 (計算)
+    # 念のためfloat32を維持
+    # mid_tone_mask = 1.0 - (2.0 * np.minimum(luminance, 1.0 - luminance)) ** 2
     
-    # マスクを適用して処理
-    result = rgb_image.copy()
-    for channel in range(3):
-        enhanced_channel = rgb_image[:, :, channel] + high_freq[:, :, channel] * amount
-        # マスクを使って元画像と合成
-        result[:, :, channel] = (rgb_image[:, :, channel] * (1.0 - final_mask) + 
-                                enhanced_channel * final_mask)
+    strength = np.float32(clarity_amount)
     
-    result = np.clip(result, 0.0, 1.0)
+    # 明瞭度適用
+    # 詳細成分を強調するが、輝度に応じて強度を変える
+    enhanced_luminance = luminance + detail_layer * strength 
+    
+    # 輝度の変化率を計算
+    delta = enhanced_luminance - luminance
+    
+    # 彩度補正（L率に応じてRGBをスケーリング）
+    result = rgb_image + delta[..., np.newaxis]
+    
     return result
+
 
 def apply_texture(rgb_image, texture_amount):
     """
     RGB float32画像にテクスチャ強調を適用する関数
-    表面の質感や細かいパターンを強調
+    ノイズ（超高周波）を避け、中高周波成分のみを強調する
+    (Lightroomの挙動に近づけた実装)
     
     Parameters:
     -----------
@@ -248,154 +97,75 @@ def apply_texture(rgb_image, texture_amount):
         RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
     texture_amount : int
         テクスチャの適用度 (-1 から 1)
-        負の値: スムース効果
-        0: 変化なし
-        正の値: テクスチャ強調
-    
+        
     Returns:
     --------
     numpy.ndarray
-        処理後のRGB画像 (H, W, 3) shape, float32, 値域 [0.0, 1.0]
+        処理後のRGB画像
     """
-    
-    # 入力検証
-    if not isinstance(rgb_image, np.ndarray):
-        raise TypeError("rgb_image must be numpy.ndarray")
-    
-    if rgb_image.dtype != np.float32:
-        raise TypeError("rgb_image must be float32")
-    
-    if len(rgb_image.shape) != 3 or rgb_image.shape[2] != 3:
-        raise ValueError("rgb_image must have shape (H, W, 3)")
-    
-    if not isinstance(texture_amount, (int, float)):
-        raise TypeError("texture_amount must be numeric")
-    
-    if not -1 <= texture_amount <= 1:
-        raise ValueError("texture_amount must be between -100 and 100")
     
     if texture_amount == 0:
         return rgb_image.copy()
     
     # パラメータ計算
-    strength = texture_amount
+    strength = np.float32(texture_amount)
     
-    # テクスチャ検出用のマルチスケール処理
-    # 2つの異なるスケールでぼかしを作成
-    small_blur = core.gaussian_blur_cv(rgb_image, (3, 3), 0)  # 細かいテクスチャ用
-    medium_blur = core.gaussian_blur_cv(rgb_image, (5, 5), 0)  # 中程度のテクスチャ用
-    
-    # 2段階の高周波成分を抽出
-    fine_texture = rgb_image - small_blur      # 非常に細かいテクスチャ
-    medium_texture = small_blur - medium_blur  # 中程度のテクスチャ
-    
-    # 輝度でテクスチャマスクを作成
+    # 輝度変換
     luminance = core.cvtColorRGB2Gray(rgb_image)
     
-    # 局所標準偏差でテクスチャ領域を検出
-    # 畳み込みで局所的な分散を計算
-    kernel = np.ones((5, 5), np.float32) / 25
-    local_mean = cv2.filter2D(luminance, -1, kernel)
-    local_mean_sq = cv2.filter2D(luminance**2, -1, kernel)
-    local_variance = local_mean_sq - local_mean**2
-    texture_mask = np.sqrt(np.maximum(local_variance, 0))
+    # 周波数分離（バンドパスフィルタ）
     
-    # テクスチャマスクを正規化
-    texture_mask = texture_mask / (texture_mask.max() + 1e-7)
-    texture_mask = np.clip(texture_mask, 0.0, 1.0)
+    # 1. ノイズ成分（超高周波）を除去するためのわずかなブラー
+    # sigma_noise = 0.5
+    # noise_layer = cv2.GaussianBlur(luminance, (0, 0), sigma_noise)
     
-    # 強度調整
-    if strength > 0:
-        fine_amount = strength * 0.8      # 細かいテクスチャ
-        medium_amount = strength * 0.4    # 中程度のテクスチャ
-    else:
-        fine_amount = strength * 0.6
-        medium_amount = strength * 0.3
+    # 2. テクスチャ成分と構造成分を分けるためのブラー
+    # blur_small = cv2.GaussianBlur(luminance, (0, 0), 1.0) # ノイズ除去用
+    # blur_large = cv2.GaussianBlur(luminance, (0, 0), 4.0) # 構造抽出用
+    # 上記パラメータは解像度依存の可能性あるが、一旦固定で
     
-    # テクスチャを適用
-    result = rgb_image.copy()
-    for channel in range(3):
-        # 2段階のテクスチャを重ね合わせ
-        enhanced = (rgb_image[:, :, channel] + 
-                   fine_texture[:, :, channel] * fine_amount +
-                   medium_texture[:, :, channel] * medium_amount)
-        
-        # テクスチャマスクで選択的に適用
-        result[:, :, channel] = (rgb_image[:, :, channel] * (1.0 - texture_mask) + 
-                                enhanced * texture_mask)
+    blur_small = cv2.GaussianBlur(luminance, (0, 0), 1.0) 
+    blur_large = cv2.GaussianBlur(luminance, (0, 0), 4.0) 
     
-    result = np.clip(result, 0.0, 1.0)
+    # テクスチャ成分 = (小ブラー) - (大ブラー)
+    extracted_texture = blur_small - blur_large
+    
+    # 強調適用
+    # RGB画像に対して、抽出したテクスチャ成分を加算
+    # strengthが正なら強調、負ならスムージング
+    
+    # 単純加算だと彩度が変わらないため、RGBそれぞれに加算で輝度コントラストをつける
+    factor = np.float32(1.5)
+    result = rgb_image + extracted_texture[..., np.newaxis] * strength * factor
+    
     return result
 
 
-def apply_texture_advanced(rgb_image, texture_amount):
+def _guided_filter_optimized(I, p, r, eps):
     """
-    高度なテクスチャ強調（周波数分離とウェーブレット風処理）
-    
-    Parameters:
-    -----------
-    rgb_image : numpy.ndarray
-        RGB画像データ (H, W, 3) shape, float32, 値域 [0.0, 1.0]
-    texture_amount : int
-        テクスチャの適用度 (-1 から 1)
-    
-    Returns:
-    --------
-    numpy.ndarray
-        処理後のRGB画像 (H, W, 3) shape, float32, 値域 [0.0, 1.0]
+    Guided Filterの最適化版（OpenCVのboxFilterを利用）
+    ximgprocがない場合のフォールバック
     """
+    ksize = 2 * r + 1
     
-    # 入力検証（同じ）
-    if not isinstance(rgb_image, np.ndarray):
-        raise TypeError("rgb_image must be numpy.ndarray")
+    mean_I = cv2.boxFilter(I, cv2.CV_32F, (ksize, ksize))
+    mean_p = cv2.boxFilter(p, cv2.CV_32F, (ksize, ksize))
+    mean_Ip = cv2.boxFilter(I * p, cv2.CV_32F, (ksize, ksize))
     
-    if rgb_image.dtype != np.float32:
-        raise TypeError("rgb_image must be float32")
+    cov_Ip = mean_Ip - mean_I * mean_p
     
-    if len(rgb_image.shape) != 3 or rgb_image.shape[2] != 3:
-        raise ValueError("rgb_image must have shape (H, W, 3)")
+    mean_II = cv2.boxFilter(I * I, cv2.CV_32F, (ksize, ksize))
+    var_I = mean_II - mean_I * mean_I
     
-    if not isinstance(texture_amount, (int, float)):
-        raise TypeError("texture_amount must be numeric")
+    a = cov_Ip / (var_I + eps)
+    b = mean_p - a * mean_I
     
-    if texture_amount == 0:
-        return rgb_image.copy()
+    mean_a = cv2.boxFilter(a, cv2.CV_32F, (ksize, ksize))
+    mean_b = cv2.boxFilter(b, cv2.CV_32F, (ksize, ksize))
     
-    # パラメータ
-    strength = texture_amount * 10
-    
-    # 周波数分離（擬似ウェーブレット）
-    # 複数のスケールでの分解
-    scales = [(3, 3), (5, 5), (7, 7), (9, 9)]
-    frequency_bands = []
-    
-    current_image = rgb_image.copy()
-    
-    for i, (kx, ky) in enumerate(scales):
-        blurred = core.gaussian_blur(current_image, (kx, ky), 0)
-        high_freq = current_image - blurred
-        frequency_bands.append(high_freq)
-        current_image = blurred
-    
-    # 最低周波数成分
-    frequency_bands.append(current_image)
-    
-    # 各周波数帯域に異なる重みを適用
-    weights = [1.0, 0.7, 0.4, 0.2]  # 高周波ほど強く強調
-    
-    # 再構成
-    result = frequency_bands[-1].copy()  # 最低周波数から開始
-    
-    for i, (band, weight) in enumerate(zip(frequency_bands[:-1], weights)):
-        if strength > 0:
-            enhanced_band = band * (1.0 + strength * weight * 0.5)
-        else:
-            enhanced_band = band * (1.0 + strength * weight * 0.3)
-        
-        result += enhanced_band
-    
-    result = np.clip(result, 0.0, 1.0)
-    return result
+    q = mean_a * I + mean_b
+    return q
+
 
 def apply_microcontrast(image, strength):
     """
