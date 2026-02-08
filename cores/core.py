@@ -21,6 +21,7 @@ import utils.utils as utils
 import params
 import config
 from threads import lock_numba
+import cores.hlsrgb as hlsrgb
 
 def normalize_image(image_data):
     # 画像データを正規化
@@ -2473,3 +2474,102 @@ def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
     
     return sharpened
 
+
+def remove_muddy_yellow(img_linear, strength=0.3, protect_vivid=True):
+    """
+    HDR対応の黄色除去フィルター
+    """
+    # 1. 汎用関数で YCbCr に変換
+    img_ycbcr = hlsrgb.linear_rgb_to_ycbcr(img_linear)
+    y, cb, cr = cv2.split(img_ycbcr)
+    
+    # 2. 黄色成分の特定 (Cb < 0 が黄色寄り)
+    yellow_mask = np.minimum(cb, 0.0) # マイナス値が保持される
+    
+    # 3. 濁り判定（鮮やかさ保護）
+    if protect_vivid:
+        # 彩度 (Chroma)
+        chroma = np.sqrt(cb**2 + cr**2)
+        
+        # 相対彩度（輝度に対する彩度の割合）
+        # ゼロ除算防止のイプシロン
+        relative_saturation = chroma / (y + 1e-6)
+        
+        # 彩度が低い（濁っている）場所ほど 1.0 に近づくウェイト
+        dullness_weight = np.exp(-1.0 * relative_saturation * 5.0)
+        
+        # 最終的な補正量
+        correction_factor = strength * dullness_weight
+    else:
+        correction_factor = strength
+
+    # 4. Cbチャンネルの操作（黄色成分の除去）
+    # yellow_maskはマイナス値なので、引くことでプラス（0方向）へ戻る
+    # つまり「青みを足す」のと同じ効果だが、Yは不変なので明るさは変わらない
+    cb_new = cb - (yellow_mask * correction_factor)
+
+    # 5. 汎用関数で RGB に戻す
+    img_result_ycbcr = cv2.merge((y, cb_new, cr))
+    return hlsrgb.linear_ycbcr_to_rgb(img_result_ycbcr)
+
+def clean_image_mud(img_float32, shadow_threshold=0.2, separation_strength=0.2):
+    """
+    画像の「暗部の色濁り」を除去し、「色の分離」を良くして透明感を出す関数。
+    
+    Args:
+        img_float32 (numpy.ndarray): 入力画像 (RGB, float32, 0.0-1.0)
+        shadow_threshold (float): これより暗い領域の彩度を落とす（黒を締める）閾値。
+        separation_strength (float): 色分離（クロストーク除去）の強度。
+
+    Returns:
+        numpy.ndarray: 処理後の画像 (RGB, float32)
+    """
+    
+    # --- Step 1: シャドークリーニング（暗部の濁り取り） ---
+    # HSV空間に変換 (H:色相, S:彩度, V:明度)
+    hlcg = hlsrgb.rgb_to_hlc_gain(img_float32)
+    h, l, c, g = cv2.split(hlcg)
+    
+    # 明度(v)が低い部分ほど、彩度(s)を下げるマスクを作成
+    # シグモイド関数的なカーブで、自然に減衰させます
+    # v < threshold の領域に対して、彩度に乗算する係数(0.0〜1.0)を作る
+    
+    # 傾き（急峻さ）
+    slope = 15.0 
+    # 中心点
+    center = shadow_threshold
+    
+    # ロジスティック関数で滑らかなマスク作成 (0に近いほど暗部 -> 係数を小さくする)
+    # vが小さい(暗い) -> desat_mask は 0に近づく
+    # vが大きい(明るい) -> desat_mask は 1に近づく
+    desat_mask = 1.0 / (1.0 + np.exp(-slope * (l - center)))
+    
+    # 彩度を適用 (暗部の色を抜く＝黒を純粋な黒にする)
+    c_cleaned = c * desat_mask
+    
+    # 一旦RGBに戻す
+    hlcg_cleaned = cv2.merge((h, l, c_cleaned, g))
+    img_shadow_clean = hlsrgb.hlc_gain_to_rgb(hlcg_cleaned)
+
+    # --- Step 2: カラーセパレーション（色の純度向上） ---
+    # CMOS特有の「混色」を取り除く簡易的なマトリクス処理
+    # 例: Rピクセルにある「わずかなGやB」を引き算して、RをよりRらしくする
+    
+    # 各チャンネルを取得
+    r, g, b = cv2.split(img_shadow_clean)
+    
+    # 平均輝度（グレー成分）を計算
+    gray = (r + g + b) / 3.0
+    
+    # 各色が「グレー（無彩色）」からどれだけ離れているか（＝色の強さ）
+    # この差分を強調することで、色が分離する
+    # dst = src + (src - gray) * strength
+    
+    r_sep = r + (r - gray) * separation_strength
+    g_sep = g + (g - gray) * separation_strength
+    b_sep = b + (b - gray) * separation_strength
+    
+    # マージ
+    img_separated = cv2.merge((r_sep, g_sep, b_sep))
+    
+    return img_separated

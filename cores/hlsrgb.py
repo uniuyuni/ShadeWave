@@ -1,5 +1,6 @@
 
 import numpy as np
+import cv2
 from numba import njit, prange
 import time
 
@@ -340,6 +341,59 @@ def hlc_gain_to_rgb_single(H, L, C_norm, gain):
     b_norm = Cb + Y_norm
     
     return r_norm * gain, g_norm * gain, b_norm * gain
+
+def linear_rgb_to_ycbcr(img_rgb):
+    """
+    Linear RGB画像を Linear YCbCr に変換します。
+    ガンマ補正を含まない単純な行列演算のため、HDR値(1.0超)も正確に保持されます。
+
+    Args:
+        img_rgb (numpy.ndarray): Linear RGB画像 (H, W, 3), float32
+
+    Returns:
+        numpy.ndarray: Linear YCbCr画像 (H, W, 3), float32
+        - Channel 0: Y  (輝度)
+        - Channel 1: Cb (青 - 輝度)
+        - Channel 2: Cr (赤 - 輝度)
+    """
+    r, g, b = cv2.split(img_rgb)
+
+    # BT.709 係数
+    # Y = 0.2126 R + 0.7152 G + 0.0722 B
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    
+    # Cb = (B - Y) / 1.8556
+    cb = (b - y) / 1.8556
+    
+    # Cr = (R - Y) / 1.5748
+    cr = (r - y) / 1.5748
+
+    return cv2.merge((y, cb, cr))
+
+
+def linear_ycbcr_to_rgb(img_ycbcr):
+    """
+    Linear YCbCr画像を Linear RGB に戻します。
+    可逆変換であり、数値誤差を除き、元のRGB値が復元されます。
+
+    Args:
+        img_ycbcr (numpy.ndarray): Linear YCbCr画像 (H, W, 3), float32
+
+    Returns:
+        numpy.ndarray: Linear RGB画像 (H, W, 3), float32
+    """
+    y, cb, cr = cv2.split(img_ycbcr)
+
+    # 逆変換係数 (BT.709 Derived)
+    # R = Y + 1.5748 Cr
+    # B = Y + 1.8556 Cb
+    # G = Y - 0.1873 Cb - 0.4681 Cr
+
+    r = y + 1.5748 * cr
+    b = y + 1.8556 * cb
+    g = y - 0.1873 * cb - 0.4681 * cr
+
+    return cv2.merge((r, g, b))
 
 
 def test_saturation_linearity():
