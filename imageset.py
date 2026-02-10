@@ -267,10 +267,6 @@ class ImageSet:
             # 正方形にする
             #img_array = core.adjust_shape_to_square(img_array)
 
-            # 画像の濁りとり
-            img_array = core.remove_muddy_yellow(img_array)
-            img_array = core.clean_image_mud(img_array)
-            
             # 描画用に設定
             self.img = np.array(img_array)
             self.flag = half

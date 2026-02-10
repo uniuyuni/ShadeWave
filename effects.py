@@ -1724,6 +1724,45 @@ class ColorTemperatureEffect(Effect):
 
         return self.diff
 
+class RemoveMuddyColorEffect(Effect):
+
+    def get_param_dict(self, param):
+        return {
+            'switch_global': True,
+            'remove_muddy_yellow': 0.3,
+            'shadow_threshold': 0.2,
+            'separation_strength': 0.2,
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids['switch_global'].enabled = self._get_param(param, 'switch_global')
+        widget.ids["slider_remove_muddy_yellow"].set_slider_value(self._get_param(param, 'remove_muddy_yellow'))
+        widget.ids["slider_shadow_threshold"].set_slider_value(self._get_param(param, 'shadow_threshold'))
+        widget.ids["slider_separation_strength"].set_slider_value(self._get_param(param, 'separation_strength'))
+
+    def set2param(self, param, widget):
+        param['switch_global'] = widget.ids['switch_global'].enabled
+        param['remove_muddy_yellow'] = widget.ids["slider_remove_muddy_yellow"].value
+        param['shadow_threshold'] = widget.ids["slider_shadow_threshold"].value
+        param['separation_strength'] = widget.ids["slider_separation_strength"].value
+
+    def make_diff(self, rgb, param, efconfig):
+        switch_global = self._get_param(param, 'switch_global')
+        remove_muddy_yellow = self._get_param(param, 'remove_muddy_yellow')
+        shadow_threshold = self._get_param(param, 'shadow_threshold')
+        separation_strength = self._get_param(param, 'separation_strength')
+        if switch_global == False or (remove_muddy_yellow == 0.0 and shadow_threshold == 0.0 and separation_strength == 0.0):
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((remove_muddy_yellow, shadow_threshold, separation_strength))
+            if self.hash != param_hash:
+                self.hash = param_hash
+                self.diff = core.remove_muddy_yellow(rgb, remove_muddy_yellow)
+                self.diff = core.clean_image_mud(self.diff, shadow_threshold, separation_strength)
+
+        return self.diff
+
 class DehazeEffect(Effect):
 
     def get_param_dict(self, param):
@@ -3400,6 +3439,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     
     lv2 = effects[2]
     lv2['color_temperature'] = ColorTemperatureEffect()
+    lv2['remove_muddy_color'] = RemoveMuddyColorEffect()
     
     lv2['auto_exposure'] = AutoExposureEffect()
     lv2['lut'] = LUTEffect()
