@@ -1,6 +1,8 @@
 
 #:include widgets/float_input.kv
 #:include widgets/multi_slider.kv
+#:include widgets/tiny_button.kv
+#:include widgets/define.kv
 
 <RectangleToggleButton@MDRectangleFlatButton+MDToggleButton>:
     _no_ripple_effect: True
@@ -68,9 +70,9 @@
         pos_hint: {'center_y': 0.5}
         size_hint_x: 1
         draw_from_anchor: True
-        track_color_inactive: 0.2, 0.2, 0.2, 1
-        track_color_active:  0.13, 0.23, 0.74, 1
-        thumb_color: 0.6, 0.6, 0.8, 1
+        track_color_inactive: gray_color
+        track_color_active:  dark_blue
+        thumb_color: light_blue
         on_value: root.on_slider_value()
         on_touch_down: root.on_slider_touch_down(args[1])
         on_touch_up: root.on_slider_touch_up(args[1])
@@ -91,11 +93,9 @@
         size_hint_x: None
         ref_width: 15
         
-        Button:
-            #size_hint_y: 1
-            background_down: 'black'
+        TinyButton:
+            bg_color_down: 'black'
             on_press: root.on_button_press(root.ids['slider'].step)
-        Button:
-            #size_hint_y: 1
-            background_down: 'black'
+        TinyButton:
+            bg_color_down: 'black'
             on_press: root.on_button_press(-root.ids['slider'].step)
