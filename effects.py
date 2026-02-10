@@ -1408,79 +1408,6 @@ class LightNoiseReductionEffect(Effect):
 
         return self.diff
 
-# デブラーフィルタ
-class DeblurFilterEffect(Effect):
-
-    def get_param_dict(self, param):
-        return {
-            'switch_focus': True,
-            'deblur_filter': 0,
-        }
-
-    def set2widget(self, widget, param):
-        widget.ids["switch_focus"].active = self._get_param(param, 'switch_focus')
-        widget.ids["slider_deblur_filter"].set_slider_value(self._get_param(param, 'deblur_filter'))
-
-    def set2param(self, param, widget):
-        param['switch_focus'] = widget.ids["switch_focus"].active
-        param['deblur_filter'] = widget.ids["slider_deblur_filter"].value
-
-    def make_diff(self, img, param, efconfig):
-        switch_focus = self._get_param(param, 'switch_focus')
-        dbfr = int(self._get_param(param, 'deblur_filter'))
-        if switch_focus == False or dbfr == 0:
-            self.diff = None
-            self.hash = None
-        else:
-            param_hash = hash((dbfr))
-            if self.hash != param_hash:
-                self.hash = param_hash
-
-                self.diff = core.lucy_richardson_gauss(img, dbfr)
-
-        return self.diff
-
-
-class DefocusEffect(Effect):
-    __net = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def get_param_dict(self, param):
-        return {
-            'switch_focus': True,
-            'defocus': False,
-        }
-
-    def set2widget(self, widget, param):
-        widget.ids["switch_focus"].active = self._get_param(param, 'switch_focus')
-        widget.ids["switch_defocus"].active = self._get_param(param, 'defocus')
-
-    def set2param(self, param, widget):
-        param['switch_focus'] = widget.ids["switch_focus"].active
-        param['defocus'] = widget.ids["switch_defocus"].active
-
-    def make_diff(self, img, param, efconfig):
-        switch_focus = self._get_param(param, 'switch_focus')
-        df = self._get_param(param, 'defocus')
-        if switch_focus == False or df == False:
-            self.diff = None
-            self.hash = None
-        else:
-            param_hash = hash((df))
-            if self.hash != param_hash:
-                self.hash = param_hash
-
-                import DRBNet
-                if DefocusEffect.__net is None:
-                    DefocusEffect.__net = DRBNet.setup_predict()
-
-                self.diff = DRBNet.predict(img, DefocusEffect.__net, config.get_config('gpu_device'))
-
-        return self.diff
-
-
 class LensblurFilterEffect(Effect):
 
     def get_param_dict(self, param):
@@ -2273,7 +2200,7 @@ class HighlightCompressEffect(Effect):
     def get_param_dict(self, param):
         return {
             'switch_global': True,
-            'highlight_compress': 0,
+            'highlight_compress': False,
         }
 
     def set2widget(self, widget, param):
@@ -3464,8 +3391,6 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
 
     lv1 = effects[1]
     lv1['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
-    lv1['deblur_filter'] = DeblurFilterEffect()
-    lv1['defocus'] = DefocusEffect()
     lv1['orton'] = OrtonEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
     lv1['scratch'] = ScratchEffect()

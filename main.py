@@ -79,6 +79,7 @@ if __name__ == '__main__':
     import widgets.mask2_content as mask2_content
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
     import widgets.collapsible_box
+    import widgets.compact_switch
 
 if __name__ != '__main__':
     class ImportBlocker:

@@ -1,0 +1,64 @@
+<EffectSelectionItem>:
+    orientation: 'horizontal'
+    size_hint_y: None
+    height: "40dp"
+    padding: "4dp"
+    spacing: "8dp"
+    
+    MDCheckbox:
+        id: checkbox
+        size_hint: None, None
+        size: "30dp", "30dp"
+        pos_hint: {'center_y': .5}
+        active: root.is_selected
+        on_active: root.is_selected = self.active
+
+    MDLabel:
+        text: root.text
+        halign: "left"
+        valign: "center"
+        pos_hint: {'center_y': .5}
+        theme_text_color: "Custom"
+        text_color: 1, 1, 1, 1
+
+<EffectSelector>:
+    title: "Select Effects"
+    size_hint: 0.9, 0.9
+    auto_dismiss: False
+
+    MDBoxLayout:
+        orientation: "vertical"
+        padding: "10dp"
+        spacing: "10dp"
+        md_bg_color: 0.1, 0.1, 0.1, 1
+
+        ScrollView:
+            MDGridLayout:
+                id: container
+                cols: 4
+                adaptive_height: True
+                padding: "10dp"
+                spacing: "10dp"
+
+        MDBoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: "50dp"
+            spacing: "10dp"
+            padding: "5dp"
+
+            MDRaisedButton:
+                id: btn_toggle_all
+                text: "Select All"
+                on_release: root.on_toggle_all()
+            
+            Widget:
+                size_hint_x: 1
+
+            MDRectangleFlatButton:
+                text: "Cancel"
+                on_release: root.do_cancel()
+
+            MDRaisedButton:
+                text: "Decide"
+                on_release: root.do_decide()

@@ -12,9 +12,11 @@
 #:include widgets/mask2_content.kv
 #:include widgets/history_content.kv
 #:include widgets/collapsible_box.kv
+#:include widgets/compact_switch.kv
 
 #:set clear_color 0, 0, 0, 0
 #:set dark_color 0.08, 0.08, 0.08, 1
+#:set dark_blue 0.13, 0.23, 0.74, 1
 #:set tabbed_panel_color 0.35, 0.35, 0.35, 1
 #:set tabbed_panel_down 'gray'
 
@@ -34,7 +36,14 @@
 
 <ParamChipText@MDChipText>:
     font_size: '9pt'
-    color: 'b0b0b0' 
+    color: 'b0b0b0'
+
+<ParamSwitch@CompactSwitch>:
+    pos_hint: {'center_y': .5}
+    size_hint: None, None
+    ref_width: 40
+    ref_height: 20
+    active: False
 
 <MainSpinnerOption@SpinnerOption>:
     size_hint_y: None
@@ -1456,15 +1465,11 @@
                                         id: waitinfo_ai_noise_reduction
                                         size_hint_x: 0.55
                                         text: ""
-                                    ParamChip:
+                                    ParamSwitch:
                                         id: chip_ai_noise_reduction
-                                        size_hint_x: None
-                                        ref_width: 40
-                                        on_press: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
+                                        on_pre_active: root.begin_history_effect_ctrl(0, 'ai_noise_reduction')
                                         on_active: root.apply_effects_lv(0, 'ai_noise_reduction')
-                                        on_release: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
-                                        ParamChipText:
-                                            text: "AI"
+                                        on_post_active: root.end_history_effect_ctrl(0, 'ai_noise_reduction')
 
                                 ParamSlider:
                                     id: slider_ai_noise_reduction_intensity
@@ -1555,51 +1560,12 @@
                                         text: "Subpixel shift"
                                     VSpacer:
                                         size_hint_x: 0.55
-                                    ParamChip:
+                                    ParamSwitch:
                                         id: switch_subpixel_shift
-                                        size_hint_x: None
-                                        ref_width: 40
-                                        on_press: root.begin_history_effect_ctrl(0, 'subpixel_shift')
+                                        on_pre_active: root.begin_history_effect_ctrl(0, 'subpixel_shift')
                                         on_active: root.apply_effects_lv(0, 'subpixel_shift')
-                                        on_release: root.end_history_effect_ctrl(0, 'subpixel_shift')
-                                        ParamChipText:
-                                            text: "AI"
+                                        on_post_active: root.end_history_effect_ctrl(0, 'subpixel_shift')
 
-                                VSeparator:
-
-                                HeadLabel:
-                                    id: switch_focus
-                                    text: ' Focus'
-                                    on_press: root.begin_history_effect_ctrl(1, ['defocus', 'deblur_filter'])
-                                    on_active: root.apply_effects_lv(1, ['defocus', 'deblur_filter'])
-                                    on_release: root.end_history_effect_ctrl(1, ['defocus', 'deblur_filter'])
-
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Defocus"
-                                    VSpacer:
-                                        size_hint_x: 0.55
-                                    ParamChip:
-                                        id: switch_defocus
-                                        size_hint_x: None
-                                        ref_width: 40
-                                        on_press: root.begin_history_effect_ctrl(1, 'defocus')
-                                        on_active: root.apply_effects_lv(1, 'defocus')
-                                        on_release: root.end_history_effect_ctrl(1, 'defocus')
-                                        ParamChipText:
-                                            text: "AI"
-
-                                ParamSlider:
-                                    id: slider_deblur_filter
-                                    text: "Deblur"
-                                    min: 0
-                                    max: 50
-                                    value: 0
-                                    step: 1
-                                    on_slider: root.apply_effects_lv(1, 'deblur_filter')
-                                    on_before_edit: root.begin_history_effect_ctrl(1, 'deblur_filter')
-                                    on_after_edit: root.end_history_effect_ctrl(1, 'deblur_filter')
-                                    
                                 VSeparator:
 
                                 HeadLabel:
@@ -1695,16 +1661,12 @@
                                         text: "Tonemap"
                                     VSpacer:
                                         size_hint_x: 0.45
-                                    ParamChip:
+                                    ParamSwitch:
                                         id: switch_highlight_compress
-                                        size_hint_x: None
-                                        ref_width: 60
                                         active: False
-                                        on_press: root.begin_history_effect_ctrl(2, 'highlight_compress')
+                                        on_pre_active: root.begin_history_effect_ctrl(2, 'highlight_compress')
                                         on_active: root.apply_effects_lv(2, 'highlight_compress')
-                                        on_release: root.end_history_effect_ctrl(2, 'highlight_compress')
-                                        ParamChipText:
-                                            text: "Apply"
+                                        on_post_active: root.end_history_effect_ctrl(2, 'highlight_compress')
 
                                 VSeparator:
 
@@ -1720,15 +1682,11 @@
                                         text: "RCA"
                                     VSpacer:
                                         size_hint_x: 0.55
-                                    ParamChip:
+                                    ParamSwitch:
                                         id: switch_rca
-                                        size_hint_x: None
-                                        ref_width: 40
-                                        on_press: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                        on_pre_active: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
                                         on_active: root.apply_effects_lv(0, 'remove_chromatic_aberration')
-                                        on_release: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
-                                        ParamChipText:
-                                            text: "Apply"
+                                        on_post_active: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
 
                                 ParamSlider:
                                     id: slider_rca_purple_amount

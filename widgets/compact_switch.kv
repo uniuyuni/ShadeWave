@@ -1,0 +1,20 @@
+
+<CompactSwitch>:
+    size_hint: None, None
+    size: 80, 40  # デフォルトサイズ（小さめ）
+    canvas.before:
+        # トラック（背景）の描画
+        Color:
+            rgba: root._track_color
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.height / 2,]
+        
+        # サム（動く丸い部分）の描画
+        Color:
+            rgba: root.thumb_color
+        Ellipse:
+            # トラックの中に収まるように少し小さく計算
+            size: root.height - 8, root.height - 8
+            pos: root.pos[0] + root._thumb_x, root.pos[1] + 4
