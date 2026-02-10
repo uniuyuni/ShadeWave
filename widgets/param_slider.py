@@ -6,7 +6,7 @@ from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
 
 import widgets.float_input
-
+import widgets.multi_slider
 
 class HeadLabel(KVBoxLayout):
     press = KVBooleanProperty(True)

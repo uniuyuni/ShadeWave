@@ -1,5 +1,6 @@
 
 #:include widgets/float_input.kv
+#:include widgets/multi_slider.kv
 
 <RectangleToggleButton@MDRectangleFlatButton+MDToggleButton>:
     _no_ripple_effect: True
@@ -61,16 +62,18 @@
         ref_width: self.parent.label_width
         width: self.parent.label_width
         
-    MDSlider:
+    MultiSlider:
         id: slider
         hint: False
+        pos_hint: {'center_y': 0.5}
         size_hint_x: 1
+        draw_from_anchor: True
+        track_color_inactive: 0.2, 0.2, 0.2, 1
+        track_color_active:  0.13, 0.23, 0.74, 1
+        thumb_color: 0.6, 0.6, 0.8, 1
         on_value: root.on_slider_value()
         on_touch_down: root.on_slider_touch_down(args[1])
         on_touch_up: root.on_slider_touch_up(args[1])
-
-        #MDSliderHandle:
-        #    size: 10, 10
 
     FloatInput:
         id: input
