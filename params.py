@@ -32,6 +32,9 @@ SPECIAL_PARAM = [
     # for effecs.Inpaint
     'inpaint',
     'inpaint_predict',
+    # for effects.PatchMatchInpaint
+    'patchmatch_inpaint',
+    'patchmatch_inpaint_predict',
     # for effects.LUTEffect
     'lut_path',
     # for effects.AutoExposureEffect
@@ -445,7 +448,7 @@ def tcg_to_image_scale(x, tcg_info):
         return (x[0] * tcg_info['disp_info'][4], x[1] * tcg_info['disp_info'][4])
     return x * tcg_info['disp_info'][4]
 
-def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
+def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False, apply_ref_img_divide=False):
     """
     TCGから参照イメージの座標を得る
 
@@ -470,8 +473,13 @@ def tcg_to_ref_image(cx, cy, ref_img, tcg_info, apply_disp_info=False):
             # Geometryモード時、クロップ時または拡大表示時とエクスポート時
             cx, cy = cx - disp_info[0], cy - disp_info[1]
             # クロップ時の表示空白
-            cx = cx + (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
-            cy = cy + (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
+            if apply_ref_img_divide == False:
+                cx = cx + (ref_img.shape[1] - disp_info[2]) / 2
+                cy = cy + (ref_img.shape[0] - disp_info[3]) / 2
+            else:
+                # 縮小画像用（一旦大きくしてから計算）
+                cx = cx + (ref_img.shape[1] / disp_info[4] - disp_info[2]) / 2
+                cy = cy + (ref_img.shape[0] / disp_info[4] - disp_info[3]) / 2        
         cx, cy = cx * disp_info[4], cy * disp_info[4]
     return (cx, cy)
 

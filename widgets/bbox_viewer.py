@@ -4,6 +4,8 @@ from kivy.uix.widget import Widget as KVWidget
 from kivy.graphics import Color, Line, PopMatrix, PushMatrix
 from kivy.core.window import Window as KVWindow
 
+import macos as device
+
 class BoundingBoxViewer(KVWidget):
     def __init__(self, size=(800, 600), initial_view=(0, 0, 1000, 800, 1.0), on_delete=None, **kwargs):
         super().__init__(**kwargs)
@@ -111,6 +113,11 @@ class BoundingBoxViewer(KVWidget):
     def _world_to_display(self, world_x, world_y):
         """ワールド座標を表示座標に変換（パディング考慮）"""
         display_width, display_height, offset_x, offset_y = self._calculate_display_area()
+
+        world_x = (world_x - self.view_w / 2) * device.dpi_scale()
+        world_y = (world_y - self.view_h / 2) * device.dpi_scale()
+        world_x = world_x + self.view_w / 2
+        world_y = world_y + self.view_h / 2
         
         # ワールド座標をビュー相対座標に変換
         rel_x = (world_x - self.view_x) * self.scale
@@ -133,6 +140,11 @@ class BoundingBoxViewer(KVWidget):
         # ワールド座標に変換
         world_x = rel_x / self.scale + self.view_x
         world_y = rel_y / self.scale + self.view_y
+
+        world_x = world_x - self.view_w / 2
+        world_y = world_y - self.view_h / 2
+        world_x = world_x / device.dpi_scale() + self.view_w / 2
+        world_y = world_y / device.dpi_scale() + self.view_h / 2
         
         return world_x, world_y
         
@@ -160,8 +172,9 @@ class BoundingBoxViewer(KVWidget):
                 box_x, box_y, box_w, box_h = box
                 
                 # 表示範囲内のボックスのみ描画
-                if (box_x + box_w >= self.view_x and box_x <= self.view_x + self.view_w and
-                    box_y + box_h >= self.view_y and box_y <= self.view_y + self.view_h):
+                if True:
+                #if (box_x + box_w >= self.view_x and box_x <= self.view_x + self.view_w and
+                #    box_y + box_h >= self.view_y and box_y <= self.view_y + self.view_h):
                     
                     # ボックスの四隅を表示座標に変換
                     display_x1, display_y1 = self._world_to_display(box_x, box_y)

@@ -380,16 +380,16 @@ class InpaintEffect(Effect):
                 self.mask_editor = MaskEditor(param,
                                               effect_ctrl_param=(0, 'inpaint'),
                                               touch_up_callback=self.mask_editor_touch_up)
-                self.mask_editor.zoom = params.get_disp_info(param)[4]
-                self.mask_editor.pos = [0, 0]
+                
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
                 param['inpaint_mask_list'] = self.inpaint_mask_list = []
-            
+                        
         if param['inpaint'] == False:
             if self.mask_editor is not None:
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
                 self.mask_editor = None
                 param['inpaint_mask_list'] = self.inpaint_mask_list = []
+
 
     def make_diff(self, img, param, efconfig):
         self.inpaint_diff_list = self._get_param(param, 'inpaint_diff_list')
@@ -409,7 +409,7 @@ class InpaintEffect(Effect):
                 proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
 
                 #img2 = qih.predict_helper(img, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace)
-                img2 = img
+                img2 = np.zeros_like(img)
 
                 # 範囲を記録
                 self.inpaint_diff_list.append(
@@ -465,6 +465,170 @@ class InpaintEffect(Effect):
 
         param['inpaint_mask_list'] = self.inpaint_mask_list
 
+class PatchmatchInpaintEffect(Effect):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        self.inpaint_diff_list = []
+        self.inpaint_mask_list = []
+        self.mask_editor = None
+
+    def get_param_dict(self, param):
+        return {
+            'switch_details': True,
+            'patchmatch_inpaint': False,
+            'patchmatch_inpaint_predict': False,
+            'patchmatch_inpaint_diff_list': [],
+            'patchmatch_inpaint_mask_list': [],
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["switch_details"].active = self._get_param(param, 'switch_details')
+        widget.ids["switch_patchmatch_inpaint"].active = self._get_param(param, 'patchmatch_inpaint')
+        widget.ids["button_inpaint_predict"].state = "normal" if self._get_param(param, 'patchmatch_inpaint_predict') == False else "down"
+
+        # 履歴描画
+        if self.mask_editor is not None:
+            self.mask_editor.clear_mask()
+            self.inpaint_mask_list = self._get_param(param, 'patchmatch_inpaint_mask_list')
+            for inpaint_mask in self.inpaint_mask_list:
+                self.mask_editor.add_mask(inpaint_mask.disp_info, inpaint_mask.image)
+            self.mask_editor.delay_update_canvas()
+
+    def set2param(self, param, widget):
+        param['switch_details'] = widget.ids["switch_details"].active
+        param['patchmatch_inpaint'] = widget.ids["switch_patchmatch_inpaint"].active
+        param['patchmatch_inpaint_predict'] = widget.ids["button_patchmatch_inpaint_predict"].state == "down"
+
+        if param['patchmatch_inpaint'] == True:
+            if self.mask_editor is None:
+                from widgets.mask_editor import MaskEditor
+                
+                self.mask_editor = MaskEditor(param,
+                                              effect_ctrl_param=(0, 'patchmatch_inpaint'),
+                                              touch_up_callback=self.mask_editor_touch_up)
+                
+                widget.ids["preview_widget"].add_widget(self.mask_editor)
+                param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
+            
+        if param['patchmatch_inpaint'] == False:
+            if self.mask_editor is not None:
+                
+                widget.ids["preview_widget"].remove_widget(self.mask_editor)
+                self.mask_editor = None
+                param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
+
+    def make_diff(self, img, param, efconfig):
+        switch_details = self._get_param(param, 'switch_details')
+        patchmatch_inpaint = self._get_param(param, 'patchmatch_inpaint')
+        patchmatch_inpaint_predict = self._get_param(param, 'patchmatch_inpaint_predict')
+        self.inpaint_diff_list = self._get_param(param, 'patchmatch_inpaint_diff_list')
+        self.inpaint_mask_list = self._get_param(param, 'patchmatch_inpaint_mask_list')
+
+        if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True:
+            import cores.patchmatch_inpainting as patchmatch_inpainting
+            import cores.content_aware_inpainter as content_aware_inpainter
+            param['patchmatch_inpaint_predict'] = False
+
+            inpainter = content_aware_inpainter.ContentAwareInpainter(
+                patch_radius=5,
+                search_radius=45,
+                multiscale_levels=3
+            )
+            
+            mask = self.mask_editor.get_mask()
+            print(f"[INPAINT DEBUG] Image shape: {img.shape}, dtype: {img.dtype}, range: [{img.min():.4f}, {img.max():.4f}]")
+            print(f"[INPAINT DEBUG] Mask shape: {mask.shape}, dtype: {mask.dtype}, unique: {np.unique(mask)}")
+            
+            for inpaint_mask in self.inpaint_mask_list:
+                proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
+                """
+                photoshopの機能であるコンテンツに応じる修復ブラシを高精度で実現させたい。
+                pythonでコードを書いて。入力はfloat32,rgbのhdr画像と、uint8のマスク画像で、マスクに従ってinpaintingさせる。
+                高速化のためにpytorchを採用し、mpsにも対応させること。
+                写真画質の高解像度画像を扱うので補完精度の向上と高速化は必須。
+                色味のを馴染ませるのも当然必要だが、ノイズの乗った画像の補完はノイズ感も統一し馴染ませること。
+                テストプログラムで品質に満足できるまで自己で実装を練り上げてから提示してください。
+                photoshopでは違和感の全くない補完を瞬時に提示してきます。それに匹敵する品質を目指してください。
+                """
+
+                # Crop and inpaint to improve performance
+                margin = 512
+                h, w = img.shape[:2]
+                x1, y1 = max(0, proc_x - margin), max(0, proc_y - margin)
+                x2, y2 = min(w, proc_x + proc_w + margin), min(h, proc_y + proc_h + margin)
+                crop_img = img[y1:y2, x1:x2]
+                crop_mask = mask[y1:y2, x1:x2]
+                
+                print(f"[INPAINT DEBUG] Crop region: ({x1},{y1}) to ({x2},{y2})")
+                print(f"[INPAINT DEBUG] Crop img: {crop_img.shape}, range: [{crop_img.min():.4f}, {crop_img.max():.4f}]")
+                print(f"[INPAINT DEBUG] Crop mask: {crop_mask.shape}, fill: {(crop_mask>127).sum()}/{crop_mask.size}")
+                
+                crop_res = inpainter.inpaint(
+                    crop_img, 
+                    crop_mask)
+
+                
+                print(f"[INPAINT DEBUG] Result: {crop_res.shape}, dtype: {crop_res.dtype}, range: [{crop_res.min():.4f}, {crop_res.max():.4f}]")
+                img2 = img.copy()
+                img2[y1:y2, x1:x2] = crop_res
+                """
+                img2 = inpainter.inpaint(img, mask)
+                """
+                # 範囲を記録
+                self.inpaint_diff_list.append(
+                    InpaintDiff(type="image",
+                                disp_info=(proc_x, proc_y, proc_w, proc_h),
+                                image=img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
+
+            param['patchmatch_inpaint_diff_list'] = self.inpaint_diff_list
+            
+            # マスク消去
+            self.mask_editor.clear_mask()
+            param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
+            self.mask_editor.delay_update_canvas()
+        
+        param_hash = hash((len(self.inpaint_diff_list)))
+        if self.hash != param_hash:
+            self.hash = param_hash
+
+            if len(self.inpaint_diff_list) > 0:
+                img2 = img.copy()
+                for inpaint_diff in self.inpaint_diff_list:
+                    if inpaint_diff.type == "image":
+                        inpaint_diff.list2image()   # データを変換する必要があるときがある
+                        cx, cy, cw, ch = inpaint_diff.disp_info
+                        img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
+                self.diff = img2
+            else:
+                self.diff = None
+
+        return self.diff
+
+    def mask_editor_touch_up(self, param, mask):
+        
+        # イメージが四角く処理されていた場合のオフセット計算
+        w, h = param['original_img_size']
+        eh, ew = mask.shape[:2]
+        x, y = (ew-w)//2, (eh-h)//2
+
+        # 処理
+        self.inpaint_mask_list = []
+        bboxes = core.get_multiple_mask_bbox(mask)
+        for bbox in bboxes:
+            proc_x, proc_y, proc_w, proc_h = aiutils.calculate_expanded_crop(
+                                                mask.shape[1], mask.shape[0],
+                                                bbox[0] + x, bbox[1] + y, bbox[2], bbox[3],
+                                                32, 32)
+
+            # 範囲を記録
+            self.inpaint_mask_list.append(
+                InpaintDiff(type="mask",
+                            disp_info=(proc_x, proc_y, proc_w, proc_h),
+                            image=mask[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
+
+        param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list
 
 class CrossFilterEffect(Effect):
 
@@ -3424,6 +3588,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['lens_modifier'] = LensModifierEffect(lens_modifier_callback=lens_modifier_callback)
     lv0['subpixel_shift'] = SubpixelShiftEffect()
     lv0['inpaint'] = InpaintEffect()
+    lv0['patchmatch_inpaint'] = PatchmatchInpaintEffect()
     lv0['cross_filter'] = CrossFilterEffect()
     lv0['geometry'] = GeometryEffect(geometry_callback=geometry_callback)
     lv0['crop'] = CropEffect(crop_callback=crop_callback)

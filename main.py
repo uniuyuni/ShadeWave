@@ -157,6 +157,7 @@ if __name__ == '__main__':
                 crop_callback=self.crop_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.inpaint_edit = None
+            self.patchmatch_inpaint_edit = None
             self.cache_system = cache_system
             self.ids['viewer'].set_cache_system(self.cache_system)
 
@@ -954,6 +955,44 @@ if __name__ == '__main__':
                 self._enable_inpaint_edit()
             else:
                 self._disable_inpaint_edit()
+
+        #--------------------------------
+
+        def _enable_patchmatch_inpaint_edit(self):
+            if self.patchmatch_inpaint_edit is None:
+                self.patchmatch_inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
+                                    initial_view=params.get_disp_info(self.primary_param),
+                                    on_delete=self._on_patchmatch_inpaint_edit)
+                self._set_diff_list_to_patchmatch_inpaint_edit()
+                self.ids['preview_widget'].add_widget(self.patchmatch_inpaint_edit)
+                #print(f"Inpaint x:{self.inpaint_edit.x}, y:{self.inpaint_edit.y}")
+                #print(f"Preview x:{self.ids['preview'].x}, y:{self.ids['preview'].y}")
+                #print(f"Mask2 x:{self.ids['mask_editor2'].x}, y:{self.ids['mask_editor2'].y}")
+
+        def _disable_patchmatch_inpaint_edit(self):
+            if self.patchmatch_inpaint_edit is not None:
+                self.ids['preview_widget'].remove_widget(self.patchmatch_inpaint_edit)
+                del self.patchmatch_inpaint_edit
+                self.patchmatch_inpaint_edit = None
+
+        def _set_diff_list_to_patchmatch_inpaint_edit(self):
+            if self.patchmatch_inpaint_edit is not None:
+                boxes = []
+                for inpaint_diff in self.primary_param.get('patchmatch_inpaint_diff_list', []):
+                    boxes.append(inpaint_diff.disp_info)
+                self.patchmatch_inpaint_edit.set_boxes(boxes)
+
+        def _on_patchmatch_inpaint_edit(self, deleted_index, deleted_box):
+            self.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
+            self.primary_param['patchmatch_inpaint_diff_list'].pop(deleted_index)
+            self.end_history_effect_ctrl(0, 'patchmatch_inpaint')
+            self.apply_effects_lv(0, 'patchmatch_inpaint')
+
+        def on_patchmatch_inpaint_edit_press(self, value):
+            if value == "down":
+                self._enable_patchmatch_inpaint_edit()
+            else:
+                self._disable_patchmatch_inpaint_edit()
 
         #--------------------------------
 

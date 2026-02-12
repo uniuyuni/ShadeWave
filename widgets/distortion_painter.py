@@ -709,7 +709,7 @@ class DistortionCanvas(KVFloatLayout):
 
             # 変形
             self.current_image = self.engine.apply_effect(
-                center=params.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True),
+                center=params.tcg_to_ref_image(tcg_x, tcg_y, self.current_image, self.tcg_info, True, True),
                 radius=params.tcg_to_image_scale(brush_size, self.tcg_info),
                 strength=strength * DistortionCanvas.STRENGTH_SCALE, #(DistortionCanvas.STRENGTH_SCALE if self.effect_type != 'restore' else 0.01),
                 effect_type=effect_type,
@@ -755,7 +755,7 @@ class DistortionCanvas(KVFloatLayout):
         # 記録再生
         for action in recorded:
             engine.apply_effect(
-                center=params.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info, True),
+                center=params.tcg_to_ref_image(action['x'], action['y'], original_image, tcg_info, True, True),
                 radius=params.tcg_to_image_scale(action['size'], tcg_info),
                 strength=action['strength'] * DistortionCanvas.STRENGTH_SCALE,
                 effect_type=action.get('effect', 'forward_warp'),

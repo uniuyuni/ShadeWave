@@ -1548,7 +1548,38 @@
                                         ref_width: 40
                                         text: "Edit"
                                         on_state: root.on_inpaint_edit_press(self.state)
-                                        #on_state: geometry.disabled = True if mask2.state == 'down' else False
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Patchmatch"
+                                    VSpacer:
+                                        size_hint_x: 0.25
+                                    ParamChip:
+                                        id: switch_patchmatch_inpaint
+                                        size_hint_x: None
+                                        ref_width: 60
+                                        on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
+                                        on_active: root.apply_effects_lv(0, 'patchmatch_inpaint')
+                                        on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
+                                        ParamChipText:
+                                            text: "Mask"
+                                    ParamChip:
+                                        type: 'assist'
+                                        id: button_patchmatch_inpaint_predict
+                                        size_hint_x: None
+                                        ref_width: 60
+                                        on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
+                                        on_press: root.apply_effects_lv(0, 'patchmatch_inpaint')
+                                        #on_release: root._set_diff_list_to_patchmatch_inpaint_edit()
+                                        on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
+                                        ParamChipText:
+                                            text: "Erase"
+                                    ToggleButton:
+                                        id: toggle_patchmatch_inpaint_edit
+                                        size_hint_x: None
+                                        ref_width: 40
+                                        text: "Edit"
+                                        on_state: root.on_patchmatch_inpaint_edit_press(self.state)
 
                                 ParamBoxLayout:
                                     ParamLabel:
