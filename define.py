@@ -2,7 +2,7 @@
 import os
 
 APPNAME = "Platypus"
-VERSION = "1.25.3"
+VERSION = "1.28.0"
 
 
 

@@ -329,14 +329,6 @@ class InpaintDiff:
         self.disp_info = kwargs.get('disp_info', None)
         self.image = kwargs.get('image', None)
 
-    def image2list(self):
-        if type(self.image) is np.ndarray:
-            self.image = utils.convert_image_to_list(self.image)
-
-    def list2image(self):
-        if type(self.image) is list or type(self.image) is tuple:
-            self.image = utils.convert_image_from_list(self.image)
-
 class InpaintEffect(Effect):
 
     def __init__(self, **kwargs):
@@ -432,7 +424,6 @@ class InpaintEffect(Effect):
                 img2 = img.copy()
                 for inpaint_diff in self.inpaint_diff_list:
                     if inpaint_diff.type == "image":
-                        inpaint_diff.list2image()   # データを変換する必要があるときがある
                         cx, cy, cw, ch = inpaint_diff.disp_info
                         img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
                 self.diff = img2
@@ -527,55 +518,19 @@ class PatchmatchInpaintEffect(Effect):
         self.inpaint_mask_list = self._get_param(param, 'patchmatch_inpaint_mask_list')
 
         if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True:
-            import cores.patchmatch_inpainting as patchmatch_inpainting
-            import cores.content_aware_inpainter as content_aware_inpainter
+            from cores.content_aware_fill import content_aware_fill
             param['patchmatch_inpaint_predict'] = False
-
-            inpainter = content_aware_inpainter.ContentAwareInpainter(
-                patch_radius=5,
-                search_radius=45,
-                multiscale_levels=3
-            )
             
             mask = self.mask_editor.get_mask()
             print(f"[INPAINT DEBUG] Image shape: {img.shape}, dtype: {img.dtype}, range: [{img.min():.4f}, {img.max():.4f}]")
             print(f"[INPAINT DEBUG] Mask shape: {mask.shape}, dtype: {mask.dtype}, unique: {np.unique(mask)}")
             
+            # Inpaint once for all masks
+            img2 = content_aware_fill(img, mask)
+            
             for inpaint_mask in self.inpaint_mask_list:
                 proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
-                """
-                photoshopの機能であるコンテンツに応じる修復ブラシを高精度で実現させたい。
-                pythonでコードを書いて。入力はfloat32,rgbのhdr画像と、uint8のマスク画像で、マスクに従ってinpaintingさせる。
-                高速化のためにpytorchを採用し、mpsにも対応させること。
-                写真画質の高解像度画像を扱うので補完精度の向上と高速化は必須。
-                色味のを馴染ませるのも当然必要だが、ノイズの乗った画像の補完はノイズ感も統一し馴染ませること。
-                テストプログラムで品質に満足できるまで自己で実装を練り上げてから提示してください。
-                photoshopでは違和感の全くない補完を瞬時に提示してきます。それに匹敵する品質を目指してください。
-                """
-
-                # Crop and inpaint to improve performance
-                margin = 512
-                h, w = img.shape[:2]
-                x1, y1 = max(0, proc_x - margin), max(0, proc_y - margin)
-                x2, y2 = min(w, proc_x + proc_w + margin), min(h, proc_y + proc_h + margin)
-                crop_img = img[y1:y2, x1:x2]
-                crop_mask = mask[y1:y2, x1:x2]
                 
-                print(f"[INPAINT DEBUG] Crop region: ({x1},{y1}) to ({x2},{y2})")
-                print(f"[INPAINT DEBUG] Crop img: {crop_img.shape}, range: [{crop_img.min():.4f}, {crop_img.max():.4f}]")
-                print(f"[INPAINT DEBUG] Crop mask: {crop_mask.shape}, fill: {(crop_mask>127).sum()}/{crop_mask.size}")
-                
-                crop_res = inpainter.inpaint(
-                    crop_img, 
-                    crop_mask)
-
-                
-                print(f"[INPAINT DEBUG] Result: {crop_res.shape}, dtype: {crop_res.dtype}, range: [{crop_res.min():.4f}, {crop_res.max():.4f}]")
-                img2 = img.copy()
-                img2[y1:y2, x1:x2] = crop_res
-                """
-                img2 = inpainter.inpaint(img, mask)
-                """
                 # 範囲を記録
                 self.inpaint_diff_list.append(
                     InpaintDiff(type="image",
@@ -585,9 +540,10 @@ class PatchmatchInpaintEffect(Effect):
             param['patchmatch_inpaint_diff_list'] = self.inpaint_diff_list
             
             # マスク消去
-            self.mask_editor.clear_mask()
             param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
-            self.mask_editor.delay_update_canvas()
+            if self.mask_editor:
+                self.mask_editor.clear_mask()
+                self.mask_editor.delay_update_canvas()
         
         param_hash = hash((len(self.inpaint_diff_list)))
         if self.hash != param_hash:
@@ -597,7 +553,6 @@ class PatchmatchInpaintEffect(Effect):
                 img2 = img.copy()
                 for inpaint_diff in self.inpaint_diff_list:
                     if inpaint_diff.type == "image":
-                        inpaint_diff.list2image()   # データを変換する必要があるときがある
                         cx, cy, cw, ch = inpaint_diff.disp_info
                         img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
                 self.diff = img2

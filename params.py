@@ -224,24 +224,22 @@ def copy_remain_param(tar, src):
         except KeyError:
             pass
 
-def _inpaint_dump(param):
-    inpaint_diff_list = param.get('inpaint_diff_list', None)
+def _inpaint_dump(param, list_name='inpaint_diff_list'):
+    inpaint_diff_list = param.get(list_name, None)
     if inpaint_diff_list is not None:
         inpaint_diff_list_dumps = []
         for inpaint_diff in inpaint_diff_list:
-            inpaint_diff.image2list()
-            inpaint_diff_list_dumps.append((inpaint_diff.type, inpaint_diff.disp_info, inpaint_diff.image))
-        param['inpaint_diff_list'] = inpaint_diff_list_dumps
+            inpaint_diff_list_dumps.append((inpaint_diff.type, inpaint_diff.disp_info, utils.convert_image_to_list(inpaint_diff.image)))
+        param[list_name] = inpaint_diff_list_dumps
 
-def _inpaint_load(param):
-    inpaint_diff_list_dumps = param.get('inpaint_diff_list', None)
+def _inpaint_load(param, list_name='inpaint_diff_list'):
+    inpaint_diff_list_dumps = param.get(list_name, None)
     if inpaint_diff_list_dumps is not None:
         inpaint_diff_list = []
         for inpaint_diff_dump in inpaint_diff_list_dumps:
-            inpaint_diff = effects.InpaintDiff(type=inpaint_diff_dump[0], disp_info=inpaint_diff_dump[1], image=inpaint_diff_dump[2])
-            inpaint_diff.list2image()
+            inpaint_diff = effects.InpaintDiff(type=inpaint_diff_dump[0], disp_info=inpaint_diff_dump[1], image=utils.convert_image_from_list(inpaint_diff_dump[2]))
             inpaint_diff_list.append(inpaint_diff)
-        param['inpaint_diff_list'] = inpaint_diff_list
+        param[list_name] = inpaint_diff_list
 
 def _ai_noise_reduction_dump(param):
     ai_noise_reduction_result = param.get('ai_noise_reduction_result', None)
@@ -256,12 +254,14 @@ def _ai_noise_reduction_load(param):
         param['ai_noise_reduction_result'] = ai_noise_reduction_result
 
 def _serialize_param(param):
-    _inpaint_dump(param)
+    _inpaint_dump(param, 'inpaint_diff_list')
+    _inpaint_dump(param, 'patchmatch_inpaint_diff_list')
     _ai_noise_reduction_dump(param)
 
 def _deserialize_param(param):
     param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
-    _inpaint_load(param)
+    _inpaint_load(param, 'inpaint_diff_list')
+    _inpaint_load(param, 'patchmatch_inpaint_diff_list')
     _ai_noise_reduction_load(param)
 
 def serialize(param, mask_editor2):

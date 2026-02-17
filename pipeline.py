@@ -89,7 +89,7 @@ class AsyncPipelineManager:
                     keys_to_remove.append(key)
                     running = True
         
-        print(f"DEBUG: cancel_effect {effect_name}. Removing {len(keys_to_remove)} RUNNING tasks. Kept: {[k for k,v in self.cache.items() if k[0]==effect_name and v['status']=='COMPLETE']}")
+        # print(f"DEBUG: cancel_effect {effect_name}. Removing {len(keys_to_remove)} RUNNING tasks. Kept: {[k for k,v in self.cache.items() if k[0]==effect_name and v['status']=='COMPLETE']}")
         
         if running:
             self.worker.cancel_effect(effect_name)
