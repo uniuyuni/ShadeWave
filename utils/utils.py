@@ -125,7 +125,6 @@ def make_orientation(rotation, flip):
     return orientation
 
 def print_nan_inf(img, label=""):
-    return
     result = np.isnan(img)
     nan_count = result.sum()
     result = np.isinf(img)
