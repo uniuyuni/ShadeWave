@@ -10,12 +10,12 @@ import cores.cubelut as cubelut
 import cores.subpixel_shift as subpixel_shift
 import cores.film_emulator as film_emulator
 import cores.lens_simulator as lens_simulator
-import linear_to_log.linear_to_log_lut as linear_to_log
+import cores.linear_to_log_lut as linear_to_log
 import cores.filters as filters
 import cores.local_contrast as local_contrast
 import cores.highlight_recovery as highlight_recovery
 import cores.hlsrgb as hlsrgb
-from cores.fringe_removal.fringe_removal import remove_chromatic_aberration
+from cores.fringe_removal import remove_chromatic_aberration
 from cores.distortion_correction import (
     correct_lens_distortion, correct_trapezoid, correct_four_points, correct_with_lines, warp_mesh,
     calculate_trapezoid_homography, calculate_four_point_homography, calculate_lines_homography
