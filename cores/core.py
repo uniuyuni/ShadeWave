@@ -2436,29 +2436,107 @@ def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
 
 #-------------------------------------------------
 
-def light_denoise(img, its, col):
+def side_window_variance_filter(src, r=3):
+    """
+    Side Window Filteringの概念を応用した、
+    8方向のうち「最も平坦な（分散が小さい）領域」の平均値を採用するフィルタ。
+    エッジとコーナーを完璧に保存しつつ強力にノイズを潰します。
+    
+    Args:
+        src (np.ndarray): 入力画像 (H, W) float32推奨
+        r (int): フィルタ半径
+    """
+    src = src.astype(np.float32)
+    h, w = src.shape[:2]
+    
+    # 積分画像(boxFilter)を使って、ある窓内の「平均」と「二乗の平均」を計算する関数
+    # shift_x, shift_y で窓の位置を中心からずらす
+    def get_mean_var(img, r, shift_x, shift_y):
+        ksize = (2*r + 1, 2*r + 1)
+        # 1. アンカー（基準点）をずらしてフィルタリングすることで「Side Window」を再現
+        # OpenCVのfilter2D/boxFilterの anchor 引数を使う
+        anchor = (r - shift_x, r - shift_y) 
+        
+        mean = cv2.boxFilter(img, -1, ksize, anchor=anchor, borderType=cv2.BORDER_REFLECT)
+        mean_sq = cv2.boxFilter(img * img, -1, ksize, anchor=anchor, borderType=cv2.BORDER_REFLECT)
+        
+        # 分散 = E[X^2] - (E[X])^2
+        var = mean_sq - mean * mean
+        return mean, var
 
-    # YCrCb色空間に変換 (HDR対応・リニア変換)
-    # Yは輝度、Cr, Cbは色差
-    # float32の場合、Y, Cr, Cb ともに概ね 0.0-1.0 (HDRならそれ以上) の範囲で扱われる
-    # (Cr, Cbは 0.5 が中心)
-    ycrcb = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
+    # 8方向（+中心）のシフト量
+    # (x, y): (-r, 0)なら左側、(r, 0)なら右側、など
+    shifts = [
+        (-r, -r), (0, -r), (r, -r), # 上3つ
+        (-r,  0), (0,  0), (r,  0), # 中3つ（(0,0)は中心）
+        (-r,  r), (0,  r), (r,  r)  # 下3つ
+    ]
+    
+    # 候補を格納するリスト
+    means = []
+    vars = []
+    
+    for sx, sy in shifts:
+        # シフト量が0でない場合だけ処理（中心だけの窓も含めたい場合はここを調整）
+        # SWFの厳密な定義では「エッジをまたがない窓」を探すため、
+        # 厳密には「窓の端」に画素が来るようにanchorを設定するが、
+        # ここでは簡易的に「rだけずらした位置」を中心とするboxFilterで代用実装
+        
+        # 正確なSide Windowの実装:
+        # 半径rのボックスフィルタだが、注目画素が「四隅」や「辺」に来るようにする。
+        # boxFilterのカーネルサイズは (2r+1) ではなく (r+1) にして、シフトさせるのが一般的だが、
+        # ここではノイズ除去性能を重視して「2r+1の窓をrだけずらす（オーバーラップさせる）」方式を採用。
+        # これにより参照画素数が増え、ノイズ除去力が上がる。
+        
+        m, v = get_mean_var(src, r, sx, sy)
+        means.append(m)
+        vars.append(v)
+
+    # numpy配列にスタック (Channel数, H, W, 候補数9)
+    means_stack = np.stack(means, axis=-1)
+    vars_stack = np.stack(vars, axis=-1)
+    
+    # 分散が最小になるインデックスを探す
+    # varが負になる計算誤差を防ぐためabs
+    min_indices = np.argmin(np.abs(vars_stack), axis=-1)
+    
+    # ファンシーインデックスで最小分散の平均値を選択
+    # (H, W) のインデックスグリッドを作成
+    h_grid, w_grid = np.indices((h, w))
+    result = means_stack[h_grid, w_grid, min_indices]
+    
+    return result
+
+
+def light_denoise(img, its, col):
+    global _dncnn_model
+
+    #imin, imax = img.min(), img.max()
+    #img = (img - imin) / (imax - imin)
+
+    ycrcb = hlsrgb.linear_rgb_to_ycbcr(img)
     y, cr, cb = cv2.split(ycrcb)
     
     # 輝度チャンネル(Y)のノイズ除去 (Guided Filter)
     if its > 0:
+        its = its * 0.01
+
         # 半径
-        radius = max(2, int(its * 0.01))
+        radius = max(2, int(its)) * 2
         # イプシロンの計算
         # Yは0-1スケール (HDR対応)
         # eps = (閾値)^2
         # its=100 で 0.2 (20%) 程度の変動を平滑化
-        eps = ((its * 0.002) ** 2)
+        eps = (its * 0.2) ** 2
         
         # 分散安定化変換: sqrt(Y) をとることで、ショットノイズ(値に比例して分散が増える)を均一化する
         # これによりハイライト部でもノイズ除去が効くようになる
         sq_y = np.sqrt(np.maximum(y, 0))
-        sq_y = cv2.ximgproc.guidedFilter(guide=sq_y, src=sq_y, radius=radius, eps=eps)
+        sq_y_s = cv2.resize(sq_y, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+        sq_y_s = side_window_variance_filter(sq_y_s, r=1)
+        sq_y_s = cv2.resize(sq_y_s, None, fx=1/1.5, fy=1/1.5, interpolation=cv2.INTER_AREA)
+        sq_y = cv2.ximgproc.guidedFilter(guide=sq_y_s, src=sq_y, radius=radius, eps=eps)
+        #sq_y = sq_y_g * (1 - its) + sq_y_s * its
         y = sq_y ** 2
 
     # 色度チャンネル(Cr, Cb)のノイズ除去 (Joint Guided Filter)
@@ -2474,7 +2552,10 @@ def light_denoise(img, its, col):
  
     # チャンネルを結合
     filtered_ycrcb = cv2.merge([y, cr, cb])
-    return cv2.cvtColor(filtered_ycrcb, cv2.COLOR_YCrCb2RGB)
+    filtered_rgb = hlsrgb.linear_ycbcr_to_rgb(filtered_ycrcb)
+    #filtered_rgb = filtered_rgb * (imax - imin) + imin
+
+    return filtered_rgb
 
 #-------------------------------------------------
 
@@ -2530,7 +2611,7 @@ def remove_muddy_yellow(img_linear, strength=0.3, protect_vivid=True):
         
         # 相対彩度（輝度に対する彩度の割合）
         # ゼロ除算防止のイプシロン
-        relative_saturation = chroma / (y + 1e-6)
+        relative_saturation = chroma / (np.maximum(y, 0.0) + 1e-6)
         
         # 彩度が低い（濁っている）場所ほど 1.0 に近づくウェイト
         dullness_weight = np.exp(-1.0 * relative_saturation * 5.0)

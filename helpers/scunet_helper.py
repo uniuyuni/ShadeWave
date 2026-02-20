@@ -26,7 +26,8 @@ def setup_scunet(is_color=True, device='cpu', is_half=False):
     model = SCUNet(in_nc=1 if "gray" in model_path else 3, config=[4]*7, dim=64, input_resolution=_TILE_SIZE)
     #model = SCUNet(in_nc=3, config=[4]*7, dim=64, input_resolution=_TILE_SIZE)
     model.load_state_dict(torch.load(model_path))
-    model = nn.DataParallel(model).eval().to(device)
+    #model = nn.DataParallel(model).eval().to(device)
+    model = model.eval().to(device)
 
     # ユーザー設定
     user_config = {"is_gray": "gray" in model_path, "is_half": is_half}
@@ -34,6 +35,8 @@ def setup_scunet(is_color=True, device='cpu', is_half=False):
 
     if is_half:
         model.half()
+
+    model = model.to(memory_format=torch.channels_last)
 
     logging.info("SCUNet Model loaded.")
     return model
@@ -58,9 +61,11 @@ def predict_scunet(model, np_image):
     tensor_img = torch.from_numpy(np_image).permute(2, 0, 1).unsqueeze(0).to(device)
 
     # 推論
-    with torch.no_grad():
+    #with torch.no_grad():
+    with torch.inference_mode():
         if model.user_config["is_half"]:
             tensor_img = tensor_img.half()
+        tensor_img = tensor_img.to(memory_format=torch.channels_last)
         restored = model(tensor_img)
 
     # 後処理

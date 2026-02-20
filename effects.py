@@ -1438,7 +1438,7 @@ class AINoiseReductonEffect(Effect):
             if needed:
                 import helpers.scunet_helper as scunet_helper
                 if AINoiseReductonEffect.__net is None:
-                    AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config('gpu_device'), is_half=False)
+                    AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config('gpu_device'))
                 
                 raw_diff = scunet_helper.predict_scunet_helper(AINoiseReductonEffect.__net, img)
                 AINoiseReductonEffect.__net = None
