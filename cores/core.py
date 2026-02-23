@@ -2313,6 +2313,7 @@ def chromatic_aberration_correction(
 #-------------------------------------------------
 
 _lensfun_db_instance = None
+
 def _get_lensfun_db():
     global _lensfun_db_instance
     import lensfunpy
@@ -2321,7 +2322,6 @@ def _get_lensfun_db():
     return _lensfun_db_instance
 
 def setup_lensfun(img_size, exif_data):
-    global __lensfun_mod
 
     make =  exif_data.get('Make', None)
     model = exif_data.get('Model', None)
@@ -2348,89 +2348,50 @@ def setup_lensfun(img_size, exif_data):
     if len(cams) > 0:
         lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=False)
 
-    __lensfun_mod = None
+    mod = None
     if len(cams) > 0:
         lens = db.find_lenses(cams[0], lensmake, lensmodel, loose_search=False)
 
         if len(lens) > 0:
             width, height = img_size
-            __lensfun_mod = lensfunpy.Modifier(lens[0], cams[0].crop_factor, width, height)
-            __lensfun_mod.initialize(float(focal_length[0:-3]), aperture, distance, pixel_format=np.float32)
-            
-            # Reset availability flags
-            global __lensfun_tca_available, __lensfun_dist_available, __lensfun_geom_available
-            __lensfun_tca_available = True
-            __lensfun_dist_available = True
-            __lensfun_geom_available = True
-            return
+            mod = lensfunpy.Modifier(lens[0], cams[0].crop_factor, width, height)
+            mod.initialize(float(focal_length[0:-3]), aperture, distance, pixel_format=np.float32)            
+            return mod
 
-    __lensfun_mod = None
+    return mod
 
-def clean_lensfun():
-    global __lensfun_mod
-    __lensfun_mod = None
-    
-    global __lensfun_tca_available, __lensfun_dist_available, __lensfun_geom_available
-    __lensfun_tca_available = True
-    __lensfun_dist_available = True
-    __lensfun_geom_available = True
+def modify_lensfun(mod, img, is_cm=True, is_sd=True, is_gd=True):
 
-__lensfun_mod = None
-__lensfun_tca_available = True
-__lensfun_dist_available = True
-__lensfun_geom_available = True
-
-def modify_lensfun(img, is_cm=True, is_sd=True, is_gd=True):
-    global __lensfun_tca_available, __lensfun_dist_available, __lensfun_geom_available
-
-    if __lensfun_mod is None:
+    if mod is None:
         logging.warning("Lensfun is not initialized")
         return (img, False, False, False)
 
-    mod = __lensfun_mod
     modimg = img
     
     if is_cm == True:
-        if __lensfun_tca_available:
-            modimg = img.copy()
-            did_apply = mod.apply_color_modification(modimg)
-            if did_apply == False:
-                logging.warning("Apply Color Modification is Failed")
-                is_cm = False
-                __lensfun_tca_available = False
-                # Revert image if failed? 
-                # If failed, modimg might be untouched or safely reusable as copy?
-                # Actually if failed, we probably want to return original img or the copy?
-                # The code below continues to use modimg. 
-                # If apply failed, presumably it did nothing.
-        else:
+        modimg = img.copy()
+        did_apply = mod.apply_color_modification(modimg)
+        if did_apply == False:
+            logging.warning("Apply Color Modification is Failed")
             is_cm = False
 
     if is_sd == True:
-        if __lensfun_dist_available:
-            undist_coords = mod.apply_subpixel_distortion()
-            if undist_coords is None:
-                logging.warning("Apply Subpixel Distortion is Failed")
-                is_sd = False
-                __lensfun_dist_available = False
-            else:
-                modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
-                modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
-                modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
-        else:
+        undist_coords = mod.apply_subpixel_distortion()
+        if undist_coords is None:
+            logging.warning("Apply Subpixel Distortion is Failed")
             is_sd = False
+        else:
+            modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
+            modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
+            modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
 
     if is_gd == True:
-        if __lensfun_geom_available:
-            undist_coords = mod.apply_geometry_distortion()
-            if undist_coords is None:
-                logging.warning("Apply Geometry Distortion is Failed")
-                is_gd = False
-                __lensfun_geom_available = False
-            else:
-                modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
-        else:
+        undist_coords = mod.apply_geometry_distortion()
+        if undist_coords is None:
+            logging.warning("Apply Geometry Distortion is Failed")
             is_gd = False
+        else:
+            modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
 
     return (modimg, is_cm, is_sd, is_gd)
 

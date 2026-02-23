@@ -248,7 +248,7 @@ if __name__ == '__main__':
             self.is_zoomed = False
             self.crop_image = None
 
-            core.clean_lensfun()
+            #core.clean_lensfun()
 
             self.reset_param(self.primary_param)
             self.ids['mask_editor2'].clear_mask()
@@ -693,7 +693,7 @@ if __name__ == '__main__':
             # 読み込み終わり
             if flag < 0:
                 # lensfun セットアップ
-                core.setup_lensfun(param['original_img_size'], exif_data)
+                #core.setup_lensfun(param['original_img_size'], exif_data)
 
                 # ロード終了
                 self.loading = False
@@ -704,6 +704,7 @@ if __name__ == '__main__':
             # 暫定処置
             if imgset.flag == False:
                 self.primary_param['lens_modifier'] = True
+                self.primary_param['exif_data'] = param['exif_data']
                 self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
                 self.primary_param['auto_exposure'] = param['auto_exposure']
 

@@ -241,6 +241,9 @@ class LensModifierEffect(Effect):
     
     def __init__(self, lens_modifier_callback=None, **kwargs):
         super().__init__(**kwargs)
+
+        self.mod = None
+
         self.callback = lens_modifier_callback
 
     def get_param_dict(self, param):
@@ -275,10 +278,20 @@ class LensModifierEffect(Effect):
             self.hash = None
         else:
             param_hash = hash((cd, sd, gd))
-            if self.hash != param_hash:
-                self.hash = param_hash
 
-                self.diff, is_cm, is_sd, is_gd = core.modify_lensfun(img, cd, sd, gd)
+            # Async Processing Logic
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+            if handled:
+                return result
+
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            if needed:
+                self.hash = combined_hash
+
+                if self.mod is None:
+                    self.mod = core.setup_lensfun(param['original_img_size'], param['exif_data'])
+
+                self.diff, is_cm, is_sd, is_gd = core.modify_lensfun(self.mod, img, cd, sd, gd)
 
                 # 適用されなかったパラメータをUIに反映
                 param['color_modification'] = is_cm

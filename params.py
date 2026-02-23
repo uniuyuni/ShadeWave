@@ -22,6 +22,7 @@ SPECIAL_PARAM = [
     'disp_info',
     # for effects.LensModifierEffect
     'lens_modifier',
+    'exif_data',
     # for imageset._set_temperature
     'color_temperature_reset',
     'color_tint_reset',

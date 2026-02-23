@@ -263,6 +263,7 @@ class ImageSet:
             # 情報の設定
             params.set_image_param(param, img_array)
             param['lens_modifier'] = not half
+            param['exif_data'] = exif_data
 
             # 正方形にする
             #img_array = core.adjust_shape_to_square(img_array)
