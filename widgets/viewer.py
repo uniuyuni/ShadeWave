@@ -48,7 +48,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         vbox.ref_padding = 8
 
         # サムネイル表示
-        self.image = KVImage(source='assets/spinner.gif', size_hint_y=0.7, anim_delay=0.01)
+        self.image = KVImage(source='assets/spinner.gif', size_hint_y=0.7, anim_delay=0.02)
         vbox.add_widget(self.image)
 
         # ファイル名ラベル
@@ -160,6 +160,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 idx = i + 1
             
             self.data.insert(idx, new_item)
+            self.cols = max(1, len(self.data))
             self.load_images({file_path: idx})
 
     @kvmainthread
@@ -168,6 +169,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             if d['file_path'] == file_path:
                 self.data.pop(i)
                 break
+        self.cols = max(1, len(self.data))
 
     def _modified_file(self, file_path):
         pass

@@ -703,8 +703,9 @@ if __name__ == '__main__':
 
             # 暫定処置
             if imgset.flag == False:
-                self.primary_param['lens_modifier'] = True
-                self.primary_param['exif_data'] = param['exif_data']
+                self.primary_param['lens_modifier'] = param['lens_modifier']
+                if param['lens_modifier'] == True:
+                    self.primary_param['exif_data'] = param['exif_data']
                 self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
                 self.primary_param['auto_exposure'] = param['auto_exposure']
 

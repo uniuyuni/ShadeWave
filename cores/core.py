@@ -2493,10 +2493,10 @@ def light_denoise(img, its, col):
         # 分散安定化変換: sqrt(Y) をとることで、ショットノイズ(値に比例して分散が増える)を均一化する
         # これによりハイライト部でもノイズ除去が効くようになる
         sq_y = np.sqrt(np.maximum(y, 0))
-        sq_y_s = cv2.resize(sq_y, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
-        sq_y_s = side_window_variance_filter(sq_y_s, r=1)
-        sq_y_s = cv2.resize(sq_y_s, None, fx=1/1.5, fy=1/1.5, interpolation=cv2.INTER_AREA)
-        sq_y = cv2.ximgproc.guidedFilter(guide=sq_y_s, src=sq_y, radius=radius, eps=eps)
+        #sq_y_s = cv2.resize(sq_y, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+        #sq_y_s = side_window_variance_filter(sq_y_s, r=1)
+        #sq_y_s = cv2.resize(sq_y_s, None, fx=1/1.5, fy=1/1.5, interpolation=cv2.INTER_AREA)
+        sq_y = cv2.ximgproc.guidedFilter(guide=sq_y, src=sq_y, radius=radius, eps=eps)
         #sq_y = sq_y_g * (1 - its) + sq_y_s * its
         y = sq_y ** 2
 
