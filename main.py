@@ -250,6 +250,11 @@ if __name__ == '__main__':
 
             #core.clean_lensfun()
 
+            self.primary_effects = effects.create_effects(
+                lens_modifier_callback=self.lens_modifier_callback,
+                distortion_callback=self.distortion_callback,
+                geometry_callback=self.geometry_callback,
+                crop_callback=self.crop_callback)                
             self.reset_param(self.primary_param)
             self.ids['mask_editor2'].clear_mask()
         

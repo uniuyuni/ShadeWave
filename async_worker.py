@@ -339,25 +339,17 @@ class AsyncWorker:
 
     def cancel_all(self):
         """
-        Cancel all pending tasks.
-        Ideally we purge the queue.
+        Cancel all pending tasks and terminate any currently running tasks.
         """
         while not self.input_queue.empty():
             try:
                 task = self.input_queue.get_nowait()
-                # If we pulled a task, we need to clean up its SHM if we were tracking it
-                # But it's hard to correlate without parsing.
-                # Simplified: Just increment a "cancellation_token" or "min_task_id"
-                # and ignore results from older tasks.
                 pass
             except Empty:
                 break
         
-        # Clean up active SHMs that will never return?
-        # This is a potential leak source if we just drop tasks.
-        # Better strategy: Do not drop tasks, let them process (fast fail) or just consume inputs.
-        # Or, track task_id and cleaning up.
-        pass
+        # Forcefully restart the worker to stop any currently executing heavy task 
+        self.restart()
 
     def has_pending_tasks(self):
         """

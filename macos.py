@@ -292,7 +292,822 @@ def set_window_autosave(app_name, window_name):
 
     return False
 
-# 使用例
+"""
+macos_dialog.py
+---------------
+macOS ネイティブダイアログを Python から呼び出すモジュール。
+外部ライブラリ不要（osascript を使用）。PyObjC が入っていればより高機能。
+
+対応ダイアログ:
+  - alert()          : 警告/情報ダイアログ
+  - confirm()        : OK/キャンセル 確認ダイアログ
+  - prompt()         : テキスト入力ダイアログ
+  - choose_from_list(): リスト選択ダイアログ
+  - file_open()      : ファイルを開くダイアログ
+  - file_save()      : ファイルを保存ダイアログ
+  - folder_select()  : フォルダ選択ダイアログ
+  - notify()         : 通知センター通知
+
+使い方:
+  import macos_dialog as dlg
+
+  dlg.alert("エラーが発生しました", title="エラー", icon="stop")
+  name = dlg.prompt("名前を入力してください", default="太郎")
+  path = dlg.file_open(file_types=["txt", "csv"])
+"""
+
+import subprocess
+import json
+import re
+import os
+from typing import Any, Optional, Union
+
+# ────────────────────────────────────────────────────────────────────────────
+# 内部ユーティリティ
+# ────────────────────────────────────────────────────────────────────────────
+
+def _run_applescript(script: str) -> str:
+    """AppleScript を実行して stdout を返す。キャンセル時は '' を返す。"""
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        # ユーザーがキャンセルした場合は空文字列を返す
+        err = result.stderr.strip()
+        if "User canceled" in err or "(-128)" in err:
+            return ""
+        raise RuntimeError(f"AppleScript エラー: {err}")
+    return result.stdout.strip()
+
+
+def _escape(s: Any) -> str:
+    """AppleScript 文字列内でエスケープが必要な文字を処理する。"""
+    return str(s).replace("\\", "\\\\").replace('"', '\\"')
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 公開 API
+# ────────────────────────────────────────────────────────────────────────────
+
+def alert(
+    message: str,
+    title: str = "通知",
+    subtitle: str = "",
+    icon: str = "note",  # "note" | "caution" | "stop"
+    buttons: list[str] = None,
+    default_button: str = None,
+) -> Optional[str]:
+    """
+    警告/情報ダイアログを表示する。
+
+    Parameters
+    ----------
+    message       : 本文メッセージ
+    title         : ウィンドウタイトル
+    subtitle      : サブタイトル（任意）
+    icon          : アイコン種別 "note"(ℹ️) / "caution"(⚠️) / "stop"(🛑)
+    buttons       : ボタンラベルのリスト（最大3つ）
+    default_button: デフォルトボタンのラベル
+
+    Returns
+    -------
+    押されたボタンのラベル。キャンセル時は None。
+    """
+    buttons = buttons or ["OK"]
+    btn_str = "{" + ", ".join(f'"{_escape(b)}"' for b in buttons) + "}"
+    default_str = f'default button "{_escape(default_button)}"' if default_button else ""
+    sub_str = f'as "{_escape(subtitle)}"' if subtitle else ""
+
+    script = f"""
+    set result to display alert "{_escape(title)}" ¬
+        message "{_escape(message)}" ¬
+        as {icon} ¬
+        buttons {btn_str} ¬
+        {default_str}
+    return button returned of result
+    """
+    raw = _run_applescript(script)
+    return raw if raw else None
+
+
+def confirm(
+    message: str,
+    title: str = "確認",
+    ok_label: str = "OK",
+    cancel_label: str = "キャンセル",
+    icon: str = "caution",
+) -> bool:
+    """
+    OK / キャンセル 確認ダイアログ。
+
+    Returns
+    -------
+    True: OK が押された, False: キャンセル
+    """
+    script = f"""
+    set result to display alert "{_escape(title)}" ¬
+        message "{_escape(message)}" ¬
+        as {icon} ¬
+        buttons {{"{_escape(cancel_label)}", "{_escape(ok_label)}"}} ¬
+        default button "{_escape(ok_label)}" ¬
+        cancel button "{_escape(cancel_label)}"
+    return button returned of result
+    """
+    raw = _run_applescript(script)
+    return raw == ok_label
+
+
+def prompt(
+    message: str,
+    title: str = "入力",
+    default: str = "",
+    hidden: bool = False,
+    ok_label: str = "OK",
+    cancel_label: str = "キャンセル",
+) -> Optional[str]:
+    """
+    テキスト入力ダイアログ。
+
+    Parameters
+    ----------
+    hidden: True にするとパスワード入力（文字が隠れる）
+
+    Returns
+    -------
+    入力された文字列。キャンセル時は None。
+    """
+    hidden_str = "with hidden answer" if hidden else ""
+    script = f"""
+    try
+        set result to display dialog "{_escape(message)}" ¬
+            with title "{_escape(title)}" ¬
+            default answer "{_escape(default)}" ¬
+            buttons {{"{_escape(cancel_label)}", "{_escape(ok_label)}"}} ¬
+            default button "{_escape(ok_label)}" ¬
+            cancel button "{_escape(cancel_label)}" ¬
+            {hidden_str}
+        return text returned of result
+    on error
+        return ""
+    end try
+    """
+    raw = _run_applescript(script)
+    return raw if raw != "" else None
+
+
+def choose_from_list(
+    items: list[str],
+    message: str = "項目を選択してください",
+    title: str = "選択",
+    multiple: bool = False,
+    ok_label: str = "選択",
+    cancel_label: str = "キャンセル",
+) -> Optional[Union[str, list[str]]]:
+    """
+    リストから項目を選択するダイアログ。
+
+    Parameters
+    ----------
+    multiple: True で複数選択可能
+
+    Returns
+    -------
+    選択された文字列（or リスト）。キャンセル時は None。
+    """
+    items_str = "{" + ", ".join(f'"{_escape(i)}"' for i in items) + "}"
+    multi_str = "with multiple selections allowed" if multiple else ""
+    script = f"""
+    set result to choose from list {items_str} ¬
+        with title "{_escape(title)}" ¬
+        with prompt "{_escape(message)}" ¬
+        OK button name "{_escape(ok_label)}" ¬
+        cancel button name "{_escape(cancel_label)}" ¬
+        {multi_str}
+    if result is false then return ""
+    return result as string
+    """
+    raw = _run_applescript(script)
+    if not raw:
+        return None
+    if multiple:
+        return [s.strip() for s in raw.split(",")]
+    return raw
+
+
+def file_open(
+    message: str = "ファイルを選択してください",
+    file_types: list[str] = None,
+    multiple: bool = False,
+    start_folder: str = "~",
+) -> Optional[Union[str, list[str]]]:
+    """
+    ファイルを開くダイアログ。
+
+    Parameters
+    ----------
+    file_types  : 拡張子のリスト（例: ["txt", "csv"]）
+    multiple    : True で複数選択可能
+    start_folder: 初期表示フォルダ
+
+    Returns
+    -------
+    選択されたパス文字列（or リスト）。キャンセル時は None。
+    """
+    type_str = ""
+    if file_types:
+        type_str = "of type {" + ", ".join(f'"{t}"' for t in file_types) + "}"
+
+    multi_str = "with multiple selections allowed" if multiple else ""
+    folder = os.path.expanduser(start_folder)
+
+    script = f"""
+    try
+        set result to choose file ¬
+            with prompt "{_escape(message)}" ¬
+            {type_str} ¬
+            default location POSIX file "{_escape(folder)}" ¬
+            {multi_str}
+        if class of result is list then
+            set paths to ""
+            repeat with f in result
+                set paths to paths & POSIX path of f & linefeed
+            end repeat
+            return paths
+        else
+            return POSIX path of result
+        end if
+    on error
+        return ""
+    end try
+    """
+    raw = _run_applescript(script).strip()
+    if not raw:
+        return None
+    paths = [p for p in raw.splitlines() if p]
+    if multiple:
+        return paths
+    return paths[0] if paths else None
+
+
+def file_save(
+    message: str = "保存先を選択してください",
+    default_name: str = "untitled",
+    file_types: list[str] = None,
+    start_folder: str = "~",
+) -> Optional[str]:
+    """
+    ファイルを保存ダイアログ。
+
+    Returns
+    -------
+    選択されたパス文字列。キャンセル時は None。
+    """
+    folder = os.path.expanduser(start_folder)
+    script = f"""
+    try
+        set result to choose file name ¬
+            with prompt "{_escape(message)}" ¬
+            default name "{_escape(default_name)}" ¬
+            default location POSIX file "{_escape(folder)}"
+        return POSIX path of result
+    on error
+        return ""
+    end try
+    """
+    raw = _run_applescript(script).strip()
+    return raw if raw else None
+
+
+def folder_select(
+    message: str = "フォルダを選択してください",
+    start_folder: str = "~",
+    multiple: bool = False,
+) -> Optional[Union[str, list[str]]]:
+    """
+    フォルダ選択ダイアログ。
+
+    Returns
+    -------
+    選択されたフォルダパス（or リスト）。キャンセル時は None。
+    """
+    folder = os.path.expanduser(start_folder)
+    multi_str = "with multiple selections allowed" if multiple else ""
+    script = f"""
+    try
+        set result to choose folder ¬
+            with prompt "{_escape(message)}" ¬
+            default location POSIX file "{_escape(folder)}" ¬
+            {multi_str}
+        if class of result is list then
+            set paths to ""
+            repeat with f in result
+                set paths to paths & POSIX path of f & linefeed
+            end repeat
+            return paths
+        else
+            return POSIX path of result
+        end if
+    on error
+        return ""
+    end try
+    """
+    raw = _run_applescript(script).strip()
+    if not raw:
+        return None
+    paths = [p for p in raw.splitlines() if p]
+    if multiple:
+        return paths
+    return paths[0] if paths else None
+
+
+def notify(
+    message: str,
+    title: str = "通知",
+    subtitle: str = "",
+    sound: str = "default",
+) -> None:
+    """
+    macOS 通知センターに通知を送る。
+
+    Parameters
+    ----------
+    sound: サウンド名（"default", "Ping", "Glass", "" で無音）
+    """
+    sub_str = f'subtitle "{_escape(subtitle)}"' if subtitle else ""
+    sound_str = f'sound name "{_escape(sound)}"' if sound else ""
+    script = f"""
+    display notification "{_escape(message)}" ¬
+        with title "{_escape(title)}" ¬
+        {sub_str} ¬
+        {sound_str}
+    """
+    _run_applescript(script)
+
+"""
+macos_gif_dialog.py
+--------------------
+GIF アニメーション・テキスト・ボタンを持つ macOS ネイティブダイアログ。
+PyObjC (AppKit) を使用。tkinter 不使用。
+
+インストール:
+    pip install pyobjc-framework-Cocoa
+
+使い方:
+    from macos_gif_dialog import gif_dialog, gif_progress_dialog
+
+    # 確認ダイアログ
+    clicked = gif_dialog(
+        gif_path="spinner.gif",
+        message="サーバーに接続しています...",
+        title="接続中",
+        buttons=["再試行", "キャンセル"],
+        cancel_label="キャンセル",
+    )
+    print(clicked)  # "再試行" or "キャンセル" or None
+
+    # バックグラウンド処理 + 自動で閉じる
+    def heavy_task():
+        import time; time.sleep(5)
+
+    gif_progress_dialog(
+        gif_path="loading.gif",
+        message="データを処理しています...",
+        task=heavy_task,
+    )
+"""
+
+import os
+import sys
+import threading
+from typing import Optional
+
+try:
+    import objc
+    from AppKit import (
+        NSApplication, NSApp,
+        NSPanel, NSWindow,
+        NSImageView, NSImage,
+        NSTextField, NSButton,
+        NSColor, NSFont,
+        NSView, NSVisualEffectView,
+        NSStackView,
+        NSUserInterfaceLayoutOrientationVertical,
+        NSUserInterfaceLayoutOrientationHorizontal,
+        NSStackViewGravityTop,
+        NSStackViewGravityCenter,
+        NSStackViewGravityBottom,
+        NSTextAlignmentCenter,
+        NSTitledWindowMask,
+        NSClosableWindowMask,
+        NSResizableWindowMask,
+        NSHUDWindowMask,
+        NSUtilityWindowMask,
+        NSFloatingWindowLevel,
+        NSBackingStoreBuffered,
+        NSMakeRect, NSMakeSize,
+        NSRunLoop, NSDate,
+        NSEvent,
+        NSApplicationActivationPolicyAccessory,
+        NSApplicationActivationPolicyRegular,
+        NSObject,
+        NSWindowStyleMaskTitled,
+        NSWindowStyleMaskClosable,
+        NSWindowStyleMaskResizable,
+        NSWindowStyleMaskFullSizeContentView,
+        NSWindowStyleMaskUtilityWindow,
+        NSWindowStyleMaskHUDWindow,
+        NSBezelStyleRounded,
+        NSBezelStyleRegularSquare,
+        NSMomentaryLightButton,
+        NSLineBreakByWordWrapping,
+        NSImageFrameNone,
+        NSImageScaleProportionallyUpOrDown,
+        NSLayoutAttributeCenterX,
+        NSLayoutAttributeCenterY,
+        NSLayoutAttributeWidth,
+        NSLayoutAttributeHeight,
+        NSLayoutAttributeTop,
+        NSLayoutAttributeBottom,
+        NSLayoutAttributeLeft,
+        NSLayoutAttributeRight,
+        NSLayoutRelationEqual,
+        NSLayoutConstraint,
+    )
+    from Foundation import NSMakeRect, NSMakeSize, NSObject, NSRunLoop, NSDate
+    HAS_PYOBJC = True
+except ImportError as e:
+    HAS_PYOBJC = False
+    _IMPORT_ERROR = str(e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ボタンクリックを受け取る Delegate
+# ─────────────────────────────────────────────────────────────────────────────
+
+if HAS_PYOBJC:
+    class _ButtonTarget(NSObject):
+        """ボタンのアクションターゲット。"""
+
+        def init(self):
+            self = objc.super(_ButtonTarget, self).init()
+            if self is None:
+                return None
+            self._result = None
+            self._dialog = None
+            return self
+
+        def setResult_dialog_(self, result, dialog):
+            self._result = result
+            self._dialog = dialog
+
+        def handleClick_(self, sender):
+            label = sender.title()
+            self._result = label
+            if self._dialog:
+                self._dialog.close_with_result(label)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ダイアログクラス
+# ─────────────────────────────────────────────────────────────────────────────
+
+if HAS_PYOBJC:
+    class _GifDialogWindow:
+        """
+        GIF + テキスト + ボタン群を持つ NSPanel ベースのダイアログ。
+        """
+
+        def __init__(
+            self,
+            gif_path: str,
+            message: str,
+            title: str = "",
+            detail: str = "",
+            buttons: list = None,
+            cancel_label: str = "キャンセル",
+            gif_size: tuple = (150, 150),
+            window_width: int = 360,
+        ):
+            self._result = None
+            self._closed = False
+            self._buttons_config = buttons or ["OK", cancel_label]
+            self._cancel_label = cancel_label
+
+            # ── NSApplication セットアップ ──────────────────────────────────
+            self._app = NSApplication.sharedApplication()
+            self._app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+            self._app.activateIgnoringOtherApps_(True)
+
+            # ── ウィンドウ ────────────────────────────────────────────────
+            style = (
+                NSWindowStyleMaskTitled |
+                NSWindowStyleMaskClosable
+            )
+            self._win = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, window_width, 100),
+                style,
+                NSBackingStoreBuffered,
+                False,
+            )
+            self._win.setTitle_(title or "")
+            self._win.setLevel_(NSFloatingWindowLevel)
+            self._win.center()
+            self._win.setReleasedWhenClosed_(False)
+
+            # ── 背景ビュー ────────────────────────────────────────────────
+            content = self._win.contentView()
+
+            # ── GIF ImageView ─────────────────────────────────────────────
+            gif_w, gif_h = gif_size
+            img = NSImage.alloc().initWithContentsOfFile_(
+                os.path.abspath(gif_path)
+            )
+            self._gif_view = NSImageView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, gif_w, gif_h)
+            )
+            self._gif_view.setImage_(img)
+            self._gif_view.setImageFrameStyle_(NSImageFrameNone)
+            self._gif_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+            self._gif_view.setAnimates_(True)  # GIF アニメーション ON
+            self._gif_view.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            # ── メッセージラベル ──────────────────────────────────────────
+            self._msg_label = NSTextField.labelWithString_(message)
+            self._msg_label.setAlignment_(NSTextAlignmentCenter)
+            self._msg_label.setFont_(NSFont.systemFontOfSize_weight_(14, 0.0))
+            self._msg_label.setTextColor_(NSColor.labelColor())
+            self._msg_label.setLineBreakMode_(NSLineBreakByWordWrapping)
+            self._msg_label.setMaximumNumberOfLines_(0)
+            self._msg_label.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            # ── 詳細ラベル（任意）────────────────────────────────────────
+            self._detail_label = None
+            if detail:
+                self._detail_label = NSTextField.labelWithString_(detail)
+                self._detail_label.setAlignment_(NSTextAlignmentCenter)
+                self._detail_label.setFont_(NSFont.systemFontOfSize_(11))
+                self._detail_label.setTextColor_(NSColor.secondaryLabelColor())
+                self._detail_label.setLineBreakMode_(NSLineBreakByWordWrapping)
+                self._detail_label.setMaximumNumberOfLines_(0)
+                self._detail_label.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            # ── ボタン群 ──────────────────────────────────────────────────
+            self._targets = []
+            self._btn_views = []
+            for label in self._buttons_config:
+                btn = NSButton.buttonWithTitle_target_action_("", None, None)
+                btn.setTitle_(label)
+                btn.setBezelStyle_(NSBezelStyleRounded)
+                btn.setTranslatesAutoresizingMaskIntoConstraints_(False)
+                if label == cancel_label:
+                    btn.setKeyEquivalent_("\x1b")  # Escape キー
+                else:
+                    btn.setKeyEquivalent_("\r")    # Return キー（最初の非キャンセルボタン）
+
+                target = _ButtonTarget.alloc().init()
+                target.setResult_dialog_(label, self)
+                btn.setTarget_(target)
+                btn.setAction_(objc.selector(
+                    target.handleClick_,
+                    signature=b"v@:@"
+                ))
+                self._targets.append(target)
+                self._btn_views.append(btn)
+
+            # ── 水平ボタンスタック ────────────────────────────────────────
+            self._btn_stack = NSStackView.stackViewWithViews_(self._btn_views)
+            self._btn_stack.setOrientation_(NSUserInterfaceLayoutOrientationHorizontal)
+            self._btn_stack.setSpacing_(10)
+            self._btn_stack.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            # ── 垂直メインスタック ────────────────────────────────────────
+            stack_items = [self._gif_view, self._msg_label]
+            if self._detail_label:
+                stack_items.append(self._detail_label)
+            stack_items.append(self._btn_stack)
+
+            self._vstack = NSStackView.stackViewWithViews_(stack_items)
+            self._vstack.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
+            self._vstack.setSpacing_(14)
+            self._vstack.setEdgeInsets_((24, 24, 24, 24))  # top, left, bottom, right
+            self._vstack.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            content.addSubview_(self._vstack)
+
+            # ── レイアウト制約 ────────────────────────────────────────────
+            constraints = [
+                # スタックを content に貼り付け
+                self._vstack.leadingAnchor().constraintEqualToAnchor_(
+                    content.leadingAnchor()),
+                self._vstack.trailingAnchor().constraintEqualToAnchor_(
+                    content.trailingAnchor()),
+                self._vstack.topAnchor().constraintEqualToAnchor_(
+                    content.topAnchor()),
+                self._vstack.bottomAnchor().constraintEqualToAnchor_(
+                    content.bottomAnchor()),
+                # GIF サイズ固定
+                self._gif_view.widthAnchor().constraintEqualToConstant_(gif_w),
+                self._gif_view.heightAnchor().constraintEqualToConstant_(gif_h),
+                # ウィンドウ幅固定
+                self._win.contentView().widthAnchor().constraintEqualToConstant_(
+                    float(window_width)),
+            ]
+            for c in constraints:
+                c.setActive_(True)
+
+        def close_with_result(self, result: str):
+            self._result = result
+            self._closed = True
+            self._win.close()
+            self._app.stop_(None)
+
+        def run(self) -> Optional[str]:
+            self._win.makeKeyAndOrderFront_(None)
+            self._app.run()
+            return self._result
+
+        def close(self):
+            """外部から閉じる（progress_dialog 用）。"""
+            if not self._closed:
+                self._closed = True
+                self._win.close()
+                self._app.stop_(None)
+
+        def update_message(self, text: str):
+            """メッセージを動的に更新する。"""
+            self._msg_label.setStringValue_(text)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 公開関数
+# ─────────────────────────────────────────────────────────────────────────────
+
+def gif_dialog(
+    gif_path: str,
+    message: str,
+    title: str = "",
+    detail: str = "",
+    buttons: list = None,
+    cancel_label: str = "キャンセル",
+    gif_size: tuple = (150, 150),
+    window_width: int = 360,
+) -> Optional[str]:
+    """
+    GIF アニメーション付きダイアログを表示する。
+
+    Parameters
+    ----------
+    gif_path     : GIF ファイルのパス
+    message      : 大きく表示するメッセージ
+    title        : ウィンドウタイトルバーの文字列
+    detail       : メッセージ下の小さい補足テキスト（省略可）
+    buttons      : ボタンラベルのリスト（例: ["OK", "キャンセル"]）
+    cancel_label : Escape キーに割り当てるボタン
+    gif_size     : GIF の表示サイズ (width, height) ピクセル
+    window_width : ウィンドウ幅
+
+    Returns
+    -------
+    押されたボタンのラベル文字列。ウィンドウを閉じた場合は None。
+    """
+    _require_pyobjc()
+    dlg = _GifDialogWindow(
+        gif_path=gif_path,
+        message=message,
+        title=title,
+        detail=detail,
+        buttons=buttons or ["OK", cancel_label],
+        cancel_label=cancel_label,
+        gif_size=gif_size,
+        window_width=window_width,
+    )
+    return dlg.run()
+
+
+def gif_progress_dialog(
+    gif_path: str,
+    message: str,
+    task: callable,
+    title: str = "処理中",
+    detail: str = "",
+    cancel_label: str = "キャンセル",
+    gif_size: tuple = (120, 120),
+    window_width: int = 340,
+    on_cancel: callable = None,
+) -> bool:
+    """
+    バックグラウンドタスクが完了するまで GIF 付きダイアログを表示する。
+
+    Parameters
+    ----------
+    task         : バックグラウンドで実行する関数（引数なし）
+    on_cancel    : キャンセルボタンが押されたときに呼ぶ関数（省略可）
+
+    Returns
+    -------
+    True: タスク完了, False: キャンセル
+    """
+    _require_pyobjc()
+
+    dlg = _GifDialogWindow(
+        gif_path=gif_path,
+        message=message,
+        title=title,
+        detail=detail,
+        buttons=[cancel_label],
+        cancel_label=cancel_label,
+        gif_size=gif_size,
+        window_width=window_width,
+    )
+
+    cancelled = threading.Event()
+
+    def run_task():
+        try:
+            task()
+        finally:
+            if not cancelled.is_set():
+                # メインスレッドで close
+                dlg.close()
+
+    t = threading.Thread(target=run_task, daemon=True)
+    t.start()
+
+    result = dlg.run()
+
+    if result == cancel_label:
+        cancelled.set()
+        if on_cancel:
+            on_cancel()
+        return False
+
+    t.join(timeout=0)
+    return True
+
+
+def _require_pyobjc():
+    if not HAS_PYOBJC:
+        raise ImportError(
+            "PyObjC が必要です。インストール方法:\n"
+            "    pip install pyobjc-framework-Cocoa\n\n"
+            f"詳細: {_IMPORT_ERROR if not HAS_PYOBJC else ''}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# デモ
+# ─────────────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    print("全ディスプレイ情報（詳細版）:")
-    print_screens_info(_screens)
+    import urllib.request, tempfile, time
+
+    print("サンプル GIF をダウンロード中...")
+    gif_url = "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif"
+    tmp = tempfile.NamedTemporaryFile(suffix=".gif", delete=False)
+    try:
+        urllib.request.urlretrieve(gif_url, tmp.name)
+    except Exception:
+        # オフラインの場合は最小限の 1x1 GIF を生成
+        tmp.write(bytes([
+            0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,
+            0x01,0x00,0x80,0x00,0x00,0xff,0xff,0xff,
+            0x00,0x00,0x00,0x21,0xf9,0x04,0x00,0x0a,
+            0x00,0x00,0x00,0x2c,0x00,0x00,0x00,0x00,
+            0x01,0x00,0x01,0x00,0x00,0x02,0x02,0x4c,
+            0x01,0x00,0x3b
+        ]))
+    tmp.close()
+
+    # ── デモ 1: 確認ダイアログ ────────────────────────────────────────────
+    print("\n1. gif_dialog() を表示します...")
+    result = gif_dialog(
+        gif_path=tmp.name,
+        message="サーバーに接続できません",
+        title="接続エラー",
+        detail="ネットワーク設定を確認してから再試行してください。",
+        buttons=["再試行", "キャンセル"],
+        cancel_label="キャンセル",
+        gif_size=(140, 140),
+    )
+    print(f"   → クリックされたボタン: {result}")
+
+    # ── デモ 2: プログレスダイアログ ─────────────────────────────────────
+    print("\n2. gif_progress_dialog() を表示します（3秒で自動終了）...")
+
+    def fake_task():
+        time.sleep(3)
+
+    ok = gif_progress_dialog(
+        gif_path=tmp.name,
+        message="データをアップロード中...",
+        title="送信中",
+        detail="しばらくお待ちください",
+        task=fake_task,
+        on_cancel=lambda: print("   → キャンセルされました"),
+    )
+    print(f"   → 完了: {ok}")
+
+    os.unlink(tmp.name)
+    print("\n✅ デモ完了")

@@ -159,7 +159,7 @@ if __name__ == '__main__':
 
 @lock_numba
 @njit('f4[:,:](f4[:,:], i4, i4)', parallel=True, fastmath=True, cache=True)
-def fast_median_filter(img, kernel_size=3, num_bins=256):
+def fast_median_filter(img, kernel_size=3, num_bins=1024):
     """
     量子化とヒストグラムベースの高速メディアンフィルタ
     float32画像を高速処理可能
@@ -257,10 +257,14 @@ def orton_effect(image, blur_radius=30, opacity=0.75, intensity=0.5):
     #blurred = np.zeros_like(image)
     #for i in range(3):  # RGB各チャンネル
     #    blurred[:, :, i] = cv2.GaussianBlur(image[:, :, i], (0, 0), blur_radius)
+    # blurred = cv2.GaussianBlur(image, (0, 0), blur_radius) # Note: The commented lines in original were using single loop
     blurred = cv2.GaussianBlur(image, (0, 0), blur_radius)
     
     # スクリーンレイヤー（中間）: 1 - (1-base) * (1-base)
-    screen_layer = 1.0 - (1.0 - base) * (1.0 - base)
+    # HDRの場合は 1.0 - (1-base)^2 が放物線を描き1.0より暗く（反転）なってしまうのを防ぐため補正する
+    base_clamped = np.clip(base, 0.0, 1.0)
+    screen_layer_sdr = 1.0 - (1.0 - base_clamped) * (1.0 - base_clamped)
+    screen_layer = np.where(base > 1.0, base, screen_layer_sdr)
     
     # 乗算レイヤー（最上位）: screen_layer * blurred
     multiply_layer = screen_layer * blurred

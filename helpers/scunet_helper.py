@@ -49,14 +49,10 @@ def predict_scunet(model, np_image):
     """
     device = next(model.parameters()).device
 
-    # 輝度だけに掛ける
-    if model.user_config["is_gray"]:
-        hlcg_image = hlsrgb.rgb_to_hlc_gain(np_image)
-        h, l, c, g = cv2.split(hlcg_image)
-        np_image = l
-
     # 前処理
+    is_n_dim2 = False
     if np_image.ndim == 2:
+        is_n_dim2 = True
         np_image = np_image[..., np.newaxis]
     tensor_img = torch.from_numpy(np_image).permute(2, 0, 1).unsqueeze(0).to(device)
 
@@ -72,12 +68,11 @@ def predict_scunet(model, np_image):
     restored = restored.squeeze().float().detach().cpu().numpy()
     if restored.ndim == 3:
         restored = restored.transpose(1, 2, 0)
-
-    # 復元
-    if model.user_config["is_gray"]:
-        l = restored
-        hlcg_image = cv2.merge([h, l, c, g])
-        restored = hlsrgb.hlc_gain_to_rgb(hlcg_image)
+        if is_n_dim2:
+            restored = restored[..., 0]
+    elif restored.ndim == 2: # in out_nc=1
+        if is_n_dim2 == False:
+            restored = restored[..., np.newaxis]
 
     return restored
 

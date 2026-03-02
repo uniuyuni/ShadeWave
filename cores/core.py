@@ -430,11 +430,18 @@ def apply_level_adjustment(image, black_level, midtone_level, white_level):
     input_range = np.maximum(input_range, 1.0)  # 0除算を防ぐ
     normalized = adjusted / input_range
     
-    # 3. 1.0以上をクリップ
+    # 3. 1.0以上をクリップ（以前の仕様）
     #normalized = np.minimum(normalized, 1.0)
     
     # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
-    result = np.power(normalized, gamma).astype(np.float32)
+    # HDR領域（> 1.0）に対してnp.powerを適用すると値が指数関数的に爆発するため保護する
+    if gamma != 1.0:
+        sdr_part = np.clip(normalized, 0.0, 1.0)
+        hdr_part = np.maximum(normalized - 1.0, 0.0)
+        # SDR領域にはガンマ補正をかけ、HDR領域（>1.0の部分）は線形加算で階調を保持する
+        result = (np.power(sdr_part, gamma) + hdr_part).astype(np.float32)
+    else:
+        result = normalized.astype(np.float32)
     
     return result
 
@@ -2468,12 +2475,7 @@ def side_window_variance_filter(src, r=3):
     
     return result
 
-
 def light_denoise(img, its, col):
-    global _dncnn_model
-
-    #imin, imax = img.min(), img.max()
-    #img = (img - imin) / (imax - imin)
 
     ycrcb = hlsrgb.linear_rgb_to_ycbcr(img)
     y, cr, cb = cv2.split(ycrcb)
@@ -2489,16 +2491,12 @@ def light_denoise(img, its, col):
         # eps = (閾値)^2
         # its=100 で 0.2 (20%) 程度の変動を平滑化
         eps = (its * 0.2) ** 2
-        
+
         # 分散安定化変換: sqrt(Y) をとることで、ショットノイズ(値に比例して分散が増える)を均一化する
         # これによりハイライト部でもノイズ除去が効くようになる
         sq_y = np.sqrt(np.maximum(y, 0))
-        #sq_y_s = cv2.resize(sq_y, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
-        #sq_y_s = side_window_variance_filter(sq_y_s, r=1)
-        #sq_y_s = cv2.resize(sq_y_s, None, fx=1/1.5, fy=1/1.5, interpolation=cv2.INTER_AREA)
-        sq_y = cv2.ximgproc.guidedFilter(guide=sq_y, src=sq_y, radius=radius, eps=eps)
-        #sq_y = sq_y_g * (1 - its) + sq_y_s * its
-        y = sq_y ** 2
+        sq_y_gf = cv2.ximgproc.guidedFilter(guide=sq_y, src=sq_y, radius=radius, eps=eps)
+        y = sq_y_gf ** 2
 
     # 色度チャンネル(Cr, Cb)のノイズ除去 (Joint Guided Filter)
     if col > 0:
@@ -2514,7 +2512,6 @@ def light_denoise(img, its, col):
     # チャンネルを結合
     filtered_ycrcb = cv2.merge([y, cr, cb])
     filtered_rgb = hlsrgb.linear_ycbcr_to_rgb(filtered_ycrcb)
-    #filtered_rgb = filtered_rgb * (imax - imin) + imin
 
     return filtered_rgb
 

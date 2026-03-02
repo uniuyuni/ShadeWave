@@ -172,11 +172,11 @@ def apply_microcontrast(image, strength):
     DxO PhotoLab風のマイクロコントラスト処理
     
     Args:
-        image: RGB画像 (float32, 0-1範囲)
+        image: RGB画像 (float32, 0-1範囲、HDR領域 > 1.0 にも対応)
         strength: 適用度 (-1 to 1)
     
     Returns:
-        処理済み画像 (float32, 0-1範囲)
+        処理済み画像 (float32, HDR保持)
     """
     if strength == 0:
         return image.copy()
@@ -185,7 +185,11 @@ def apply_microcontrast(image, strength):
     normalized_strength = strength
     
     # RGB→LAB変換（明度のみ処理）
-    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+    # HDR値（>1.0）がクリップされるのを防ぐため、最大値で正規化する
+    max_val = max(1.0, float(np.max(image)))
+    normalized_image = image / max_val
+    
+    lab = cv2.cvtColor(normalized_image, cv2.COLOR_RGB2LAB)
     L = lab[..., 0] / 100.0  # 0-1範囲に正規化
     
     # 多段階ガイドフィルタによる局所適応処理
@@ -194,6 +198,9 @@ def apply_microcontrast(image, strength):
     # LAB→RGB変換
     lab[..., 0] = enhanced_L * 100.0
     result = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    
+    # HDR値を復元
+    result = result * max_val
     
     return result
 

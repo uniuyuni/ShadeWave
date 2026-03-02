@@ -1450,6 +1450,7 @@ class AINoiseReductonEffect(Effect):
             
             if needed:
                 import helpers.scunet_helper as scunet_helper
+                
                 if AINoiseReductonEffect.__net is None:
                     AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config('gpu_device'))
                 
