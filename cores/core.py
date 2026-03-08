@@ -378,7 +378,7 @@ def adjust_contrast(img, cf, c=0.5):
         
     return adjust_img
 
-def apply_level_adjustment(image, black_level, midtone_level, white_level):
+def apply_level_adjustment(image, black_level=0, midtone_level=128, white_level=255):
     """
     Photoshop風のレベル補正を適用する関数
     
@@ -1165,16 +1165,16 @@ def get_exif_image_size(exif_data):
     top, left = exif_data.get("RawImageCropTopLeft", "0 0").split()
     top, left = int(top), int(left)
 
-    width, height = exif_data.get("RawImageCroppedSize", "0x0").split('x')
-    width, height = int(width), int(height)
-    if width == 0 and height == 0:
-        width, height = exif_data.get("ImageSize", "0x0").split('x')
-        width, height = int(width), int(height)
-        if width == 0 and height == 0:
-            raise AttributeError("Not Find image size data")
-        
-    return (top, left, width, height)
+    _size_tag = ["RawImageCroppedSize", "FullImageSize", "RawImageSize", "ImageSize"]
+    for tag in _size_tag:
+        if exif_data.get(tag, None) is not None:
+            width, height = exif_data.get(tag, "0x0").split('x')
+            width, height = int(width), int(height)
+            if width != 0 and height != 0:
+                return (top, left, width, height)
 
+    raise AttributeError("Not Find image size data")
+        
 def set_exif_image_size(exif_data, top, left, width, height):
     setflag = False
     

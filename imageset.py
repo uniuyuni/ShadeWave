@@ -21,6 +21,8 @@ import cores.bit_depth_expansion as bit_depth_expansion
 import cores.core as core
 import cores.highlight_recovery as highlight_recovery
 import cores.local_contrast as local_contrast
+import cores.colour_functions as colour_functions
+import cores.color as color
 
 #print(f"libraw version:{rawpy.libraw_version}")
 
@@ -180,6 +182,10 @@ class ImageSet:
         try:
             raw = lre.imread(file_path)
 
+            # AI demosaicフラグ
+            ai_demosaic = config.get_config('ai_demosaic')
+
+            # デモザイク、AI demosaicするときは preprocessだけ
             img_array = raw.postprocess(output_color=lre.ColorSpace.ProPhotoRGB,
                                         demosaic_algorithm=lre.DemosaicAlgorithm.AMaZE,
                                         output_bps=32,
@@ -192,9 +198,51 @@ class ImageSet:
                                         #user_black=0,
                                         #no_auto_bright=True,
                                         highlight_mode=5,
-                                        use_gpu_acceleration=True)
-                                        #auto_bright_thr=0.0005)
-                                        #fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Full)
+                                        use_gpu_acceleration=True,
+                                        preprocess=ai_demosaic)
+            
+            if ai_demosaic:
+                from helpers.demosaicnet_helper import init_demosaicnet, inference_demosaicnet, find_xtrans_offset
+
+                if raw.is_xtrans:
+                    mosaic_type = 'xtrans'
+                    offset_y, offset_x = 2, 2 # オフセットを指定してlibrawのパターンと合わせる
+                else:
+                    mosaic_type = 'bayer'
+                    offset_y, offset_x = raw.get_bayer_pattern_offset()
+
+                # NOTE: noiselevel=0.0 を使用する。暗い画像でnoiselevel=0.3にすると
+                # DemosaicNetがGチャンネルを負値にするため紫色になる。
+                # (信号が0.01~0.02なのに対しnoise=0.3では信号対ノイズ比が極低になる)
+                model_info = init_demosaicnet(mosaic_type=mosaic_type, noiselevel=0.0, tile_size=512, device='mps')
+                
+                # Automatically find the best X-Trans alignment offset
+                """
+                offset_y, offset_x = find_xtrans_offset(
+                    model_info, img_array,
+                )
+                """
+                img_array = inference_demosaicnet(
+                    model_info,
+                    img_array,
+                    out_dtype=np.float32,
+                    offset_y=offset_y,
+                    offset_x=offset_x,
+                )
+
+                # 1. LibRaw のマトリクス(D65)から D50 へのブラッドフォード逆変換行列                
+                # D65の影響を打ち消して元の E光源(1,1,1) 状態に戻す
+                cmat_e = np.dot(color.M_D65_to_D50, raw.color_matrix[:3, :3])
+                
+                # 2. D50のホワイトポイント比率を各行に掛けて、D50基準の順行列にする
+                D50_wp = np.array([0.96422, 1.00000, 0.82521])
+                forward_matrix = cmat_e * (D50_wp / cmat_e.sum(axis=1))[:, np.newaxis]
+                
+                # 3. 変換した D50 ForwardMatrix を適用する
+                img_array = np.dot(img_array, forward_matrix.T)
+
+                # 色空間変換
+                img_array = colour_functions.XYZ_to_RGB(img_array, colourspace='ProPhoto RGB', chromatic_adaptation_transform=config.get_config('cat')).astype(np.float32)
 
             # クロップとexifデータの回転
             top, left, width, height = self._delete_exif_orientation(exif_data)
@@ -213,30 +261,6 @@ class ImageSet:
                 img_array = np.rot90(img_array)
                 img_array = img_array[-cheight:, :cwidth]
             
-            # float32へ
-            #img_array = core.convert_to_float32(img_array)
-
-            #img_array = img_array - raw.black_level_per_channel[0] / ((1<<14)-1)
-            #img_array = np.clip(img_array, 0, 1)
-
-            # 倍率色収差低減
-            #if half == False:
-            #    img_array = core.chromatic_aberration_correction(img_array)
-
-            """
-            if True:
-                # プロファイルを適用
-                reader = DCPReader("dcp/Fujifilm X-E3 Adobe Standard.dcp")
-                profile = reader.read()
-                processor = DCPProcessor(profile)
-                img_array = processor.process(img_array,
-                        partial(colour_functions.XYZ_to_RGB, colourspace='ProPhoto RGB', chromatic_adaptation_transform=config.get_config('cat')),
-                        illuminant='1', use_look_table=True)
-            else:            
-                # プロファイルを使わない時用
-                img_array = np.dot(img_array, self.FORWARDMATRIX1.T)
-                img_array = colour_functions.XYZ_to_RGB(img_array, 'ProPhoto RGB', None, config.get_config('cat')).astype(np.float32)
-            """
             # ホワイトバランス定義
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
@@ -245,11 +269,13 @@ class ImageSet:
             if config.get_config('raw_auto_exposure') == True:
                 
                 Ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
+                Ev *= 0.5
                 
                 # ここで補正
-                img_array = core.adjust_exposure(img_array, Ev)
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
-                img_array = core.adjust_tone(img_array, white_level=-100)
+                img_array = core.adjust_exposure(img_array, Ev)
+                #img_array = core.adjust_tone(img_array, white_level=-100)
+                #img_array = core.apply_level_adjustment(img_array, 10)
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
 
             param['rgb_or_raw'] = 'raw'

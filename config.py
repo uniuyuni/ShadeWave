@@ -16,6 +16,7 @@ def init_config(widget):
         'import_path': os.getcwd() + "/test_photos",
         'lut_path': os.getcwd() + "/lut",
         'preview_size': 1024,
+        'ai_demosaic': False,
         'raw_auto_exposure': True,
         'scale_threshold': 0.5,
         'inpaint_resize_limit': 1024,

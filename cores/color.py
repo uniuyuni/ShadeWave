@@ -126,6 +126,12 @@ def d50_to_d65(XYZ):
     ], dtype=np.float32)
     return _apply_chromatic_adaptation(XYZ, M_d50_to_d65)
 
+M_D65_to_D50 = np.array([
+    [ 1.0478112,  0.0228866, -0.0501270],
+    [ 0.0295424,  0.9904844, -0.0170491],
+    [-0.0092345,  0.0150436,  0.7521316]
+], dtype=np.float32)
+
 def d65_to_d50(XYZ):
     """
     D65 白色点から D50 白色点への変換を実施する関数。
@@ -137,12 +143,7 @@ def d65_to_d50(XYZ):
         numpy.ndarray: D50 白色点に適用された XYZ 値。形状は input と同じ。
     """
     # Bradford 法 による D65→D50 変換行列
-    M_d65_to_d50 = np.array([
-        [ 1.0478112,  0.0228866, -0.0501270],
-        [ 0.0295424,  0.9904844, -0.0170491],
-        [-0.0092345,  0.0150436,  0.7521316]
-    ], dtype=np.float32)
-    return _apply_chromatic_adaptation(XYZ, M_d65_to_d50)
+    return _apply_chromatic_adaptation(XYZ, M_D65_to_D50)
 
 def srgb_gamma_encode(linear):
     """sRGBのガンマ補正"""
