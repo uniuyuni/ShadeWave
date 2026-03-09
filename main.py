@@ -172,6 +172,7 @@ if __name__ == '__main__':
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
             self.apply_thread.start()
             self.enabledelay = None
+            self._actively_loading = False  # ファイル選択によるロード中フラグ（起動時のloading: Trueとは別管理）
 
             self.history = history.History()
             self.current_op = None
@@ -217,9 +218,10 @@ if __name__ == '__main__':
                 has_tasks = self.async_worker.has_pending_tasks()
                 queue_empty = self.async_worker.input_queue.empty()
                 active_count = len(self.async_worker.active_shms)
-                if self.is_processing != has_tasks:
-                    logging.info(f"is_processing changed: {self.is_processing} -> {has_tasks} (queue_empty={queue_empty}, active_shms={active_count})")
-                    self.is_processing = has_tasks
+                should_processing = has_tasks or self._actively_loading
+                if self.is_processing != should_processing:
+                    logging.info(f"is_processing changed: {self.is_processing} -> {should_processing} (queue_empty={queue_empty}, active_shms={active_count}, actively_loading={self._actively_loading})")
+                    self.is_processing = should_processing
 
         def on_kv_post(self, *args, **kwargs):
             super(MainWidget, self).on_kv_post(*args, **kwargs)
@@ -645,6 +647,7 @@ if __name__ == '__main__':
             print(f"[PERF] on_select: Start. Time: {time.time()}")
             # ロード開始
             self.loading = True
+            self._actively_loading = True  # アニメーション表示開始
             # 前の設定を保存
             self.save_current_sidecar()
             # 前のエフェクトを終了
@@ -702,6 +705,7 @@ if __name__ == '__main__':
 
                 # ロード終了
                 self.loading = False
+                self._actively_loading = False  # アニメーション表示終了
 
                 # flag -2はrgbの終わり
                 flag = -1

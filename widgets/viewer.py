@@ -404,6 +404,21 @@ class ViewerWidget(RecycleView, DraggableWidget):
             scale_factor = max_length / height
         return (int(width * scale_factor), int(height * scale_factor))
 
+    def on_scroll_start(self, touch, check_children=True):
+        # マウスホイールの縦スクロールを横スクロールに変換する
+        # touch.buttonを一時的に書き換え、super()呼び出し後に元に戻す
+        # （touchオブジェクトは共有のため、他のウィジェットへの副作用を防ぐ）
+        if touch.is_mouse_scrolling:
+            original_button = touch.button
+            if touch.button == 'scrolldown':
+                touch.button = 'scrollright'
+            elif touch.button == 'scrollup':
+                touch.button = 'scrollleft'
+            result = super().on_scroll_start(touch, check_children)
+            touch.button = original_button  # 他のウィジェットのために元の値に戻す
+            return result
+        return super().on_scroll_start(touch, check_children)
+
     def on_key_down(self, window, key, scancode, codepoint, modifier):
         if (key == 97 and ('ctrl' in modifier or 'meta' in modifier)):  # A
             self.clear_selection()

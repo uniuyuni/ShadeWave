@@ -230,6 +230,12 @@ class ImageSet:
                     offset_x=offset_x,
                 )
 
+                # ハイライト復元
+                thr = raw.get_threshold()          # maximum / data_maximum の値を取得
+                img_array = raw.recover_highlights(img_array)           # threshold=-1 で自動
+                #img_array = raw.tone_mapping(img_array)                 # after_scale=1.0
+                img_array = raw.enhance_micro_contrast(img_array, threshold=thr, strength=8.0, target_contrast=0.06)
+
                 # 1. LibRaw のマトリクス(D65)から D50 へのブラッドフォード逆変換行列                
                 # D65の影響を打ち消して元の E光源(1,1,1) 状態に戻す
                 cmat_e = np.dot(color.M_D65_to_D50, raw.color_matrix[:3, :3])
@@ -269,7 +275,7 @@ class ImageSet:
             if config.get_config('raw_auto_exposure') == True:
                 
                 Ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
-                Ev *= 0.5
+                Ev *= 0.75
                 
                 # ここで補正
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
