@@ -380,69 +380,56 @@ def adjust_contrast(img, cf, c=0.5):
 
 def apply_level_adjustment(image, black_level=0, midtone_level=128, white_level=255):
     """
-    Photoshop風のレベル補正を適用する関数
-    
+    Photoshop風のレベル補正を適用する関数（float32ネイティブ演算）
+
     Args:
-        image: 入力画像 (0.0-1.0の範囲)
+        image: 入力画像 (float32, 0.0–1.0の範囲。HDRは1.0超もあり)
         black_level: 黒レベル (0-255)
         midtone_level: 中間調レベル (0-255, 128が中性)
         white_level: 白レベル (0-255)
-    
-    Returns:
-        調整された画像 (0.0-1.0の範囲)
-    """
-    
-    # 16ビット画像の最大値
-    max_val = 65535
-    
-    # 入力レベルを16ビット範囲に変換
-    black_16bit = black_level * 256
-    white_16bit = white_level * 256
-    
-    # midtone_levelを黒レベルと白レベルの範囲でクリップして再マッピング
-    # Photoshopでは、midtone_levelは黒レベルと白レベルの間の相対位置を表す
-    clipped_midtone = max(min(midtone_level, white_level), black_level)
 
-    # 黒レベルと白レベルの範囲で正規化（0-1）
+    Returns:
+        調整された画像 (float32, 0.0–1.0の範囲)
+    """
+
+    # パラメータを直接 float32 の 0–1 正規化値に変換
+    # （16bit 経由のスケールアップを廃止し精度を向上）
+    inv255 = np.float32(1.0 / 255.0)
+    black_f = np.float32(black_level) * inv255
+    white_f = np.float32(white_level) * inv255
+
+    # midtone を黒–白の範囲でクリップして正規化
+    clipped_midtone = max(min(midtone_level, white_level), black_level)
     if white_level > black_level:
         midtone_normalized = (clipped_midtone - black_level) / (white_level - black_level)
     else:
         midtone_normalized = 0.5  # 範囲が無効な場合は中性値
-    
-    # 正規化された値（0-1）をガンマ値に変換
-    # 0.5が中性（ガンマ1.0）、0に近いほど明るく、1に近いほど暗く
+
+    # 正規化された midtone をガンマ値に変換
+    # 0.5 が中性（ガンマ 1.0）、0 に近いほど明るく、1 に近いほど暗く
     if midtone_normalized < 0.5:
-        # 0-0.5の範囲を0.1-1.0のガンマ値にマッピング（明るく）
-        gamma = 0.1 + (midtone_normalized / 0.5) * 0.9
+        gamma = np.float32(0.1 + (midtone_normalized / 0.5) * 0.9)
     else:
-        # 0.5-1.0の範囲を1.0-9.99のガンマ値にマッピング（暗く）
-        gamma = 1.0 + ((midtone_normalized - 0.5) / 0.5) * 8.99
-    
-    # 入力画像を16ビット範囲に変換
-    image_16bit = image * max_val
-    
-    # レベル調整の計算（Photoshop準拠）
-    # 1. 黒レベル以下を0にクリップ
-    adjusted = np.maximum(image_16bit - black_16bit, 0)
-    
-    # 2. 入力範囲を0-1に正規化
-    input_range = white_16bit - black_16bit
-    input_range = np.maximum(input_range, 1.0)  # 0除算を防ぐ
+        gamma = np.float32(1.0 + ((midtone_normalized - 0.5) / 0.5) * 8.99)
+
+    # ---- float32 ネイティブで演算 ----------------------------------------
+    # 1. 黒レベル以下を 0 にクリップ
+    img_f32 = image.astype(np.float32)
+    adjusted = np.maximum(img_f32 - black_f, np.float32(0.0))
+
+    # 2. 入力範囲を 0–1 に正規化
+    input_range = np.float32(max(white_f - black_f, np.float32(1.0 / 255.0)))  # 0 除算防止
     normalized = adjusted / input_range
-    
-    # 3. 1.0以上をクリップ（以前の仕様）
-    #normalized = np.minimum(normalized, 1.0)
-    
-    # 4. ガンマ補正を適用（正規化された0-1範囲に対して）
-    # HDR領域（> 1.0）に対してnp.powerを適用すると値が指数関数的に爆発するため保護する
-    if gamma != 1.0:
-        sdr_part = np.clip(normalized, 0.0, 1.0)
-        hdr_part = np.maximum(normalized - 1.0, 0.0)
-        # SDR領域にはガンマ補正をかけ、HDR領域（>1.0の部分）は線形加算で階調を保持する
+
+    # 3. ガンマ補正（SDR 領域のみ）・HDR 領域は線形加算で保護
+    if gamma != np.float32(1.0):
+        sdr_part = np.clip(normalized, np.float32(0.0), np.float32(1.0))
+        hdr_part = np.maximum(normalized - np.float32(1.0), np.float32(0.0))
+        # HDR（>1.0）にガンマをかけると指数爆発するため、線形加算で階調を保持
         result = (np.power(sdr_part, gamma) + hdr_part).astype(np.float32)
     else:
         result = normalized.astype(np.float32)
-    
+
     return result
 
 #--------------------------------------------------
@@ -2649,3 +2636,91 @@ def clean_image_mud(img_float32, shadow_threshold=0.2, separation_strength=0.2):
     img_separated = cv2.merge((r_sep, g_sep, b_sep))
     
     return img_separated
+
+
+
+def smoothstep(e0, e1, x):
+    t = np.clip((x - e0) / (e1 - e0 + 1e-12), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+def bell(x, l0, l1, r0, r1):
+    return smoothstep(l0, l1, x) * (1.0 - smoothstep(r0, r1, x))
+
+def apply_tone_controls(
+    rgb,
+    shadows=0.0, highlights=0.0, blacks=0.0, whites=0.0, midtones=0.0,
+    max_stops=2.0,   # スライダー±100で最大±2 stop変化
+    eps=1e-6
+):
+    # rgb: float, >=0 推奨（上限なし）
+    rgb = np.asarray(rgb, dtype=np.float32)
+    R, G, B = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    Y = 0.2126 * R + 0.7152 * G + 0.0722 * B
+    Yp = np.maximum(Y, eps)
+
+    # HDR対応: log2輝度軸
+    L = np.log2(Yp)  # Y=1 -> 0stop, Y=4 -> +2stop
+
+    # 領域マスク（stop単位、必要に応じて調整）
+    w_bl = 1.0 - smoothstep(-10.0, -6.0, L)         # blacks
+    w_sh = bell(L, -8.0, -3.0, -1.0,  1.0)          # shadows
+    w_mid= bell(L, -2.5, -0.5,  0.5,  2.0)          # midtones
+    w_hi = bell(L, -0.5,  0.8,  2.0,  4.0)          # highlights
+    w_wh = smoothstep( 1.5,  3.5, L)                # whites
+
+    a_bl = np.clip(blacks,    -100, 100) / 100.0
+    a_sh = np.clip(shadows,   -100, 100) / 100.0
+    a_mid= np.clip(midtones,  -100, 100) / 100.0
+    a_hi = np.clip(highlights,-100, 100) / 100.0
+    a_wh = np.clip(whites,    -100, 100) / 100.0
+
+    # 合成stop変化量
+    dL = max_stops * (
+        w_bl * a_bl + w_sh * a_sh + w_mid * a_mid + w_hi * a_hi + w_wh * a_wh
+    )
+
+    # 輝度を乗算で変更（上限クリップなし）
+    Y2 = Yp * np.exp2(dL)
+    scale = Y2 / Yp
+    out = rgb * scale[..., None]
+
+    # 下限のみ確保（上限は設けない）
+    return np.maximum(out, 0.0)
+
+def boost_detail_from_tone_change(
+    rgb_before,              # 補正前 (float, >=0)
+    rgb_after,               # 補正後 (float, >=0)
+    detail_strength=0.8,     # 全体強度
+    sigma=1.8,               # 半径
+    hi_start=0.8,            # 明部判定開始(輝度)
+    hi_end=2.0,              # 明部判定最大(輝度)
+    max_comp_stops=2.0,      # 何stop下げで強度1.0扱い
+    gamma=2.0,               # 小さい補正を抑えるカーブ
+    eps=1e-6
+):
+    a = np.asarray(rgb_before, dtype=np.float32)
+    b = np.asarray(rgb_after, dtype=np.float32)
+
+    Ya = np.maximum(0.2126*a[...,0] + 0.7152*a[...,1] + 0.0722*a[...,2], eps)
+    Yb = np.maximum(0.2126*b[...,0] + 0.7152*b[...,1] + 0.0722*b[...,2], eps)
+
+    # 下がった分のstop量
+    comp_stops = np.maximum(0.0, np.log2(Ya, dtype=np.float32) - np.log2(Yb, dtype=np.float32))
+    comp_w = np.clip(comp_stops / max_comp_stops, 0.0, 1.0)
+
+    # 明部マスクは補正前の輝度から作る方が安定
+    L = np.log2(Ya, dtype=np.float32)
+    hi_w = smoothstep(np.log2(hi_start, dtype=np.float32), np.log2(hi_end, dtype=np.float32), L)
+
+    # log輝度ハイパス
+    logY = np.log(Yb, dtype=np.float32)
+    base = cv2.GaussianBlur(logY, (0, 0), sigmaX=sigma, sigmaY=sigma)
+    detail = logY - base
+
+    gain = detail_strength * (comp_w ** gamma) * hi_w
+    logY2 = logY + gain * detail
+    Y2 = np.exp(logY2, dtype=np.float32)
+
+    out = b * (Y2 / Yb)[..., None]
+    return np.maximum(out, 0.0)
+

@@ -197,31 +197,31 @@ class ImageSet:
                                         half_size=half,
                                         #user_black=0,
                                         #no_auto_bright=True,
-                                        highlight_mode=5,
+                                        highlight_mode=4, # 5にするとtonemappingが行われる
                                         use_gpu_acceleration=True,
                                         preprocess=ai_demosaic)
+            print(f"[DEBUG] postprocess min={img_array.min()} max={img_array.max()}")
             
             if ai_demosaic:
                 from helpers.demosaicnet_helper import init_demosaicnet, inference_demosaicnet, find_xtrans_offset
 
-                if raw.is_xtrans:
-                    mosaic_type = 'xtrans'
-                    offset_y, offset_x = 2, 2 # オフセットを指定してlibrawのパターンと合わせる
-                else:
-                    mosaic_type = 'bayer'
-                    offset_y, offset_x = raw.get_bayer_pattern_offset()
-
                 # NOTE: noiselevel=0.0 を使用する。暗い画像でnoiselevel=0.3にすると
                 # DemosaicNetがGチャンネルを負値にするため紫色になる。
                 # (信号が0.01~0.02なのに対しnoise=0.3では信号対ノイズ比が極低になる)
-                model_info = init_demosaicnet(mosaic_type=mosaic_type, noiselevel=0.0, tile_size=512, device='mps')
-                
-                # Automatically find the best X-Trans alignment offset
-                """
-                offset_y, offset_x = find_xtrans_offset(
-                    model_info, img_array,
-                )
-                """
+                model_info = init_demosaicnet(mosaic_type='xtrans' if raw.is_xtrans else 'bayer',
+                                              noiselevel=0.0, tile_size=512, device='mps')
+
+                # オフセットを指定してlibrawのパターンと合わせる
+                if raw.is_xtrans:
+                    offset_y, offset_x = 2, 2
+                    #offset_y, offset_x = find_xtrans_offset(model_info, img_array)
+                else:
+                    offset_y, offset_x = raw.get_bayer_pattern_offset()
+
+                # NOTE: 暗部が破綻するので一旦増幅して、デモザイク後に復元する
+                # k=増幅係数。ISO別に係数を変えると良いらしい:-)
+                k = 8.0
+                img_array = (np.log1p(k * img_array) / np.log1p(k)).astype(np.float32)
                 img_array = inference_demosaicnet(
                     model_info,
                     img_array,
@@ -229,6 +229,7 @@ class ImageSet:
                     offset_y=offset_y,
                     offset_x=offset_x,
                 )
+                img_array = (np.expm1(np.log1p(k) * img_array) / k).astype(np.float32)
 
                 # ハイライト復元
                 thr = raw.get_threshold()          # maximum / data_maximum の値を取得

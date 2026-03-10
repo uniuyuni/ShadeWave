@@ -2187,6 +2187,7 @@ class ExposureEffect(Effect):
 
                 rgb = core.type_convert(rgb, np.ndarray)
                 self.diff = core.adjust_exposure(rgb, ev)
+                self.diff = core.boost_detail_from_tone_change(rgb, self.diff, detail_strength=1.2, max_comp_stops=2.0)
 
         return self.diff
     
