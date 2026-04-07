@@ -1759,6 +1759,16 @@
                                     on_before_edit: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
                                     on_after_edit: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
                                 ParamSlider:
+                                    id: slider_rca_green_amount
+                                    text: "Green Amount"
+                                    min: 1
+                                    max: 100
+                                    value: 20
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(0, 'remove_chromatic_aberration')
+                                    on_before_edit: root.begin_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                    on_after_edit: root.end_history_effect_ctrl(0, 'remove_chromatic_aberration')
+                                ParamSlider:
                                     id: slider_rca_fringe_width
                                     text: "Fringe Width"
                                     min: 1
@@ -1849,23 +1859,95 @@
 
                                 ParamBoxLayout:
                                     ParamLabel:
-                                        text: "Type"
+                                        text: "Coating"
                                     VSpacer:
                                         size_hint_x: 0.1
                                     ParamSpinner:
-                                        id: spinner_lens_preset
+                                        id: spinner_coating_preset
                                         values: [ 'None', ]
                                         on_hovered_item: root.apply_effects_lv(2, 'lens_simulator')
                                         on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lens_simulator')
                                         on_value: root.end_history_effect_ctrl(2, 'lens_simulator')
-                                        
+
                                 ParamSlider:
-                                    id: slider_lens_intensity
-                                    text: "Intensity"
+                                    id: slider_coating_strength
+                                    text: "Coating mix"
                                     min: 0
                                     max: 100
                                     value: 100
                                     step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_coating_light
+                                    text: "Light (flare)"
+                                    min: 0.0
+                                    max: 3.0
+                                    value: 1.0
+                                    step: 0.05
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_lateral_ca
+                                    text: "Lateral CA"
+                                    min: 0.0
+                                    max: 2.0
+                                    value: 0.3
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_longitudinal_ca
+                                    text: "Longitudinal CA"
+                                    min: 0.0
+                                    max: 2.0
+                                    value: 0.4
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_spherical_ca
+                                    text: "Spherical"
+                                    min: 0.0
+                                    max: 2.0
+                                    value: 0.5
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_lens_focus_depth
+                                    text: "Focus depth"
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.5
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_lens_aperture
+                                    text: "Aperture f/"
+                                    min: 0.8
+                                    max: 16.0
+                                    value: 1.4
+                                    step: 0.1
+                                    for_float: True
                                     on_slider: root.apply_effects_lv(2, 'lens_simulator')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
@@ -2927,4 +3009,3 @@
             ref_height: 160
             do_scroll_x: True
             do_scroll_y: False
-

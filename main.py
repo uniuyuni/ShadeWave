@@ -57,7 +57,7 @@ if __name__ == '__main__':
     import macos as device
 
     import cores.film_emulator as film_emulator
-    import cores.lens_simulator as lens_simulator
+    from cores.coating_simulator import CoatingSimulator
     import config
     import export
     from processing_dialog import create_processing_dialog
@@ -1061,11 +1061,9 @@ if __name__ == '__main__':
 
         def _set_lens_presets(self):
             presets = ['None']
-
-            for preset in lens_simulator.LensSimulator.LENS_PRESETS:
-                presets.append(preset)
-
-            self.ids['spinner_lens_preset'].values = presets
+            for _key, data in CoatingSimulator().presets.items():
+                presets.append(data['name'])
+            self.ids['spinner_coating_preset'].values = presets
 
         def _set_exif_data(self, exif_data):
             self.ids['exif_file_name'].value = exif_data.get("FileName", "-")

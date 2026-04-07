@@ -88,6 +88,11 @@ class FringeRemoverFast:
         - In-place operations where possible
         """
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
+        # Shared HSV components to avoid recompute
+        maxc = np.maximum(np.maximum(r, g), b)
+        minc = np.minimum(np.minimum(r, g), b)
+        deltac = maxc - minc
+        s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
         
         # Fast edge detection using simple gradient
         luminance = 0.299 * r + 0.587 * g + 0.114 * b
@@ -95,12 +100,12 @@ class FringeRemoverFast:
         
         # Create masks - OPTIMIZED
         if self.purple_amount > 0:
-            purple_mask = self._create_purple_mask_fast(image, edges)
+            purple_mask = self._create_purple_mask_fast(image, edges, maxc=maxc, minc=minc, deltac=deltac, s=s)
             if purple_mask.max() > 0.01:  # Only process if mask is significant
                 image = self._correct_purple_fringe_fast(image, purple_mask)
         
         if self.green_amount > 0:
-            green_mask = self._create_green_mask_fast(image, edges)
+            green_mask = self._create_green_mask_fast(image, edges, maxc=maxc, minc=minc, deltac=deltac, s=s)
             if green_mask.max() > 0.01:
                 image = self._correct_green_fringe_fast(image, green_mask)
         
@@ -129,26 +134,35 @@ class FringeRemoverFast:
         # Fast dilation
         if self.fringe_width > 1:
             # サイズの上限を設定（高速化）
-            size = min(self.fringe_width * 2 + 1, 20)  # 最大で20に制限
+            size = self.fringe_width * 2 + 1
             # OpenCV dilate（scipyより2-3倍高速）
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
             edges = cv2.dilate(edges.astype(np.uint8), kernel).astype(np.float32)
         
         return edges.astype(np.float32)
     
-    def _create_purple_mask_fast(self, image: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    def _create_purple_mask_fast(self, image: np.ndarray, edges: np.ndarray,
+                                 maxc: np.ndarray = None,
+                                 minc: np.ndarray = None,
+                                 deltac: np.ndarray = None,
+                                 s: np.ndarray = None) -> np.ndarray:
         """
         Fast purple fringe mask creation.
         """
+        if edges.max() <= 0:
+            return edges.astype(np.float32)
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
         
         # Fast HSV conversion (only H and S needed)
-        maxc = np.maximum(np.maximum(r, g), b)
-        minc = np.minimum(np.minimum(r, g), b)
+        if maxc is None or minc is None:
+            maxc = np.maximum(np.maximum(r, g), b)
+            minc = np.minimum(np.minimum(r, g), b)
         
         # Saturation
-        deltac = maxc - minc
-        s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
+        if deltac is None:
+            deltac = maxc - minc
+        if s is None:
+            s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
         
         # Hue (simplified, only compute where needed)
         h = np.zeros_like(maxc)
@@ -193,17 +207,26 @@ class FringeRemoverFast:
         # Apply amount and clip
         return np.clip(purple_mask * self.purple_amount, 0, 1)
     
-    def _create_green_mask_fast(self, image: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    def _create_green_mask_fast(self, image: np.ndarray, edges: np.ndarray,
+                                maxc: np.ndarray = None,
+                                minc: np.ndarray = None,
+                                deltac: np.ndarray = None,
+                                s: np.ndarray = None) -> np.ndarray:
         """
         Fast green fringe mask creation.
         """
+        if edges.max() <= 0:
+            return edges.astype(np.float32)
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
         
         # Fast HSV (only what's needed)
-        maxc = np.maximum(np.maximum(r, g), b)
-        minc = np.minimum(np.minimum(r, g), b)
-        deltac = maxc - minc
-        s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
+        if maxc is None or minc is None:
+            maxc = np.maximum(np.maximum(r, g), b)
+            minc = np.minimum(np.minimum(r, g), b)
+        if deltac is None:
+            deltac = maxc - minc
+        if s is None:
+            s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
         
         # Hue (only compute for green range)
         h = np.zeros_like(maxc)

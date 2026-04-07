@@ -2643,50 +2643,6 @@ def smoothstep(e0, e1, x):
     t = np.clip((x - e0) / (e1 - e0 + 1e-12), 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
 
-def bell(x, l0, l1, r0, r1):
-    return smoothstep(l0, l1, x) * (1.0 - smoothstep(r0, r1, x))
-
-def apply_tone_controls(
-    rgb,
-    shadows=0.0, highlights=0.0, blacks=0.0, whites=0.0, midtones=0.0,
-    max_stops=2.0,   # スライダー±100で最大±2 stop変化
-    eps=1e-6
-):
-    # rgb: float, >=0 推奨（上限なし）
-    rgb = np.asarray(rgb, dtype=np.float32)
-    R, G, B = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    Y = 0.2126 * R + 0.7152 * G + 0.0722 * B
-    Yp = np.maximum(Y, eps)
-
-    # HDR対応: log2輝度軸
-    L = np.log2(Yp)  # Y=1 -> 0stop, Y=4 -> +2stop
-
-    # 領域マスク（stop単位、必要に応じて調整）
-    w_bl = 1.0 - smoothstep(-10.0, -6.0, L)         # blacks
-    w_sh = bell(L, -8.0, -3.0, -1.0,  1.0)          # shadows
-    w_mid= bell(L, -2.5, -0.5,  0.5,  2.0)          # midtones
-    w_hi = bell(L, -0.5,  0.8,  2.0,  4.0)          # highlights
-    w_wh = smoothstep( 1.5,  3.5, L)                # whites
-
-    a_bl = np.clip(blacks,    -100, 100) / 100.0
-    a_sh = np.clip(shadows,   -100, 100) / 100.0
-    a_mid= np.clip(midtones,  -100, 100) / 100.0
-    a_hi = np.clip(highlights,-100, 100) / 100.0
-    a_wh = np.clip(whites,    -100, 100) / 100.0
-
-    # 合成stop変化量
-    dL = max_stops * (
-        w_bl * a_bl + w_sh * a_sh + w_mid * a_mid + w_hi * a_hi + w_wh * a_wh
-    )
-
-    # 輝度を乗算で変更（上限クリップなし）
-    Y2 = Yp * np.exp2(dL)
-    scale = Y2 / Yp
-    out = rgb * scale[..., None]
-
-    # 下限のみ確保（上限は設けない）
-    return np.maximum(out, 0.0)
-
 def boost_detail_from_tone_change(
     rgb_before,              # 補正前 (float, >=0)
     rgb_after,               # 補正後 (float, >=0)

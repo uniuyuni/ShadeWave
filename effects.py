@@ -9,7 +9,8 @@ import cores.core as core
 import cores.cubelut as cubelut
 import cores.subpixel_shift as subpixel_shift
 import cores.film_emulator as film_emulator
-import cores.lens_simulator as lens_simulator
+from cores.coating_simulator import CoatingSimulator
+from cores.lens_aberration_simulator import LensAberrationSimulator
 import cores.linear_to_log_lut as linear_to_log
 import cores.filters as filters
 import cores.local_contrast as local_contrast
@@ -187,6 +188,7 @@ class RemoveChromaticAberrationEffect(Effect):
             'switch_fringe_removal': True,
             'rca_enabled': False,
             'rca_purple_amount': 20,
+            'rca_green_amount': 20,
             'rca_fringe_width': 20,
             'rca_edge_threshold': 10,
         }
@@ -199,6 +201,7 @@ class RemoveChromaticAberrationEffect(Effect):
         widget.ids["switch_fringe_removal"].enabled = self._get_param(param, 'switch_fringe_removal')
         widget.ids["switch_rca"].active = self._get_param(param, 'rca_enabled')
         widget.ids["slider_rca_purple_amount"].set_slider_value(self._get_param(param, 'rca_purple_amount'))
+        widget.ids["slider_rca_green_amount"].set_slider_value(self._get_param(param, 'rca_green_amount'))
         widget.ids["slider_rca_fringe_width"].set_slider_value(self._get_param(param, 'rca_fringe_width'))
         widget.ids["slider_rca_edge_threshold"].set_slider_value(self._get_param(param, 'rca_edge_threshold'))
     
@@ -206,6 +209,7 @@ class RemoveChromaticAberrationEffect(Effect):
         param['switch_fringe_removal'] = widget.ids["switch_fringe_removal"].enabled
         param['rca_enabled'] = widget.ids["switch_rca"].active
         param['rca_purple_amount'] = widget.ids["slider_rca_purple_amount"].value
+        param['rca_green_amount'] = widget.ids["slider_rca_green_amount"].value
         param['rca_fringe_width'] = widget.ids["slider_rca_fringe_width"].value
         param['rca_edge_threshold'] = widget.ids["slider_rca_edge_threshold"].value
 
@@ -213,6 +217,7 @@ class RemoveChromaticAberrationEffect(Effect):
         switch_fringe_removal = self._get_param(param, 'switch_fringe_removal')
         rca_enabled = self._get_param(param, 'rca_enabled')
         rca_purple_amount = self._get_param(param, 'rca_purple_amount')
+        rca_green_amount = self._get_param(param, 'rca_green_amount')
         rca_fringe_width = self._get_param(param, 'rca_fringe_width')
         rca_edge_threshold = self._get_param(param, 'rca_edge_threshold')
         if switch_fringe_removal == False or rca_enabled == False or efconfig.loading_flag != -1:
@@ -222,7 +227,7 @@ class RemoveChromaticAberrationEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((rca_enabled, rca_purple_amount, rca_fringe_width, rca_edge_threshold))
+            param_hash = hash((rca_enabled, rca_purple_amount, rca_green_amount, rca_fringe_width, rca_edge_threshold))
 
             # Async Processing Logic
             handled, result = self.try_async_execution(img, param, efconfig, param_hash)
@@ -232,7 +237,15 @@ class RemoveChromaticAberrationEffect(Effect):
             needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
             if needed:
                 self.hash = combined_hash
-                self.diff = remove_chromatic_aberration(img, purple_amount=rca_purple_amount/10, fringe_width=rca_fringe_width, edge_threshold=rca_edge_threshold/1000, min_saturation=0.1)
+                self.diff = remove_chromatic_aberration(
+                    img,
+                    purple_amount=rca_purple_amount/10,
+                    green_amount=rca_green_amount/10,
+                    fringe_width=rca_fringe_width,
+                    lateral_correction=True,
+                    edge_threshold=rca_edge_threshold/1000,
+                    min_saturation=0.1
+                )
         
         return self.diff
 
@@ -3133,43 +3146,116 @@ class LUTEffect(Effect):
 
         return self.diff
 
+def _lens_sim_synthetic_depth(h, w):
+    cy, cx = h / 2.0, w / 2.0
+    y, x = np.ogrid[:h, :w]
+    d = np.sqrt((x.astype(np.float32) - cx) ** 2 + (y.astype(np.float32) - cy) ** 2)
+    d /= np.sqrt(cx * cx + cy * cy) + 1e-6
+    return np.clip(d, 0.0, 1.0)
+
+
 class LensSimulatorEffect(Effect):
+
+    _coating_sim = CoatingSimulator()
 
     def get_param_dict(self, param):
         return {
             'switch_lens_simulator': True,
-            'lens_preset': 'None',
-            'lens_intensity': 100,
+            'coating_preset': 'None',
+            'coating_strength': 100,
+            'coating_light': 1.0,
+            'lateral_ca': 0.3,
+            'longitudinal_ca': 0.4,
+            'spherical_ca': 0.5,
+            'lens_focus_depth': 0.5,
+            'lens_aperture': 1.4,
         }
- 
+
     def set2widget(self, widget, param):
         widget.ids["switch_lens_simulator"].enabled = self._get_param(param, 'switch_lens_simulator')
-        widget.ids["spinner_lens_preset"].set_text(self._get_param(param, 'lens_preset'))
-        widget.ids["slider_lens_intensity"].set_slider_value(self._get_param(param, 'lens_intensity'))
+        widget.ids["spinner_coating_preset"].set_text(self._get_param(param, 'coating_preset'))
+        widget.ids["slider_coating_strength"].set_slider_value(self._get_param(param, 'coating_strength'))
+        widget.ids["slider_coating_light"].set_slider_value(self._get_param(param, 'coating_light'))
+        widget.ids["slider_lateral_ca"].set_slider_value(self._get_param(param, 'lateral_ca'))
+        widget.ids["slider_longitudinal_ca"].set_slider_value(self._get_param(param, 'longitudinal_ca'))
+        widget.ids["slider_spherical_ca"].set_slider_value(self._get_param(param, 'spherical_ca'))
+        widget.ids["slider_lens_focus_depth"].set_slider_value(self._get_param(param, 'lens_focus_depth'))
+        widget.ids["slider_lens_aperture"].set_slider_value(self._get_param(param, 'lens_aperture'))
 
     def set2param(self, param, widget):
         param['switch_lens_simulator'] = widget.ids["switch_lens_simulator"].enabled
-        spinner = widget.ids["spinner_lens_preset"]
-        param['lens_preset'] = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
-        param['lens_intensity'] = widget.ids["slider_lens_intensity"].value
+        spinner = widget.ids["spinner_coating_preset"]
+        param['coating_preset'] = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
+        param['coating_strength'] = widget.ids["slider_coating_strength"].value
+        param['coating_light'] = widget.ids["slider_coating_light"].value
+        param['lateral_ca'] = widget.ids["slider_lateral_ca"].value
+        param['longitudinal_ca'] = widget.ids["slider_longitudinal_ca"].value
+        param['spherical_ca'] = widget.ids["slider_spherical_ca"].value
+        param['lens_focus_depth'] = widget.ids["slider_lens_focus_depth"].value
+        param['lens_aperture'] = widget.ids["slider_lens_aperture"].value
+
+    def _coating_label_to_key(self, label):
+        if label == 'None':
+            return None
+        for key, data in self._coating_sim.presets.items():
+            if data['name'] == label:
+                return key
+        return None
 
     def make_diff(self, rgb, param, efconfig):
-        switch_lens_simulator = self._get_param(param, 'switch_lens_simulator')
-        preset = self._get_param(param, 'lens_preset')
-        intensity = self._get_param(param, 'lens_intensity')
-        if switch_lens_simulator == False or preset == 'None' or intensity <= 0:
+        switch = self._get_param(param, 'switch_lens_simulator')
+        coat_label = self._get_param(param, 'coating_preset')
+        coat_strength = self._get_param(param, 'coating_strength')
+        coat_light = float(self._get_param(param, 'coating_light'))
+        lateral = float(self._get_param(param, 'lateral_ca'))
+        longitudinal = float(self._get_param(param, 'longitudinal_ca'))
+        spherical = float(self._get_param(param, 'spherical_ca'))
+        focus_d = float(self._get_param(param, 'lens_focus_depth'))
+        aperture = float(self._get_param(param, 'lens_aperture'))
+
+        coat_key = self._coating_label_to_key(coat_label)
+        coat_on = coat_key is not None and coat_strength > 0
+        aber_on = (lateral > 1e-5 or longitudinal > 1e-5 or spherical > 1e-5)
+
+        if not switch or (not coat_on and not aber_on):
             self.diff = None
             self.hash = None
+            return self.diff
+
+        param_hash = hash((
+            coat_label, coat_strength, round(coat_light, 4),
+            round(lateral, 4), round(longitudinal, 4), round(spherical, 4),
+            round(focus_d, 4), round(aperture, 4),
+        ))
+        if self.hash == param_hash:
+            return self.diff
+
+        self.hash = param_hash
+        rgb = core.type_convert(rgb, np.ndarray)
+        work = np.asarray(rgb, dtype=np.float32).copy()
+
+        if aber_on:
+            h, w = work.shape[:2]
+            depth_map = _lens_sim_synthetic_depth(h, w)
+            sim = LensAberrationSimulator((h, w))
+            processed = sim.apply_all_aberrations(
+                work,
+                depth_map=depth_map,
+                lateral_strength=lateral,
+                longitudinal_strength=longitudinal,
+                spherical_strength=spherical,
+                focus_depth=focus_d,
+                aperture=max(0.5, aperture),
+            )
         else:
-            param_hash = hash((preset, intensity))
-            if self.hash != param_hash:
-                self.hash = param_hash
+            processed = work
 
-                rgb = core.type_convert(rgb, np.ndarray)
-                lens = lens_simulator.process_image(rgb, preset)
-                per = intensity / 100.0
-                self.diff = cv2.addWeighted(lens, per, rgb, 1 - per, 0)
+        if coat_on:
+            coated = self._coating_sim.apply_preset(processed.copy(), coat_key, light_source_intensity=coat_light)
+            t = coat_strength / 100.0
+            processed = processed * (1.0 - t) + coated * t
 
+        self.diff = processed.astype(np.float32, copy=False)
         return self.diff
     
 class FilmSimulationEffect(Effect):
