@@ -1,6 +1,7 @@
 .DS_Store
 .jpg
 .png
+pixitest/
 test/
 test_photos/
 checkpoints/
@@ -8,7 +9,13 @@ icc/
 dcp/
 luts/
 metal/
+SAM3/
+SCUNet/
+Real-ESRGAN/
 splitimage/**build/**
 splitimage/*.egg*/**
 **/__pycache__/**
 **/venv3.11.9/**
+# pixi environments
+.pixi/*
+!.pixi/config.toml

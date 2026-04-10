@@ -1,0 +1,16 @@
+[workspace]
+authors = ["uniuyuni <uniuyuni@gmail.com>"]
+channels = ["conda-forge"]
+name = "platypus"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+curl = ">=8.17.0,<9"
+git = ">=2.51.0,<3"
+gdown = ">=5.2.1,<6"
+libvips = ">=8.17.2,<9"
+pip = ">=25.0.1,<26"
+python = ">=3.11.13,<3.12"
