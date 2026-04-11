@@ -3,6 +3,12 @@
 #display_splash_screen("assets/platypus.png")
 
 if __name__ == '__main__':
+    import os as _os_early
+    # OpenMP ランタイムの情報メッセージを抑える（llvm-openmp / 混在時）
+    _os_early.environ.setdefault("OMP_DISPLAY_ENV", "FALSE")
+    _os_early.environ.setdefault("KMP_WARNINGS", "0")
+    _os_early.environ.setdefault("LIBOMP_VERBOSE", "0")
+
     try:
         #import matplotlib
         #matplotlib.use('Agg', force=True)  # matplotlib読み込み前にAgg固定
@@ -661,11 +667,32 @@ if __name__ == '__main__':
 
                 # とりあえずEXIF表示
                 self._set_exif_data(exif_data)
+            else:
+                # カードなし（フォルダ空など）— get_file が呼ばれず loading が解除されないのを防ぐ
+                self.loading = False
+                self._actively_loading = False
         
         @kvmainthread
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, flag):
             print(f"[PERF] on_fcs_get_file: Called. Flag: {flag}, Time: {time.time()}")
-            print(f"Load image SHAPE: {imgset.img.shape} FLAG: {imgset.flag}, Proc: {flag}")
+            _img = getattr(imgset, "img", None) if imgset is not None else None
+            shape_str = getattr(_img, "shape", None) if _img is not None else None
+            print(f"Load image SHAPE: {shape_str} FLAG: {getattr(imgset, 'flag', None)}, Proc: {flag}")
+
+            # 読み込み段階ごとの flag: RAW プレビュー=0, RGB 完了=-2, 最終=-1。いずれも表示可能になったら UI を止める。
+            # flag<0 だけだとプレビュー(0)のあと永遠に loading が残る（フル解像が遅い・固まると終わらない）。
+            if flag is not None and flag <= 0:
+                self.loading = False
+                self._actively_loading = False
+
+            if imgset is None or getattr(imgset, "img", None) is None:
+                logging.error(f"画像データがありません: {file_path} (flag={flag})")
+                self.empty_image()
+                if self.processor:
+                    self.processor.cancel_all()
+                self.loading = False
+                self._actively_loading = False
+                return
 
             if flag == 0 or flag == -2:
                 # 最終的なパラメータを合成
@@ -697,17 +724,8 @@ if __name__ == '__main__':
 
                 self.history_panel.set_history(self.history)
 
-
-            # 読み込み終わり
+            # flag -2はrgbの終わり（最終は -1 に統一）
             if flag < 0:
-                # lensfun セットアップ
-                #core.setup_lensfun(param['original_img_size'], exif_data)
-
-                # ロード終了
-                self.loading = False
-                self._actively_loading = False  # アニメーション表示終了
-
-                # flag -2はrgbの終わり
                 flag = -1
 
             # 暫定処置

@@ -30,6 +30,19 @@ import utils.aiutils as aiutils
 import macos as device
 from enums import EffectMode, ExecutionMode
 
+
+def _loading_flag_ready_for_heavy_effects(loading_flag):
+    """
+    main.on_fcs_get_file と同じ解釈: flag<=0 で表示可能になったら重い処理を許可する。
+    loading_flag == -1 だけを「準備完了」とすると、RAW プレビュー(0) や RGB 段階(-2) で
+    LoadingWait が永遠に下流を PREVIEW のままにし、AI ノイズ除去などが開始されない。
+    None は未ロード。bool の True は half 解像など「まだ途中」の意味でブロックする。
+    """
+    if loading_flag is None:
+        return False
+    return loading_flag <= 0
+
+
 class EffectConfig():
 
     def __init__(self, **kwargs):
@@ -158,9 +171,8 @@ class LoadingWaitEffect(Effect):
         self.execution_mode = ExecutionMode.ASYNC
 
     def make_diff(self, img, param, efconfig):
-        # Flag check: Wait until flag is -1
-        # If flag != -1, we are loading.
-        if efconfig.loading_flag != -1:
+        # main の「表示可能」(flag<=0) まで待つ。-1 のみだとプレビュー(0)で永遠にブロックする。
+        if not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
             # We are waiting for load completion.
             # Block downstream heavy effects.
             if efconfig.layer_status is not None:
@@ -220,7 +232,7 @@ class RemoveChromaticAberrationEffect(Effect):
         rca_green_amount = self._get_param(param, 'rca_green_amount')
         rca_fringe_width = self._get_param(param, 'rca_fringe_width')
         rca_edge_threshold = self._get_param(param, 'rca_edge_threshold')
-        if switch_fringe_removal == False or rca_enabled == False or efconfig.loading_flag != -1:
+        if switch_fringe_removal == False or rca_enabled == False or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
             
@@ -286,7 +298,7 @@ class LensModifierEffect(Effect):
         cd = self._get_param(param, 'color_modification')
         sd = self._get_param(param, 'subpixel_distortion')
         gd = self._get_param(param, 'geometry_distortion')
-        if switch_lm == False or lm == False or (cd == False and sd == False and gd == False) or efconfig.loading_flag != -1:
+        if switch_lm == False or lm == False or (cd == False and sd == False and gd == False) or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
             self.diff = None
             self.hash = None
         else:
@@ -662,7 +674,7 @@ class CrossFilterEffect(Effect):
         thickness = max(1.0, self._get_param(param, 'cross_filter_thickness')) #* efconfig.disp_info[4])
         distance = self._get_param(param, 'cross_filter_distance') #* efconfig.disp_info[4]
         random = self._get_param(param, 'cross_filter_random')
-        if switch_cross_filter is False or num_points == 0 or length <= 1 or intensity == 0 or efconfig.loading_flag > -1:
+        if switch_cross_filter is False or num_points == 0 or length <= 1 or intensity == 0 or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
 
@@ -764,7 +776,7 @@ class DistortionEffect(Effect):
                 self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
                 self.distortion_painter.remap_recorded()
 
-                if efconfig.loading_flag == -1:
+                if _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
                     self.is_initial_open = 0
         
         switch_distortion = self._get_param(param, 'switch_distortion')

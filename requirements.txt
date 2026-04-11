@@ -1,12 +1,14 @@
 # NOTE:
-# SAM3 and SCUNet sources are not installed from here.
-# They are cloned into the workspace by setup.sh.
+# SAM3, SCUNet, demosaicnet_torch, libraw_enhanced are cloned and prepared by setup.sh (LibRaw sources for the editable install).
+
+-e ./libraw_enhanced
 
 basicsr
 color-matcher
 dashscope
+decord2
 einops
-facer @ git+https://github.com/FacePerceiver/facer.git@main
+pyfacer @ git+https://github.com/FacePerceiver/facer.git@main
 ftfy
 gfpgan
 google-genai
@@ -15,7 +17,6 @@ iopath
 kivy
 kivymd
 lensfunpy
-libraw-enhanced
 matplotlib
 mediapipe
 msgpack
@@ -25,9 +26,12 @@ opencv-contrib-python
 pandas
 Pillow
 pillow-heif
+psutil
 pycocotools
 pyexiftool
 pyopencl
+pyobjc-framework-Cocoa
+pyobjc-framework-Quartz
 pyvips
 rawpy
 regex

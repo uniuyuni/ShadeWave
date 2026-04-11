@@ -25,6 +25,7 @@ import define
 import cores.core as core
 import utils.kvutils as kvutils
 from widgets.draggable_widget import DraggableWidget
+from utils.paths import rel
 
 class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     file_path = KVStringProperty()
@@ -48,7 +49,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         vbox.ref_padding = 8
 
         # サムネイル表示
-        self.image = KVImage(source='assets/spinner.gif', size_hint_y=0.7, anim_delay=0.02)
+        self.image = KVImage(source=rel("assets", "spinner.gif"), size_hint_y=0.7, anim_delay=0.02)
         vbox.add_widget(self.image)
 
         # ファイル名ラベル
@@ -84,7 +85,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
 
     def on_thumb_source(self, instance, thumb):
         if thumb is None:
-            self.image.source = 'assets/spinner.gif'
+            self.image.source = rel("assets", "spinner.gif")
             self.image.texture = None
             return
 

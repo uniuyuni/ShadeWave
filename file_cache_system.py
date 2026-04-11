@@ -66,6 +66,30 @@ def run_method(obj, method_name, copy_config, *args, **kwargs):
 
     return getattr(obj, method_name)(*args, **kwargs)
 
+def _notify_load_failed(
+    file_path: str,
+    file_callbacks: dict,
+    exif_data,
+    param,
+    reason: str,
+):
+    """preload 失敗・未対応形式・例外時に UI の loading を解除するためコールバックを必ず呼ぶ。"""
+    logging.error(f"FCS load failed ({file_path}): {reason}")
+    callback = file_callbacks.get(file_path)
+    if not callback:
+        return
+    imgset = imageset.ImageSet()
+    imgset.file_path = file_path
+    imgset.img = None
+    imgset.flag = -1
+    exif_data = exif_data if exif_data is not None else {}
+    param = param if param is not None else {}
+    try:
+        callback(file_path, imgset, exif_data, param, None, -1)
+    except Exception as e:
+        logging.error(f"FCS failure callback error: {e}")
+
+
 # ヘルパー関数（スレッド間で共有）
 def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, file_callbacks):
     """
@@ -89,7 +113,15 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
     try:
         # ファイル読み込み準備？
         result = imgset.preload(file_path, exif_data, param)
-        if result is not None:
+        if result is None:
+            _notify_load_failed(
+                file_path,
+                file_callbacks,
+                exif_data,
+                param,
+                "unsupported extension or preload returned None",
+            )
+        elif result is not None:
             # 続きの読み込みがある
             executor = shared_resources['executor']
             futures = []
@@ -122,9 +154,18 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
 
     except Exception as e:
         logging.error(f"FCS Error preloading {file_path}: {e}")
-        return
-    
-    finally:        
+        _notify_load_failed(
+            file_path,
+            file_callbacks,
+            exif_data,
+            param,
+            str(e),
+        )
+    finally:
+        if file_path in preload_registry:
+            del preload_registry[file_path]
+        if file_path in active_processes:
+            del active_processes[file_path]
         # 処理キューフラグを設定
         shared_resources['process_queue_flag'] = True
 
@@ -381,7 +422,8 @@ class FileCacheSystem:
             return
         
         # 先行読み込み登録から指定数のファイルを取得して読み込みを開始
-        files_to_load = list(self.preload_registry.keys())[:-int(processes_to_start)]
+        _keys = list(self.preload_registry.keys())
+        files_to_load = _keys[: int(processes_to_start)]
         
         for file_path in files_to_load:
             if file_path not in self.active_processes:  # 既に進行中でないことを確認

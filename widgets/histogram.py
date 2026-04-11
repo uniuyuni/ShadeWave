@@ -116,7 +116,8 @@ class HistogramWidget(KVImage):
 class HistogramApp(KVApp):
     def build(self):
         histogram = HistogramWidget()
-        histogram._load_image("/Users/uniuyuni/PythonProjects/escargot/picture/DSCF0007.JPG")
+        # 開発用のローカルパスに依存しないようにする
+        # histogram._load_image(<path>)
         return histogram
 
 if __name__ == '__main__':

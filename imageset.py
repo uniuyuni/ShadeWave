@@ -179,6 +179,7 @@ class ImageSet:
         return (file_path, imageset_to_shared_memory(imgset), exif_data, param, -1)
                              
     def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
+        raw = None
         try:
             raw = lre.imread(file_path)
 
@@ -312,7 +313,8 @@ class ImageSet:
             logging.error(e)
 
         finally:
-            raw.close()
+            if raw is not None:
+                raw.close()
 
         return (file_path, self, exif_data, param)
 
