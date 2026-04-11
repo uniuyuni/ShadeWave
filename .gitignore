@@ -9,8 +9,11 @@ icc/
 dcp/
 luts/
 metal/
+libraw_enhanced/
+third_party/libraw-install/
 SAM3/
 SCUNet/
+demosaicnet_torch/
 Real-ESRGAN/
 splitimage/**build/**
 splitimage/*.egg*/**

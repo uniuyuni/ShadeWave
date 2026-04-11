@@ -5,12 +5,26 @@ name = "platypus"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
+[activation]
+scripts = ["scripts/pixi_env_libraw.sh"]
+
 [tasks]
+# external/LibRaw-master を autotools で third_party/libraw-install にビルド（pixi の autoconf/automake/libtool を使用）
+build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
+# 拡張モジュールのみ再ビルド（LibRaw は既に third_party にある想定）
+install-libraw-enhanced = { cmd = "pip install -e libraw_enhanced --no-build-isolation" }
+# 初回: LibRaw ビルド → editable インストール（毎回フルビルドしたい場合はこちら）
+setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && pip install -e libraw_enhanced --no-build-isolation'" }
 
 [dependencies]
+autoconf = ">=2.71,<3"
+automake = ">=1.16,<2"
 curl = ">=8.17.0,<9"
 git = ">=2.51.0,<3"
 gdown = ">=5.2.1,<6"
+libtool = ">=2.4,<3"
 libvips = ">=8.17.2,<9"
 pip = ">=25.0.1,<26"
+pkg-config = ">=0.29,<1"
 python = ">=3.11.13,<3.12"
+llvm-openmp = ">=22.1.3,<23"
