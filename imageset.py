@@ -23,6 +23,7 @@ import cores.highlight_recovery as highlight_recovery
 import cores.local_contrast as local_contrast
 import cores.colour_functions as colour_functions
 import cores.color as color
+from enums import ImageFidelity, LoadStage
 
 #print(f"libraw version:{rawpy.libraw_version}")
 
@@ -36,11 +37,16 @@ def imageset_to_shared_memory(imgset):
     shared_array = np.ndarray(imgset.img.shape, dtype=imgset.img.dtype, buffer=shm.buf)
     shared_array[:] = imgset.img[:]
     # 共有メモリのサイズを返す
-    return (imgset.file_path, shm.name, imgset.img.shape, imgset.img.dtype, imgset.flag)
+    fid = getattr(imgset, "fidelity", ImageFidelity.FULL)
+    fid_val = fid.value if isinstance(fid, ImageFidelity) else str(fid)
+    return (imgset.file_path, shm.name, imgset.img.shape, imgset.img.dtype, fid_val)
 
-def shared_memory_to_imageset(file_path, shm_name, shape, dtype, flag):
+def shared_memory_to_imageset(file_path, shm_name, shape, dtype, *rest):
     """
-    共有メモリからImageSetを作成する
+    共有メモリからImageSetを作成する。
+    rest[0]: fidelity 文字列（'preview' / 'full'）。
+    旧6タプル (…, fidelity, raw_half_bool) の末尾 bool は無視する。
+    旧 (raw_half_bool, fidelity) 順も rest の型で判別して吸収する。
     """
     # 共有メモリを読み込む
     shm = shared_memory.SharedMemory(name=shm_name)
@@ -53,11 +59,35 @@ def shared_memory_to_imageset(file_path, shm_name, shape, dtype, flag):
     shm.close()
     # 共有メモリを削除
     shm.unlink()
+    field_a = rest[0] if len(rest) > 0 else None
+    field_b = rest[1] if len(rest) > 1 else None
+    if isinstance(field_a, bool) and isinstance(field_b, str):
+        field_a, field_b = field_b, None
+    elif isinstance(field_b, bool):
+        field_b = None
+
+    fidelity_val = None
+    if field_a is not None and isinstance(field_a, str) and field_a in (
+        ImageFidelity.PREVIEW.value,
+        ImageFidelity.FULL.value,
+    ):
+        fidelity_val = field_a
+    elif field_b is not None and isinstance(field_b, str):
+        fidelity_val = field_b
+    elif field_a is not None or field_b is not None:
+        fidelity_val = field_a if isinstance(field_a, str) else field_b
+
     # ImageSetを作成
     imgset = ImageSet()
     imgset.file_path = file_path
     imgset.img = img
-    imgset.flag = flag
+    if fidelity_val is not None:
+        try:
+            imgset.fidelity = ImageFidelity(fidelity_val)
+        except ValueError:
+            imgset.fidelity = ImageFidelity.FULL
+    else:
+        imgset.fidelity = ImageFidelity.FULL
 
     return imgset
 
@@ -78,7 +108,7 @@ class ImageSet:
 
         self.file_path = None
         self.img = None
-        self.flag = None
+        self.fidelity = ImageFidelity.FULL
         self.color_space = 'ProPhoto RGB'
 
     def _black(self, in_img, black_level):
@@ -161,24 +191,20 @@ class ImageSet:
 
             # 描画用に設定
             self.img = img_array
+            self.fidelity = ImageFidelity.PREVIEW
             
             logging.info(f"PERF: _load_raw_preview finished. Shape: {img_array.shape}")
 
         except Exception as e:
             logging.error(f"raw error {file_path} {e}")
         
-        return (file_path, self, exif_data, param, 0)
-
-    def _load_raw_fast(self, raw, file_path, exif_data, param):
-        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, True)
-        #return (file_path, imgset, exif_data, param, 0)
-        return (file_path, imageset_to_shared_memory(imgset), exif_data, param, 1)
+        return (file_path, self, exif_data, param, LoadStage.FIRST_PAINTABLE)
 
     def _load_raw_full(self, raw, file_path, exif_data, param):
-        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param, False)
-        return (file_path, imageset_to_shared_memory(imgset), exif_data, param, -1)
+        file_path, imgset, exif_data, param = self._load_raw_process(raw, file_path, exif_data, param)
+        return (file_path, imageset_to_shared_memory(imgset), exif_data, param, LoadStage.FULL_DECODE)
                              
-    def _load_raw_process(self, raw, file_path, exif_data, param, half=False):
+    def _load_raw_process(self, raw, file_path, exif_data, param):
         raw = None
         try:
             raw = lre.imread(file_path)
@@ -194,8 +220,7 @@ class ImageSet:
                                         use_camera_wb=True,
                                         #user_wb = [1.0, 1.0, 1.0, 0.0],
                                         gamma=(1.0, 1.0),
-                                        #four_color_rgb=True if half == False else False,
-                                        half_size=half,
+                                        half_size=False,
                                         #user_black=0,
                                         #no_auto_bright=True,
                                         highlight_mode=4, # 5にするとtonemappingが行われる
@@ -255,13 +280,9 @@ class ImageSet:
             # クロップとexifデータの回転
             top, left, width, height = self._delete_exif_orientation(exif_data)
 
-            # サイズを整える
-            if half == True:
-                cheight = height // 2
-                cwidth = width // 2
-            else:
-                cheight = height
-                cwidth = width
+            # サイズを整える（フル解像）
+            cheight = height
+            cwidth = width
             if cwidth > cheight:
                 img_array = img_array[:cheight, :cwidth]
             else:
@@ -289,14 +310,9 @@ class ImageSet:
             param['rgb_or_raw'] = 'raw'
             param['auto_exposure'] = -Ev # 補正は逆方向
             
-            # サイズを合わせる（INTER_AREAは縮小時にノイズを低減）
-            #if img_array.shape[1] != width or img_array.shape[0] != height:
-            if half == True:
-                img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)        
-
             # 情報の設定
             params.set_image_param(param, img_array)
-            param['lens_modifier'] = not half
+            param['lens_modifier'] = True
             param['exif_data'] = exif_data
 
             # 正方形にする
@@ -304,7 +320,7 @@ class ImageSet:
 
             # 描画用に設定
             self.img = np.array(img_array)
-            self.flag = half
+            self.fidelity = ImageFidelity.FULL
 
         except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
             logging.warning("file is not supported " + file_path)
@@ -369,8 +385,9 @@ class ImageSet:
             #img_array = core.adjust_shape_to_square(img_array)
             
         self.img = np.array(img_array)
+        self.fidelity = ImageFidelity.FULL
         
-        return (file_path, self, exif_data, param, -2)
+        return (file_path, self, exif_data, param, LoadStage.RGB_DONE)
 
     class Result():
         def __init__(self, worker, source):
@@ -383,7 +400,6 @@ class ImageSet:
         if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):            
             result = []
             result.append(ImageSet.Result(worker="_load_raw_preview", source=None))
-            #result.append(ImageSet.Result(worker="_load_raw_fast", source=None))
             result.append(ImageSet.Result(worker="_load_raw_full", source=None))
 
             return result

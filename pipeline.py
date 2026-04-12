@@ -129,6 +129,7 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag
+    efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.upstream_hash = hash(id(img))
 
     # 背景レイヤー
@@ -189,6 +190,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.is_zoomed = True
     efconfig.mode = EffectMode.EXPORT
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
+    efconfig.image_fidelity = primary_param.get('image_fidelity')
 
     # 背景レイヤー
     img0, lv1reset, pre_rotation_img, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig, processor=None)

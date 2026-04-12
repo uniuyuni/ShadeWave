@@ -12,6 +12,15 @@ import define
 import effects
 import utils.utils as utils
 import macos as device
+from enums import ImageFidelity
+
+# pmck 内の「重い」primary_param キー（フル解像時のみシリアライズ／プレビュー時は読み飛ばし）
+HEAVY_PRIMARY_PARAM_KEYS = (
+    'ai_noise_reduction_result',
+    'inpaint_diff_list',
+    'patchmatch_inpaint_diff_list',
+    'heavy_saved_at_fidelity',
+)
 
 # 重要だがセーブしないパラメータ
 SPECIAL_PARAM = [
@@ -41,6 +50,8 @@ SPECIAL_PARAM = [
     # for effects.AutoExposureEffect
     'rgb_or_raw',
     'auto_exposure',
+    # SCUNet raw の upstream 照合用（セッション内のみ、pmck には出さない）
+    'ai_noise_reduction_content_key',
 ]
 
 # セーブするが、初期化時にリセットするパラメータ
@@ -254,16 +265,27 @@ def _ai_noise_reduction_load(param):
         ai_noise_reduction_result = utils.convert_image_from_list(ai_noise_reduction_result)
         param['ai_noise_reduction_result'] = ai_noise_reduction_result
 
-def _serialize_param(param):
-    _inpaint_dump(param, 'inpaint_diff_list')
-    _inpaint_dump(param, 'patchmatch_inpaint_diff_list')
-    _ai_noise_reduction_dump(param)
+def _serialize_param(param, include_heavy=True):
+    if include_heavy:
+        _inpaint_dump(param, 'inpaint_diff_list')
+        _inpaint_dump(param, 'patchmatch_inpaint_diff_list')
+        _ai_noise_reduction_dump(param)
+        param['heavy_saved_at_fidelity'] = ImageFidelity.FULL.value
+    else:
+        for k in HEAVY_PRIMARY_PARAM_KEYS:
+            param.pop(k, None)
 
-def _deserialize_param(param):
+def _deserialize_param(param, load_heavy=True):
     param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
-    _inpaint_load(param, 'inpaint_diff_list')
-    _inpaint_load(param, 'patchmatch_inpaint_diff_list')
-    _ai_noise_reduction_load(param)
+    if load_heavy:
+        _inpaint_load(param, 'inpaint_diff_list')
+        _inpaint_load(param, 'patchmatch_inpaint_diff_list')
+        _ai_noise_reduction_load(param)
+    else:
+        param.pop('ai_noise_reduction_result', None)
+        param['inpaint_diff_list'] = []
+        param['patchmatch_inpaint_diff_list'] = []
+        param.pop('heavy_saved_at_fidelity', None)
 
 def serialize(param, mask_editor2):
     tdatetime = dt.now()
@@ -273,8 +295,9 @@ def serialize(param, mask_editor2):
     # セーブしないパラメータを削除
     param2 = delete_special_param(param)
 
-    # 色々処理変換
-    _serialize_param(param2)
+    # 重い結果はフル解像（フルRAW / フルRGB）のときだけ pmck に含める
+    include_heavy = param.get('image_fidelity') == ImageFidelity.FULL.value
+    _serialize_param(param2, include_heavy=include_heavy)
 
     # パラメータがないのでそもそもファイルを作らない
     if len(param2) == 0 and (mask_dict is None or len(mask_dict) == 0):
@@ -291,16 +314,44 @@ def serialize(param, mask_editor2):
 
     return dict
 
-def deserialize(dict, param, mask_editor2):
-    param.update(dict['primary_param'])
+def deserialize(dict, param, mask_editor2, load_heavy=True):
+    pp = dict['primary_param'].copy()
+    if not load_heavy:
+        for k in HEAVY_PRIMARY_PARAM_KEYS:
+            pp.pop(k, None)
+    param.update(pp)
 
     # 色々処理変換
-    _deserialize_param(param)
+    _deserialize_param(param, load_heavy=load_heavy)
 
     mask_editor2.clear_mask()
     mask_dict = dict.get('mask2', None)
     if mask_dict is not None:
         mask_editor2.deserialize(dict)
+
+
+def merge_heavy_from_pmck(file_path, param, mask_editor2):
+    """
+    RAW がプレビュー→フルに遷移したとき等、既に軽い内容だけ読み込んだ後に
+    pmck から重いペイロードだけをマージする。
+    """
+    if file_path is None:
+        return
+    fp = file_path + '.pmck'
+    try:
+        with open(fp, 'rb') as f:
+            d = msgpack.unpackb(f.read(), raw=False)
+    except FileNotFoundError:
+        return
+    pp = d.get('primary_param')
+    if not pp or pp.get('heavy_saved_at_fidelity') != ImageFidelity.FULL.value:
+        return
+    for k in ('ai_noise_reduction_result', 'inpaint_diff_list', 'patchmatch_inpaint_diff_list'):
+        if k in pp:
+            param[k] = pp[k]
+    _ai_noise_reduction_load(param)
+    _inpaint_load(param, 'inpaint_diff_list')
+    _inpaint_load(param, 'patchmatch_inpaint_diff_list')
 
 def save_json(file_path, param, mask_editor2):
     if file_path is not None and is_empty_param(param, mask_editor2) == False:
@@ -313,7 +364,7 @@ def save_json(file_path, param, mask_editor2):
             return True
     return False
 
-def load_json(file_path, param, mask_editor2):
+def load_json(file_path, param, mask_editor2, load_heavy=True):
     if file_path is not None:
         file_path = file_path + '.pmck'
         try:
@@ -326,7 +377,7 @@ def load_json(file_path, param, mask_editor2):
                 except:
                     pass
 
-                deserialize(dict, param, mask_editor2)
+                deserialize(dict, param, mask_editor2, load_heavy=load_heavy)
                 return dict
             
         except FileNotFoundError as e:

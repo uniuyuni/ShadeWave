@@ -56,6 +56,8 @@ if __name__ == '__main__':
     import define
     import cores.core as core
     import params
+    from enums import ImageFidelity, LoadStage, coerce_load_stage
+    from image_fidelity import pipeline_loading_flag
     import effects
     import pipeline
     import utils.utils as utils
@@ -137,6 +139,16 @@ if __name__ == '__main__':
         PILImage._initialized = 2
         PILImage.init()
 
+    def _load_stage_allows_ui(stage, imgset):
+        """
+        プレビュー（RAW 埋め込み）または単発 RGB が表示可能になった段階でのみ True。
+        RAW フルデコード完了は fidelity が FULL のときのみ True（それ以外はローディング継続）。
+        """
+        if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
+            return True
+        if stage == LoadStage.FULL_DECODE and getattr(imgset, 'fidelity', None) == ImageFidelity.FULL:
+            return True
+        return False
 
     class MainWidget(MDBoxLayout):
         loading = KVBooleanProperty(False)
@@ -255,6 +267,7 @@ if __name__ == '__main__':
             self.click_y = 0
             self.is_zoomed = False
             self.crop_image = None
+            self._last_image_fidelity = None
 
             #core.clean_lensfun()
 
@@ -316,7 +329,7 @@ if __name__ == '__main__':
         def draw_image_core(self, center_pos=None):
             if (self.imgset is not None) and (self.imgset.img is not None):
 
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=self.imgset.flag, is_drag=self.is_press_space, center_pos=center_pos)
+                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos)
                 print(f"[PERF] draw_image_core: process_pipeline finished. Time: {time.time()}")
                 if img is None:
                     return
@@ -643,6 +656,7 @@ if __name__ == '__main__':
         def save_current_sidecar(self):
             if self.imgset is not None:
                 param2 = effects.delete_default_param_all(self.primary_effects, self.primary_param) # プライマリのデフォルト値は消す
+                param2['image_fidelity'] = getattr(self.imgset, 'fidelity', ImageFidelity.FULL).value
                 result = params.save_json(self.imgset.file_path, param2, self.ids['mask_editor2'])
                 if result == False:
                     # 失敗時はファイルを削除
@@ -673,20 +687,15 @@ if __name__ == '__main__':
                 self._actively_loading = False
         
         @kvmainthread
-        def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, flag):
-            print(f"[PERF] on_fcs_get_file: Called. Flag: {flag}, Time: {time.time()}")
+        def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, stage):
+            stage = coerce_load_stage(stage)
+            print(f"[PERF] on_fcs_get_file: Called. stage: {stage}, Time: {time.time()}")
             _img = getattr(imgset, "img", None) if imgset is not None else None
             shape_str = getattr(_img, "shape", None) if _img is not None else None
-            print(f"Load image SHAPE: {shape_str} FLAG: {getattr(imgset, 'flag', None)}, Proc: {flag}")
-
-            # 読み込み段階ごとの flag: RAW プレビュー=0, RGB 完了=-2, 最終=-1。いずれも表示可能になったら UI を止める。
-            # flag<0 だけだとプレビュー(0)のあと永遠に loading が残る（フル解像が遅い・固まると終わらない）。
-            if flag is not None and flag <= 0:
-                self.loading = False
-                self._actively_loading = False
+            print(f"Load image SHAPE: {shape_str} fidelity: {getattr(imgset, 'fidelity', None)}, Proc: {stage}")
 
             if imgset is None or getattr(imgset, "img", None) is None:
-                logging.error(f"画像データがありません: {file_path} (flag={flag})")
+                logging.error(f"画像データがありません: {file_path} (stage={stage})")
                 self.empty_image()
                 if self.processor:
                     self.processor.cancel_all()
@@ -694,16 +703,22 @@ if __name__ == '__main__':
                 self._actively_loading = False
                 return
 
-            if flag == 0 or flag == -2:
-                # 最終的なパラメータを合成
+            if _load_stage_allows_ui(stage, imgset):
+                self.loading = False
+                self._actively_loading = False
+
+            if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
+                # 最終的なパラメータを合成（RAW 初回プレビュー or 単発 RGB）
                 card = self.ids['viewer'].get_card(file_path)
                 if card is not None:
                     # 一度も描画してないので値が設定されてない。暫定処置
                     self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
                     self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
 
-                    # パラメータを読み込んで追加設定
-                    params.load_json(file_path, param, self.ids['mask_editor2'])
+                    # フル解像のときだけ pmck から重い結果を復元（RAW プレビュー段階ではスキップ）
+                    param['image_fidelity'] = getattr(imgset, 'fidelity', ImageFidelity.FULL).value
+                    load_heavy = param['image_fidelity'] == ImageFidelity.FULL.value
+                    params.load_json(file_path, param, self.ids['mask_editor2'], load_heavy=load_heavy)
 
                 # １回目の時だけパラメータを反映して、編集できる様にする
                 self.primary_param.clear()
@@ -724,12 +739,8 @@ if __name__ == '__main__':
 
                 self.history_panel.set_history(self.history)
 
-            # flag -2はrgbの終わり（最終は -1 に統一）
-            if flag < 0:
-                flag = -1
-
-            # 暫定処置
-            if imgset.flag == False:
+            # RAW フルデコード完了時にレンズ補正まわりを param から反映
+            if stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw':
                 self.primary_param['lens_modifier'] = param['lens_modifier']
                 if param['lens_modifier'] == True:
                     self.primary_param['exif_data'] = param['exif_data']
@@ -741,8 +752,15 @@ if __name__ == '__main__':
                 self.processor.cancel_all()
                 self.ids['histogram'].set_histogram_data(None) # Reset histogram? 
 
-            imgset.flag = flag
             self.imgset = imgset
+
+            fid = getattr(imgset, 'fidelity', ImageFidelity.FULL)
+            self.primary_param['image_fidelity'] = fid.value
+            prev_fid = getattr(self, '_last_image_fidelity', None)
+            if fid == ImageFidelity.FULL and prev_fid == ImageFidelity.PREVIEW:
+                params.merge_heavy_from_pmck(file_path, self.primary_param, self.ids['mask_editor2'])
+            self._last_image_fidelity = fid
+
             effects.reeffect_all(self.primary_effects)
             self.start_draw_image_and_crop(imgset)
 

@@ -36,7 +36,7 @@ def setup_scunet(is_color=True, device='cpu', is_half=False):
     if is_half:
         model.half()
 
-    model = model.to(memory_format=torch.channels_last)
+    #model = model.to(memory_format=torch.channels_last)
 
     logging.info("SCUNet Model loaded.")
     return model
@@ -61,7 +61,7 @@ def predict_scunet(model, np_image):
     with torch.inference_mode():
         if model.user_config["is_half"]:
             tensor_img = tensor_img.half()
-        tensor_img = tensor_img.to(memory_format=torch.channels_last)
+        #tensor_img = tensor_img.to(memory_format=torch.channels_last)
         restored = model(tensor_img)
 
     # 後処理
@@ -77,18 +77,30 @@ def predict_scunet(model, np_image):
     return restored
 
 def predict_scunet_helper(model, np_image):
-
-    org_image = np_image.copy()
+    """
+    SCUNet は [0,1] 付近を想定。HDR（>1 等）はグローバル min-max で潰さず、
+    負値を 0 にクリップしたうえで hi=max(max,1) でスケールし、出力で戻す。
+    """
+    org_image = np.ascontiguousarray(np.asarray(np_image, dtype=np.float32))
+    org_image = np.nan_to_num(org_image, nan=0.0, posinf=1.0, neginf=0.0)
 
     logging.info("SCUNet Predicting...")
-    imin = np_image.min()
-    imax = np_image.max()
-    if 0.0 < imin or 1.0 < imax:
-        logging.warning(f"SCUNet Input image range is [{imin}, {imax}].")
-        if imax != imin:
-            np_image = (np_image - imin) / (imax - imin)
-        else:
-             np_image = np_image - imin
+    imin = float(org_image.min())
+    imax = float(org_image.max())
+    if org_image.size == 0 or imax < 1e-12:
+        logging.warning("SCUNet: empty or flat image, skipping.")
+        return org_image.copy()
+
+    np_image = org_image.copy()
+    scale_back = 1.0
+    if imax > 1.0 + 1e-6 or imin < -1e-6:
+        logging.warning(
+            f"SCUNet Input range [{imin}, {imax}] — scale by hi=max(max,1) (not global min-max)."
+        )
+        np_image = np.clip(np_image, 0.0, None)
+        hi = max(float(np_image.max()), 1.0)
+        np_image = np_image / hi
+        scale_back = hi
 
     split_images, split_info = splitimage.split_image_with_overlap(np_image, _TILE_SIZE, _TILE_SIZE, _TILE_OVERLAP)
 
@@ -103,11 +115,8 @@ def predict_scunet_helper(model, np_image):
             logging.info(f"SCUNet Predict {i+1} / {len(split_images)} in {time.time() - t0:.2f} seconds")
 
     result = splitimage.combine_image_with_overlap(denoised_images, split_info)
-    if 0.0 < imin or 1.0 < imax:
-        if imax != imin:
-            result = (result * (imax - imin)) + imin
-        else:
-            result = result + imin
+    if scale_back != 1.0:
+        result = np.asarray(result * scale_back, dtype=np.float32)
 
     logging.info("SCUNet Finalizing...")
     waitinfo.set_text("ai_noise_reduction", "Finalizing...")
@@ -116,4 +125,4 @@ def predict_scunet_helper(model, np_image):
     logging.info(f"SCUNet Completed. {time.time() - t1:.2f} seconds")
     waitinfo.set_text("ai_noise_reduction", "")
 
-    return result
+    return np.asarray(result, dtype=np.float32)

@@ -123,7 +123,12 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                     
                     result_image = None
                     diff = target_effect.make_diff(input_image, params, efconfig)
-                    if diff is not None:
+                    # AINoise: make_diff が param に SCUNet 素出力を入れる。apply_diff はブレンド済みのため
+                    # メインで raw を保存・upstream キー照合するには素出力を送る。
+                    raw_nr = params.get("ai_noise_reduction_result")
+                    if raw_nr is not None and isinstance(raw_nr, np.ndarray):
+                        result_image = np.ascontiguousarray(raw_nr, dtype=np.float32)
+                    elif diff is not None:
                         result_image = target_effect.apply_diff(input_image)
                     else:
                         result_image = input_image # No change

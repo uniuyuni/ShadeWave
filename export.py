@@ -9,6 +9,7 @@ import subprocess
 
 import cores.core as core
 import define
+from enums import ImageFidelity
 from imageset import ImageSet
 import effects
 import pipeline
@@ -161,7 +162,8 @@ class ExportFile():
         self.mask_editor2.set_ref_image(self.imgset.img, self.imgset.img)
         #self.mask_editor2.update()
 
-        params.load_json(self.file_path, self.param, self.mask_editor2)
+        params.load_json(self.file_path, self.param, self.mask_editor2, load_heavy=True)
+        self.param['image_fidelity'] = getattr(self.imgset, 'fidelity', ImageFidelity.FULL).value
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
 
         img = colour_functions.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], config.get_config('cat'),

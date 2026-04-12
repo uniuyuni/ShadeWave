@@ -29,14 +29,31 @@ import utils.utils as utils
 import utils.aiutils as aiutils
 import macos as device
 from enums import EffectMode, ExecutionMode
+from image_fidelity import heavy_ai_allowed
+
+
+def _ai_noise_content_key(nr, upstream_hash):
+    """NR 入力に効く upstream（loading_wait までのハッシュ）と nr オンオフ。強度は含めない。"""
+    return hash((hash(nr), upstream_hash))
+
+
+def _ai_noise_blend_raw(raw, base, nr_intensity):
+    """SCUNet 素出力 raw とベース画像を強度でブレンド。"""
+    if raw is None or base is None or raw.shape != base.shape:
+        return None
+    raw = np.ascontiguousarray(raw, dtype=np.float32)
+    base = np.ascontiguousarray(base, dtype=np.float32)
+    alpha = float(nr_intensity) / 100.0
+    if alpha <= 0.0:
+        return base
+    if alpha >= 1.0:
+        return raw
+    return cv2.addWeighted(raw, alpha, base, 1.0 - alpha, 0.0)
 
 
 def _loading_flag_ready_for_heavy_effects(loading_flag):
     """
-    main.on_fcs_get_file と同じ解釈: flag<=0 で表示可能になったら重い処理を許可する。
-    loading_flag == -1 だけを「準備完了」とすると、RAW プレビュー(0) や RGB 段階(-2) で
-    LoadingWait が永遠に下流を PREVIEW のままにし、AI ノイズ除去などが開始されない。
-    None は未ロード。bool の True は half 解像など「まだ途中」の意味でブロックする。
+    image_fidelity.pipeline_loading_flag と整合: None=未ロード、-1 以下で下流の軽い補正を許可。
     """
     if loading_flag is None:
         return False
@@ -55,6 +72,7 @@ class EffectConfig():
         self.layer_status = None
         self.upstream_hash = 0
         self.loading_flag = -1
+        self.image_fidelity = None  # primary_param['image_fidelity'] を pipeline が渡す場合あり
 
 # 補正基底クラス
 class Effect():
@@ -428,24 +446,31 @@ class InpaintEffect(Effect):
         switch_details = self._get_param(param, 'switch_details')
         ip = self._get_param(param, 'inpaint')
         ipp = self._get_param(param, 'inpaint_predict')
-        if switch_details == True and (ip == True and ipp == True):
+        if switch_details == True and (ip == True and ipp == True) and heavy_ai_allowed(param):
             import helpers.qwen_image_helper as qih
             
             param['inpaint_predict'] = False # なぜか二重起動するときがあるので予防
 
             mask = self.mask_editor.get_mask().astype(np.float32) / 255.0
 
+            # 各バウンディングごとに Qwen へ渡す（predict_helper は image を in-place 更新して返す）
+            img_work = img.copy()
             for inpaint_mask in self.inpaint_mask_list:
                 proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
+                img_work = qih.predict_helper(
+                    img_work, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace
+                )
 
-                #img2 = qih.predict_helper(img, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace)
-                img2 = np.zeros_like(img)
-
-                # 範囲を記録
+            self.inpaint_diff_list = []
+            for inpaint_mask in self.inpaint_mask_list:
+                proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
                 self.inpaint_diff_list.append(
-                    InpaintDiff(type="image",
-                                disp_info=(proc_x, proc_y, proc_w, proc_h),
-                                image=img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
+                    InpaintDiff(
+                        type="image",
+                        disp_info=(proc_x, proc_y, proc_w, proc_h),
+                        image=img_work[proc_y : proc_y + proc_h, proc_x : proc_x + proc_w].copy(),
+                    )
+                )
 
             param['inpaint_diff_list'] = self.inpaint_diff_list
             
@@ -555,7 +580,7 @@ class PatchmatchInpaintEffect(Effect):
         self.inpaint_diff_list = self._get_param(param, 'patchmatch_inpaint_diff_list')
         self.inpaint_mask_list = self._get_param(param, 'patchmatch_inpaint_mask_list')
 
-        if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True:
+        if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True and heavy_ai_allowed(param):
             from cores.content_aware_fill import content_aware_fill
             param['patchmatch_inpaint_predict'] = False
             
@@ -1406,100 +1431,109 @@ class AINoiseReductonEffect(Effect):
 
             self.diff = None
             self.hash = None
-            # param['ai_noise_reduction_result'] = None
-            # Also clear result from params if disabled? User might want to keep it. 
-            # But usually disabled means no result.
-            # param['ai_noise_reduction_result'] = None 
         else:
-            # Hash only parameters. try_async_execution will mix upstream_hash.
-            param_hash = hash(nr)
-            
-            # Additional hash for rendering (includes intensity)
-            render_hash = hash((param_hash, efconfig.upstream_hash, nr_intensity))
+            if not heavy_ai_allowed(param):
+                if efconfig.processor is not None:
+                    efconfig.processor.cancel_effect(self.__class__.__name__)
+                self.diff = None
+                self.hash = None
+                return None
 
-            # Debug Log for Cache Verification
-            print(f"DEBUG: AINoiseReducton make_diff. nr={nr}, upstream={efconfig.upstream_hash}, param_hash={param_hash}, render_hash={render_hash}, self.hash={self.hash}")
+            # 強度は render のみ。非同期キャッシュの param_hash には含めない（raw 再利用してブレンドのみ）
+            param_hash_async = hash((nr,))
+            content_key = _ai_noise_content_key(nr, efconfig.upstream_hash)
+            render_hash = hash((content_key, nr_intensity))
 
-            # Optimization: Skip if already rendered for this state
+            print(
+                f"DEBUG: AINoiseReducton make_diff. nr={nr}, upstream={efconfig.upstream_hash}, "
+                f"content_key={content_key}, render_hash={render_hash}, self.hash={self.hash}"
+            )
+
             if self.hash == render_hash and self.diff is not None:
-                # print("DEBUG: Short-circuit return self.diff")
                 return self.diff
 
-            # Async Processing Logic: Always try async first
-            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+            raw_stored = param.get("ai_noise_reduction_result")
+            key_stored = param.get("ai_noise_reduction_content_key")
+
+            # 保存済み raw + upstream 未変化なら SCUNet／ワーカーを呼ばずブレンドのみ
+            if isinstance(raw_stored, np.ndarray) and raw_stored.shape == img.shape:
+                if key_stored is None or key_stored == content_key:
+                    if key_stored is None:
+                        param["ai_noise_reduction_content_key"] = content_key
+                    blended = _ai_noise_blend_raw(raw_stored, img, nr_intensity)
+                    if blended is not None:
+                        self.diff = blended
+                        self.hash = render_hash
+                        return self.diff
+                else:
+                    param.pop("ai_noise_reduction_result", None)
+                    param.pop("ai_noise_reduction_content_key", None)
+            elif raw_stored is not None:
+                param.pop("ai_noise_reduction_result", None)
+                param.pop("ai_noise_reduction_content_key", None)
+
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash_async)
             if handled:
-                print(f"DEBUG: try_async handled. result ID={id(result) if result is not None else 'None'}. CombinedHash={hash((param_hash, efconfig.upstream_hash))}")
-                # If we got a result (cached or newly computed), update nr_result
+                print(
+                    f"DEBUG: try_async handled. result={id(result) if result is not None else None}, "
+                    f"combined={hash((param_hash_async, efconfig.upstream_hash))}"
+                )
                 if result is not None:
-                    param['ai_noise_reduction_result'] = result
-                    
-                    # Blend with intensity
-                    alpha = nr_intensity / 100.0
-                    # Optimization: Use cv2 for faster blending
-                    # self.diff = result * alpha + img * (1.0 - alpha)
-                    if alpha <= 0.0:
-                        self.diff = img
-                    elif alpha >= 1.0:
-                        self.diff = result
-                    else:
-                        self.diff = cv2.addWeighted(result, alpha, img, 1.0 - alpha, 0.0)
-                    
-                    # Store render hash as current state hash
+                    raw = np.asarray(result, dtype=np.float32)
+                    param["ai_noise_reduction_result"] = raw
+                    param["ai_noise_reduction_content_key"] = content_key
+                    blended = _ai_noise_blend_raw(raw, img, nr_intensity)
+                    if blended is None:
+                        self.diff = None
+                        self.hash = None
+                        return None
+                    self.diff = blended
                     self.hash = render_hash
                     return self.diff
-                
-                # If running/waiting (result is None), try to use preserved result as preview
-                if nr_result is not None:
-                    # Blend preview too
+
+                if nr_result is not None and nr_result.shape == img.shape:
                     alpha = nr_intensity / 100.0
-                    # self.diff = nr_result * alpha + img * (1.0 - alpha)
                     if alpha <= 0.0:
                         self.diff = img
                     elif alpha >= 1.0:
                         self.diff = nr_result
                     else:
-                        # Ensure shapes match (upstream might have changed size?)
-                        if nr_result.shape == img.shape:
-                            self.diff = cv2.addWeighted(nr_result, alpha, img, 1.0 - alpha, 0.0)
-                        else:
-                            self.diff = None # Cannot blend mismatch
-                    
-                    # Use a distinct hash for preview (add 'preview')
-                    self.hash = hash((render_hash, 'preview')) 
+                        self.diff = cv2.addWeighted(nr_result, alpha, img, 1.0 - alpha, 0.0)
+                    self.hash = hash((render_hash, "preview"))
                     return self.diff
-                    
+
                 return None
 
-            # Sync Fallback (Main Thread)
-            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
-            
-            if needed:
-                import helpers.scunet_helper as scunet_helper
-                
-                if AINoiseReductonEffect.__net is None:
-                    AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config('gpu_device'))
-                
-                raw_diff = scunet_helper.predict_scunet_helper(AINoiseReductonEffect.__net, img)
-                AINoiseReductonEffect.__net = None
-                param['ai_noise_reduction_result'] = raw_diff
+            # 同期（processor なし）：上で raw 無効ならここへ。再計算 or 残り
+            raw_diff = param.get("ai_noise_reduction_result")
+            if (
+                isinstance(raw_diff, np.ndarray)
+                and raw_diff.shape == img.shape
+                and param.get("ai_noise_reduction_content_key") == content_key
+            ):
+                blended = _ai_noise_blend_raw(raw_diff, img, nr_intensity)
+                if blended is not None:
+                    self.diff = blended
+                    self.hash = render_hash
+                    return self.diff
+
+            import helpers.scunet_helper as scunet_helper
+
+            if AINoiseReductonEffect.__net is None:
+                AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config("gpu_device"))
+
+            raw_diff = scunet_helper.predict_scunet_helper(AINoiseReductonEffect.__net, img)
+            AINoiseReductonEffect.__net = None
+            param["ai_noise_reduction_result"] = raw_diff
+            param["ai_noise_reduction_content_key"] = content_key
+            blended = _ai_noise_blend_raw(raw_diff, img, nr_intensity)
+            if blended is None:
+                self.diff = None
+                self.hash = None
             else:
-                raw_diff = param.get('ai_noise_reduction_result')
-                
-            if raw_diff is not None:
-                 alpha = nr_intensity / 100.0
-                 # self.diff = raw_diff * alpha + img * (1.0 - alpha)
-                 if alpha <= 0.0:
-                     self.diff = img
-                 elif alpha >= 1.0:
-                     self.diff = raw_diff
-                 else:
-                     self.diff = cv2.addWeighted(raw_diff, alpha, img, 1.0 - alpha, 0.0)
-                     
-                 self.hash = render_hash
-            else:
-                 self.diff = None
-                 self.hash = None
-        
+                self.diff = blended
+                self.hash = render_hash
+
         return self.diff
 
 

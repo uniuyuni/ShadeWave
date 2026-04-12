@@ -10,6 +10,7 @@ import logging
 import imageset
 import config
 import utils.utils as utils
+from enums import LoadStage, ImageFidelity
 
 # warm-up用のダミー関数（pickle化可能なトップレベル関数）
 def _warmup_worker():
@@ -22,11 +23,11 @@ def _task_callback(file_callbacks, shared_resources, future):
         # タスクの結果を取得
         if isinstance(future, Future):
             # サブプロセス実行なら共有メモリから取得
-            file_path, shm, exif_data, param, flag = future.result()
+            file_path, shm, exif_data, param, stage = future.result()
             imgset = imageset.shared_memory_to_imageset(*shm)
         else:
             # メインプロセス実行ならメモリから取得
-            file_path, imgset, exif_data, param, flag = future
+            file_path, imgset, exif_data, param, stage = future
 
         # Memmap化 (キャッシュ投入前)
         if imgset is not None and imgset.img is not None:
@@ -53,8 +54,8 @@ def _task_callback(file_callbacks, shared_resources, future):
         # コールバックを実行
         callback = file_callbacks.get(file_path, None)
         if callback:
-            callback(file_path, imgset, exif_data, param, current_history, flag)
-            logging.info(f"FCS Callback executed for {file_path}, flag={flag}")
+            callback(file_path, imgset, exif_data, param, current_history, stage)
+            logging.info(f"FCS Callback executed for {file_path}, stage={stage}")
 
     except Exception as e:
         logging.error(f"FCS: {str(e)}")
@@ -81,11 +82,10 @@ def _notify_load_failed(
     imgset = imageset.ImageSet()
     imgset.file_path = file_path
     imgset.img = None
-    imgset.flag = -1
     exif_data = exif_data if exif_data is not None else {}
     param = param if param is not None else {}
     try:
-        callback(file_path, imgset, exif_data, param, None, -1)
+        callback(file_path, imgset, exif_data, param, None, LoadStage.FULL_DECODE)
     except Exception as e:
         logging.error(f"FCS failure callback error: {e}")
 
@@ -246,11 +246,11 @@ class FileCacheSystem:
                 if file_path not in self.file_callbacks:
                     self.file_callbacks.clear() # 他のファイルなら消す
                 
-                callback(file_path, imgset, exif_data, param.copy(), history, 0)
+                callback(file_path, imgset, exif_data, param.copy(), history, LoadStage.FIRST_PAINTABLE)
 
-                # 読み込み完了済みなら完了通知も送る
-                if getattr(imgset, 'flag', 0) == -1:
-                    callback(file_path, imgset, exif_data, param.copy(), history, -1)
+                # フル解像がキャッシュに乗っているときは、旧 -1 相当の再コールバック（重い pmck マージ用）
+                if getattr(imgset, 'fidelity', None) == ImageFidelity.FULL:
+                    callback(file_path, imgset, exif_data, param.copy(), history, LoadStage.FULL_DECODE)
                 
             result = (exif_data, imgset)
                         
