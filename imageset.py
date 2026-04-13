@@ -223,7 +223,7 @@ class ImageSet:
                                         half_size=False,
                                         #user_black=0,
                                         #no_auto_bright=True,
-                                        highlight_mode=4, # 5にするとtonemappingが行われる
+                                        highlight_mode=5, # 5にするとtonemappingが行われる
                                         use_gpu_acceleration=True,
                                         preprocess=ai_demosaic)
             print(f"[DEBUG] postprocess min={img_array.min()} max={img_array.max()}")

@@ -1,4 +1,33 @@
 {
+    // デバッグ／タスクが開く「自動化用」ターミナル。pixi shell ではなく zsh のみにして、F5 の debugpy と干渉しないようにする。
+    "terminal.integrated.automationProfile.osx": {
+        "path": "/bin/zsh",
+        "args": []
+    },
+    "python.terminal.activateEnvironment": false,
+    // Debug Console が stderr を赤扱いし、出力がすべて赤に見えることがある対策
+    "workbench.colorCustomizations": {
+        "[Default Dark+]": {
+            "debugConsole.errorForeground": "#d4d4d4",
+            "debugConsole.infoForeground": "#d4d4d4",
+            "debugConsole.warningForeground": "#cca700"
+        },
+        "[Default Dark Modern]": {
+            "debugConsole.errorForeground": "#cccccc",
+            "debugConsole.infoForeground": "#cccccc",
+            "debugConsole.warningForeground": "#cca700"
+        },
+        "[Default Light+]": {
+            "debugConsole.errorForeground": "#3b3b3b",
+            "debugConsole.infoForeground": "#3b3b3b",
+            "debugConsole.warningForeground": "#895503"
+        },
+        "[Default Light Modern]": {
+            "debugConsole.errorForeground": "#3b3b3b",
+            "debugConsole.infoForeground": "#3b3b3b",
+            "debugConsole.warningForeground": "#895503"
+        }
+    },
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/default/bin/python",
     "files.associations": {
         "python.h": "c",

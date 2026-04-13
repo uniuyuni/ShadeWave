@@ -1,8 +1,11 @@
 {
     // https://go.microsoft.com/fwlink/?linkid=830387
     //
-    // pixi: `.pixi` は gitignore されるため、未生成なら `pixi install`
-    // デバッグでは libomp を DYLD で明示（このリポジトリでは F5 でもこちらが必要な環境がある）
+    // 既定は integratedTerminal。.vscode/settings.json の terminal.integrated.automationProfile で
+    // デバッグ用ターミナルを zsh のみにし、手動で開く「pixi shell」タブと干渉しにくくしている。
+    // それでも不安なとき・ブレークが効かないときだけ「デバッグコンソール」構成を使う。
+    // 下記 env でデバッグ対象プロセスの環境を固定。pythonArgs は Python 3.11+ frozen modules 対策。
+    // pixi.toml [activation] scripts/pixi_env_libraw.sh と同順。`.pixi` 未生成なら `pixi install`
     "version": "0.2.0",
     "configurations": [
         {
@@ -11,11 +14,82 @@
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
             "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
+            "pythonArgs": ["-X", "frozen_modules=off"],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
             "env": {
-                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${workspaceFolder}/SAM3${pathSeparator}${env:PYTHONPATH}",
+                "PATH": "${workspaceFolder}/.pixi/envs/default/bin:${env:PATH}",
                 "CONDA_PREFIX": "${workspaceFolder}/.pixi/envs/default",
+                "CONDA_DEFAULT_ENV": "platypus",
+                "PIXI_PROJECT_ROOT": "${workspaceFolder}",
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${workspaceFolder}/SAM3${pathSeparator}${env:PYTHONPATH}",
+                "LIBRAW_LOCAL_PREFIX": "${workspaceFolder}/third_party/libraw-install",
+                "PKG_CONFIG_PATH": "${workspaceFolder}/third_party/libraw-install/lib/pkgconfig:${env:PKG_CONFIG_PATH}",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1",
+                "OMP_DISPLAY_ENV": "FALSE",
+                "KMP_WARNINGS": "0",
+                "LIBOMP_VERBOSE": "0",
+                "ENABLE_PJRT_COMPATIBILITY": "1",
+                "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
+                "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+                "PYTORCH_MPS_FAST_MATH": "1",
+                "KMP_DUPLICATE_LIB_OK": "FALSE",
+                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib"
+            }
+        },
+        {
+            "name": "Platypus: main.py (デバッグコンソール)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
+            "pythonArgs": ["-X", "frozen_modules=off"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "justMyCode": true,
+            "subProcess": true,
+            "env": {
+                "PATH": "${workspaceFolder}/.pixi/envs/default/bin:${env:PATH}",
+                "CONDA_PREFIX": "${workspaceFolder}/.pixi/envs/default",
+                "CONDA_DEFAULT_ENV": "platypus",
+                "PIXI_PROJECT_ROOT": "${workspaceFolder}",
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${workspaceFolder}/SAM3${pathSeparator}${env:PYTHONPATH}",
+                "LIBRAW_LOCAL_PREFIX": "${workspaceFolder}/third_party/libraw-install",
+                "PKG_CONFIG_PATH": "${workspaceFolder}/third_party/libraw-install/lib/pkgconfig:${env:PKG_CONFIG_PATH}",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1",
+                "OMP_DISPLAY_ENV": "FALSE",
+                "KMP_WARNINGS": "0",
+                "LIBOMP_VERBOSE": "0",
+                "ENABLE_PJRT_COMPATIBILITY": "1",
+                "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
+                "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+                "PYTORCH_MPS_FAST_MATH": "1",
+                "KMP_DUPLICATE_LIB_OK": "FALSE",
+                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib"
+            }
+        },
+        {
+            "name": "Platypus: main.py (libomp を DYLD_INSERT する)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
+            "pythonArgs": ["-X", "frozen_modules=off"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
+            "env": {
+                "PATH": "${workspaceFolder}/.pixi/envs/default/bin:${env:PATH}",
+                "CONDA_PREFIX": "${workspaceFolder}/.pixi/envs/default",
+                "CONDA_DEFAULT_ENV": "platypus",
+                "PIXI_PROJECT_ROOT": "${workspaceFolder}",
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${workspaceFolder}/SAM3${pathSeparator}${env:PYTHONPATH}",
+                "LIBRAW_LOCAL_PREFIX": "${workspaceFolder}/third_party/libraw-install",
+                "PKG_CONFIG_PATH": "${workspaceFolder}/third_party/libraw-install/lib/pkgconfig:${env:PKG_CONFIG_PATH}",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1",
                 "OMP_DISPLAY_ENV": "FALSE",
                 "KMP_WARNINGS": "0",
                 "LIBOMP_VERBOSE": "0",
@@ -25,7 +99,7 @@
                 "PYTORCH_MPS_FAST_MATH": "1",
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
                 "DYLD_INSERT_LIBRARIES": "${workspaceFolder}/.pixi/envs/default/lib/libomp.dylib",
-                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib:${env:DYLD_FALLBACK_LIBRARY_PATH}"
+                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib"
             }
         },
         {
@@ -34,11 +108,20 @@
             "request": "launch",
             "program": "${file}",
             "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
+            "pythonArgs": ["-X", "frozen_modules=off"],
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
             "env": {
-                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${workspaceFolder}/SAM3${pathSeparator}${env:PYTHONPATH}",
+                "PATH": "${workspaceFolder}/.pixi/envs/default/bin:${env:PATH}",
                 "CONDA_PREFIX": "${workspaceFolder}/.pixi/envs/default",
+                "CONDA_DEFAULT_ENV": "platypus",
+                "PIXI_PROJECT_ROOT": "${workspaceFolder}",
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${workspaceFolder}/SAM3${pathSeparator}${env:PYTHONPATH}",
+                "LIBRAW_LOCAL_PREFIX": "${workspaceFolder}/third_party/libraw-install",
+                "PKG_CONFIG_PATH": "${workspaceFolder}/third_party/libraw-install/lib/pkgconfig:${env:PKG_CONFIG_PATH}",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1",
                 "OMP_DISPLAY_ENV": "FALSE",
                 "KMP_WARNINGS": "0",
                 "LIBOMP_VERBOSE": "0",
@@ -47,8 +130,7 @@
                 "PYTORCH_ENABLE_MPS_FALLBACK": "1",
                 "PYTORCH_MPS_FAST_MATH": "1",
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
-                "DYLD_INSERT_LIBRARIES": "${workspaceFolder}/.pixi/envs/default/lib/libomp.dylib",
-                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib:${env:DYLD_FALLBACK_LIBRARY_PATH}"
+                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib"
             }
         }
     ]

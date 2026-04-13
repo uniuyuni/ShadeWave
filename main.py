@@ -39,6 +39,7 @@ if __name__ == '__main__':
     from kivy.graphics.transformation import Matrix as KVMatrix
 
     import threading
+    import threads
 
     import cores.colour_functions as colour_functions
     import re
@@ -198,6 +199,8 @@ if __name__ == '__main__':
             self.run_set2widget_all = False
 
             self.is_press_space = False
+            # on_select で選んだパス。FCS の遅延コールバックが別ファイル向けなら無視する（primary_param と imgset の不整合防止）
+            self._expected_file_path = None
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
@@ -258,26 +261,27 @@ if __name__ == '__main__':
             #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
 
         def empty_image(self):
-            self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
-            self.texture.flip_vertical()
-            self.ids["preview"].texture = None
+            with threads.primary_param_lock:
+                self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
+                self.texture.flip_vertical()
+                self.ids["preview"].texture = None
 
-            self.imgset = None
-            self.click_x = 0
-            self.click_y = 0
-            self.is_zoomed = False
-            self.crop_image = None
-            self._last_image_fidelity = None
+                self.imgset = None
+                self.click_x = 0
+                self.click_y = 0
+                self.is_zoomed = False
+                self.crop_image = None
+                self._last_image_fidelity = None
 
-            #core.clean_lensfun()
+                #core.clean_lensfun()
 
-            self.primary_effects = effects.create_effects(
-                lens_modifier_callback=self.lens_modifier_callback,
-                distortion_callback=self.distortion_callback,
-                geometry_callback=self.geometry_callback,
-                crop_callback=self.crop_callback)                
-            self.reset_param(self.primary_param)
-            self.ids['mask_editor2'].clear_mask()
+                self.primary_effects = effects.create_effects(
+                    lens_modifier_callback=self.lens_modifier_callback,
+                    distortion_callback=self.distortion_callback,
+                    geometry_callback=self.geometry_callback,
+                    crop_callback=self.crop_callback)
+                self.reset_param(self.primary_param)
+                self.ids['mask_editor2'].clear_mask()
         
         def start_draw_image_and_crop(self, imgset, center_pos=None):
             if self.imgset is imgset:
@@ -292,7 +296,7 @@ if __name__ == '__main__':
 
         @kvmainthread
         def blit_image(self, img, dt=0):
-            print(f"[PERF] blit_image: Start. Time: {time.time()}")
+            logging.debug("[PERF] blit_image: Start. Time: %s", time.time())
             # Texture Resizing logic
             is_dither = config.get_config('display_output_dither')
             is_downscale = config.get_config('display_output_downscale')
@@ -327,40 +331,44 @@ if __name__ == '__main__':
             self.ids["histogram"].draw_histogram_from_data(hist_data)
 
         def draw_image_core(self, center_pos=None):
-            if (self.imgset is not None) and (self.imgset.img is not None):
+            with threads.primary_param_lock:
+                if (self.imgset is not None) and (self.imgset.img is not None):
+                    if not params.has_original_img_size(self.primary_param):
+                        logging.warning("draw_image_core: original_img_size 未定義のため描画しません")
+                        return
 
-                img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos)
-                print(f"[PERF] draw_image_core: process_pipeline finished. Time: {time.time()}")
-                if img is None:
-                    return
+                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos)
+                    logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
+                    if img is None:
+                        return
 
-                img = np.array(img)
-                utils.print_nan_inf(img, "output")
+                    img = np.array(img)
+                    utils.print_nan_inf(img, "output")
 
-                src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
-                img = colour_functions.RGB_to_RGB(img, src_space, config.get_config('display_color_gamut'), config.get_config('cat'),
-                                        apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+                    src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
+                    img = colour_functions.RGB_to_RGB(img, src_space, config.get_config('display_color_gamut'), config.get_config('cat'),
+                                            apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
-                # ヒストグラム表示
-                img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
-                hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
-                self.draw_histogram_view(hist_data)
+                    # ヒストグラム表示
+                    img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
+                    hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
+                    self.draw_histogram_view(hist_data)
 
-                # プレビュー表示
-                img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
-                img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
-                img_draw = np.clip(img_draw, 0, 1)
-                                
-                #描画をスケジューリング
-                self.blit_image(img_draw)
-                """
-                try:
-                    if self.enabledelay is not None:
-                        self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
-                except:
-                    pass  # 未スケジュール時は無視
-                self.enabledelay = KVClock.schedule_once(partial(self.blit_image, img_draw), -1)
-                """
+                    # プレビュー表示
+                    img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
+                    img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
+                    img_draw = np.clip(img_draw, 0, 1)
+
+                    #描画をスケジューリング
+                    self.blit_image(img_draw)
+                    """
+                    try:
+                        if self.enabledelay is not None:
+                            self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
+                    except:
+                        pass  # 未スケジュール時は無視
+                    self.enabledelay = KVClock.schedule_once(partial(self.blit_image, img_draw), -1)
+                    """
 
         def draw_image(self):
             last_processed_version = -1
@@ -664,24 +672,27 @@ if __name__ == '__main__':
         
         @kvmainthread
         def on_select(self, card):
-            print(f"[PERF] on_select: Start. Time: {time.time()}")
+            logging.debug("[PERF] on_select: Start. Time: %s", time.time())
             # ロード開始
             self.loading = True
             self._actively_loading = True  # アニメーション表示開始
-            # 前の設定を保存
-            self.save_current_sidecar()
-            # 前のエフェクトを終了
-            effects.finalize_all(self.primary_effects, self.primary_param, self)
-            # 空のイメージをセット
-            self.empty_image()
+            with threads.primary_param_lock:
+                # 前の設定を保存
+                self.save_current_sidecar()
+                # 前のエフェクトを終了
+                effects.finalize_all(self.primary_effects, self.primary_param, self)
+                # 空のイメージをセット
+                self.empty_image()
 
             if card is not None:
+                self._expected_file_path = card.file_path
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
                 exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
 
                 # とりあえずEXIF表示
                 self._set_exif_data(exif_data)
             else:
+                self._expected_file_path = None
                 # カードなし（フォルダ空など）— get_file が呼ばれず loading が解除されないのを防ぐ
                 self.loading = False
                 self._actively_loading = False
@@ -689,7 +700,14 @@ if __name__ == '__main__':
         @kvmainthread
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, stage):
             stage = coerce_load_stage(stage)
-            print(f"[PERF] on_fcs_get_file: Called. stage: {stage}, Time: {time.time()}")
+            if file_path != getattr(self, '_expected_file_path', None):
+                logging.info(
+                    "FCS: 現在の選択と異なるファイルのコールバックを無視します: %r (expected %r)",
+                    file_path,
+                    getattr(self, '_expected_file_path', None),
+                )
+                return
+            logging.debug("[PERF] on_fcs_get_file: Called. stage: %s, Time: %s", stage, time.time())
             _img = getattr(imgset, "img", None) if imgset is not None else None
             shape_str = getattr(_img, "shape", None) if _img is not None else None
             print(f"Load image SHAPE: {shape_str} fidelity: {getattr(imgset, 'fidelity', None)}, Proc: {stage}")
@@ -708,7 +726,6 @@ if __name__ == '__main__':
                 self._actively_loading = False
 
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
-                # 最終的なパラメータを合成（RAW 初回プレビュー or 単発 RGB）
                 card = self.ids['viewer'].get_card(file_path)
                 if card is not None:
                     # 一度も描画してないので値が設定されてない。暫定処置
@@ -720,49 +737,58 @@ if __name__ == '__main__':
                     load_heavy = param['image_fidelity'] == ImageFidelity.FULL.value
                     params.load_json(file_path, param, self.ids['mask_editor2'], load_heavy=load_heavy)
 
-                # １回目の時だけパラメータを反映して、編集できる様にする
-                self.primary_param.clear()
-                self.primary_param.update(param)
-                print(f"[PERF] on_fcs_get_file: Merged Params. Time: {time.time()}")
-                self.set2widget_all(self.primary_effects, self.primary_param)
-                
-                # 特別あつかいでエディタを起動できるなら起動する
-                self.apply_effects_lv(1, 'distortion')
-                self.apply_effects_lv(0, 'crop')
-
-                # ヒストリーの設定
-                if history_obj is None:
-                    self.history = history.History()
-                    self.cache_system.set_history(file_path, self.history)
-                else:
-                    self.history = history_obj
-
-                self.history_panel.set_history(self.history)
-
-            # RAW フルデコード完了時にレンズ補正まわりを param から反映
-            if stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw':
-                self.primary_param['lens_modifier'] = param['lens_modifier']
-                if param['lens_modifier'] == True:
-                    self.primary_param['exif_data'] = param['exif_data']
-                self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
-                self.primary_param['auto_exposure'] = param['auto_exposure']
-
             # Cancel previous background tasks
             if self.processor:
                 self.processor.cancel_all()
-                self.ids['histogram'].set_histogram_data(None) # Reset histogram? 
+                self.ids['histogram'].set_histogram_data(None)  # Reset histogram?
 
-            self.imgset = imgset
+            with threads.primary_param_lock:
+                if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
+                    # １回目の時だけパラメータを反映して、編集できる様にする
+                    self.primary_param.clear()
+                    self.primary_param.update(param)
+                    logging.debug("[PERF] on_fcs_get_file: Merged Params. Time: %s", time.time())
+                    self.set2widget_all(self.primary_effects, self.primary_param)
 
-            fid = getattr(imgset, 'fidelity', ImageFidelity.FULL)
-            self.primary_param['image_fidelity'] = fid.value
-            prev_fid = getattr(self, '_last_image_fidelity', None)
-            if fid == ImageFidelity.FULL and prev_fid == ImageFidelity.PREVIEW:
-                params.merge_heavy_from_pmck(file_path, self.primary_param, self.ids['mask_editor2'])
-            self._last_image_fidelity = fid
+                    # 特別あつかいでエディタを起動できるなら起動する
+                    self.apply_effects_lv(1, 'distortion')
+                    self.apply_effects_lv(0, 'crop')
 
-            effects.reeffect_all(self.primary_effects)
-            self.start_draw_image_and_crop(imgset)
+                    # ヒストリーの設定
+                    if history_obj is None:
+                        self.history = history.History()
+                        self.cache_system.set_history(file_path, self.history)
+                    else:
+                        self.history = history_obj
+
+                    self.history_panel.set_history(self.history)
+
+                # RAW フルデコード完了時にレンズ補正まわりを param から反映
+                if stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw':
+                    self.primary_param['lens_modifier'] = param['lens_modifier']
+                    if param['lens_modifier'] == True:
+                        self.primary_param['exif_data'] = param['exif_data']
+                    self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
+                    self.primary_param['auto_exposure'] = param['auto_exposure']
+
+                self.imgset = imgset
+
+                fid = getattr(imgset, 'fidelity', ImageFidelity.FULL)
+                self.primary_param['image_fidelity'] = fid.value
+                prev_fid = getattr(self, '_last_image_fidelity', None)
+                if fid == ImageFidelity.FULL and prev_fid == ImageFidelity.PREVIEW:
+                    params.merge_heavy_from_pmck(file_path, self.primary_param, self.ids['mask_editor2'])
+                self._last_image_fidelity = fid
+
+                params.apply_original_geometry_if_missing(self.primary_param, imgset.img)
+                if not params.has_original_img_size(self.primary_param):
+                    logging.error("on_fcs_get_file: デコード画像からも original_img_size を確定できません")
+                    self.loading = False
+                    self._actively_loading = False
+                    return
+
+                effects.reeffect_all(self.primary_effects)
+                self.start_draw_image_and_crop(imgset)
 
         def on_image_touch_down(self, touch):
             if self.ids['preview_widget'].collide_point(*touch.pos):
@@ -877,7 +903,7 @@ if __name__ == '__main__':
                     exfile = export.ExportFile(x.file_path, x.exif_data)
                     exfile.write_to_file(ex_path, preset['quality'], resize_str, preset['sharpen']/100, preset['icc_profile'], preset['metadata'], preset['gps'], preset['dithering'])
 
-        def _make_export_path(seslf, path, preset):
+        def _make_export_path(self, path, preset):
             dirname, basename = os.path.split(path)
             basename_with_out_ext, ext = os.path.splitext(basename)
             if len(preset['output_path']) > 0:

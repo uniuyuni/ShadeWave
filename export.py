@@ -1,5 +1,6 @@
 
 import os
+import logging
 import numpy as np
 import json
 import exiftool
@@ -155,6 +156,11 @@ class ExportFile():
         self.imgset = ImageSet()
         result = self.imgset.preload(self.file_path, self.exif_data, self.param)
         self.imgset.load(result, self.file_path, self.exif_data, self.param)
+
+        params.apply_original_geometry_if_missing(self.param, self.imgset.img)
+        if not params.has_original_img_size(self.param):
+            logging.error("エクスポート中止: original_img_size を確定できません")
+            return
 
         #self.mask_editor2.set_orientation(self.param.get('rotation', 0), self.param.get('rotation2', 0), self.param.get('flip_mode', 0))
         self.mask_editor2.set_texture_size(self.imgset.img.shape[1], self.imgset.img.shape[0])

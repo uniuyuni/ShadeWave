@@ -1852,6 +1852,7 @@
 
                                 HeadLabel:
                                     id: switch_lens_simulator
+                                    active: False
                                     text: ' Lens Simulator'
                                     on_press: root.begin_history_effect_ctrl(2, 'lens_simulator')
                                     on_active: root.apply_effects_lv(2, 'lens_simulator')
@@ -1897,7 +1898,7 @@
                                     text: "Lateral CA"
                                     min: 0.0
                                     max: 2.0
-                                    value: 0.3
+                                    value: 0.0
                                     step: 0.01
                                     for_float: True
                                     on_slider: root.apply_effects_lv(2, 'lens_simulator')
@@ -1909,7 +1910,7 @@
                                     text: "Longitudinal CA"
                                     min: 0.0
                                     max: 2.0
-                                    value: 0.4
+                                    value: 0.0
                                     step: 0.01
                                     for_float: True
                                     on_slider: root.apply_effects_lv(2, 'lens_simulator')
@@ -1921,7 +1922,7 @@
                                     text: "Spherical"
                                     min: 0.0
                                     max: 2.0
-                                    value: 0.5
+                                    value: 0.0
                                     step: 0.01
                                     for_float: True
                                     on_slider: root.apply_effects_lv(2, 'lens_simulator')

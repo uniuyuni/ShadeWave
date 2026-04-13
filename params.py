@@ -145,14 +145,6 @@ def denorm_param(param, val):
 
     return None
 
-    if val is not None:
-        maxsize = max(param['original_img_size'])
-        if type(val) == tuple:
-            val = (v * maxsize for v in val)
-        else:
-            val = val * maxsize
-    return val
-
 def norm_param(param, val):
     if val is not None:
         if type(val) == tuple or type(val) == list:
@@ -163,15 +155,24 @@ def norm_param(param, val):
         return val / max(param['original_img_size'])
     return None
 
-    if val is not None:
-        maxsize = max(param['original_img_size'])
-        if type(val) == tuple:
-            val = (v / maxsize for v in val)
-        else:
-            val = val / maxsize
-    return val
-
 #-------------------------------------------------
+def has_original_img_size(param):
+    """幾何・クロップ・パイプラインが前提とする。SPECIAL_PARAM のため pmck 単体では欠ける。"""
+    return param.get('original_img_size') is not None
+
+
+def apply_original_geometry_if_missing(param, img):
+    """
+    デコード済み画像があるときだけ、欠けている original_img_size / img_size を実画像の寸法で埋める。
+    crop_rect / disp_info は変更しない（pmck 由来の編集を壊さないため）。
+    """
+    if img is None or has_original_img_size(param):
+        return
+    h, w = img.shape[:2]
+    param['original_img_size'] = (w, h)
+    param['img_size'] = (w, h)
+
+
 # 画像の初期設定を設定する
 def set_image_param(param, img):
     height, width = img.shape[:2]

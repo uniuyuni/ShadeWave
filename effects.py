@@ -3206,13 +3206,13 @@ class LensSimulatorEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'switch_lens_simulator': True,
+            'switch_lens_simulator': False,
             'coating_preset': 'None',
             'coating_strength': 100,
             'coating_light': 1.0,
-            'lateral_ca': 0.3,
-            'longitudinal_ca': 0.4,
-            'spherical_ca': 0.5,
+            'lateral_ca': 0.0,
+            'longitudinal_ca': 0.0,
+            'spherical_ca': 0.0,
             'lens_focus_depth': 0.5,
             'lens_aperture': 1.4,
         }

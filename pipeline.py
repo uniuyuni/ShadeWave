@@ -2,12 +2,14 @@
 import numpy as np
 import logging
 
+logger = logging.getLogger(__name__)
+
 import config
 import params
 import effects
 import cores.core as core
 import utils.utils as utils
-from enums import EffectMode, ExecutionMode, PipelineStatus
+from enums import EffectMode, PipelineStatus
 
 class AsyncPipelineManager:
     def __init__(self, worker):
@@ -29,7 +31,12 @@ class AsyncPipelineManager:
     def get_result(self, effect_name, param_hash):
         key = (effect_name, param_hash)
         res = self.cache.get(key)
-        print(f"DEBUG: get_result {effect_name} {param_hash} -> {res['status'] if res else 'None'}")
+        logger.debug(
+            "get_result %s %s -> %s",
+            effect_name,
+            param_hash,
+            res["status"] if res else "None",
+        )
         return res
 
     def submit_task(self, effect_name, img, params, efconfig, param_hash):
@@ -38,10 +45,20 @@ class AsyncPipelineManager:
         # Check if already submitted
         if key in self.cache:
             if self.cache[key]['status'] in ['RUNNING', 'COMPLETE']:
-                print(f"DEBUG: submit_task HIT {effect_name} {param_hash} status={self.cache[key]['status']}")
+                logger.debug(
+                    "submit_task HIT %s %s status=%s",
+                    effect_name,
+                    param_hash,
+                    self.cache[key]["status"],
+                )
                 return self.cache[key]
         
-        print(f"DEBUG: submit_task MISS {effect_name} {param_hash}. Existing keys: {[k for k in self.cache.keys() if k[0]==effect_name]}")
+        logger.debug(
+            "submit_task MISS %s %s. Existing keys: %s",
+            effect_name,
+            param_hash,
+            [k for k in self.cache.keys() if k[0] == effect_name],
+        )
 
         # Check if ANY task for this effect is running (to support cancellation/restart)
         # If we are submitting a NEW task for the same effect, it means parameters changed.
@@ -89,8 +106,6 @@ class AsyncPipelineManager:
                     keys_to_remove.append(key)
                     running = True
         
-        # print(f"DEBUG: cancel_effect {effect_name}. Removing {len(keys_to_remove)} RUNNING tasks. Kept: {[k for k,v in self.cache.items() if k[0]==effect_name and v['status']=='COMPLETE']}")
-        
         if running:
             self.worker.cancel_effect(effect_name)
             
@@ -113,7 +128,10 @@ class AsyncPipelineManager:
 
 
 def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None):
-    
+    if not params.has_original_img_size(primary_param):
+        logging.warning("process_pipeline: original_img_size 未定義のため処理しません")
+        return None, crop_image
+
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
     if disp_info is None:
@@ -141,14 +159,7 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
         mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, pre_rotation_img)
         params.set_disp_info(primary_param, disp_info2)
-        
-        # Crop performed, so upstream (imgc) changed.
-        # But lv1reset might be False if lv0 didn't change.
-        # We MUST set lv1reset=True if we generated a NEW imgc that is different from cached crop result?
-        # Actually core.crop_image runs every time `process_pipeline` is called if we don't cache `crop_image` outside?
-        # `process_pipeline` argument `crop_image` IS the cache from `MainWidget`.
-        # If `crop_image` was None, we created it. So it IS new (to the pipeline flow).
-        # We should set lv1reset=True to force downstream updates.
+        # 新規クロップ生成時は下流を必ず更新
         lv1reset = True
         
     else:
@@ -160,28 +171,19 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig.disp_info = disp_info2
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info2[4])
     
-    # 並列処理
-    # Async Manager update
-    if processor is not None:
-        if processor.get_pipeline_version() - pipeline_version > 2:
-            pass
-            #return None, imgc        
-
     if not is_drag:
         img2, lv4reset = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=processor)
         img2 = pipeline_last(img2, primary_effects, primary_param, efconfig, prev_reset=lv4reset, processor=processor)
     else:
         img2 = imgc
 
-    if processor is not None:
-        if processor.get_pipeline_version() - pipeline_version > 2:
-            pass
-            #return None, imgc        
-
     return img2, imgc
 
 def export_pipeline(img, primary_effects, primary_param, mask_editor2):
-    
+    if not params.has_original_img_size(primary_param):
+        logging.error("export_pipeline: original_img_size 未定義のため処理しません")
+        return None
+
     # 環境設定
     disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), 1) # 倍率１で作成
     params.set_disp_info(primary_param, disp_info) # コピーしとく
@@ -247,76 +249,11 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
 
     return img3, lv1reset
 
-def _process_effect(effect, name, rgb, param, efconfig, upstream_status, processor):
-    # Determine execution mode
-    mode = getattr(effect, 'execution_mode', ExecutionMode.SYNC)
-    if efconfig.mode == EffectMode.EXPORT:
-        mode = ExecutionMode.SYNC # Force sync (or blocking) on export
-    
-    # 1. SYNC or BLOCKING
-    if mode != ExecutionMode.ASYNC:
-        # Just execute
-        diff = effect.make_diff(rgb, param, efconfig)
-        if diff is not None:
-            rgb = effect.apply_diff(rgb)
-        utils.print_nan_inf(rgb, f"{name}")
-        return rgb, upstream_status, True # Always return True (executed) to imply potentially dirty? 
-        # Actually `make_diff` internally manages `self.diff` and `self.hash`?
-        # The caller checks `pre_diff is not diff`. We need to preserve that logic.
-        # But here we are refactoring.
-        # Let's keep the caller logic for diff check if possible, OR return 'changed'.
-        
-    # 2. ASYNC
-    # Check upstream
-    if upstream_status == PipelineStatus.PREVIEW:
-        # Upstream is dirty/preview, so we MUST skip heavy calc or do preview
-        # Return simple pass-through or preview if available
-        # For now, pass-through (no diff applied)
-        # But we must update `diff` to None or similar so next calls know it changed?
-        # Actually, if we skip, `diff` remains what it was? API says `make_diff` updates `self.diff`.
-        # We should call `make_diff` with a flag? No.
-        
-        # Strategies:
-        # A. Call `make_diff` but it knows to be fast?
-        # B. Don't call `make_diff`.
-        
-        # User said: "simple preview mode (or skip)".
-        # To skip: `diff = None`.
-        # But `effect.hash` must be managed?
-        
-        # Simplest: Just return rgb as is.
-        # But we need to signal that we are "PROCESSING".
-        # And we need to ensure `lvXreset` logic works.
-        pass
-        
-    # Check cache / Submit
-    if processor is not None:
-        # Calculate param hash (complex, `make_diff` usually does it)
-        # We need a way to get hash WITHOUT running heavy code.
-        # BUT current `make_diff` does both: check hash, run if needed.
-        # We need to separate hash calculation?
-        # Many effects in `effects.py` do: `param_hash = hash(...)`.
-        pass
-
-    return rgb, upstream_status, False
-
-# Helper for async logic reused in lv1..4
-def _execute_layer_async(layer_effects, rgb, param, efconfig, reset_flag, upstream_status, processor, layer_name):
-    # This replaces the loop in pipeline_lvX
-    # BUT `lvX` functions have specific returns (lvXreset).
-    # And logic is slightly different (e.g. `pre_rotation` in lv0).
-    pass
-    # It is hard to extract a common function because of specific variable binding.
-    # We will modify each execution loop in place.
-
 def pipeline_lv0(img, effects, param, efconfig, processor=None):
     lv0 = effects[0]
     lv1reset = False
     
     pre_rotation_img = None
-    
-    # lv0 is usually sync (Lens correction, rotation).
-    # But if we had async...
     
     rgb = img
     upstream_status = PipelineStatus.COMPLETE # Initial input is complete
@@ -336,188 +273,6 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
             
         pre_diff = lv0[n].diff
         
-        # Check Mode
-        mode = getattr(lv0[n], 'execution_mode', ExecutionMode.SYNC)
-        if efconfig.mode == EffectMode.EXPORT:
-            mode = ExecutionMode.SYNC
-            
-        if mode == ExecutionMode.ASYNC and processor is not None:
-            # ASYNC LOGIC
-            # 1. If upstream is preview, skip
-            if upstream_status == PipelineStatus.PREVIEW:
-                diff = None # Skip
-                # Effectively we act as if diff is None.
-                # But we should NOT update hash? 
-                # If we don't update hash, next time it will run.
-                # But if we skipp, `diff` becomes None.
-                # If `pre_diff` was something, `pre_diff != diff` -> True -> lv1reset=True.
-                pass
-            else:
-                # 2. Upstream Complete. Check/Submit.
-                pass
-                # We need param_hash. 
-                # We must modify `make_diff` to return hash? Or access internal `hash` method?
-                # Most effects don't expose hash calculation separately.
-                # We might need to rely on `make_diff` to be fast enough to just check hash?
-                # "Heavy" part is usually inside `if self.hash != param_hash:`.
-                # So `make_diff` IS the check.
-                # IF the effect is written correctly, `make_diff` is fast if hash matches.
-                # BUT if hash mismatches, it runs heavy code.
-                # We need to INTERCEPT this.
-                
-                # We can't easily intercept without changing Effect classes.
-                # BUT user said "ExecMode" enum.
-                # Maybe we change `make_diff` signature?
-                # `make_diff(..., async_check_only=True)`?
-                
-                # Let's assume we can call `make_diff`? No.
-                # If we call `make_diff`, it blocks.
-                
-                # WE NEED TO REFLECT ON THE PLAN.
-                # "Cache check: Is there a result?"
-                # To check cache, we need hash.
-                # To get hash, we need to calculate it.
-                # Code in `make_diff` calculates hash.
-                
-                # I should MODIFY `Effect` class or individual effects to expose `get_params_hash(param)`?
-                # Or just assume `make_diff` is refactored?
-                # Refactoring all effects is huge.
-                
-                # Alternative: `processor` wraps the heavy call?
-                # The `make_diff` calls `core.heavy_func`.
-                # We can wrap `core.heavy_func`? No.
-                
-                # Let's implement a wrapper in `pipeline.py` that calculates hash FOR the specific async effects we know?
-                # We only have `AsyncWorker` logic for generic effect?
-                
-                # User request: "Execute Sync if lvXreset=True".
-                
-                # Let's look at `effects.py` again.
-                # Example `AINoiseReductonEffect.make_diff`:
-                # `nr = ...`, `param_hash = hash((nr))`
-                # `if self.hash != param_hash: heavy...`
-                
-                # If I want to async this:
-                # I need `param_hash`.
-                
-                # I will wrap the logic here in pipeline:
-                # We assume for ASYNC effects, `make_diff` simply returns the cached diff if available?
-                # No.
-                
-                # I'll stick to: Pipeline calls `make_diff` for everything.
-                # BUT for Async effects, I need to modify `make_diff` to NOT run heavy calc.
-                # I will modify `Effect.make_diff` signature to accept `async_manager`?
-                # `make_diff(img, param, efconfig, async_manager=None)`
-                
-                # If `async_manager` is passed:
-                # It calculates hash.
-                # Calls `async_manager.submit_or_get(self.name, img, ...)`
-                # If returns None (running), set `self.diff = None` (or existing?), return.
-                
-                # This seems invasive but necessary.
-                # I need to modify `Effect.make_diff` signature in `effects.py`.
-                # And update all overrides?
-                # Most overrides use `*args, **kwargs`? No, explicit arguments.
-                
-                # Wait, `make_diff` is called in `pipeline.py`.
-                # `diff = lv0[n].make_diff(rgb, param, efconfig)`
-                
-                # If I change arguments, I break everything if I don't update all classes.
-                # There are ~20 effects. Updates are feasible.
-                
-                # OR use `kwargs` in `make_diff`?
-                # `def make_diff(self, img, param, efconfig, **kwargs):`
-                # Base `Effect` has it.
-                # Subclasses might not accept kwargs.
-                
-                # Let's check `effects.py` again.
-                # `class LensModifierEffect(Effect): def make_diff(self, img, param, efconfig):`
-                # It does NOT accept `**kwargs`.
-                
-                # I cannot easily pass `processor` to `make_diff`.
-                
-                # Alternative:
-                # In `pipeline.py`, I manually check cache if I know how to calc hash.
-                # But I don't know internal hash logic of each effect.
-                
-                # Alternative 2:
-                # `processor` is set to `efconfig`?!
-                # `efconfig` is passed to `make_diff`.
-                # I can attach `processor` and `upstream_status` to `efconfig`.
-                # Then modify `make_diff` of target ASYNC effects (e.g. `AINoiseReductonEffect`) to use it.
-                # This avoids changing signature of ALL effects.
-                # I only need to touch the Heavy effects.
-                
-                # Plan Check:
-                # 1. Add `processor` and `upstream_status` to `EffectConfig`.
-                # 2. In `pipeline.py`, set these in `efconfig`.
-                # 3. In `pipeline.py`, still loop as usual.
-                # 4. In `effects.py`, modify Heavy effects (e.g. `AINoiseReductonEffect`) to:
-                #    - Extract `processor`, `upstream_status` from `efconfig`.
-                #    - If `processor` present and `execution_mode == ASYNC`:
-                #      - Calc hash.
-                #      - Check `upstream_status`. IF PREVIEW, return None (or cached).
-                #      - IF COMPLETE, `processor.submit_task(...)`.
-                #      - If result ready, use it.
-                
-                # This isolates changes to `effects.py` (heavy classes) and `pipeline.py` (setup).
-                # `pipeline.py` changes are minimal (just passing context via efconfig).
-                
-                # Wait, `pipeline_lvX` loops are:
-                # `diff = lv1[n].make_diff(...)`
-                # `if pre_diff is not diff: lv2reset = True`
-                
-                # If `make_diff` returns `None` (skipped/running), `diff` is `None`.
-                # If `pre_diff` was `Some`, then `reset=True`.
-                # Next frame, `diff` is `None`. `pre_diff` is `None`. `reset=False`. Stable.
-                
-                # If task completes:
-                # `make_diff` returns `Result`.
-                # `pre_diff` was `None`. `reset=True`. Stable.
-                
-                # This logic works!
-                
-                # But what about `upstream_status`?
-                # `pipeline.py` needs to know if ANY effect in this layer is in "PROCESSING" state to update `upstream_status` for next layer.
-                # `efconfig` is shared? No, created in `process_pipeline`.
-                # But `upstream_status` changes PER LAYER.
-                # `efconfig.upstream_status`?
-                # We update `efconfig.upstream_status` before calling `lv1`?
-                # And inside `lv1`, if an effect returns "PROCESSING", we need to flag `current_layer_status = PREVIEW`.
-                # But `make_diff` returns `diff`. It doesn't return status.
-                
-                # How do we know if it's "PROCESSING" vs "Effect Disabled (None)"?
-                # Effect Disabled -> diff is None.
-                # Processing -> diff is None (or preview).
-                # Using `None` for processing implies "Disabled" to the image flow (no change).
-                # That's fine for "Preview".
-                
-                # But how does `pipeline.py` know to propagate `PREVIEW` status to next layer?
-                # We need to query the effect?
-                # `failed_to_complete = ...`?
-                
-                # I can populate `efconfig` with `layer_status = COMPLETE` initially.
-                # If an async effect runs and is NOT complete, it sets `efconfig.layer_status = PREVIEW`.
-                # Then `pipeline.py` reads `efconfig.layer_status` and passes it to next layer.
-                
-                # Excellent.
-                
-                # Changes Plan Revised:
-                # 1. Update `EffectConfig` in `effects.py` to hold `processor` and `upstream_status` and `current_status`.
-                # 2. Implement `AsyncPipelineManager` in `pipeline.py` (done).
-                # 3. Update `pipeline.py` to set `efconfig` fields.
-                #    - Pass `upstream_status` to `pipeline_lvX`.
-                #    - Should update `efconfig` inside `pipeline_lvX` or before?
-                #    - `efconfig.upstream_status = upstream_status`
-                #    - `efconfig.layer_status = PipelineStatus.COMPLETE` (reset for this layer)
-                #    - Call effects.
-                #    - Return `efconfig.layer_status` as `upstream_status` for next layer.
-                # 4. Update `effects.py`:
-                #    - Modify `AINoiseReductonEffect` (and others) `make_diff` to use async logic.
-                
-                # Let's clean up `process_pipeline` first.
-                
-    
         diff = lv0[n].make_diff(rgb, param, efconfig)
         if diff is not None:
             rgb = lv0[n].apply_diff(rgb)

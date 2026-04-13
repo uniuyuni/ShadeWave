@@ -17,3 +17,12 @@ def lock_editor(func):
         with editor_lock:
             return func(*args, **kwargs)
     return wrapper
+
+# メインスレッドの primary_param / imgset と描画スレッドの競合を防ぐ（on_select→empty_image など同一スレッド再入のため RLock）
+primary_param_lock = threading.RLock()
+
+def lock_primary_param(func):
+    def wrapper(*args, **kwargs):
+        with primary_param_lock:
+            return func(*args, **kwargs)
+    return wrapper
