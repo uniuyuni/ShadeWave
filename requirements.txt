@@ -1,5 +1,6 @@
 # NOTE:
 # SAM3, SCUNet, demosaicnet_torch, libraw_enhanced are cloned and prepared by setup.sh (LibRaw sources for the editable install).
+# macOS .app ビルド用（任意）: pip install "pyinstaller>=6"
 
 -e ./libraw_enhanced
 

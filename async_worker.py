@@ -8,6 +8,7 @@ import logging
 import traceback
 import sys
 import copy
+import threading
 
 import effects
 import config
@@ -174,52 +175,70 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
 class AsyncWorker:
     def __init__(self):
         self.process = None
+        self.thread_mode = getattr(sys, "frozen", False)
         self.input_queue = Queue()
         self.result_queue = Queue()
         self.msg_queue = Queue()
         self.stop_event = Event()
         self.active_shms = set() # Track SHMs to unlink them if needed
         self.task_counter = 0
-        self.latest_tasks = multiprocessing.Manager().dict() # effect_name -> task_id
+        if self.thread_mode:
+            self.latest_tasks = {}
+        else:
+            self.latest_tasks = multiprocessing.Manager().dict() # effect_name -> task_id
 
     def start(self):
         if self.process is None or not self.process.is_alive():
             self.stop_event.clear()
-            # Pass current config to worker
-            self.process = Process(
-                target=worker_process,
-                name="ASyncWorker", 
-                args=(self.input_queue, self.result_queue, self.msg_queue, self.stop_event, config._config, self.latest_tasks)
-            )
-            self.process.daemon = True
-            self.process.start()
+            if self.thread_mode:
+                self.process = threading.Thread(
+                    target=worker_process,
+                    name="ASyncWorkerThread",
+                    args=(self.input_queue, self.result_queue, self.msg_queue, self.stop_event, config._config, self.latest_tasks),
+                    daemon=True,
+                )
+                self.process.start()
+            else:
+                # Pass current config to worker
+                self.process = Process(
+                    target=worker_process,
+                    name="ASyncWorker", 
+                    args=(self.input_queue, self.result_queue, self.msg_queue, self.stop_event, config._config, self.latest_tasks)
+                )
+                self.process.daemon = True
+                self.process.start()
             logging.info("AsyncWorker started.")
 
     def stop(self):
         if self.process:
             self.stop_event.set()
-            self.process.join(timeout=0.1) # Short wait
-            if self.process.is_alive():
-                logging.warning(f"Terminating worker process {self.process.pid}...")
-                self.process.terminate()
-                self.process.join(timeout=0.1)
-                
-            if self.process.is_alive():
-                logging.warning(f"Killing worker process {self.process.pid}...")
-                try:
-                    self.process.kill() # Force kill
-                    self.process.join()
-                except AttributeError:
-                    # In case python version is old or process object issues
-                    import os
-                    import signal
+            self.process.join(timeout=0.2) # Short wait
+
+            if self.thread_mode:
+                self.process = None
+                logging.info("AsyncWorker stopped.")
+            else:
+                if self.process.is_alive():
+                    logging.warning(f"Terminating worker process {self.process.pid}...")
+                    self.process.terminate()
+                    self.process.join(timeout=0.1)
+                    
+                if self.process.is_alive():
+                    logging.warning(f"Killing worker process {self.process.pid}...")
                     try:
-                        os.kill(self.process.pid, signal.SIGKILL)
-                    except:
-                        pass
-                        
-            self.process = None
-            logging.info("AsyncWorker stopped.")
+                        self.process.kill() # Force kill
+                        self.process.join()
+                    except AttributeError:
+                        # In case python version is old or process object issues
+                        import os
+                        import signal
+                        try:
+                            os.kill(self.process.pid, signal.SIGKILL)
+                        except:
+                            pass
+                            
+                self.process = None
+                logging.info("AsyncWorker stopped.")
             
         # Clean up queues (drain)
         try:

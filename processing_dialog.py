@@ -1,15 +1,25 @@
 
-import tkinter as tk
-from PIL import Image, ImageTk
+import sys
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from PIL import Image
 from kivy.clock import Clock as KVClock
+
+
+def _use_tkinter() -> bool:
+    """PyInstaller 同梱では kivy フックにより tkinter が含まれないため frozen 時は False。"""
+    return not getattr(sys, "frozen", False)
+
 
 class _ProcessingDialog():
 
     def __init__(self, gif_path):
+        import tkinter as tk
+        from PIL import ImageTk
+
+        self._tk = tk
         self.parent = tk.Tk()
         self.hide()
         self.parent.overrideredirect(True)  # フレームを非表示
@@ -22,7 +32,7 @@ class _ProcessingDialog():
         
         # GIFアニメーションの設定
         self.gif_path = gif_path
-        self.gif_frames = self._load_gif_frames()
+        self.gif_frames = self._load_gif_frames(ImageTk)
         self.current_frame = 0
         # 任意テキスト表示用ラベル (右下に表示) - placeを使用して絶対配置
         self.sub_text_label = tk.Label(
@@ -57,11 +67,11 @@ class _ProcessingDialog():
         self._animate()
         #self._maintain_front()
     
-    def _load_gif_frames(self):
+    def _load_gif_frames(self, ImageTk):
         """GIFファイルをフレームに分割して読み込む"""
         frames = []
         try:
-            # GIFをフレームごとに読み込み
+            # GIFをフレームごとに読み込む
             gif_image = Image.open(self.gif_path)
             for frame in range(0, gif_image.n_frames):
                 gif_image.seek(frame)
@@ -124,11 +134,31 @@ class _ProcessingDialog():
         self.parent.grab_release()
         #self.parent.destroy()
 
+
+class _NullProcessingDialog:
+    """tkinter なし（PyInstaller 同梱時など）のスタブ"""
+
+    def show(self):
+        pass
+
+    def update(self):
+        pass
+
+    def hide(self):
+        pass
+
+    def set_text(self, text):
+        pass
+
+
 __dialog = None
 
 def create_processing_dialog():
     global __dialog
-    __dialog = _ProcessingDialog("assets/spinner.gif")
+    if _use_tkinter():
+        __dialog = _ProcessingDialog("assets/spinner.gif")
+    else:
+        __dialog = _NullProcessingDialog()
     
 def show_processing_dialog(dt=0):
     global __dialog

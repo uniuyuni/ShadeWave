@@ -3,11 +3,18 @@
 #display_splash_screen("assets/platypus.png")
 
 if __name__ == '__main__':
+    import sys as _sys_early
     import os as _os_early
+    import multiprocessing as _mp_early
+    # PyInstaller: kv/json 等は sys._MEIPASS 配下に同梱される
+    if getattr(_sys_early, "frozen", False) and hasattr(_sys_early, "_MEIPASS"):
+        _os_early.chdir(_sys_early._MEIPASS)
     # OpenMP ランタイムの情報メッセージを抑える（llvm-openmp / 混在時）
     _os_early.environ.setdefault("OMP_DISPLAY_ENV", "FALSE")
     _os_early.environ.setdefault("KMP_WARNINGS", "0")
     _os_early.environ.setdefault("LIBOMP_VERBOSE", "0")
+    _os_early.environ.setdefault("KIVY_NO_ARGS", "1")  # 子プロセスでの Kivy 引数誤解釈を防ぐ
+    _mp_early.freeze_support()  # frozen 実行時の multiprocessing 子プロセス分岐を早期処理
 
     try:
         #import matplotlib
@@ -17,13 +24,14 @@ if __name__ == '__main__':
     except ImportError:
         pass
 
-    import tkinter as tk
+    # PyInstaller + Kivy 既定フックでは tkinter が除外される。バンドル実行時はスキップ。
+    if not getattr(_sys_early, "frozen", False):
+        import tkinter as tk
 
-    # tk.Tk()で落ちるのを回避するためのパッチ
-    #matplotlib.use('tkagg')
-    tk = tk.Tk()
-    tk.withdraw()
-    tk.destroy()
+        # tk.Tk()で落ちるのを回避するためのパッチ
+        tk = tk.Tk()
+        tk.withdraw()
+        tk.destroy()
 
     from kivy.config import Config
     Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
@@ -1249,9 +1257,6 @@ if __name__ == '__main__':
 if __name__ == '__main__':
     # 処理中ダイアログ作成
     create_processing_dialog()
-
-    # マルチプロセスのサポートを有効にする
-    multiprocessing.freeze_support()
 
     # PILイメージプラグイン抑制
     pillow_init()

@@ -22,3 +22,8 @@ splitimage/*.egg*/**
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# PyInstaller
+/build/
+/dist/
+*.spec

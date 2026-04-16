@@ -6,6 +6,7 @@ import os
 import concurrent.futures
 from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 import logging
+import sys
 
 import imageset
 import config
@@ -172,7 +173,14 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
 class FileCacheSystem:
     def __init__(self, max_cache_size: int = 10, max_concurrent_loads: int = 4):
         # 共有リソースを初期化
-        self.ppe = ProcessPoolExecutor(max_workers=2)
+        # frozen 配布版では cv2 のネイティブ依存競合を避けるため ProcessPool を使わない
+        if getattr(sys, "frozen", False):
+            self.ppe = ThreadPoolExecutor(max_workers=2)
+            self._use_process_pool = False
+        else:
+            self.ppe = ProcessPoolExecutor(max_workers=2)
+            self._use_process_pool = True
+
         self.shared_resources = {
             'cache': {},
             'preload_registry': {},
@@ -183,8 +191,9 @@ class FileCacheSystem:
         # ダミーを走らせる（プロセスのwarm-up）
         # アプリケーション起動時にワーカープロセスを起動しておくことで、
         # 最初の画像読み込み時のプロセス起動コストを回避
-        for _ in range(self.ppe._max_workers):
-            self.ppe.submit(_warmup_worker)
+        if self._use_process_pool:
+            for _ in range(self.ppe._max_workers):
+                self.ppe.submit(_warmup_worker)
         
         # 各共有リソースへの参照を設定
         self.cache = self.shared_resources['cache']

@@ -9,6 +9,8 @@ version = "0.1.0"
 scripts = ["scripts/pixi_env_libraw.sh"]
 
 [tasks]
+# PyInstaller で macOS .app を生成（要: pip install pyinstaller）。現在の pixi 環境のパッケージを参照
+build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
 # external/LibRaw-master を autotools で third_party/libraw-install にビルド（pixi の autoconf/automake/libtool を使用）
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
 # 拡張モジュールのみ再ビルド（LibRaw は既に third_party にある想定）
