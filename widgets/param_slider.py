@@ -4,10 +4,71 @@ from kivymd.uix.button import MDRectangleFlatButton
 from kivymd.uix.behaviors.toggle_behavior import MDToggleButton
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
+from kivy.metrics import dp
 
 import widgets.float_input
 import widgets.multi_slider
 import widgets.tiny_button
+
+
+class ParamFloatInput(widgets.float_input.FloatInput):
+    """数値枠内で水平ドラッグするとスライダーの step 単位で値を増減する。"""
+
+    _SCRUB_THRESHOLD_PX = dp(2)
+    _PIXELS_PER_STEP = dp(2)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._scrub_touch_uid = None
+        self._scrub_active = False
+        self._scrub_start = (0.0, 0.0)
+        self._scrub_last_x = 0.0
+
+    def on_touch_down(self, touch):
+        self._scrub_touch_uid = None
+        self._scrub_start = (touch.x, touch.y)
+        self._scrub_last_x = touch.x
+        self._scrub_active = False
+        if self.collide_point(*touch.pos):
+            self._scrub_touch_uid = touch.uid
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._scrub_touch_uid != touch.uid:
+            return super().on_touch_move(touch)
+        parent = self.parent
+        sx, sy = self._scrub_start
+        dx_total = touch.x - sx
+        dy_total = touch.y - sy
+        if not self._scrub_active:
+            if abs(dx_total) < self._SCRUB_THRESHOLD_PX and abs(dy_total) < self._SCRUB_THRESHOLD_PX:
+                return super().on_touch_move(touch)
+            if abs(dx_total) < abs(dy_total):
+                return super().on_touch_move(touch)
+            self._scrub_active = True
+            self.focus = False
+            touch.grab(self)
+            if hasattr(parent, 'on_input_scrub_begin'):
+                parent.on_input_scrub_begin()
+            self._scrub_last_x = touch.x
+        dx = touch.x - self._scrub_last_x
+        self._scrub_last_x = touch.x
+        if hasattr(parent, 'on_input_scrub_pixels'):
+            parent.on_input_scrub_pixels(dx)
+        return True
+
+    def on_touch_up(self, touch):
+        if self._scrub_touch_uid == touch.uid:
+            if self._scrub_active:
+                parent = self.parent
+                if hasattr(parent, 'on_input_scrub_end'):
+                    parent.on_input_scrub_end()
+                if touch.grab_current is self:
+                    touch.ungrab(self)
+                self._scrub_active = False
+            self._scrub_touch_uid = None
+        return super().on_touch_up(touch)
+
 
 class HeadLabel(KVBoxLayout):
     press = KVBooleanProperty(True)
@@ -72,6 +133,32 @@ class ParamSlider(KVBoxLayout):
         self.value = min(self.max, max(self.min, self.ids['slider'].value + step))
         self.ids['slider'].value = self.value
         self.after_edit = self.value
+
+    def on_input_scrub_begin(self):
+        self.before_edit = self.value
+        self._input_scrub_accum = 0.0
+
+    def on_input_scrub_pixels(self, dx):
+        self._input_scrub_accum += dx
+        pps = ParamFloatInput._PIXELS_PER_STEP
+        st = self.ids['slider'].step
+        while self._input_scrub_accum >= pps:
+            self._apply_input_scrub_step(st)
+            self._input_scrub_accum -= pps
+        while self._input_scrub_accum <= -pps:
+            self._apply_input_scrub_step(-st)
+            self._input_scrub_accum += pps
+
+    def _apply_input_scrub_step(self, delta):
+        if delta == 0:
+            return
+        new_val = min(self.max, max(self.min, self.ids['slider'].value + delta))
+        if new_val != self.ids['slider'].value:
+            self.ids['slider'].value = new_val
+
+    def on_input_scrub_end(self):
+        self.after_edit = self.value
+        self._input_scrub_accum = 0.0
     
     def on_slider_touch_down(self, touch):
         if touch.is_double_tap:

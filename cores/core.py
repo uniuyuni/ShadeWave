@@ -2469,32 +2469,50 @@ def light_denoise(img, its, col):
     
     # 輝度チャンネル(Y)のノイズ除去 (Guided Filter)
     if its > 0:
-        its = its * 0.01
+        # スライダー 0–100 を [0,1] に正規化（col と同じスケール感に揃える）
+        t = its * 0.01
+        # 低〜中域（例: 10 付近）では効きを穏やかにする（t=1 で従来相当の強さに近づける）
+        t_eff = float(np.clip(t, 0.0, 1.0) ** 1.35)
 
-        # 半径
-        radius = max(2, int(its)) * 2
+        # 半径（t が小さいとき最小付近まで下げる）
+        radius = max(2, int(2 + 2 * (t_eff ** 1.05)))
         # イプシロンの計算
         # Yは0-1スケール (HDR対応)
         # eps = (閾値)^2
-        # its=100 で 0.2 (20%) 程度の変動を平滑化
-        eps = (its * 0.2) ** 2
+        # t=1 で (0.2)^2 程度（従来 its=1.0 と同程度）
+        eps = ((t_eff * 0.2) ** 2)
 
         # 分散安定化変換: sqrt(Y) をとることで、ショットノイズ(値に比例して分散が増える)を均一化する
         # これによりハイライト部でもノイズ除去が効くようになる
-        sq_y = np.sqrt(np.maximum(y, 0))
-        sq_y_gf = cv2.ximgproc.guidedFilter(guide=sq_y, src=sq_y, radius=radius, eps=eps)
+        sq_y = np.sqrt(np.maximum(y, 0)).astype(np.float32, copy=False)
+        # ガイドにノイズが乗ったままだと、局所分散が「エッジ」として扱われ平滑が効きにくい。
+        # ガイドだけ微小スケールを落とし、src は生の sq_y のままフィルタする。
+        sigma_guide = float(max(0.35, min(1.4, 0.22 + 0.09 * float(radius))))
+        # スライダー低めではガイド平滑を弱め、全体の「効き」を抑える
+        sigma_guide *= float(0.45 + 0.55 * t)
+        sq_y_guide = cv2.GaussianBlur(sq_y, (0, 0), sigma_guide)
+        sq_y_gf = cv2.ximgproc.guidedFilter(guide=sq_y_guide, src=sq_y, radius=radius, eps=eps)
         y = sq_y_gf ** 2
 
     # 色度チャンネル(Cr, Cb)のノイズ除去 (Joint Guided Filter)
     if col > 0:
-        # 色度ノイズは強めにかけるため半径を大きく
-        radius = max(4, int(col * 0.3))
-        # 色差も0-1スケール
-        eps = ((col * 0.005) ** 2)
+        # 輝度と同様に 0–100 → [0,1]（従来 col をそのまま掛けていたのを正規化し、低域を穏やかに）
+        col_n = float(np.clip(col * 0.01, 0.0, 1.0))
+        col_eff = col_n ** 1.35
+        # 色度ノイズは強めにかけるため半径を大きく（最大付近は従来に近い）
+        radius = max(2, int(2 + 28 * (col_eff ** 1.05)))
+        # 色差も0-1スケール（col_n=1 で従来 col=100 と同等の係数になるよう 0.5 を使用）
+        eps = ((col_eff * 0.5) ** 2)
         
         # 輝度(Y)をガイドにして色差(Cr, Cb)をフィルタリング
-        cr = cv2.ximgproc.guidedFilter(guide=y, src=cr, radius=radius, eps=eps)
-        cb = cv2.ximgproc.guidedFilter(guide=y, src=cb, radius=radius, eps=eps)
+        # 輝度NRをオフにしたとき y はノイズのままなので、ジョイントGFが輝度ノイズに引きずられる。
+        # その場合のみガイドを軽く平滑化する。
+        y_guide = y
+        if its <= 0:
+            sigma_y = float(max(0.45, min(1.3, 0.2 * col_n + 0.35)))
+            y_guide = cv2.GaussianBlur(y.astype(np.float32, copy=False), (0, 0), sigma_y)
+        cr = cv2.ximgproc.guidedFilter(guide=y_guide, src=cr, radius=radius, eps=eps)
+        cb = cv2.ximgproc.guidedFilter(guide=y_guide, src=cb, radius=radius, eps=eps)
  
     # チャンネルを結合
     filtered_ycrcb = cv2.merge([y, cr, cb])
