@@ -168,7 +168,7 @@ def _add_data_mac(src: Path, dest_in_bundle: str) -> str:
 def _kivy_pyinstaller_flags() -> list[str]:
     """
     Kivy 公式 pyinstaller_hooks を使う（--collect-all kivy は kivy.garden で失敗するため使わない）。
-    注: Kivy 既定フックは tkinter を除外する。Platypus は frozen 時は tkinter を使わない（main.py / processing_dialog）。
+    注: Kivy 既定フックは tkinter を除外する。処理中 HUD は macOS では PyObjC（processing_dialog → macos.MacOSProcessingOverlay）。frozen 時も assets/spinner.gif と pyobjc を同梱すれば利用可。
     """
     from kivy.tools.packaging import pyinstaller_hooks as kh
 

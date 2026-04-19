@@ -47,31 +47,9 @@ from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 import macos as device
 
+from cores.mask2 import elliptical_raster, freedraw_raster, gradient_raster
+from cores.mask2.cutout_guided import create_cutout_mask_guided
 
-def create_cutout_mask_guided(image, rough_mask, radius=8, eps=0.001):
-    """
-    オブジェクト切り抜き用の高品質マスク作成
-    
-    Parameters:
-    - image: 元画像（BGR）
-    - rough_mask: AIが生成した粗いマスク（0-255 or 0-1）
-    - radius: フィルター半径（大きいほど広範囲に影響、推奨: 8-16）
-    - eps: 正則化パラメータ（小さいほどエッジ保存、推奨: 0.0001-0.01）
-    """
-    # ガイデッドフィルター適用
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    refined = cv2.ximgproc.guidedFilter(
-        guide=gray,
-        src=rough_mask,
-        radius=radius,
-        eps=eps
-    )
-    
-    # オプション: コントラスト調整でエッジを強調
-    #refined = np.clip((refined - 0.5) * 1.2 + 0.5, 0, 1)
-    
-    return refined
 
 class TextInputDialog(KVPopup):
     def __init__(self, callback, **kwargs):
@@ -873,188 +851,10 @@ class CircularGradientMask(BaseMask):
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_elliptical_gradient(self, image_size, center, inner_axes, outer_axes, angle_rad, invert=False, smoothness=1):
+        return elliptical_raster.draw_elliptical_gradient(
+            image_size, center, inner_axes, outer_axes, angle_rad, invert, smoothness
+        )
 
-        width, height = image_size
-        
-        # 0. 極小サイズのチェック
-        if width <= 0 or height <= 0:
-            return np.zeros((height, width), dtype=np.float32)
-
-        # 回転方向の修正 (以前のロジックと合わせるため反転)
-        angle_rad = -angle_rad
-
-        # 1. パラメータ計算 (Radius)
-        rx_in, ry_in = inner_axes
-        rx_out, ry_out = outer_axes
-        
-        # 中間の半径（ステップ位置）
-        rx_mid = (rx_in + rx_out) / 2.0
-        ry_mid = (ry_in + ry_out) / 2.0
-        
-        # Sigma計算 (距離の1/4程度がErfの自然な遷移幅)
-        sigma_x = abs(rx_out - rx_in) * 0.25 * smoothness
-        sigma_y = abs(ry_out - ry_in) * 0.25 * smoothness
-        
-        # Sigmaが小さすぎる場合はブラーなし
-        if sigma_x < 0.1 and sigma_y < 0.1:
-            sigma_x = 0.1
-            sigma_y = 0.1
-
-        # ダウンサンプリングスケールの計算 (Adaptive Downscaling for Warp Destination)
-        # Warp処理後の出力サイズを小さくすることで、WarpAffineの負荷を下げる
-        # ジッターを防ぐため、ターゲットSigmaを少し大きめ(4.0)に設定
-        target_sigma = 4.0
-        
-        # Sigmaの小さい方に合わせて全体をスケールする（安全策）
-        min_sigma = min(sigma_x, sigma_y)
-        dest_scale = target_sigma / min_sigma if min_sigma > target_sigma else 1.0
-        dest_scale = min(dest_scale, 1.0)
-        
-        # 最終出力（Full Res）へのWarp行列を計算してから、Scaleを適用する方が簡単
-        
-        # 2. 必要なキャンバスサイズの計算 (Rectified Space - Unrotated)
-        # 最終画像の四隅を逆変換して、未回転空間でのバウンディングボックスを求める
-        corners = np.array([
-            [0, 0],
-            [width, 0],
-            [width, height],
-            [0, height]
-        ], dtype=np.float32)
-        
-        cos_a = np.cos(-angle_rad)
-        sin_a = np.sin(-angle_rad)
-        
-        corners_centered = corners - center
-        x_rot = corners_centered[:, 0] * cos_a - corners_centered[:, 1] * sin_a
-        y_rot = corners_centered[:, 0] * sin_a + corners_centered[:, 1] * cos_a
-        
-        # Unrotated空間でのBounding Box
-        min_x = np.min(x_rot)
-        max_x = np.max(x_rot)
-        min_y = np.min(y_rot)
-        max_y = np.max(y_rot)
-        
-        # ソースキャンバス（Unrotated）の解像度
-        # ここも sigma に応じて小さくても良いが、Blurによる劣化を防ぐため
-        # Unrotated空間では「Warp後のScale」と同程度か、あるいは Blur自体を行うのでここでもDownscale可能
-        # 今回は Warp先が小さいので、ソースもそれに準じた解像度で十分
-        
-        # ソース側の解像度も dest_scale に合わせる
-        # Sigmaもスケールされる
-        src_scale = dest_scale
-        eff_sigma_x = sigma_x * src_scale
-        eff_sigma_y = sigma_y * src_scale
-        
-        # Padding
-        pad_x = int(math.ceil(3.0 * eff_sigma_x))
-        pad_y = int(math.ceil(3.0 * eff_sigma_y))
-
-        # Unrotated空間での座標 (Full Res)
-        unrot_w = max_x - min_x
-        unrot_h = max_y - min_y
-        
-        # ソース画像サイズ (Scaled)
-        src_w = int(math.ceil(unrot_w * src_scale)) + 2 * pad_x
-        src_h = int(math.ceil(unrot_h * src_scale)) + 2 * pad_y
-        
-        # ソース画像の原点オフセット (Scaled coords)
-        # src_imgの(0,0) は Unrotated空間の (min_x * s - pad, min_y * s - pad)
-        src_origin_x = min_x * src_scale - pad_x
-        src_origin_y = min_y * src_scale - pad_y
-        
-        # 楕円中心 (Scaled coords, relative to src_img origin)
-        # Unrotated Center is (0,0). Scaled is (0,0).
-        # In src_img: (0 - src_origin_x, 0 - src_origin_y)
-        ell_cx = -src_origin_x
-        ell_cy = -src_origin_y
-        
-        # ソース画像作成
-        src_img = np.zeros((src_h, src_w), dtype=np.float32)
-        
-        if invert == False:
-            bg_color = 1.0
-            fg_color = 0.0
-        else:
-            bg_color = 0.0
-            fg_color = 1.0
-            
-        src_img.fill(bg_color)
-        
-        # 楕円描画 (Scaled)
-        cv2.ellipse(src_img, (int(ell_cx), int(ell_cy)), 
-                    (int(rx_mid * src_scale), int(ry_mid * src_scale)), 
-                    0, 0, 360, color=fg_color, thickness=-1)
-
-        # ガウシアンブラー (Scaled Anisotropic)
-        src_img = cv2.GaussianBlur(src_img, (0, 0), sigmaX=eff_sigma_x, sigmaY=eff_sigma_y)
-        
-        # 5. Warp to Downscaled Destination
-        dest_w = int(width * dest_scale)
-        dest_h = int(height * dest_scale)
-        
-        if dest_w <= 0 or dest_h <= 0:
-             return np.zeros((height, width), dtype=np.float32)
-        
-        # Matrix Construction: Source(Scaled) -> Dest(Scaled)
-        # Source Pixel (u,v) -> Dest Pixel (dx, dy)
-        
-        # Flow:
-        # P_src(u,v) 
-        # -> Unrotated_Full(X, Y) = (u + src_origin_x)/src_scale ? No. 
-        #    P_src coords are Scaled.
-        #    Unrotated_Scaled = (u + src_origin_x, v + src_origin_y)
-        #    Unrotated_Full = Unrotated_Scaled / src_scale
-        # -> Rotated_Full = Rotate(angle) * Unrotated_Full
-        # -> Dest_Full = Rotated_Full + Center
-        # -> Dest_Scaled = Dest_Full * dest_scale
-        
-        # Since src_scale == dest_scale (we chose them same for simplicity):
-        # Dest_Scaled = (Rotate(angle) * (Unrotated_Scaled / s) + Center) * s
-        #             = Rotate(angle) * Unrotated_Scaled + Center * s
-        # Dest_Scaled = Rotate(angle) * (P_src + Origin_Scaled) + Center * s
-        
-        # M = R(a) * T(Origin_Scaled) + shift(Center*s)
-        
-        cos_v = np.cos(angle_rad)
-        sin_v = np.sin(angle_rad)
-        
-        # R terms (Applied to P_src)
-        a00 = cos_v
-        a01 = -sin_v
-        a10 = sin_v
-        a11 = cos_v
-        
-        # Translation
-        # R * Origin
-        ox = src_origin_x
-        oy = src_origin_y
-        
-        # Center * scale
-        cx = center[0] * dest_scale
-        cy = center[1] * dest_scale
-        
-        tx = ox * cos_v - oy * sin_v + cx
-        ty = ox * sin_v + oy * cos_v + cy
-        
-        M = np.array([
-            [a00, a01, tx],
-            [a10, a11, ty]
-        ], dtype=np.float32)
-
-        border_val = bg_color
-        
-        # Warp to Small Destination
-        dst_small = cv2.warpAffine(src_img, M, (dest_w, dest_h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=float(border_val))
-        
-        # 6. Setup Final Result
-        if dest_scale < 1.0:
-            # Upscale
-            dst_img = cv2.resize(dst_small, (width, height), interpolation=cv2.INTER_LINEAR)
-        else:
-            dst_img = dst_small
-
-        return dst_img
-    
 # GradientMask クラス
 class GradientMask(BaseMask):
     start_point = KVListProperty([0, 0])    # グラデーションの開始点
@@ -1305,76 +1105,9 @@ class GradientMask(BaseMask):
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
     
     def draw_gradient(self, image_size, center, start_point, end_point, smoothness=1):
-
-        width, height = image_size
-        
-        # ベクトル計算
-        start_x, start_y = end_point # Swap to match gradient direction
-        end_x, end_y = start_point
-        vec_start_end = np.array([end_x - start_x, end_y - start_y])
-        length_start_end = np.linalg.norm(vec_start_end)
-        
-        if length_start_end == 0:
-            return np.zeros((height, width), dtype=np.float32)
-
-        # Sigma計算 (距離の1/4程度)
-        sigma = (length_start_end * 0.25) * smoothness
-        if sigma < 0.1:
-            # Hard Edge
-            img = np.zeros((height, width), dtype=np.float32)
-            mid_x = (start_x + end_x) / 2
-            mid_y = (start_y + end_y) / 2
-            unit_vec = vec_start_end / length_start_end
-            y_coords, x_coords = np.indices((height, width))
-            projected = (x_coords - mid_x) * unit_vec[0] + (y_coords - mid_y) * unit_vec[1]
-            img[projected >= 0] = 1.0
-            return img
-
-        # Downscaling Strategy
-        # ターゲットSigma (4.0 ~ 5.0) になるように縮小
-        target_sigma = 4.0
-        scale = target_sigma / sigma if sigma > target_sigma else 1.0
-        scale = min(scale, 1.0)
-        
-        small_w = int(math.ceil(width * scale))
-        small_h = int(math.ceil(height * scale))
-        
-        if small_w <= 0 or small_h <= 0:
-             return np.zeros((height, width), dtype=np.float32)
-
-        # Small Image Generation
-        img_small = np.zeros((small_h, small_w), dtype=np.float32)
-        
-        # Scale Points
-        start_x_s = start_x * scale
-        start_y_s = start_y * scale
-        end_x_s = end_x * scale
-        end_y_s = end_y * scale
-        mid_x_s = (start_x_s + end_x_s) / 2
-        mid_y_s = (start_y_s + end_y_s) / 2
-        
-        vec_s = np.array([end_x_s - start_x_s, end_y_s - start_y_s])
-        len_s = np.linalg.norm(vec_s)
-        if len_s == 0:
-             return np.zeros((height, width), dtype=np.float32)
-        unit_vec_s = vec_s / len_s
-        
-        y_coords_s, x_coords_s = np.indices((small_h, small_w))
-        projected_s = (x_coords_s - mid_x_s) * unit_vec_s[0] + (y_coords_s - mid_y_s) * unit_vec_s[1]
-        
-        img_small[projected_s >= 0] = 1.0
-        
-        # Blur (Sigma is scaled)
-        eff_sigma = sigma * scale
-        img_small = cv2.GaussianBlur(img_small, (0, 0), sigmaX=eff_sigma, sigmaY=eff_sigma)
-        
-        # Upscale
-        if scale < 1.0:
-            img = cv2.resize(img_small, (width, height), interpolation=cv2.INTER_LINEAR)
-        else:
-            img = img_small
-
-        return img
+        return gradient_raster.draw_linear_gradient(
+            image_size, center, start_point, end_point, smoothness
+        )
 
 # 全体マスクのクラス
 class FullMask(BaseMask):
@@ -1711,7 +1444,7 @@ class FreeDrawMask(BaseMask):
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, nline, npoint))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
              
-            mask = self.draw_line(image_size, copy_lines)
+            mask = freedraw_raster.draw_line_texture(image_size, copy_lines)
 
             # ルミナンスとマスクを作成
             mask = self._apply_extened_params(mask)
@@ -1720,208 +1453,10 @@ class FreeDrawMask(BaseMask):
             self.image_mask_cache_hash = newhash
 
         return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
-    
-    def create_natural_brush(self, size, softness=1.2):
-        """自然なブラシを作成"""
-        brush_size = int(size)
-        brush_radius = brush_size // 2
-        center = (brush_size // 2, brush_size // 2)
-
-        # カーネルサイズを計算
-        kernel = np.zeros((brush_size, brush_size), np.float32)
-        # カーネルに円を描く
-        cv2.circle(kernel, (brush_radius, brush_radius), brush_radius // 2, 1, -1)
-
-        # カーネルをガウシアンぼかし
-        kz = int(max(1, brush_radius * softness)) | 1
-        kernel = cv2.GaussianBlur(kernel, (kz, kz), 0)
-
-        return kernel
-    
-    def safe_array_slice(self, array, y_min, y_max, x_min, x_max):
-        """安全な配列スライス（境界チェック付き）"""
-        h, w = array.shape[:2]
-        
-        # 境界を画像サイズに制限
-        y_min = max(0, min(h-1, y_min))
-        y_max = max(y_min+1, min(h, y_max))
-        x_min = max(0, min(w-1, x_min))
-        x_max = max(x_min+1, min(w, x_max))
-        
-        return array[y_min:y_max, x_min:x_max], (y_min, y_max, x_min, x_max)
-    
-    def apply_brush_at_point(self, image, x, y, brush, is_erasing=False, opacity=1.0, blend_mode='max'):
-        """指定位置にブラシを適用（安全な境界チェック付き）"""
-        if brush.size == 0:
-            return
-            
-        brush_h, brush_w = brush.shape
-        brush_center_x, brush_center_y = brush_w // 2, brush_h // 2
-        
-        # 画像上の適用範囲を計算
-        img_y_min = int(y - brush_center_y)
-        img_y_max = int(y - brush_center_y + brush_h)
-        img_x_min = int(x - brush_center_x)
-        img_x_max = int(x - brush_center_x + brush_w)
-        
-        # 画像の境界内に制限
-        img_h, img_w = image.shape
-        img_y_min_clipped = max(0, img_y_min)
-        img_y_max_clipped = min(img_h, img_y_max)
-        img_x_min_clipped = max(0, img_x_min)
-        img_x_max_clipped = min(img_w, img_x_max)
-        
-        # 適用範囲が有効かチェック
-        if (img_y_min_clipped >= img_y_max_clipped or 
-            img_x_min_clipped >= img_x_max_clipped):
-            return
-        
-        # ブラシの対応部分を計算
-        brush_y_min = img_y_min_clipped - img_y_min
-        brush_y_max = brush_y_min + (img_y_max_clipped - img_y_min_clipped)
-        brush_x_min = img_x_min_clipped - img_x_min
-        brush_x_max = brush_x_min + (img_x_max_clipped - img_x_min_clipped)
-        
-        # 境界チェック
-        brush_y_min = max(0, min(brush_h-1, brush_y_min))
-        brush_y_max = max(brush_y_min+1, min(brush_h, brush_y_max))
-        brush_x_min = max(0, min(brush_w-1, brush_x_min))
-        brush_x_max = max(brush_x_min+1, min(brush_w, brush_x_max))
-        
-        try:
-            # ブラシ部分を取得
-            brush_part = brush[brush_y_min:brush_y_max, brush_x_min:brush_x_max]
-            if brush_part.size == 0:
-                return
-                
-            # 不透明度を適用
-            brush_part = brush_part * opacity
-            
-            # 画像に適用
-            target_region = image[img_y_min_clipped:img_y_max_clipped, 
-                                img_x_min_clipped:img_x_max_clipped]
-            
-            if blend_mode == 'max':
-                # 最大値（上書き）モード - 積算防止用
-                image[img_y_min_clipped:img_y_max_clipped, 
-                     img_x_min_clipped:img_x_max_clipped] = np.maximum(target_region, brush_part)
-            elif is_erasing:
-                # 消しゴムモード
-                image[img_y_min_clipped:img_y_max_clipped, 
-                     img_x_min_clipped:img_x_max_clipped] = np.maximum(0, target_region - brush_part)
-            else:
-                # 描画モード（加算）
-                image[img_y_min_clipped:img_y_max_clipped, 
-                     img_x_min_clipped:img_x_max_clipped] = np.minimum(1, target_region + brush_part)
-                     
-        except (IndexError, ValueError) as e:
-            # エラーが発生した場合は無視して続行
-            pass
-    
-    def draw_smooth_line(self, image, points, brush_size, softness, is_erasing=False, blend_mode='add'):
-        """滑らかな線を描画"""
-        if len(points) == 0:
-            return
-        
-        # ブラシを作成
-        brush = self.create_natural_brush(brush_size, softness)
-        
-        # 単一点の場合
-        if len(points) == 1:
-            p = points[0]
-            self.apply_brush_at_point(image, int(p[0]), int(p[1]), brush, is_erasing, blend_mode=blend_mode)
-            return
-        
-        # 複数点の場合は補間して滑らかに
-        texture_points = points
-        
-        # ブレンドモードに応じた不透明度設定
-        opacity = 1.0 if blend_mode == 'max' else 0.5
-        
-        for i in range(len(texture_points) - 1):
-            p1 = texture_points[i]
-            p2 = texture_points[i + 1]
-            
-            # 2点間の距離を計算
-            distance = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
-            
-            # 補間点数を距離に応じて調整（密度を一定に保つ）
-            steps = max(1, int(distance / (brush_size * 0.05)))
-            
-            for j in range(steps + 1):
-                t = j / max(1, steps)
-                x = p1[0] + t * (p2[0] - p1[0])
-                y = p1[1] + t * (p2[1] - p1[1])
-                
-                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, opacity, blend_mode=blend_mode)
-    
-    def draw_line(self, image_size, lines):
-        """改良された線描画メソッド（BBox最適化版）"""
-        try:
-            # 画像の初期化（透明背景）
-            width, height = image_size
-            if width <= 0 or height <= 0:
-                return np.zeros((100, 100), dtype=np.float32)
-                
-            image = np.zeros((height, width), dtype=np.float32)
-            
-            # 各線を描画
-            for line in lines:
-                if len(line.points) == 0:
-                    continue
-                
-                # 線のパラメータを安全に取得
-                is_erasing = line.is_erasing
-                brush_size = line.size
-                brush_soft = line.soft
-
-                # バウンディングボックスの計算
-                pts = np.array(line.points)
-                min_x = np.min(pts[:, 0]) - brush_size
-                max_x = np.max(pts[:, 0]) + brush_size
-                min_y = np.min(pts[:, 1]) - brush_size
-                max_y = np.max(pts[:, 1]) + brush_size
-
-                # 画像範囲でクリップ
-                min_x = max(0, int(min_x))
-                max_x = min(width, int(max_x))
-                min_y = max(0, int(min_y))
-                max_y = min(height, int(max_y))
-                
-                if min_x >= max_x or min_y >= max_y:
-                    continue
-
-                patch_w = max_x - min_x
-                patch_h = max_y - min_y
-
-                # ストローク用の一時バッファをBBoxサイズで作成
-                stroke_buffer = np.zeros((patch_h, patch_w), dtype=np.float32)
-                
-                # ポイントをローカル座標に変換して描画
-                local_points = []
-                for p in line.points:
-                    local_points.append((p[0] - min_x, p[1] - min_y))
-
-                # 滑らかな線を一時バッファに描画（MAXモード）
-                self.draw_smooth_line(stroke_buffer, local_points, brush_size, brush_soft, False, blend_mode='max')
-
-                # ストロークバッファをメイン画像に合成
-                target_region = image[min_y:max_y, min_x:max_x]
-                if is_erasing:
-                    image[min_y:max_y, min_x:max_x] = np.maximum(0, target_region - stroke_buffer)
-                else:
-                    image[min_y:max_y, min_x:max_x] = np.minimum(1, target_region + stroke_buffer)
-            
-            return image
-            
-        except Exception as e:
-            # 全体的なエラーの場合は空の画像を返す
-            return np.zeros((max(1, image_size[1]), max(1, image_size[0])), dtype=np.float32)
 
 
 # セグメントマスクのクラス
 class SegmentMask(BaseMask):
-    __processor = None
     corner = KVListProperty([0, 0])
 
     def __init__(self, editor, **kwargs):
@@ -2171,33 +1706,12 @@ class SegmentMask(BaseMask):
         return segment_mask if segment_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def _draw_segment(self, image_size, bbox, invert):
-        import helpers.sam3_helper as sam3_helper
-        if SegmentMask.__processor is None:
-            SegmentMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
-        
-        # 画像の取得
-        img = self.editor.get_original_image_rgb()
+        from cores.mask2 import inference_runtime as mask2_inference_runtime
 
-        # バウンディングボックスの整数化
-        bbox = [int(x) for x in bbox]
-        
-        # バウンディングボックスの検証
-        if bbox[0] == bbox[0] + bbox[2] or bbox[1] == bbox[1] + bbox[3]:
-            return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
-        
-        # 推論実行 (Original画像に対して)
-        mask_original = sam3_helper.predict_sam3_for_bbox(SegmentMask.__processor, img, bbox)
-        
-        # マスクの調整        
-        mask_original = create_cutout_mask_guided(img, mask_original, radius=60, eps=0.0001)
-        
-        if invert:
-            mask_original = 1 - mask_original   
-        
-        return mask_original
+        img = self.editor.get_original_image_rgb()
+        return mask2_inference_runtime.predict_sam3_bbox(img, bbox, invert)
 
 class DepthMapMask(BaseMask):
-    __model = None
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -2353,19 +1867,11 @@ class DepthMapMask(BaseMask):
         return depth_map_mask if depth_map_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_depth_map(self, image_size):
-        import depth_pro
-        if DepthMapMask.__model is None:
-            DepthMapMask.__model = depth_pro.setup_model(device=config.get_config('gpu_device'))
+        from cores.mask2 import inference_runtime as mask2_inference_runtime
 
-        # 画像の取得
-        img = self.editor.get_original_image_rgb()
-
-        mask = depth_pro.predict_model(DepthMapMask.__model, img)
-
-        return mask
+        return mask2_inference_runtime.predict_depth_map(self.editor.get_original_image_rgb())
 
 class FaceMask(BaseMask):
-    __faces = None
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -2535,33 +2041,20 @@ class FaceMask(BaseMask):
         return faces_mask if faces_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def draw_face(self, image_size, exclude_names):
-        import helpers.facer_helper as facer_helper
+        from cores.mask2 import inference_runtime as mask2_inference_runtime
 
-        # 画像の取得
-        img = self.editor.get_original_image_rgb()
-
-        if FaceMask.__faces is None:
-            FaceMask.__faces = facer_helper.create_faces(img, device='cpu')
-        
-        # マスク画像を作成
-        if FaceMask.__faces == 0:
-            return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
-
-        result = facer_helper.draw_face_mask(FaceMask.__faces, exclude_names)
-
-        # マスクの調整        
-        result = create_cutout_mask_guided(img, result, radius=60, eps=0.0001)
-
-        return result
+        return mask2_inference_runtime.predict_face_mask(
+            self.editor.get_original_image_rgb(), exclude_names
+        )
 
     @staticmethod
     def delete_faces():
-        if FaceMask.__faces is not None:
-            FaceMask.__faces = None
+        from cores.mask2 import inference_runtime as mask2_inference_runtime
+
+        mask2_inference_runtime.delete_faces()
 
 # セグメントマスクのクラス
 class TargetTextMask(BaseMask):
-    __processor = None
 
     def __init__(self, editor, **kwargs):
         super().__init__(editor, **kwargs)
@@ -2741,23 +2234,10 @@ class TargetTextMask(BaseMask):
         return segment_mask if segment_mask is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     def _draw_segment(self, image_size, text, invert):
-        import helpers.sam3_helper as sam3_helper
-        if TargetTextMask.__processor is None:
-            TargetTextMask.__processor = sam3_helper.setup_sam3(config.get_config('gpu_device'))
-        
-        # 画像の取得
+        from cores.mask2 import inference_runtime as mask2_inference_runtime
+
         img = self.editor.get_original_image_rgb()
-        
-        # 推論実行 (Original画像に対して)
-        mask_original = sam3_helper.predict_sam3_for_text(TargetTextMask.__processor, img, text)
-
-        # マスクの調整        
-        mask_original = create_cutout_mask_guided(img, mask_original, radius=60, eps=0.0001)
-
-        if invert:
-            mask_original = 1 - mask_original
-        
-        return mask_original
+        return mask2_inference_runtime.predict_sam3_text(img, text, invert)
 
 
 # メインのエディタークラス

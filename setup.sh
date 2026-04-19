@@ -46,19 +46,22 @@ pixi install
 
 ensure_libraw_enhanced
 
+clone_if_missing https://github.com/uniuyuni/SAM3.git SAM3
+
 # libraw_enhanced は pixi 内でビルドした LibRaw（third_party/libraw-install）にリンクする（システム LibRaw 不要）
 echo "LibRaw を third_party/libraw-install にビルドしています..."
 pixi run build-libraw
 
 pixi run python -m pip install --upgrade pip "setuptools>=70,<82" wheel
-# libraw_enhanced は pixi 環境の llvm-openmp / ローカル LibRaw にリンクするためビルド分離をオフにする
-REQ_NO_LIBRAW="$(mktemp)"
-grep -v '^[[:space:]]*-e[[:space:]].*libraw_enhanced' requirements.txt >"$REQ_NO_LIBRAW"
-pixi run python -m pip install -r "$REQ_NO_LIBRAW"
-rm -f "$REQ_NO_LIBRAW"
+# libraw_enhanced / SAM3 は editable のため別途 install（llvm-openmp / ローカル LibRaw 向けに libraw は --no-build-isolation）
+REQ_NO_LOCAL="$(mktemp)"
+grep -v '^[[:space:]]*-e[[:space:]].*libraw_enhanced' requirements.txt | \
+  grep -v '^[[:space:]]*-e[[:space:]].*SAM3' >"$REQ_NO_LOCAL"
+pixi run python -m pip install -r "$REQ_NO_LOCAL"
+rm -f "$REQ_NO_LOCAL"
 pixi run python -m pip install -e ./libraw_enhanced --no-build-isolation
+pixi run python -m pip install -e ./SAM3
 
-clone_if_missing https://github.com/uniuyuni/SAM3.git SAM3
 clone_if_missing https://github.com/cszn/SCUNet.git SCUNet
 clone_if_missing https://github.com/gfacciol/demosaicnet_torch.git demosaicnet_torch
 

@@ -15,6 +15,7 @@ build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
 # 拡張モジュールのみ再ビルド（LibRaw は既に third_party にある想定）
 install-libraw-enhanced = { cmd = "pip install -e libraw_enhanced --no-build-isolation" }
+install-sam3 = { cmd = "pip install -e SAM3" }
 # 初回: LibRaw ビルド → editable インストール（毎回フルビルドしたい場合はこちら）
 setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && pip install -e libraw_enhanced --no-build-isolation'" }
 

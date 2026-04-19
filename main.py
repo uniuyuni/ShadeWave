@@ -42,7 +42,11 @@ if __name__ == '__main__':
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivy.core.window import Window as KVWindow
     from kivy.graphics.texture import Texture as KVTexture
-    from kivy.properties import BooleanProperty as KVBooleanProperty, ListProperty as KVListProperty
+    from kivy.properties import (
+        BooleanProperty as KVBooleanProperty,
+        ListProperty as KVListProperty,
+        NumericProperty as KVNumericProperty,
+    )
     from kivy.clock import Clock as KVClock, mainthread as kvmainthread
     from kivy.graphics.transformation import Matrix as KVMatrix
 
@@ -163,6 +167,9 @@ if __name__ == '__main__':
         loading = KVBooleanProperty(False)
         preview_size = KVListProperty([100, 100])
         is_processing = KVBooleanProperty(False)
+        export_in_progress = KVBooleanProperty(False)
+        export_done = KVNumericProperty(0)
+        export_total = KVNumericProperty(0)
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -209,6 +216,9 @@ if __name__ == '__main__':
             self.is_press_space = False
             # on_select で選んだパス。FCS の遅延コールバックが別ファイル向けなら無視する（primary_param と imgset の不整合防止）
             self._expected_file_path = None
+
+            self._export_cancel_event = threading.Event()
+            self._export_thread = None
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
@@ -870,6 +880,8 @@ if __name__ == '__main__':
             dialog.open()
 
         def handle_export_dialog(self, preset):
+            if self.export_in_progress:
+                return
             # 保存先ファイルの存在チェック
             cards = self.ids['viewer'].get_selected_cards()
             isfile = False
@@ -889,27 +901,67 @@ if __name__ == '__main__':
         def handle_confirm_dialog(self, select, preset):
             if select in ['Overwrite', 'Rename']:
                 cards = self.ids['viewer'].get_selected_cards()
-                for x in cards:
-                    ex_path = self._make_export_path(x.file_path, preset)
-                    if select == 'Rename':
-                        ex_path = self._find_not_duplicate_filename(ex_path)
-                    if select == 'Overwrite':
-                        if os.path.isfile(ex_path): # あっても無くても'Overwrite'
-                            self.cache_system.delete_file(ex_path)
-                            os.remove(ex_path) # ほんとは消さなくても良さそうだけど、通知がおかしいので
+                if not cards or self.export_in_progress:
+                    return
 
-                    resize_str = ""
-                    if preset['size_mode'] == "Long Edge":
-                        _, _, width, height = core.get_exif_image_size(x.exif_data)
-                        if width >= height:
-                            resize_str = preset['size_value'] + "x"
-                        else:
-                            resize_str = "x" + preset['size_value']
-                    if preset['size_mode'] == "Pixels": resize_str = preset['size_value']
-                    if preset['size_mode'] == "Percentage": resize_str = preset['size_value'] + "%"
+                self._export_cancel_event.clear()
+                n = len(cards)
+                self.export_total = n
+                self.export_done = 0
+                self.export_in_progress = True
 
-                    exfile = export.ExportFile(x.file_path, x.exif_data)
-                    exfile.write_to_file(ex_path, preset['quality'], resize_str, preset['sharpen']/100, preset['icc_profile'], preset['metadata'], preset['gps'], preset['dithering'])
+                def _export_job():
+                    try:
+                        for i, x in enumerate(cards):
+                            if self._export_cancel_event.is_set():
+                                break
+                            ok = False
+                            try:
+                                ex_path = self._make_export_path(x.file_path, preset)
+                                if select == 'Rename':
+                                    ex_path = self._find_not_duplicate_filename(ex_path)
+                                if select == 'Overwrite':
+                                    if os.path.isfile(ex_path): # あっても無くても'Overwrite'
+                                        self.cache_system.delete_file(ex_path)
+                                        os.remove(ex_path) # ほんとは消さなくても良さそうだけど、通知がおかしいので
+
+                                resize_str = ""
+                                if preset['size_mode'] == "Long Edge":
+                                    _, _, width, height = core.get_exif_image_size(x.exif_data)
+                                    if width >= height:
+                                        resize_str = preset['size_value'] + "x"
+                                    else:
+                                        resize_str = "x" + preset['size_value']
+                                if preset['size_mode'] == "Pixels": resize_str = preset['size_value']
+                                if preset['size_mode'] == "Percentage": resize_str = preset['size_value'] + "%"
+
+                                exfile = export.ExportFile(x.file_path, x.exif_data)
+                                ok = exfile.write_to_file(
+                                    ex_path,
+                                    preset['quality'],
+                                    resize_str,
+                                    preset['sharpen']/100,
+                                    preset['icc_profile'],
+                                    preset['metadata'],
+                                    preset['gps'],
+                                    preset['dithering'],
+                                    cancel_event=self._export_cancel_event,
+                                )
+                            except Exception:
+                                logging.exception("export failed for %s", x.file_path)
+                                ok = False
+                            done = i + 1
+                            KVClock.schedule_once(
+                                lambda dt, d=done: setattr(self, "export_done", d),
+                                0,
+                            )
+                            if not ok:
+                                break
+                    finally:
+                        KVClock.schedule_once(self._export_finish_ui, 0)
+
+                self._export_thread = threading.Thread(target=_export_job, daemon=True)
+                self._export_thread.start()
 
         def _make_export_path(self, path, preset):
             dirname, basename = os.path.split(path)
@@ -1155,6 +1207,22 @@ if __name__ == '__main__':
             self.ids['exif_software'].value = exif_data.get("Software", "-")
             #self.ids['exif_'].value = exif_data.get("", "-")
         
+        def request_export_cancel(self):
+            self._export_cancel_event.set()
+
+        def _export_finish_ui(self, *args):
+            self.export_in_progress = False
+            self.export_done = 0
+            self.export_total = 0
+            self._export_thread = None
+            self.ids['viewer'].clear_selection()
+
+        def on_export_bar_press(self):
+            if self.export_in_progress:
+                self.request_export_cancel()
+            else:
+                self.on_export_press()
+
         def shutdown(self):
             #self.processor.stop()
             if self.async_worker:
@@ -1243,6 +1311,11 @@ if __name__ == '__main__':
             return super().on_start()
 
         def on_stop(self):
+            self.main_widget.request_export_cancel()
+            t = self.main_widget._export_thread
+            if t is not None and t.is_alive():
+                t.join(timeout=3.0)
+            self.main_widget._export_finish_ui()
             self.main_widget.save_current_sidecar()
             self.main_widget.shutdown()
 

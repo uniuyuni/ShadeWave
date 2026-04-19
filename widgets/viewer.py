@@ -357,6 +357,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             if idx < len(self.data):
                 self.data[idx]['selected'] = False
         self.selected_indices.clear()
+        self.last_selected_index = None
         self.refresh_from_data()
 
     def get_selected_cards(self):

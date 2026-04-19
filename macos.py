@@ -734,12 +734,217 @@ try:
         NSLayoutAttributeRight,
         NSLayoutRelationEqual,
         NSLayoutConstraint,
+        NSWindowStyleMaskNonactivatingPanel,
+        NSTextAlignmentLeft,
+        NSTextAlignmentRight,
+        NSCursor,
     )
     from Foundation import NSMakeRect, NSMakeSize, NSObject, NSRunLoop, NSDate
     HAS_PYOBJC = True
 except ImportError as e:
     HAS_PYOBJC = False
     _IMPORT_ERROR = str(e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kivy 処理中オーバーレイ（HUD パネル・メインウィンドウ追従）
+# ─────────────────────────────────────────────────────────────────────────────
+
+if HAS_PYOBJC:
+    class MacOSProcessingOverlay:
+        """
+        標準に近いフローティング HUD。define.APPNAME と一致するタイトルのウィンドウ中央に重ね、
+        update() ごとに位置を同期する（マルチディスプレイ／ウィンドウ移動に追従）。
+        """
+
+        def __init__(
+            self,
+            gif_path: str,
+            app_name: str,
+            message: str = "Processing...",
+        ):
+            self._app_name = app_name
+            self._gif_path = os.path.abspath(gif_path)
+            self._message = message
+            self._win = None
+            self._gif_view = None
+            self._main_label = None
+            self._sub_label = None
+            self._pending_sub = None
+            self._panel_w = 268.0
+            self._panel_h = 108.0
+            self._built = False
+
+        def _ensure_shared_app(self):
+            app = NSApplication.sharedApplication()
+            # NSApplicationActivationPolicyProhibited == 2
+            if app.activationPolicy() == 2:
+                app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+        def _build(self):
+            if self._built:
+                return
+            self._ensure_shared_app()
+            style = NSWindowStyleMaskHUDWindow | NSWindowStyleMaskNonactivatingPanel
+            self._win = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, self._panel_w, self._panel_h),
+                style,
+                NSBackingStoreBuffered,
+                False,
+            )
+            self._win.setFloatingPanel_(True)
+            self._win.setWorksWhenModal_(True)
+            self._win.setLevel_(NSFloatingWindowLevel)
+            self._win.setAlphaValue_(0.92)
+            self._win.setTitle_("")
+            self._win.setReleasedWhenClosed_(False)
+            self._win.setHidesOnDeactivate_(False)
+            self._win.setBecomesKeyOnlyIfNeeded_(True)
+            cb = getattr(AppKit, "NSWindowCollectionBehaviorCanJoinAllSpaces", 0)
+            if cb:
+                try:
+                    self._win.setCollectionBehavior_(cb)
+                except Exception:
+                    pass
+
+            content = self._win.contentView()
+            img = NSImage.alloc().initWithContentsOfFile_(self._gif_path)
+            if img is None:
+                img = NSImage.alloc().initWithSize_(NSMakeSize(100, 100))
+
+            self._gif_view = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, 100, 100))
+            self._gif_view.setImage_(img)
+            self._gif_view.setImageFrameStyle_(NSImageFrameNone)
+            self._gif_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+            self._gif_view.setAnimates_(True)
+            self._gif_view.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            self._main_label = NSTextField.labelWithString_(self._message)
+            self._main_label.setAlignment_(NSTextAlignmentLeft)
+            self._main_label.setFont_(NSFont.systemFontOfSize_weight_(14.0, 0.3))
+            self._main_label.setLineBreakMode_(NSLineBreakByWordWrapping)
+            self._main_label.setMaximumNumberOfLines_(2)
+            self._main_label.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            self._sub_label = NSTextField.labelWithString_("")
+            self._sub_label.setAlignment_(NSTextAlignmentRight)
+            self._sub_label.setFont_(NSFont.systemFontOfSize_(10.0))
+            self._sub_label.setTextColor_(NSColor.secondaryLabelColor())
+            self._sub_label.setLineBreakMode_(NSLineBreakByWordWrapping)
+            self._sub_label.setMaximumNumberOfLines_(2)
+            self._sub_label.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            text_stack = NSStackView.stackViewWithViews_([self._main_label, self._sub_label])
+            text_stack.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
+            text_stack.setSpacing_(4.0)
+            text_stack.setAlignment_(NSLayoutAttributeLeft)
+            text_stack.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            h_stack = NSStackView.stackViewWithViews_([self._gif_view, text_stack])
+            h_stack.setOrientation_(NSUserInterfaceLayoutOrientationHorizontal)
+            h_stack.setSpacing_(12.0)
+            h_stack.setAlignment_(NSLayoutAttributeCenterY)
+            h_stack.setEdgeInsets_((12.0, 14.0, 12.0, 14.0))
+            h_stack.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+            content.addSubview_(h_stack)
+
+            constraints = [
+                h_stack.leadingAnchor().constraintEqualToAnchor_(content.leadingAnchor()),
+                h_stack.trailingAnchor().constraintEqualToAnchor_(content.trailingAnchor()),
+                h_stack.topAnchor().constraintEqualToAnchor_(content.topAnchor()),
+                h_stack.bottomAnchor().constraintEqualToAnchor_(content.bottomAnchor()),
+                self._gif_view.widthAnchor().constraintEqualToConstant_(100.0),
+                self._gif_view.heightAnchor().constraintEqualToConstant_(100.0),
+            ]
+            for c in constraints:
+                c.setActive_(True)
+
+            self._built = True
+
+        def _sync_frame_to_main_window(self):
+            if not self._win:
+                return
+            pw, ph = self._panel_w, self._panel_h
+            main = get_window(self._app_name)
+            if main is not None:
+                mf = main.frame()
+                x = mf.origin.x + (mf.size.width - pw) * 0.5
+                y = mf.origin.y + (mf.size.height - ph) * 0.5
+            else:
+                vf = NSScreen.mainScreen().visibleFrame()
+                x = vf.origin.x + (vf.size.width - pw) * 0.5
+                y = vf.origin.y + (vf.size.height - ph) * 0.5
+            self._win.setFrame_display_(NSMakeRect(x, y, pw, ph), True)
+
+        def _pump_runloop(self):
+            """
+            NSRunLoop のタイマー処理に加え、キューに溜まったイベントを短く処理する。
+            メインスレッドが AppKit を十分に回さないとシステムが待ちカーソル（ビーチボール）を出すため。
+            """
+            app = NSApplication.sharedApplication()
+            try:
+                NSCursor.arrowCursor().set()
+            except Exception:
+                pass
+            try:
+                import Foundation
+
+                mode = getattr(
+                    Foundation,
+                    "NSDefaultRunLoopMode",
+                    "kCFRunLoopDefaultMode",
+                )
+                mask = getattr(AppKit, "NSEventMaskAny", 0xFFFFFFFFFFFFFFFF)
+                past = NSDate.distantPast()
+                for _ in range(48):
+                    event = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
+                        mask,
+                        past,
+                        mode,
+                        True,
+                    )
+                    if event is None:
+                        break
+                    app.sendEvent_(event)
+            except Exception:
+                pass
+            try:
+                until = NSDate.dateWithTimeIntervalSinceNow_(0.02)
+                NSRunLoop.currentRunLoop().runUntilDate_(until)
+                app.updateWindows()
+            except Exception:
+                pass
+
+        def _apply_pending(self):
+            if self._pending_sub is not None and self._sub_label is not None:
+                self._sub_label.setStringValue_(self._pending_sub or "")
+                self._pending_sub = None
+
+        def show(self):
+            self._build()
+            self._sync_frame_to_main_window()
+            self._apply_pending()
+            self._win.orderFrontRegardless()
+            try:
+                NSCursor.arrowCursor().set()
+            except Exception:
+                pass
+
+        def update(self):
+            if not self._built:
+                return
+            self._sync_frame_to_main_window()
+            self._apply_pending()
+            self._pump_runloop()
+
+        def hide(self):
+            if self._win:
+                self._win.orderOut_(None)
+
+        def set_text(self, text):
+            """右下サブテキスト（メインスレッドの update で反映）。"""
+            self._pending_sub = text
 
 
 # ─────────────────────────────────────────────────────────────────────────────

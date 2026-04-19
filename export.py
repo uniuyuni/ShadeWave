@@ -17,7 +17,12 @@ import pipeline
 import params
 import effects
 import config
-import widgets.mask_editor2 as mask_editor2
+from cores.mask2 import Mask2HeadlessPipeline
+
+
+def _export_cancel_requested(cancel_event):
+    return cancel_event is not None and cancel_event.is_set()
+
 
 _SAFE_TAGS = [
     # EXIF（カメラと撮影設定）
@@ -147,9 +152,23 @@ class ExportFile():
         self.imgset = None
         self.effects = effects.create_effects()
         self.param = {}
-        self.mask_editor2 = mask_editor2.MaskEditor2()
+        self.mask_editor2 = None
 
-    def write_to_file(self, ex_path, quality, resize_str, sharpen, icc_profile, exifsw, gpssw, dithering):
+    def write_to_file(
+        self,
+        ex_path,
+        quality,
+        resize_str,
+        sharpen,
+        icc_profile,
+        exifsw,
+        gpssw,
+        dithering,
+        cancel_event=None,
+    ):
+        if _export_cancel_requested(cancel_event):
+            return False
+
         self.quality = quality
         self.ex_path = ex_path
         self.icc_profile = icc_profile
@@ -157,10 +176,15 @@ class ExportFile():
         result = self.imgset.preload(self.file_path, self.exif_data, self.param)
         self.imgset.load(result, self.file_path, self.exif_data, self.param)
 
+        if _export_cancel_requested(cancel_event):
+            return False
+
         params.apply_original_geometry_if_missing(self.param, self.imgset.img)
         if not params.has_original_img_size(self.param):
             logging.error("エクスポート中止: original_img_size を確定できません")
-            return
+            return False
+
+        self.mask_editor2 = Mask2HeadlessPipeline()
 
         #self.mask_editor2.set_orientation(self.param.get('rotation', 0), self.param.get('rotation2', 0), self.param.get('flip_mode', 0))
         self.mask_editor2.set_texture_size(self.imgset.img.shape[1], self.imgset.img.shape[0])
@@ -170,11 +194,21 @@ class ExportFile():
 
         params.load_json(self.file_path, self.param, self.mask_editor2, load_heavy=True)
         self.param['image_fidelity'] = getattr(self.imgset, 'fidelity', ImageFidelity.FULL).value
+
+        if _export_cancel_requested(cancel_event):
+            return False
+
         img = pipeline.export_pipeline(self.imgset.img, self.effects, self.param, self.mask_editor2)
+
+        if _export_cancel_requested(cancel_event):
+            return False
 
         img = colour_functions.RGB_to_RGB(img, 'ProPhoto RGB', core.ICC_PROFILE_TO_COLOR_SPACE[self.icc_profile], config.get_config('cat'),
                                 apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
         img = np.clip(img, 0, 1) # ここじゃないとダメ
+
+        if _export_cancel_requested(cancel_event):
+            return False
 
         format = ex_ext = os.path.splitext(self.ex_path)[1]
 
@@ -238,6 +272,9 @@ class ExportFile():
         if sharpen > 0:
             vips_image = vips_image.sharpen(sigma=sharpen)
 
+        if _export_cancel_requested(cancel_event):
+            return False
+
         # ICCプロファイルファイルを読み込む
         try:
             with open('icc/' + self.icc_profile + '.icc', 'rb') as f:
@@ -254,12 +291,19 @@ class ExportFile():
             logging.warning(f"ICC profile {self.icc_profile} not found")
 
         # ファイル書き込み
+        if _export_cancel_requested(cancel_event):
+            return False
+
         vips_image.write_to_file(self.ex_path, **save_options)
 
         # Exif書き込み
         if exifsw:
+            if _export_cancel_requested(cancel_event):
+                return False
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
                 safe_metadata = make_safe_metadata(self.exif_data, gpssw)
                 safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
                 #safe_metadata["ColorSpace"] = 0xfffe
                 et.set_tags(self.ex_path, tags=safe_metadata)
+
+        return True
