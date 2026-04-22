@@ -145,6 +145,7 @@ class ImageSet:
                 decode = base64.b64decode(preview_base64[7:])
                 with PILImage.open(io.BytesIO(decode)) as img:
                     img = PILImageOps.exif_transpose(img)
+                    img = img.convert("RGB")
                     img_array = np.array(img)
             else:
                 raise ValueError(f"Unsupported thumbnail format.")
@@ -335,6 +336,8 @@ class ImageSet:
         # RGB画像で読み込んでみる
         with pyvips.Image.new_from_file(file_path) as vips_image:
             img_array = np.array(vips_image)
+            if img_array.ndim == 3 and img_array.shape[2] > 3:
+                img_array = img_array[:, :, :3]
 
             # float32へ
             img_array = core.convert_to_float32(img_array)

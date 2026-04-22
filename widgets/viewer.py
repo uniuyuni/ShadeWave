@@ -253,7 +253,14 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 if thumb_base64 is not None:
                     image = np.frombuffer(base64.b64decode(thumb_base64[7:]), dtype=np.uint8)
                     thumb = cv2.imdecode(image, 1)
-                    thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+                    if thumb.ndim == 2:
+                        thumb = cv2.cvtColor(thumb, cv2.COLOR_GRAY2RGB)
+                    elif thumb.shape[2] == 4:
+                        thumb = cv2.cvtColor(thumb, cv2.COLOR_BGRA2RGB)
+                    elif thumb.shape[2] > 4:
+                        thumb = cv2.cvtColor(thumb[:, :, :3], cv2.COLOR_BGR2RGB)
+                    else:
+                        thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
                 else:
                     if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
                         with rawpy.imread(file_path) as raw:
@@ -261,6 +268,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     else:
                         with pyvips.Image.new_from_file(file_path) as vips_image:
                             thumb = np.array(vips_image)
+                            if thumb.ndim == 3 and thumb.shape[2] > 3:
+                                thumb = thumb[:, :, :3]
                 thumb = core.convert_to_float32(thumb)
 
                 thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)

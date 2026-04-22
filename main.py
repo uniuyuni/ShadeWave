@@ -163,6 +163,20 @@ if __name__ == '__main__':
             return True
         return False
 
+    def _load_stage_ends_file_loading_indicator(stage, imgset):
+        """
+        ファイル読み込み用インジケータ（_actively_loading / is_processing）を消す段階。
+        プレビュー到達でパラメータを触れる loading 解除とは分離し、RAW はフルデコード完了まで
+        スピナーを表示し続ける。
+        """
+        if stage == LoadStage.FULL_DECODE:
+            return True
+        if stage == LoadStage.RGB_DONE:
+            return True
+        if stage == LoadStage.FIRST_PAINTABLE and getattr(imgset, 'fidelity', None) == ImageFidelity.FULL:
+            return True
+        return False
+
     class MainWidget(MDBoxLayout):
         loading = KVBooleanProperty(False)
         preview_size = KVListProperty([100, 100])
@@ -741,6 +755,7 @@ if __name__ == '__main__':
 
             if _load_stage_allows_ui(stage, imgset):
                 self.loading = False
+            if _load_stage_ends_file_loading_indicator(stage, imgset):
                 self._actively_loading = False
 
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
