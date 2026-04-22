@@ -11,6 +11,25 @@ def empty_cache():
     elif torch.backends.mps.is_available():
         torch.mps.empty_cache()  # MPSバックエンド用
 
+# log1p による HDR 的レンジ圧縮（SCUNet / DemosaicNet 等で k=8 を共有）
+LOG1P_TONEMAP_K_DEFAULT = 8.0
+
+
+def log1p_tonemap_forward(x, k=LOG1P_TONEMAP_K_DEFAULT, clip_nonnegative=True):
+    """
+    入力を log1p 正規化空間へ写す。clip_nonnegative=True のとき 0 未満をクリップ（SCUNet 前処理用）。
+    """
+    y = x
+    if clip_nonnegative:
+        y = np.clip(y, 0.0, None)
+    return (np.log1p(k * y) / np.log1p(k)).astype(np.float32)
+
+
+def log1p_tonemap_inverse(result, k=LOG1P_TONEMAP_K_DEFAULT):
+    """log1p_tonemap_forward の逆変換。"""
+    return (np.expm1(np.log1p(k) * result) / k).astype(np.float32)
+
+
 def calculate_expanded_crop(img_width, img_height, x, y, w, h, width, height):
     """
     関数のパラメータ説明:

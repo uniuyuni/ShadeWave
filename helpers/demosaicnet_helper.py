@@ -11,6 +11,8 @@ demosaicnet_dir = os.path.join(platypus_dir, 'demosaicnet_torch')
 if demosaicnet_dir not in sys.path:
     sys.path.append(demosaicnet_dir)
 
+import utils.aiutils as aiutils
+
 from demosaicnet import demosaick_load_model, demosaick, xtrans_mosaic, bayer_mosaic
 
 def init_demosaicnet(mosaic_type='bayer', noiselevel=0.0, tile_size=512, device='cuda'):
@@ -145,6 +147,28 @@ def inference_demosaicnet(model_info, raw, crop=48, out_dtype=None, offset_y=0, 
         out = out.astype(target_dtype)
         
     return out
+
+
+def inference_demosaicnet_with_log_tonemap(
+    model_info, img_array, k=None, crop=48, out_dtype=None, offset_y=0, offset_x=0
+):
+    """
+    デモザイク前後に log1p 空間のトーンマップ（imageset 相当）を適用する。
+    負のクリップは行わない（従来の ai_demosaic ブロックと同じ）。
+    """
+    if k is None:
+        k = aiutils.LOG1P_TONEMAP_K_DEFAULT
+    img_array = aiutils.log1p_tonemap_forward(img_array, k=k, clip_nonnegative=False)
+    img_array = inference_demosaicnet(
+        model_info,
+        img_array,
+        crop=crop,
+        out_dtype=out_dtype,
+        offset_y=offset_y,
+        offset_x=offset_x,
+    )
+    return aiutils.log1p_tonemap_inverse(img_array, k=k)
+
 
 def find_xtrans_offset(model_info, raw, patch_size=256):
     """

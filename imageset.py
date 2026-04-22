@@ -229,7 +229,7 @@ class ImageSet:
             print(f"[DEBUG] postprocess min={img_array.min()} max={img_array.max()}")
             
             if ai_demosaic:
-                from helpers.demosaicnet_helper import init_demosaicnet, inference_demosaicnet, find_xtrans_offset
+                from helpers.demosaicnet_helper import init_demosaicnet, inference_demosaicnet_with_log_tonemap, find_xtrans_offset
 
                 # NOTE: noiselevel=0.0 を使用する。暗い画像でnoiselevel=0.3にすると
                 # DemosaicNetがGチャンネルを負値にするため紫色になる。
@@ -245,17 +245,14 @@ class ImageSet:
                     offset_y, offset_x = raw.get_bayer_pattern_offset()
 
                 # NOTE: 暗部が破綻するので一旦増幅して、デモザイク後に復元する
-                # k=増幅係数。ISO別に係数を変えると良いらしい:-)
-                k = 8.0
-                img_array = (np.log1p(k * img_array) / np.log1p(k)).astype(np.float32)
-                img_array = inference_demosaicnet(
+                # k は utils.aiutils.LOG1P_TONEMAP_K_DEFAULT（demosaicnet_helper 内で使用）
+                img_array = inference_demosaicnet_with_log_tonemap(
                     model_info,
                     img_array,
                     out_dtype=np.float32,
                     offset_y=offset_y,
                     offset_x=offset_x,
                 )
-                img_array = (np.expm1(np.log1p(k) * img_array) / k).astype(np.float32)
 
                 # ハイライト復元
                 thr = raw.get_threshold()          # maximum / data_maximum の値を取得

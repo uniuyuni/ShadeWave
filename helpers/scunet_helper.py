@@ -85,6 +85,7 @@ def predict_scunet_helper(model, np_image):
     org_image = np.nan_to_num(org_image, nan=0.0, posinf=1.0, neginf=0.0)
 
     logging.info("SCUNet Predicting...")
+    """
     imin = float(org_image.min())
     imax = float(org_image.max())
     if org_image.size == 0 or imax < 1e-12:
@@ -101,7 +102,10 @@ def predict_scunet_helper(model, np_image):
         hi = max(float(np_image.max()), 1.0)
         np_image = np_image / hi
         scale_back = hi
+    """
 
+    k = aiutils.LOG1P_TONEMAP_K_DEFAULT
+    np_image = aiutils.log1p_tonemap_forward(np_image, k=k, clip_nonnegative=True)
     split_images, split_info = splitimage.split_image_with_overlap(np_image, _TILE_SIZE, _TILE_SIZE, _TILE_OVERLAP)
 
     t1 = time.time()
@@ -115,8 +119,11 @@ def predict_scunet_helper(model, np_image):
             logging.info(f"SCUNet Predict {i+1} / {len(split_images)} in {time.time() - t0:.2f} seconds")
 
     result = splitimage.combine_image_with_overlap(denoised_images, split_info)
+    """
     if scale_back != 1.0:
         result = np.asarray(result * scale_back, dtype=np.float32)
+    """
+    result = aiutils.log1p_tonemap_inverse(result, k=k)
 
     logging.info("SCUNet Finalizing...")
     waitinfo.set_text("ai_noise_reduction", "Finalizing...")
