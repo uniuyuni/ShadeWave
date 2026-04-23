@@ -38,140 +38,129 @@ def _param2_has_substantive_heavy_payload(param2: dict) -> bool:
     return False
 
 # レンズ3: lensfun 実効（color/subpixel/geometry）の書き戻しは SPECIAL、.pmck の primary には出さない。
-# lens_fun_user は「ユーザー3つ」だけ。デフォルト (T,T,T) ＝キーなし。少なくとも1つオフなら保存対象。
+# lensfun_user は「ユーザー3つ」だけ。デフォルト (T,T,T) ＝キーなし。少なくとも1つオフなら保存対象。
 # .pmck に積むのは「デフォルト差分があり、かつ lensfun 実効と一致しない」場合。
-LENS_FUN_USER_KEY = "lens_fun_user"
+LENSFUN_USER_KEY = "lensfun_user"
 # pmck には含めない内部状態（capability）
-LENS_FUN_STATE_KEY = "_lens_fun_state"
-_LENS_FUN_CAPABILITY_KEY = "lensfun_capability"
+LENSFUN_STATE_KEY = "_lensfun_state"
+_LENSFUN_CAPABILITY_KEY = "lensfun_capability"
+_LENSFUN_EFFECTIVE_KEY = "lensfun_effective"
 
 
-def normalize_lens_fun_user(val):
+def normalize_lensfun_user(val):
     if val is None:
         return None
     if isinstance(val, (list, tuple)) and len(val) == 3:
         return (bool(val[0]), bool(val[1]), bool(val[2]))
-    if isinstance(val, dict):
-        return (
-            bool(val.get("color_modification", True)),
-            bool(val.get("subpixel_distortion", True)),
-            bool(val.get("geometry_distortion", True)),
-        )
     return None
 
 
-def get_lens_fun_user_tuple(param):
-    raw = param.get(LENS_FUN_USER_KEY)
-    n = normalize_lens_fun_user(raw)
-    if n is None:
-        # lens_fun_user が無いケースでも、現在UI/param上の3チェックをユーザー意図として扱う。
-        # （ここが常にデフォルト全オンに落ちると、変更していても保存判定が抜ける）
-        return (
-            bool(param.get("color_modification", True)),
-            bool(param.get("subpixel_distortion", True)),
-            bool(param.get("geometry_distortion", True)),
-        )
-    return n
+def get_lensfun_user_tuple(param):
+    raw = param.get(LENSFUN_USER_KEY)
+    n = normalize_lensfun_user(raw)
+    if n is not None:
+        return n
+    return (True, True, True)
 
 
-def _ensure_lens_fun_state(param) -> dict:
-    st = param.get(LENS_FUN_STATE_KEY)
+def _ensure_lensfun_state(param) -> dict:
+    st = param.get(LENSFUN_STATE_KEY)
     if not isinstance(st, dict):
         st = {}
-        param[LENS_FUN_STATE_KEY] = st
+        param[LENSFUN_STATE_KEY] = st
     return st
 
 
-def clear_lens_fun_capability(param) -> None:
-    st = _ensure_lens_fun_state(param)
-    st.pop(_LENS_FUN_CAPABILITY_KEY, None)
+def clear_lensfun_capability(param) -> None:
+    st = _ensure_lensfun_state(param)
+    st.pop(_LENSFUN_CAPABILITY_KEY, None)
 
 
-def set_lens_fun_capability(param, capability) -> None:
-    st = _ensure_lens_fun_state(param)
-    n = normalize_lens_fun_user(capability)
+def set_lensfun_effective_tuple(param, effective) -> None:
+    st = _ensure_lensfun_state(param)
+    n = normalize_lensfun_user(effective)
     if n is None:
-        st.pop(_LENS_FUN_CAPABILITY_KEY, None)
+        st.pop(_LENSFUN_EFFECTIVE_KEY, None)
         return
-    st[_LENS_FUN_CAPABILITY_KEY] = n
+    st[_LENSFUN_EFFECTIVE_KEY] = n
 
 
-def _get_lens_fun_capability(param):
-    st = param.get(LENS_FUN_STATE_KEY)
+def get_lensfun_effective_tuple(param):
+    st = param.get(LENSFUN_STATE_KEY)
+    if isinstance(st, dict):
+        n = normalize_lensfun_user(st.get(_LENSFUN_EFFECTIVE_KEY))
+        if n is not None:
+            return n
+    return get_lensfun_user_tuple(param)
+
+
+def set_lensfun_capability(param, capability) -> None:
+    st = _ensure_lensfun_state(param)
+    n = normalize_lensfun_user(capability)
+    if n is None:
+        st.pop(_LENSFUN_CAPABILITY_KEY, None)
+        return
+    st[_LENSFUN_CAPABILITY_KEY] = n
+
+
+def _get_lensfun_capability(param):
+    st = param.get(LENSFUN_STATE_KEY)
     if not isinstance(st, dict):
         return None
-    return normalize_lens_fun_user(st.get(_LENS_FUN_CAPABILITY_KEY))
+    return normalize_lensfun_user(st.get(_LENSFUN_CAPABILITY_KEY))
 
 
-def should_persist_lens_fun_in_pmck(param) -> bool:
+def should_persist_lensfun_in_pmck(param) -> bool:
     """
     ルール（ユーザー指定）:
     - lensfun 純粋対応可否 c がある: t==c なら保存しない、t!=c なら保存する
     - lensfun 対応可否 c がない: デフォルト (T,T,T) と同じなら保存しない、違えば保存する
     """
-    t = get_lens_fun_user_tuple(param)
-    c = _get_lens_fun_capability(param)
+    t = get_lensfun_user_tuple(param)
+    c = _get_lensfun_capability(param)
     if c is None:
         return t != (True, True, True)
     return t != c
 
 
-def _strip_lens_fun_all_on_from_pmck_primary_param(param2: dict) -> None:
+def _strip_lensfun_all_on_from_pmck_primary_param(param2: dict) -> None:
     """
-    primary_param の lens_fun_user を正規化し、全オン（不正値含む扱い）ならキーを落とす。
+    primary_param の lensfun_user を正規化し、全オン（不正値含む扱い）ならキーを落とす。
     has_user_lens / delete_special 以外の経路で混入した (T,T,T) も消す最終防衛。
     """
-    k = LENS_FUN_USER_KEY
+    k = LENSFUN_USER_KEY
     if k not in param2:
         return
-    n = normalize_lens_fun_user(param2.get(k))
+    n = normalize_lensfun_user(param2.get(k))
     if n is None or not any(not bool(x) for x in n):
         param2.pop(k, None)
 
 
-def collapse_default_lens_fun_user(param: dict) -> None:
+def collapse_default_lensfun_user(param: dict) -> None:
     """
     ユーザーレンズ3がデフォルト (T,T,T) または正規化不能ならキーを落とす。
     Kivy/numpy の 0/1 や list/msgpack 由来で == 比較だけでは delete_default から抜けないのを防ぐ。
     """
-    if LENS_FUN_USER_KEY not in param:
+    if LENSFUN_USER_KEY not in param:
         return
-    n = normalize_lens_fun_user(param.get(LENS_FUN_USER_KEY))
+    n = normalize_lensfun_user(param.get(LENSFUN_USER_KEY))
     if n is None or n == (True, True, True):
-        param.pop(LENS_FUN_USER_KEY, None)
+        param.pop(LENSFUN_USER_KEY, None)
 
 
-def sync_effective_lens_checkboxes_from_user(param):
-    """メモリ上の color/subpixel/geometry を lens_fun_user（ユーザー層）に揃える（lens 実効前の一貫用）。"""
-    c, s, g = get_lens_fun_user_tuple(param)
-    param["color_modification"] = c
-    param["subpixel_distortion"] = s
-    param["geometry_distortion"] = g
-
-
-def _sync_lens_fun_from_loaded_primary(param):
+def _sync_lensfun_from_loaded_primary(param):
     """
-    .pmck primary を param に入れた直後: 新形式は lens_fun_user のみ、旧形式は3キーをユーザー意図として移す。
+    .pmck primary を param に入れた直後、lensfun 関連をタプル表現へ正規化する。
     """
     param.pop("_lens_trinity_wrote_from_lensfun", None)  # 旧内部フラグ
-    clear_lens_fun_capability(param)
-    if LENS_FUN_USER_KEY in param and param[LENS_FUN_USER_KEY] is not None:
-        n = normalize_lens_fun_user(param[LENS_FUN_USER_KEY])
+    clear_lensfun_capability(param)
+    set_lensfun_effective_tuple(param, None)
+    if LENSFUN_USER_KEY in param and param[LENSFUN_USER_KEY] is not None:
+        n = normalize_lensfun_user(param[LENSFUN_USER_KEY])
         if n is not None:
-            param[LENS_FUN_USER_KEY] = n
-    elif (
-        "color_modification" in param
-        or "subpixel_distortion" in param
-        or "geometry_distortion" in param
-    ):
-        # 旧 pmck: 実効＋ユーザー判別不能 → 3キーをユーザー意図として引き継ぎ
-        param[LENS_FUN_USER_KEY] = (
-            bool(param.get("color_modification", True)),
-            bool(param.get("subpixel_distortion", True)),
-            bool(param.get("geometry_distortion", True)),
-        )
-    collapse_default_lens_fun_user(param)
-    sync_effective_lens_checkboxes_from_user(param)
+            param[LENSFUN_USER_KEY] = n
+    collapse_default_lensfun_user(param)
+    set_lensfun_effective_tuple(param, get_lensfun_user_tuple(param))
 
 
 # スイッチだけは従来どおり param に（pmck に残り得る＝ユーザーがオフにした場合）
@@ -187,7 +176,7 @@ def _param2_strips_nonsubstance_mutable(p: dict) -> None:
     """
     p.pop("rating", None)
     p.pop("image_fidelity", None)
-    # lens_fun_user は SPECIAL のため param2 に乗らない。pmck へは serialize が直接積む。
+    # lensfun_user は SPECIAL のため param2 に乗らない。pmck へは serialize が直接積む。
     for k in _LENS_LIKE_DEFAULT_TRUE_KEYS:
         v = p.get(k, True)
         if v == False:  # noqa: E712
@@ -225,13 +214,10 @@ SPECIAL_PARAM = [
     # セッション中のみ（フル/プレビュー・_serialize 重い判定用）。.pmck primary には出さない
     "image_fidelity",
     # レンズ3のユーザー意図。メモリ・copy_special 用。pmck へは serialize が (T,T,T) 以外のときだけ明示的に書く
-    LENS_FUN_USER_KEY,
-    LENS_FUN_STATE_KEY,
+    LENSFUN_USER_KEY,
+    LENSFUN_STATE_KEY,
     # for effects.LensModifierEffect: 実効3値は永続に含めない
     'lens_modifier',
-    "color_modification",
-    "subpixel_distortion",
-    "geometry_distortion",
     'exif_data',
     # for imageset._set_temperature
     'color_temperature_reset',
@@ -381,7 +367,7 @@ def set_image_param(param, img):
     set_crop_rect(param, get_crop_rect(param, core.get_initial_crop_rect(width, height)))
     set_disp_info(param, core.convert_rect_to_info(get_crop_rect(param), config.get_config('preview_size')/max(param['original_img_size'])))
     # 新規デコード: pmck 未読込
-    clear_lens_fun_capability(param)
+    clear_lensfun_capability(param)
 
     return (width, height)
 
@@ -517,8 +503,8 @@ def serialize(param, mask_editor2, file_path=None):
     include_heavy = param.get("image_fidelity") == ImageFidelity.FULL.value
     has_mask = bool(mask_dict)
     eff = _param2_effective_user_substance_remaining(param2)
-    # pmck に載せるのは should_persist_lens_fun_in_pmck が True のときだけ。
-    has_user_lens = should_persist_lens_fun_in_pmck(param)
+    # pmck に載せるのは should_persist_lensfun_in_pmck が True のときだけ。
+    has_user_lens = should_persist_lensfun_in_pmck(param)
 
     if not eff and not has_mask and not has_user_lens:
         return None
@@ -529,10 +515,10 @@ def serialize(param, mask_editor2, file_path=None):
 
     _param2_strips_nonsubstance_mutable(param2)
     if has_user_lens:
-        t = get_lens_fun_user_tuple(param)
-        param2[LENS_FUN_USER_KEY] = (bool(t[0]), bool(t[1]), bool(t[2]))
+        t = get_lensfun_user_tuple(param)
+        param2[LENSFUN_USER_KEY] = (bool(t[0]), bool(t[1]), bool(t[2]))
 
-    _strip_lens_fun_all_on_from_pmck_primary_param(param2)
+    _strip_lensfun_all_on_from_pmck_primary_param(param2)
     if not has_mask and not param2:
         return None
     if not param2 and has_mask:
@@ -560,7 +546,7 @@ def deserialize(ser, param, mask_editor2, load_heavy=True):
         for k in HEAVY_PRIMARY_PARAM_KEYS:
             pp.pop(k, None)
     param.update(pp)
-    _sync_lens_fun_from_loaded_primary(param)
+    _sync_lensfun_from_loaded_primary(param)
 
     # 色々処理変換
     _deserialize_param(param, load_heavy=load_heavy)
@@ -678,7 +664,7 @@ def is_empty_param(param, mask_editor2):
         param2 = param2.copy()
     param2.pop("rating", None)
     _param2_strips_nonsubstance_mutable(param2)
-    if should_persist_lens_fun_in_pmck(param):
+    if should_persist_lensfun_in_pmck(param):
         return False
     if _param2_effective_user_substance_remaining(param2):
         return False

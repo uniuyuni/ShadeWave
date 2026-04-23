@@ -290,21 +290,18 @@ class LensModifierEffect(Effect):
         self.callback = lens_modifier_callback
 
     def get_param_dict(self, param):
-        trinity_def = (True, True, True)
         return {
             'switch_lens_modifier': True,
             'lens_modifier': True,
-            params.LENS_FUN_USER_KEY: trinity_def,
-            'color_modification': trinity_def[0],
-            'subpixel_distortion': trinity_def[1],
-            'geometry_distortion': trinity_def[2],
+            params.LENSFUN_USER_KEY: (True, True, True),
         }
 
     def set2widget(self, widget, param):
+        is_cm, is_sd, is_gd = params.get_lensfun_effective_tuple(param)
         widget.ids["switch_lens_modifier"].enabled = self._get_param(param, 'switch_lens_modifier')
-        widget.ids["checkbox_color_modification"].active = self._get_param(param, 'color_modification')
-        widget.ids["checkbox_subpixel_distortion"].active = self._get_param(param, 'subpixel_distortion')
-        widget.ids["checkbox_geometry_distortion"].active = self._get_param(param, 'geometry_distortion')
+        widget.ids["checkbox_color_modification"].active = is_cm
+        widget.ids["checkbox_subpixel_distortion"].active = is_sd
+        widget.ids["checkbox_geometry_distortion"].active = is_gd
 
     def set2param(self, param, widget):
         nsw = widget.ids["switch_lens_modifier"].enabled
@@ -314,25 +311,24 @@ class LensModifierEffect(Effect):
         param['switch_lens_modifier'] = nsw
         t = (bool(ncm), bool(nsd), bool(ngd))
         if t == (True, True, True):
-            param.pop(params.LENS_FUN_USER_KEY, None)
+            param.pop(params.LENSFUN_USER_KEY, None)
         else:
-            param[params.LENS_FUN_USER_KEY] = t
-        param['color_modification'] = ncm
-        param['subpixel_distortion'] = nsd
-        param['geometry_distortion'] = ngd
+            param[params.LENSFUN_USER_KEY] = t
+        params.set_lensfun_effective_tuple(param, t)
 
     def delete_default_param(self, param):
-        params.collapse_default_lens_fun_user(param)
+        params.collapse_default_lensfun_user(param)
         super().delete_default_param(param)
 
     def make_diff(self, img, param, efconfig):
         switch_lm = self._get_param(param, 'switch_lens_modifier')        
         lm = self._get_param(param, 'lens_modifier')
-        cd, sd, gd = params.get_lens_fun_user_tuple(param)
+        cd, sd, gd = params.get_lensfun_user_tuple(param)
         if switch_lm == False or lm == False or (cd == False and sd == False and gd == False) or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
             self.diff = None
             self.hash = None
-            params.clear_lens_fun_capability(param)
+            params.set_lensfun_effective_tuple(param, (cd, sd, gd))
+            params.clear_lensfun_capability(param)
         else:
             param_hash = hash((cd, sd, gd))
 
@@ -347,14 +343,12 @@ class LensModifierEffect(Effect):
 
                 if self.mod is None:
                     self.mod = core.setup_lensfun(param['original_img_size'], param['exif_data'])
-                params.set_lens_fun_capability(param, core.get_lensfun_capability(self.mod, img))
+                params.set_lensfun_capability(param, core.get_lensfun_capability(self.mod, img))
 
                 self.diff, is_cm, is_sd, is_gd = core.modify_lensfun(self.mod, img, cd, sd, gd)
 
                 # 適用されなかったパラメータをUIに反映
-                param['color_modification'] = is_cm
-                param['subpixel_distortion'] = is_sd
-                param['geometry_distortion'] = is_gd
+                params.set_lensfun_effective_tuple(param, (is_cm, is_sd, is_gd))
                 if self.callback:
                     self.callback()
         
