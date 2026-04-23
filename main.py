@@ -181,6 +181,7 @@ if __name__ == '__main__':
 
     class MainWidget(MDBoxLayout):
         loading = KVBooleanProperty(False)
+        mask2_wait_full_load = KVBooleanProperty(True)
         preview_size = KVListProperty([100, 100])
         is_processing = KVBooleanProperty(False)
         export_in_progress = KVBooleanProperty(False)
@@ -726,6 +727,10 @@ if __name__ == '__main__':
             logging.debug("[PERF] on_select: Start. Time: %s", time.time())
             # ロード開始
             self.loading = True
+            self.mask2_wait_full_load = True
+            if 'mask2' in self.ids:
+                # ファイル切替時: 状態を戻してから無効化
+                self.ids['mask2'].state = 'normal'
             self._actively_loading = True  # アニメーション表示開始
             with threads.primary_param_lock:
                 # 前の設定を保存
@@ -776,6 +781,11 @@ if __name__ == '__main__':
                 self.loading = False
             if _load_stage_ends_file_loading_indicator(stage, imgset):
                 self._actively_loading = False
+            # Mask2 はフル読み込み完了までは無効化
+            if stage == LoadStage.RGB_DONE or (
+                stage == LoadStage.FULL_DECODE and getattr(imgset, 'fidelity', None) == ImageFidelity.FULL
+            ):
+                self.mask2_wait_full_load = False
 
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
                 card = self.ids['viewer'].get_card(file_path)
@@ -1100,6 +1110,11 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].end()
 
         def on_mask2_press(self, value):
+            if self.mask2_wait_full_load:
+                self.ids['mask2'].state = 'normal'
+                kvutils.find_widget(self, 'mask2_content_panel').disabled = True
+                self._disable_mask2()
+                return
             if value == "down":
                 self._enable_mask2()
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = False
