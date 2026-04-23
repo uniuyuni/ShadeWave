@@ -290,12 +290,14 @@ class LensModifierEffect(Effect):
         self.callback = lens_modifier_callback
 
     def get_param_dict(self, param):
+        trinity_def = (True, True, True)
         return {
             'switch_lens_modifier': True,
             'lens_modifier': True,
-            'color_modification': True,
-            'subpixel_distortion': True,
-            'geometry_distortion': True,
+            params.LENS_FUN_USER_KEY: trinity_def,
+            'color_modification': trinity_def[0],
+            'subpixel_distortion': trinity_def[1],
+            'geometry_distortion': trinity_def[2],
         }
 
     def set2widget(self, widget, param):
@@ -305,20 +307,32 @@ class LensModifierEffect(Effect):
         widget.ids["checkbox_geometry_distortion"].active = self._get_param(param, 'geometry_distortion')
 
     def set2param(self, param, widget):
-        param['switch_lens_modifier'] = widget.ids["switch_lens_modifier"].enabled
-        param['color_modification'] = widget.ids["checkbox_color_modification"].active
-        param['subpixel_distortion'] = widget.ids["checkbox_subpixel_distortion"].active
-        param['geometry_distortion'] = widget.ids["checkbox_geometry_distortion"].active
+        nsw = widget.ids["switch_lens_modifier"].enabled
+        ncm = widget.ids["checkbox_color_modification"].active
+        nsd = widget.ids["checkbox_subpixel_distortion"].active
+        ngd = widget.ids["checkbox_geometry_distortion"].active
+        param['switch_lens_modifier'] = nsw
+        t = (bool(ncm), bool(nsd), bool(ngd))
+        if t == (True, True, True):
+            param.pop(params.LENS_FUN_USER_KEY, None)
+        else:
+            param[params.LENS_FUN_USER_KEY] = t
+        param['color_modification'] = ncm
+        param['subpixel_distortion'] = nsd
+        param['geometry_distortion'] = ngd
+
+    def delete_default_param(self, param):
+        params.collapse_default_lens_fun_user(param)
+        super().delete_default_param(param)
 
     def make_diff(self, img, param, efconfig):
         switch_lm = self._get_param(param, 'switch_lens_modifier')        
         lm = self._get_param(param, 'lens_modifier')
-        cd = self._get_param(param, 'color_modification')
-        sd = self._get_param(param, 'subpixel_distortion')
-        gd = self._get_param(param, 'geometry_distortion')
+        cd, sd, gd = params.get_lens_fun_user_tuple(param)
         if switch_lm == False or lm == False or (cd == False and sd == False and gd == False) or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
             self.diff = None
             self.hash = None
+            params.clear_lens_fun_capability(param)
         else:
             param_hash = hash((cd, sd, gd))
 
@@ -333,6 +347,7 @@ class LensModifierEffect(Effect):
 
                 if self.mod is None:
                     self.mod = core.setup_lensfun(param['original_img_size'], param['exif_data'])
+                params.set_lens_fun_capability(param, core.get_lensfun_capability(self.mod, img))
 
                 self.diff, is_cm, is_sd, is_gd = core.modify_lensfun(self.mod, img, cd, sd, gd)
 

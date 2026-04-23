@@ -380,6 +380,8 @@ class ImageSet:
             # 情報の設定
             params.set_image_param(param, img_array)
             param['lens_modifier'] = False
+            # RAW 側 _load_raw_process と同様、以降の on_fcs / レーティング追読用に param に載せる
+            param['exif_data'] = exif_data
 
             # 正方形へ変換
             #img_array = core.adjust_shape_to_square(img_array)

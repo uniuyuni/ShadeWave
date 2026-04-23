@@ -75,6 +75,8 @@ if __name__ == '__main__':
     import pipeline
     import utils.utils as utils
     import utils.kvutils as kvutils
+    from utils import rating_utils
+    from utils import rating_io
     import macos as device
 
     import cores.film_emulator as film_emulator
@@ -208,6 +210,7 @@ if __name__ == '__main__':
             self.patchmatch_inpaint_edit = None
             self.cache_system = cache_system
             self.ids['viewer'].set_cache_system(self.cache_system)
+            self._rgb_xmp_rating_had = {}
 
             self.async_worker = AsyncWorker()
             # self.async_worker.start() # Start explicitly after config init
@@ -693,11 +696,27 @@ if __name__ == '__main__':
             effects.set2widget_all(self, _effects, param)
             self.run_set2widget_all = False
 
+        def _viewer_snapshot_rating(self, file_path: str) -> int:
+            if not file_path:
+                return 0
+            v = self.ids.get("viewer")
+            if v:
+                for d in v.data:
+                    if d.get("file_path") == file_path:
+                        return int(d.get("rating", 0) or 0)
+            return 0
+
         def save_current_sidecar(self):
             if self.imgset is not None:
                 param2 = effects.delete_default_param_all(self.primary_effects, self.primary_param) # プライマリのデフォルト値は消す
                 param2['image_fidelity'] = getattr(self.imgset, 'fidelity', ImageFidelity.FULL).value
-                result = params.save_json(self.imgset.file_path, param2, self.ids['mask_editor2'])
+                param2.pop("rating", None)
+                raw_r = 0
+                if rating_utils.is_raw_path(self.imgset.file_path):
+                    raw_r = self._viewer_snapshot_rating(self.imgset.file_path)
+                result = params.save_json(
+                    self.imgset.file_path, param2, self.ids['mask_editor2'], raw_sidecar_rating=raw_r
+                )
                 if result == False:
                     # 失敗時はファイルを削除
                     params.delete_empty_param_json(self.imgset.file_path)
@@ -721,8 +740,8 @@ if __name__ == '__main__':
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
                 exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
 
-                # とりあえずEXIF表示
-                self._set_exif_data(exif_data)
+                # とりあえずEXIF表示（imgset 未設定でもパスを渡し XMP 星の追読を可能にする）
+                self._set_exif_data(exif_data, file_path=card.file_path)
             else:
                 self._expected_file_path = None
                 # カードなし（フォルダ空など）— get_file が呼ばれず loading が解除されないのを防ぐ
@@ -780,6 +799,21 @@ if __name__ == '__main__':
                     # １回目の時だけパラメータを反映して、編集できる様にする
                     self.primary_param.clear()
                     self.primary_param.update(param)
+                    if file_path and rating_utils.is_rgb_path(file_path):
+                        # サムネ用 get_metadata 由来は param / exif_data 引数（同一参照想定）に。空なら exiftool 追読だけが頼り
+                        pex = self.primary_param.get("exif_data")
+                        if not isinstance(pex, dict):
+                            pex = {}
+                        if not pex and isinstance(exif_data, dict) and exif_data:
+                            pex = exif_data
+                        self.primary_param["exif_data"] = {**pex}
+                        ex = self.primary_param["exif_data"]
+                        rating_io.merge_xmp_star_tags_into_exif(file_path, ex)
+                        try:
+                            r = int(rating_utils.parse_exif_rating_value(ex) or 0)
+                            self.ids["viewer"].set_rating_for_path(file_path, r)
+                        except Exception:
+                            pass
                     logging.debug("[PERF] on_fcs_get_file: Merged Params. Time: %s", time.time())
                     self.set2widget_all(self.primary_effects, self.primary_param)
 
@@ -822,6 +856,7 @@ if __name__ == '__main__':
 
                 effects.reeffect_all(self.primary_effects)
                 self.start_draw_image_and_crop(imgset)
+            self._sync_exif_rating_row()
 
         def on_image_touch_down(self, touch):
             if self.ids['preview_widget'].collide_point(*touch.pos):
@@ -925,7 +960,12 @@ if __name__ == '__main__':
                 self.export_done = 0
                 self.export_in_progress = True
 
+                rating_by_path = {
+                    c.file_path: self._export_snapshot_rating(c.file_path) for c in cards
+                }
+
                 def _export_job():
+                    exported_ok = []
                     try:
                         for i, x in enumerate(cards):
                             if self._export_cancel_event.is_set():
@@ -950,7 +990,8 @@ if __name__ == '__main__':
                                 if preset['size_mode'] == "Pixels": resize_str = preset['size_value']
                                 if preset['size_mode'] == "Percentage": resize_str = preset['size_value'] + "%"
 
-                                exfile = export.ExportFile(x.file_path, x.exif_data)
+                                ex_r = rating_by_path.get(x.file_path, 0)
+                                exfile = export.ExportFile(x.file_path, x.exif_data, export_rating=ex_r)
                                 ok = exfile.write_to_file(
                                     ex_path,
                                     preset['quality'],
@@ -965,6 +1006,8 @@ if __name__ == '__main__':
                             except Exception:
                                 logging.exception("export failed for %s", x.file_path)
                                 ok = False
+                            if ok:
+                                exported_ok.append(ex_path)
                             done = i + 1
                             KVClock.schedule_once(
                                 lambda dt, d=done: setattr(self, "export_done", d),
@@ -973,7 +1016,10 @@ if __name__ == '__main__':
                             if not ok:
                                 break
                     finally:
-                        KVClock.schedule_once(self._export_finish_ui, 0)
+                        done_paths = list(exported_ok)
+                        KVClock.schedule_once(
+                            lambda dt, ep=done_paths: self._export_finish_ui(dt, ep), 0
+                        )
 
                 self._export_thread = threading.Thread(target=_export_job, daemon=True)
                 self._export_thread.start()
@@ -1202,7 +1248,10 @@ if __name__ == '__main__':
                 presets.append(data['name'])
             self.ids['spinner_coating_preset'].values = presets
 
-        def _set_exif_data(self, exif_data):
+        def _set_exif_data(self, exif_data, file_path=None):
+            fp = file_path or (self.imgset.file_path if self.imgset is not None else None)
+            if exif_data is not None and fp and rating_utils.is_rgb_path(fp):
+                rating_io.merge_xmp_star_tags_into_exif(fp, exif_data)
             self.ids['exif_file_name'].value = exif_data.get("FileName", "-")
             self.ids['exif_file_size'].value = exif_data.get("FileSize", "-")
             self.ids['exif_create_date'].value = exif_data.get("CreateDate", "-")
@@ -1221,16 +1270,117 @@ if __name__ == '__main__':
             self.ids['exif_lens_model'].value = exif_data.get("LensModel", "-")
             self.ids['exif_software'].value = exif_data.get("Software", "-")
             #self.ids['exif_'].value = exif_data.get("", "-")
-        
+            if self.imgset and self.imgset.file_path and rating_utils.is_rgb_path(self.imgset.file_path):
+                self._rgb_xmp_rating_had[self.imgset.file_path] = rating_utils.exif_had_xmp_rating_tag(exif_data)
+            self._sync_exif_rating_row()
+
+        def _sync_exif_rating_row(self):
+            row = self.ids.get("exif_rating_row", None)
+            if row is None or self.imgset is None or not self.imgset.file_path:
+                if row is not None:
+                    row.rating = 0
+                return
+            fp = self.imgset.file_path
+            r = 0
+            for d in self.ids["viewer"].data:
+                if d.get("file_path") == fp:
+                    r = int(d.get("rating", 0) or 0)
+                    break
+            else:
+                r = int(
+                    rating_utils.effective_rating_display(
+                        fp, self.primary_param.get("exif_data", {}) or {}, self.primary_param
+                    )
+                )
+            row.rating = int(r)
+
+        def apply_exif_pane_rating_slot(self, slot: int):
+            if not self.imgset or not self.imgset.file_path:
+                return
+            cur = int(self.ids["exif_rating_row"].rating or 0)
+            new_r = rating_utils.new_rating_on_slot_click(cur, int(slot))
+            self.apply_paths_rating([self.imgset.file_path], new_r)
+
+        def apply_paths_rating(self, file_paths, new_r: int):
+            new_r = int(new_r) if new_r is not None else 0
+            for fp in file_paths:
+                if not fp:
+                    continue
+                if rating_utils.is_raw_path(fp):
+                    # RAW: 星は viewer の data のみ即時更新。pmck へは他パラメータと同様、
+                    # ファイル切替・エクスポート前・手動/終了保存など save_current_sidecar 経由のみ。
+                    self.ids["viewer"].set_rating_for_path(fp, new_r)
+                    if self.imgset and self.imgset.file_path == fp:
+                        with threads.primary_param_lock:
+                            self.primary_param.pop("rating", None)
+                else:
+                    had = self._rgb_xmp_rating_had.get(fp, rating_utils.exif_had_xmp_rating_tag(
+                        (self.primary_param.get("exif_data") or {}) if (self.imgset and self.imgset.file_path == fp) else (self._viewer_exif_for_path(fp) or {})))
+                    try:
+                        rating_io.write_rgb_file_xmp_rating(fp, new_r, had)
+                    except Exception as e:
+                        logging.exception("RGB rating")
+                        rating_io.notify_write_error(str(e))
+                        continue
+                    exif = None
+                    if fp in self.cache_system.cache:
+                        exif = self.cache_system.cache[fp][1]
+                        rating_io.update_exif_dict_after_rgb_write(exif, new_r, had)
+                    with threads.primary_param_lock:
+                        if self.imgset and self.imgset.file_path == fp and self.primary_param.get("exif_data"):
+                            rating_io.update_exif_dict_after_rgb_write(self.primary_param["exif_data"], new_r, had)
+                    if new_r > 0:
+                        self._rgb_xmp_rating_had[fp] = True
+                    elif new_r == 0 and had:
+                        self._rgb_xmp_rating_had[fp] = True
+                    else:
+                        self._rgb_xmp_rating_had[fp] = False
+                    for d in self.ids["viewer"].data:
+                        if d.get("file_path") == fp and exif is not None:
+                            d["exif_data"] = exif
+                            break
+                    self.ids["viewer"].set_rating_for_path(fp, new_r)
+            self._sync_exif_rating_row()
+
+        def _viewer_exif_for_path(self, file_path: str):
+            for d in self.ids["viewer"].data:
+                if d.get("file_path") == file_path:
+                    return d.get("exif_data")
+            return None
+
+        def _export_snapshot_rating(self, file_path: str) -> int:
+            """Export 用の 0～5。選択カードは常に viewer にある。"""
+            return self._viewer_snapshot_rating(file_path)
+
         def request_export_cancel(self):
             self._export_cancel_event.set()
 
-        def _export_finish_ui(self, *args):
+        def _export_finish_ui(self, dt=None, exported_ok=None):
             self.export_in_progress = False
             self.export_done = 0
             self.export_total = 0
             self._export_thread = None
-            self.ids['viewer'].clear_selection()
+            viewer = self.ids['viewer']
+            # エクスポート直後: 先に vips 作成→のち exiftool で星、watch より前にサムネ載せが走ると 0 星のまま
+            for p in exported_ok or []:
+                if p:
+                    viewer.refresh_exif_for_exported_path(p)
+            if exported_ok:
+                retry_paths = list(exported_ok)
+                KVClock.schedule_once(
+                    lambda _dt, pl=retry_paths: self._export_retry_viewer_exif(list(pl)), 0.35
+                )
+            fp = self.imgset.file_path if self.imgset is not None else None
+            if fp:
+                viewer.set_selection_silent(fp)
+            else:
+                viewer.clear_selection()
+
+        def _export_retry_viewer_exif(self, paths):
+            v = self.ids["viewer"]
+            for p in paths or []:
+                if p:
+                    v.refresh_exif_for_exported_path(p)
 
         def on_export_bar_press(self):
             if self.export_in_progress:
@@ -1343,6 +1493,9 @@ if __name__ == '__main__':
             self.main_widget.resize()
 
 if __name__ == '__main__':
+    from kivy.factory import Factory
+    from widgets.rating_row import RatingRow
+    Factory.register("RatingRow", cls=RatingRow)
     # 処理中ダイアログ作成
     create_processing_dialog()
 

@@ -202,6 +202,21 @@
                                 MetaInfo:
                                     id: exif_file_name
                                     key: "File Name"
+                                BoxLayout:
+                                    orientation: 'horizontal'
+                                    size_hint_y: None
+                                    ref_height: 20
+                                    MetaKey:
+                                        text: "Rating"
+                                    HSpacer:
+                                    RatingRow:
+                                        id: exif_rating_row
+                                        exif_pane: True
+                                        ctx: root
+                                        size_hint_x: None
+                                        size_hint_y: None
+                                        ref_width: 88
+                                        ref_height: 20
                                 MetaInfo:
                                     id: exif_file_size
                                     key: "File Size"
@@ -341,7 +356,7 @@
                         disabled: root.loading == True
                         on_press: root.on_select_press()
                     HSpacer:
-                        size_hint_x: 0.6
+                        size_hint_x: 0.5
                     ToggleButton:
                         id: mask2
                         size_hint_x: 0.1
@@ -353,13 +368,21 @@
                         size_hint_x: 0.05
                     BoxLayout:
                         orientation: 'horizontal'
-                        size_hint_x: 0.15
-                        Label:
-                            text: (str(int(root.export_done)) + '/' + str(int(root.export_total))) if root.export_in_progress else ''
-                            size_hint_x: 0.2
+                        size_hint_x: 0.20
+                        Image:
+                            id: export_indicator
+                            source: 'assets/box.gif'
+                            anim_delay: 0.05
+                            size_hint_x: None
+                            ref_width: 30
                             pos_hint: {'center_y': 0.5}
                             opacity: 1 if root.export_in_progress else 0
-                            font_size: '11sp'
+                        Label:
+                            text: (str(int(root.export_done)) + '/' + str(int(root.export_total))) if root.export_in_progress else ''
+                            size_hint_x: 0.25
+                            pos_hint: {'center_y': 0.5}
+                            opacity: 1 if root.export_in_progress else 0
+                            font_size: '13sp'
                             halign: 'right'
                             valign: 'middle'
                             text_size: self.size

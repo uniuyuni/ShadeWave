@@ -18,6 +18,7 @@ import params
 import effects
 import config
 from cores.mask2 import Mask2HeadlessPipeline
+from utils import rating_io
 
 
 def _export_cancel_requested(cancel_event):
@@ -142,9 +143,11 @@ class ExportFile():
         '.PNG': 'PNG',
     }
 
-    def __init__(self, file_path, exif_data):
+    def __init__(self, file_path, exif_data, export_rating: int = 0):
         self.file_path = str(file_path)
         self.exif_data = exif_data.copy()
+        # メインで viewer / primary と同期した 0～5。スレッド安全のため起動前に退避
+        self.export_rating = int(export_rating) if export_rating is not None else 0
 
         self.ex_path = None
         self.quality = 100
@@ -194,6 +197,8 @@ class ExportFile():
 
         params.load_json(self.file_path, self.param, self.mask_editor2, load_heavy=True)
         self.param['image_fidelity'] = getattr(self.imgset, 'fidelity', ImageFidelity.FULL).value
+        self.param.pop("rating", None)  # 星は param に入れない（er で書き出し）
+        er = max(0, min(5, int(self.export_rating)))
 
         if _export_cancel_requested(cancel_event):
             return False
@@ -296,14 +301,22 @@ class ExportFile():
 
         vips_image.write_to_file(self.ex_path, **save_options)
 
-        # Exif書き込み
+        # 元EXIF 等の一括コピー（メタData プリセット）
         if exifsw:
             if _export_cancel_requested(cancel_event):
                 return False
             with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
-                safe_metadata = make_safe_metadata(self.exif_data, gpssw)
+                ex_src = dict(self.exif_data) if self.exif_data else {}
+                ex_src.pop("Rating", None)
+                safe_metadata = make_safe_metadata(ex_src, gpssw)
                 safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
-                #safe_metadata["ColorSpace"] = 0xfffe
                 et.set_tags(self.ex_path, tags=safe_metadata)
+
+        # 星はメタ一括の ON/OFF に依存しない。メタ OFF でも exiftool で付与。
+        if not _export_cancel_requested(cancel_event) and os.path.isfile(self.ex_path):
+            try:
+                rating_io.write_exported_file_rating(self.ex_path, int(er))
+            except Exception:
+                logging.exception("export write rating to output file")
 
         return True

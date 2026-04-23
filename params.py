@@ -1,5 +1,6 @@
 
 import os
+import logging
 import numpy as np
 import json
 import math
@@ -13,6 +14,8 @@ import effects
 import utils.utils as utils
 import macos as device
 from enums import ImageFidelity
+from utils import rating_utils
+from utils.rating_io import PMCK_RAW_RATING_KEY, merge_raw_pmck_rating
 
 # pmck 内の「重い」primary_param キー（フル解像時のみシリアライズ／プレビュー時は読み飛ばし）
 HEAVY_PRIMARY_PARAM_KEYS = (
@@ -22,6 +25,196 @@ HEAVY_PRIMARY_PARAM_KEYS = (
     'heavy_saved_at_fidelity',
 )
 
+
+def _param2_has_substantive_heavy_payload(param2: dict) -> bool:
+    """本当に重いペイロードがあるときだけ（マーカー単体は False）。"""
+    v = param2.get("ai_noise_reduction_result", None)
+    if v is not None and not (isinstance(v, (list, tuple)) and len(v) == 0):
+        return True
+    for k in ("inpaint_diff_list", "patchmatch_inpaint_diff_list"):
+        w = param2.get(k, None)
+        if w and isinstance(w, (list, tuple)) and len(w) > 0:
+            return True
+    return False
+
+# レンズ3: lensfun 実効（color/subpixel/geometry）の書き戻しは SPECIAL、.pmck の primary には出さない。
+# lens_fun_user は「ユーザー3つ」だけ。デフォルト (T,T,T) ＝キーなし。少なくとも1つオフなら保存対象。
+# .pmck に積むのは「デフォルト差分があり、かつ lensfun 実効と一致しない」場合。
+LENS_FUN_USER_KEY = "lens_fun_user"
+# pmck には含めない内部状態（capability）
+LENS_FUN_STATE_KEY = "_lens_fun_state"
+_LENS_FUN_CAPABILITY_KEY = "lensfun_capability"
+
+
+def normalize_lens_fun_user(val):
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)) and len(val) == 3:
+        return (bool(val[0]), bool(val[1]), bool(val[2]))
+    if isinstance(val, dict):
+        return (
+            bool(val.get("color_modification", True)),
+            bool(val.get("subpixel_distortion", True)),
+            bool(val.get("geometry_distortion", True)),
+        )
+    return None
+
+
+def get_lens_fun_user_tuple(param):
+    raw = param.get(LENS_FUN_USER_KEY)
+    n = normalize_lens_fun_user(raw)
+    if n is None:
+        # lens_fun_user が無いケースでも、現在UI/param上の3チェックをユーザー意図として扱う。
+        # （ここが常にデフォルト全オンに落ちると、変更していても保存判定が抜ける）
+        return (
+            bool(param.get("color_modification", True)),
+            bool(param.get("subpixel_distortion", True)),
+            bool(param.get("geometry_distortion", True)),
+        )
+    return n
+
+
+def _ensure_lens_fun_state(param) -> dict:
+    st = param.get(LENS_FUN_STATE_KEY)
+    if not isinstance(st, dict):
+        st = {}
+        param[LENS_FUN_STATE_KEY] = st
+    return st
+
+
+def clear_lens_fun_capability(param) -> None:
+    st = _ensure_lens_fun_state(param)
+    st.pop(_LENS_FUN_CAPABILITY_KEY, None)
+
+
+def set_lens_fun_capability(param, capability) -> None:
+    st = _ensure_lens_fun_state(param)
+    n = normalize_lens_fun_user(capability)
+    if n is None:
+        st.pop(_LENS_FUN_CAPABILITY_KEY, None)
+        return
+    st[_LENS_FUN_CAPABILITY_KEY] = n
+
+
+def _get_lens_fun_capability(param):
+    st = param.get(LENS_FUN_STATE_KEY)
+    if not isinstance(st, dict):
+        return None
+    return normalize_lens_fun_user(st.get(_LENS_FUN_CAPABILITY_KEY))
+
+
+def should_persist_lens_fun_in_pmck(param) -> bool:
+    """
+    ルール（ユーザー指定）:
+    - lensfun 純粋対応可否 c がある: t==c なら保存しない、t!=c なら保存する
+    - lensfun 対応可否 c がない: デフォルト (T,T,T) と同じなら保存しない、違えば保存する
+    """
+    t = get_lens_fun_user_tuple(param)
+    c = _get_lens_fun_capability(param)
+    if c is None:
+        return t != (True, True, True)
+    return t != c
+
+
+def _strip_lens_fun_all_on_from_pmck_primary_param(param2: dict) -> None:
+    """
+    primary_param の lens_fun_user を正規化し、全オン（不正値含む扱い）ならキーを落とす。
+    has_user_lens / delete_special 以外の経路で混入した (T,T,T) も消す最終防衛。
+    """
+    k = LENS_FUN_USER_KEY
+    if k not in param2:
+        return
+    n = normalize_lens_fun_user(param2.get(k))
+    if n is None or not any(not bool(x) for x in n):
+        param2.pop(k, None)
+
+
+def collapse_default_lens_fun_user(param: dict) -> None:
+    """
+    ユーザーレンズ3がデフォルト (T,T,T) または正規化不能ならキーを落とす。
+    Kivy/numpy の 0/1 や list/msgpack 由来で == 比較だけでは delete_default から抜けないのを防ぐ。
+    """
+    if LENS_FUN_USER_KEY not in param:
+        return
+    n = normalize_lens_fun_user(param.get(LENS_FUN_USER_KEY))
+    if n is None or n == (True, True, True):
+        param.pop(LENS_FUN_USER_KEY, None)
+
+
+def sync_effective_lens_checkboxes_from_user(param):
+    """メモリ上の color/subpixel/geometry を lens_fun_user（ユーザー層）に揃える（lens 実効前の一貫用）。"""
+    c, s, g = get_lens_fun_user_tuple(param)
+    param["color_modification"] = c
+    param["subpixel_distortion"] = s
+    param["geometry_distortion"] = g
+
+
+def _sync_lens_fun_from_loaded_primary(param):
+    """
+    .pmck primary を param に入れた直後: 新形式は lens_fun_user のみ、旧形式は3キーをユーザー意図として移す。
+    """
+    param.pop("_lens_trinity_wrote_from_lensfun", None)  # 旧内部フラグ
+    clear_lens_fun_capability(param)
+    if LENS_FUN_USER_KEY in param and param[LENS_FUN_USER_KEY] is not None:
+        n = normalize_lens_fun_user(param[LENS_FUN_USER_KEY])
+        if n is not None:
+            param[LENS_FUN_USER_KEY] = n
+    elif (
+        "color_modification" in param
+        or "subpixel_distortion" in param
+        or "geometry_distortion" in param
+    ):
+        # 旧 pmck: 実効＋ユーザー判別不能 → 3キーをユーザー意図として引き継ぎ
+        param[LENS_FUN_USER_KEY] = (
+            bool(param.get("color_modification", True)),
+            bool(param.get("subpixel_distortion", True)),
+            bool(param.get("geometry_distortion", True)),
+        )
+    collapse_default_lens_fun_user(param)
+    sync_effective_lens_checkboxes_from_user(param)
+
+
+# スイッチだけは従来どおり param に（pmck に残り得る＝ユーザーがオフにした場合）
+_LENS_LIKE_DEFAULT_TRUE_KEYS = (
+    "switch_lens_modifier",
+)
+
+
+def _param2_strips_nonsubstance_mutable(p: dict) -> None:
+    """
+    実質の編集に含めない付箋（解像度マーカー・未伴う heavy 等）を除去。
+    `serialize` の「空判定用コピー」だけでなく、書き込み直前の param2 実体に必ず同じ操作を掛ける。
+    """
+    p.pop("rating", None)
+    p.pop("image_fidelity", None)
+    # lens_fun_user は SPECIAL のため param2 に乗らない。pmck へは serialize が直接積む。
+    for k in _LENS_LIKE_DEFAULT_TRUE_KEYS:
+        v = p.get(k, True)
+        if v == False:  # noqa: E712
+            continue
+        p.pop(k, None)
+    v = p.get("ai_noise_reduction_result", None)
+    if v is None or (isinstance(v, (list, tuple)) and len(v) == 0):
+        p.pop("ai_noise_reduction_result", None)
+    for k in ("inpaint_diff_list", "patchmatch_inpaint_diff_list"):
+        w = p.get(k, None)
+        if w is None or (isinstance(w, (list, tuple)) and len(w) == 0):
+            p.pop(k, None)
+    if not _param2_has_substantive_heavy_payload(p):
+        p.pop("heavy_saved_at_fidelity", None)
+
+
+def _param2_effective_user_substance_remaining(param2: dict) -> dict:
+    """
+    delete_special 後の primary 相当辞書から、パイプライン付帯だけを除いた「実質の編集」残り。
+    ここが空でマスクも無いときは .pmck を作らない。
+    """
+    if not param2:
+        return {}
+    p = param2.copy()
+    _param2_strips_nonsubstance_mutable(p)
+    return p
+
 # 重要だがセーブしないパラメータ
 SPECIAL_PARAM = [
     # for set_image_param
@@ -29,8 +222,16 @@ SPECIAL_PARAM = [
     'img_size',
     #'crop_rect',
     'disp_info',
-    # for effects.LensModifierEffect
+    # セッション中のみ（フル/プレビュー・_serialize 重い判定用）。.pmck primary には出さない
+    "image_fidelity",
+    # レンズ3のユーザー意図。メモリ・copy_special 用。pmck へは serialize が (T,T,T) 以外のときだけ明示的に書く
+    LENS_FUN_USER_KEY,
+    LENS_FUN_STATE_KEY,
+    # for effects.LensModifierEffect: 実効3値は永続に含めない
     'lens_modifier',
+    "color_modification",
+    "subpixel_distortion",
+    "geometry_distortion",
     'exif_data',
     # for imageset._set_temperature
     'color_temperature_reset',
@@ -56,10 +257,7 @@ SPECIAL_PARAM = [
 
 # セーブするが、初期化時にリセットするパラメータ
 REMAIN_PARAM = [
-    'crop_rect',
-    'color_modification',
-    'subpixel_distortion',
-    'geometry_distortion',
+    "crop_rect",
 ]
 
 # 正規化込みの読み出し、設定
@@ -182,6 +380,8 @@ def set_image_param(param, img):
     param['img_size'] = (width, height)
     set_crop_rect(param, get_crop_rect(param, core.get_initial_crop_rect(width, height)))
     set_disp_info(param, core.convert_rect_to_info(get_crop_rect(param), config.get_config('preview_size')/max(param['original_img_size'])))
+    # 新規デコード: pmck 未読込
+    clear_lens_fun_capability(param)
 
     return (width, height)
 
@@ -288,47 +488,87 @@ def _deserialize_param(param, load_heavy=True):
         param['patchmatch_inpaint_diff_list'] = []
         param.pop('heavy_saved_at_fidelity', None)
 
-def serialize(param, mask_editor2):
+def _pmck_shell_empty_primary() -> dict:
+    tstr = dt.now().strftime("%Y/%m/%d")
+    return {
+        "make": "Platypus",
+        "date": tstr,
+        "version": define.VERSION,
+        "primary_param": {},
+    }
+
+
+def serialize(param, mask_editor2, file_path=None):
     tdatetime = dt.now()
     tstr = tdatetime.strftime('%Y/%m/%d')
     mask_dict = mask_editor2.serialize()
 
     # セーブしないパラメータを削除
     param2 = delete_special_param(param)
+    if not isinstance(param2, dict):
+        param2 = {}
+    else:
+        param2 = param2.copy()
+    # 編集用 primary_param には星を入れない。永続化は (1)RAW… .pmck トップの platypus_raw_rating
+    # (2)RGB… 画像ファイルの XMP。ここは pmck 内 primary のシリアライズのため必ず排除する。
+    param2.pop("rating", None)
+    _param2_strips_nonsubstance_mutable(param2)
 
-    # 重い結果はフル解像（フルRAW / フルRGB）のときだけ pmck に含める
-    include_heavy = param.get('image_fidelity') == ImageFidelity.FULL.value
-    _serialize_param(param2, include_heavy=include_heavy)
+    include_heavy = param.get("image_fidelity") == ImageFidelity.FULL.value
+    has_mask = bool(mask_dict)
+    eff = _param2_effective_user_substance_remaining(param2)
+    # pmck に載せるのは should_persist_lens_fun_in_pmck が True のときだけ。
+    has_user_lens = should_persist_lens_fun_in_pmck(param)
 
-    # パラメータがないのでそもそもファイルを作らない
-    if len(param2) == 0 and (mask_dict is None or len(mask_dict) == 0):
+    if not eff and not has_mask and not has_user_lens:
         return None
+    if not eff and has_mask:
+        param2 = {}
+    elif eff:
+        _serialize_param(param2, include_heavy=include_heavy)
 
-    dict = {
+    _param2_strips_nonsubstance_mutable(param2)
+    if has_user_lens:
+        t = get_lens_fun_user_tuple(param)
+        param2[LENS_FUN_USER_KEY] = (bool(t[0]), bool(t[1]), bool(t[2]))
+
+    _strip_lens_fun_all_on_from_pmck_primary_param(param2)
+    if not has_mask and not param2:
+        return None
+    if not param2 and has_mask:
+        param2 = {}
+
+    ser = {
         'make': "Platypus",
         'date': tstr,
         'version': define.VERSION,
         'primary_param': param2,
     }
     if mask_dict is not None:
-        dict.update(mask_dict)
+        ser.update(mask_dict)
 
-    return dict
+    return ser
 
-def deserialize(dict, param, mask_editor2, load_heavy=True):
-    pp = dict['primary_param'].copy()
+def deserialize(ser, param, mask_editor2, load_heavy=True):
+    pp = ser.get("primary_param")
+    if not isinstance(pp, dict):
+        pp = {}
+    else:
+        pp = pp.copy()
+    pp.pop("rating", None)  # 旧形式・レーティングは primary に還元しない
     if not load_heavy:
         for k in HEAVY_PRIMARY_PARAM_KEYS:
             pp.pop(k, None)
     param.update(pp)
+    _sync_lens_fun_from_loaded_primary(param)
 
     # 色々処理変換
     _deserialize_param(param, load_heavy=load_heavy)
 
     mask_editor2.clear_mask()
-    mask_dict = dict.get('mask2', None)
+    mask_dict = ser.get("mask2", None)
     if mask_dict is not None:
-        mask_editor2.deserialize(dict)
+        mask_editor2.deserialize(ser)
 
 
 def merge_heavy_from_pmck(file_path, param, mask_editor2):
@@ -354,46 +594,99 @@ def merge_heavy_from_pmck(file_path, param, mask_editor2):
     _inpaint_load(param, 'inpaint_diff_list')
     _inpaint_load(param, 'patchmatch_inpaint_diff_list')
 
-def save_json(file_path, param, mask_editor2):
-    if file_path is not None and is_empty_param(param, mask_editor2) == False:
-        file_path = file_path + '.pmck'
-        dict = serialize(param, mask_editor2)
-        if dict is not None:
-            with open(file_path, 'wb') as f:
-                f.write(msgpack.packb(dict, use_bin_type=True))
-                #json.dump(dict, f, cls=core.CompactNumpyEncoder)
+def save_json(file_path, param, mask_editor2, raw_sidecar_rating: int = 0):
+    if file_path is None:
+        return False
+    path_pmck = file_path + '.pmck'
+    is_raw = bool(file_path) and rating_utils.is_raw_path(file_path)
+    raw_r = int(raw_sidecar_rating or 0) if is_raw else 0
+    empty = is_empty_param(param, mask_editor2)
+    if empty:
+        if is_raw and raw_r > 0:
+            # RAW で実質編集なしの場合は、古い primary/mask を残さず rating 専用の最小 .pmck を再構築する。
+            ser = _pmck_shell_empty_primary()
+            ser[PMCK_RAW_RATING_KEY] = raw_r
+            with open(path_pmck, 'wb') as f:
+                f.write(msgpack.packb(ser, use_bin_type=True))
             return True
+        if os.path.exists(path_pmck):
+            try:
+                os.remove(path_pmck)
+            except OSError:
+                pass
+        return False
+    ser = serialize(param, mask_editor2, file_path=file_path)
+    if is_raw:
+        if raw_r > 0:
+            if ser is None:
+                ser = _pmck_shell_empty_primary()
+            ser[PMCK_RAW_RATING_KEY] = raw_r
+        else:
+            if ser is not None:
+                ser.pop(PMCK_RAW_RATING_KEY, None)
+    else:
+        if ser is not None:
+            ser.pop(PMCK_RAW_RATING_KEY, None)  # RGB に RAW 専用キーが乗るのを防ぐ
+    if ser is not None:
+        with open(path_pmck, 'wb') as f:
+            f.write(msgpack.packb(ser, use_bin_type=True))
+        return True
+    if os.path.exists(path_pmck):
+        try:
+            os.remove(path_pmck)
+        except OSError:
+            pass
     return False
 
 def load_json(file_path, param, mask_editor2, load_heavy=True):
-    if file_path is not None:
-        file_path = file_path + '.pmck'
-        try:
-            with open(file_path, 'rb') as f:
-                dict = msgpack.unpackb(f.read(), raw=False)
-                #dict = json.load(f, object_hook=core.compact_numpy_decoder)
-                # tupleがlistになってしまうのでtupleに戻す
-                try:
-                    dict['primary_param']['crop_rect'] = tuple(dict['primary_param']['crop_rect'])
-                except:
-                    pass
+    if file_path is None:
+        return None
+    path_pmck = file_path + '.pmck'
+    try:
+        with open(path_pmck, 'rb') as f:
+            dict_ = msgpack.unpackb(f.read(), raw=False)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        logging.exception("load_json read failed: %s", e)
+        return None
 
-                deserialize(dict, param, mask_editor2, load_heavy=load_heavy)
-                return dict
-            
-        except FileNotFoundError as e:
-            pass
-    
-    return None
+    pp = dict_.get("primary_param") or {}
+    has_geometry_or_mask = (
+        "crop_rect" in pp
+        or "original_img_size" in pp
+        or bool(dict_.get("mask2"))
+    )
+    ppx = {k: v for k, v in pp.items() if k != "rating"}
+    if not has_geometry_or_mask and not ppx:
+        return dict_
+    # tupleがlistになってしまうのでtupleに戻す
+    try:
+        if dict_.get('primary_param') and 'crop_rect' in dict_['primary_param']:
+            dict_['primary_param']['crop_rect'] = tuple(dict_['primary_param']['crop_rect'])
+    except (KeyError, TypeError):
+        pass
+    deserialize(dict_, param, mask_editor2, load_heavy=load_heavy)
+    param.pop("rating", None)  # 旧 pmck
+    return dict_
 
 def is_empty_param(param, mask_editor2):
     param2 = delete_special_param(param)
+    if not isinstance(param2, dict):
+        param2 = {}
+    else:
+        param2 = param2.copy()
+    param2.pop("rating", None)
+    _param2_strips_nonsubstance_mutable(param2)
+    if should_persist_lens_fun_in_pmck(param):
+        return False
+    if _param2_effective_user_substance_remaining(param2):
+        return False
     mask_list = mask_editor2.get_mask_list()
-    if len(param2) == 0 and (mask_list is None or len(mask_list) == 0):
+    if mask_list is None or len(mask_list) == 0:
         return True
-
     return False
-    
+
 
 def delete_empty_param_json(file_path):
     if file_path is not None:

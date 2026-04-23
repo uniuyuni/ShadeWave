@@ -2389,6 +2389,32 @@ def modify_lensfun(mod, img, is_cm=True, is_sd=True, is_gd=True):
 
     return (modimg, is_cm, is_sd, is_gd)
 
+
+def get_lensfun_capability(mod, img):
+    """
+    ユーザー指定を混ぜない、lensfun の純粋な対応可否 (cm, sd, gd) を返す。
+    失敗時はすべて False。
+    """
+    if mod is None or img is None:
+        return (False, False, False)
+    is_cm = False
+    is_sd = False
+    is_gd = False
+    try:
+        tmp = img.copy()
+        is_cm = bool(mod.apply_color_modification(tmp))
+    except Exception:
+        is_cm = False
+    try:
+        is_sd = mod.apply_subpixel_distortion() is not None
+    except Exception:
+        is_sd = False
+    try:
+        is_gd = mod.apply_geometry_distortion() is not None
+    except Exception:
+        is_gd = False
+    return (is_cm, is_sd, is_gd)
+
 #-------------------------------------------------
 
 def side_window_variance_filter(src, r=3):
