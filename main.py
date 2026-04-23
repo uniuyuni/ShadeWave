@@ -103,6 +103,7 @@ if __name__ == '__main__':
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
     import widgets.collapsible_box
     import widgets.compact_switch
+    import widgets.modern_checkbox
 
 if __name__ != '__main__':
     class ImportBlocker:
@@ -1525,5 +1526,4 @@ if __name__ == '__main__':
         
     # 終了時にクリーンアップ
     cache_system.shutdown()
-
 

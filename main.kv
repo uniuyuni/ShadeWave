@@ -38,6 +38,12 @@
     size_hint: None, None
     ref_width: 40
     ref_height: 20
+
+<ParamCheckBox@ModernCheckBox>:
+    pos_hint: {'center_y': .5}
+    size_hint: None, None
+    ref_width: 20
+    ref_height: 20
     active: False
 
 <MainSpinnerOption@SpinnerOption>:
@@ -1180,48 +1186,46 @@
                                     on_active: root.apply_effects_lv(0, 'lens_modifier')
                                     on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
 
-                                MDGridLayout:
+                                AnchorLayout:
+                                    anchor_x: 'right'
+                                    anchor_y: 'center'
                                     size_hint_y: None
-                                    ref_height: 40
-                                    ref_width: 120
-                                    cols: 9
+                                    ref_height: 24
 
-                                    HSpacer:
-                                        size_hint_x: 0.19
-                                    CheckBox:
-                                        id: checkbox_color_modification
-                                        size_hint_x: 0.033
-                                        active: True
-                                        on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
-                                        on_active: root.apply_effects_lv(0, 'lens_modifier')
-                                        on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
-                                    ParamLabel:          
-                                        text: "Color"
-                                        size_hint_x: 0.11
-                                    HSpacer:
-                                        size_hint_x: 0.145
-                                    CheckBox:
-                                        id: checkbox_subpixel_distortion
-                                        active: True
-                                        size_hint_x: 0.033
-                                        on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
-                                        on_active: root.apply_effects_lv(0, 'lens_modifier')
-                                        on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
-                                    ParamLabel:          
-                                        text: "Subpixel"
-                                        size_hint_x: 0.155
-                                    HSpacer:
-                                        size_hint_x: 0.115
-                                    CheckBox:
-                                        id: checkbox_geometry_distortion
-                                        active: True
-                                        size_hint_x: 0.033
-                                        on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
-                                        on_active: root.apply_effects_lv(0, 'lens_modifier')
-                                        on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
-                                    ParamLabel:          
-                                        text: "Geometry"
-                                        size_hint_x: 0.185
+                                    MDGridLayout:
+                                        size_hint: None, None
+                                        ref_width: 256
+                                        ref_height: 20
+                                        cols: 6
+                                        ref_spacing: 2
+
+                                        ParamLabel:
+                                            text: "Color"
+                                            ref_width: 58
+                                        ParamCheckBox:
+                                            id: checkbox_color_modification
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                            on_active: root.apply_effects_lv(0, 'lens_modifier')
+                                            on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
+                                        ParamLabel:
+                                            text: "Subpixel"
+                                            ref_width: 68
+                                        ParamCheckBox:
+                                            id: checkbox_subpixel_distortion
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                            on_active: root.apply_effects_lv(0, 'lens_modifier')
+                                            on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
+                                        ParamLabel:
+                                            text: "Geometry"
+                                            ref_width: 64
+                                        ParamCheckBox:
+                                            id: checkbox_geometry_distortion
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
+                                            on_active: root.apply_effects_lv(0, 'lens_modifier')
+                                            on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
 
                                 VSpacer
 
@@ -2641,10 +2645,12 @@
 
                                     ParamLabel:          
                                         text: "Invert"
-                                    CheckBox:
+                                    ParamCheckBox:
                                         id: checkbox_mask2_invert
                                         active: False
-                                        on_press: root.apply_effects_lv(3, 'mask2')
+                                        on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                        on_active: root.apply_effects_lv(3, 'mask2')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     ParamLabel:           
                                         text: " "
                                     Label:          
@@ -2909,49 +2915,74 @@
                                     on_active: root.apply_effects_lv(3, 'mask2')
                                     on_release: root.end_history_effect_ctrl(3, 'mask2')
 
-                                MDGridLayout:
-                                    id: grid_mask2_face
+                                AnchorLayout:
+                                    anchor_x: 'right'
+                                    anchor_y: 'center'
                                     size_hint_y: None
-                                    ref_height: 40
-                                    ref_width: 120
-                                    cols: 6
+                                    ref_height: 44
 
-                                    ParamLabel:          
-                                        text: "Face"
-                                    CheckBox:
-                                        id: checkbox_mask2_face_face
-                                        active: True
-                                        on_active: root.apply_effects_lv(3, 'mask2')
-                                    ParamLabel:          
-                                        text: "Brows"
-                                    CheckBox:
-                                        id: checkbox_mask2_face_brows
-                                        active: True
-                                        on_active: root.apply_effects_lv(3, 'mask2')
-                                    ParamLabel:          
-                                        text: "Eyes"
-                                    CheckBox:
-                                        id: checkbox_mask2_face_eyes
-                                        active: True
-                                        on_active: root.apply_effects_lv(3, 'mask2')
-                                    ParamLabel:          
-                                        text: "Nose"
-                                    CheckBox:
-                                        id: checkbox_mask2_face_nose
-                                        active: True
-                                        on_active: root.apply_effects_lv(3, 'mask2')
-                                    ParamLabel:          
-                                        text: "Mouth"
-                                    CheckBox:
-                                        id: checkbox_mask2_face_mouth
-                                        active: True
-                                        on_active: root.apply_effects_lv(3, 'mask2')
-                                    ParamLabel:          
-                                        text: "Lips"
-                                    CheckBox:
-                                        id: checkbox_mask2_face_lips
-                                        active: True
-                                        on_active: root.apply_effects_lv(3, 'mask2')
+                                    MDGridLayout:
+                                        id: grid_mask2_face
+                                        size_hint: None, None
+                                        cols: 6
+                                        width: self.minimum_width
+                                        height: self.minimum_height
+                                        spacing: dp(4)
+
+                                        ParamLabel:
+                                            text: "Face"
+                                            ref_width: 44
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_face_face
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "Brows"
+                                            ref_width: 44
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_face_brows
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "Eyes"
+                                            ref_width: 44
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_face_eyes
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "Nose"
+                                            ref_width: 44
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_face_nose
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "Mouth"
+                                            ref_width: 44
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_face_mouth
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "Lips"
+                                            ref_width: 44
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_face_lips
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                     IconTabbedPanelItem:
                         text: 'Li'

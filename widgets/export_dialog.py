@@ -16,6 +16,7 @@ import macos as device
 
 import widgets.param_slider
 import widgets.float_input
+import widgets.modern_checkbox
 
 class PresetNameDialog(KVPopup):
     def __init__(self, save_callback, **kwargs):

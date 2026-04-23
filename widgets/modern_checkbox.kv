@@ -1,0 +1,39 @@
+<ModernCheckBox>:
+    size_hint: None, None
+    size: dp(18), dp(18)
+    canvas.before:
+        Color:
+            rgba:
+                root.focus_color[0], root.focus_color[1], root.focus_color[2], \
+                0 if root.disabled else 0.9 * root._focus_alpha
+        RoundedRectangle:
+            pos: root._focus_pos
+            size: root._focus_size()
+            radius: root._focus_radius()
+
+        Color:
+            rgba:
+                root.box_color[0], root.box_color[1], root.box_color[2], \
+                0.45 if root.disabled else root.box_color[3]
+        RoundedRectangle:
+            pos: root._box_pos
+            size: root._box_side, root._box_side
+            radius: root._box_radius()
+
+        Color:
+            rgba:
+                root._border_color[0], root._border_color[1], root._border_color[2], \
+                0.45 if root.disabled else root._border_color[3]
+        Line:
+            rounded_rectangle: [root._box_pos[0], root._box_pos[1], root._box_side, root._box_side, root._box_radius()[0]]
+            width: dp(1.1)
+
+        Color:
+            rgba:
+                root.check_color[0], root.check_color[1], root.check_color[2], \
+                0.35 if root.disabled else root._check_progress
+        Line:
+            points: root._check_points
+            width: root._check_line_width()
+            cap: 'round'
+            joint: 'round'
