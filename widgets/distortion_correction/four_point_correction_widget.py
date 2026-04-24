@@ -78,6 +78,10 @@ class FourPointCorrectionWidget(KVFloatLayout):
     def set_callback(self, callback):
         self.on_callback = callback
 
+    def set_texture_size(self, texture_size):
+        self.texture_size = texture_size
+        self._sync_tcg_to_kivy()
+
     def on_edit_start(self):
         """編集開始イベント（ヒストリー管理用）"""
         if self.on_callback:

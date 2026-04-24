@@ -1160,7 +1160,7 @@
                                     text: "Radius"
                                     min: 0
                                     max: 100
-                                    value: 0
+                                    value: 80
                                     step: 1
                                     on_slider: root.apply_effects_lv(4, 'vignette')
                                     on_before_edit: root.begin_history_effect_ctrl(4, 'vignette')
@@ -1171,7 +1171,7 @@
                                     text: "Softness"
                                     min: 0
                                     max: 100
-                                    value: 100
+                                    value: 80
                                     step: 1
                                     on_slider: root.apply_effects_lv(4, 'vignette')
                                     on_before_edit: root.begin_history_effect_ctrl(4, 'vignette')
@@ -1533,7 +1533,7 @@
                                     text: "Luminace"
                                     min: 0
                                     max: 100
-                                    value: 0
+                                    value: 20
                                     step: 1
                                     on_slider: root.apply_effects_lv(2, 'light_noise_reduction')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'light_noise_reduction')
@@ -1544,7 +1544,7 @@
                                     text: "Color"
                                     min: 0
                                     max: 100
-                                    value: 0
+                                    value: 20
                                     step: 1
                                     on_slider: root.apply_effects_lv(2, 'light_noise_reduction')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'light_noise_reduction')
@@ -1894,7 +1894,7 @@
 
                                 HeadLabel:
                                     id: switch_lens_simulator
-                                    active: False
+                                    active: True
                                     text: ' Lens Simulator'
                                     on_press: root.begin_history_effect_ctrl(2, 'lens_simulator')
                                     on_active: root.apply_effects_lv(2, 'lens_simulator')
@@ -2478,9 +2478,10 @@
                                         state: 'normal'
                                         on_press: root.apply_effects_lv(0, "geometry")
 
+                                # Lens / Trapezoid の有効化は main.MainWidget.sync_distortion_mode_sliders
                                 ParamSlider:
                                     id: slider_lens_distortion_strength
-                                    disabled: btn_lens.state != 'down'
+                                    disabled: True
                                     text: "Lens Distortion"
                                     min: -100
                                     max: 100
@@ -2492,7 +2493,7 @@
 
                                 ParamSlider:
                                     id: slider_lens_distortion_scale
-                                    disabled: btn_lens.state != 'down'
+                                    disabled: True
                                     text: "Lens Scale"
                                     min: -100
                                     max: 100
@@ -2504,7 +2505,7 @@
 
                                 ParamSlider:
                                     id: slider_correct_trapezoid_h
-                                    disabled: btn_trapezoid.state != 'down'
+                                    disabled: True
                                     text: "Horizontal"
                                     min: -100
                                     max: 100
@@ -2517,7 +2518,7 @@
 
                                 ParamSlider:
                                     id: slider_correct_trapezoid_v
-                                    disabled: btn_trapezoid.state != 'down'
+                                    disabled: True
                                     text: "Vertical"
                                     min: -100
                                     max: 100
@@ -2529,7 +2530,7 @@
 
                                 ParamSlider:
                                     id: slider_focal_length
-                                    disabled: btn_trapezoid.state != 'down'
+                                    disabled: True
                                     text: "Focal Length"
                                     min: 0
                                     max: 100

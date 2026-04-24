@@ -135,7 +135,7 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     disp_info = params.get_disp_info(primary_param)
     if disp_info is None:
-        disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), config.get_config('preview_size')/max(primary_param['original_img_size']))
+        disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), config.get_preview_texture_side()/max(primary_param['original_img_size']))
         params.set_disp_info(primary_param, disp_info)
 
     # 環境設定

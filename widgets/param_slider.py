@@ -5,6 +5,7 @@ from kivymd.uix.behaviors.toggle_behavior import MDToggleButton
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
 from kivy.metrics import dp
+import math
 
 import widgets.float_input
 import widgets.multi_slider
@@ -111,7 +112,21 @@ class ParamSlider(KVBoxLayout):
         self.value = self.ids['slider'].value
         self.ids['input'].set_value(self.value)
         if self.disabled == False:
-            self.slider = self.value
+            v = self.value
+            s = self.slider
+            # set_slider_value 中に self.disabled が True だと self.slider を入れ替えておらず、
+            # 直前の s と今回の v が同じ数になると self.slider = v が等値扱いで
+            # on_slider(→ apply_effects) が1回も飛ばない。Ge の Lens など、ボタンで set_slider
+            # 同期が重なると出やすい。一度 inf に戻してから v を入れて on_slider を確実に出す。
+            if s != float("inf") and (
+                s == v
+                or (
+                    self.for_float
+                    and math.isclose(s, v, rel_tol=0.0, abs_tol=1e-5)
+                )
+            ):
+                self.slider = float("inf")
+            self.slider = v
 
     def on_input_text_validate(self):
         try:
@@ -127,7 +142,7 @@ class ParamSlider(KVBoxLayout):
         self.value = val
         self.ids['slider'].value = self.value
         self.after_edit = self.value
-    
+
     def on_button_press(self, step):
         self.before_edit = self.value
         self.value = min(self.max, max(self.min, self.ids['slider'].value + step))
@@ -159,21 +174,22 @@ class ParamSlider(KVBoxLayout):
     def on_input_scrub_end(self):
         self.after_edit = self.value
         self._input_scrub_accum = 0.0
-    
+
     def on_slider_touch_down(self, touch):
         if touch.is_double_tap:
             if self.ids['label'].collide_point(*touch.pos):
                 self.before_edit = self.value
                 self.ids['slider'].value = self.reset_value
                 return True
-        
+
+        # 以前ここで reset_value へ戻しており、MultiSlider の on_touch 後に
+        # これが走るとスライダーが常に初期値(例: レンズ歪み 0)のままになる。
         if self.ids['slider'].collide_point(*touch.pos):
             self.before_edit = self.value
-            self.ids['slider'].value = self.reset_value
-            return True        
-        
+            return True
+
         return False
-    
+
     def on_slider_touch_up(self, touch):
         self.after_edit = self.value
         return False

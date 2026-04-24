@@ -166,6 +166,10 @@ class MeshWarpWidget(KVFloatLayout):
     def set_callback(self, callback):
         self.on_callback = callback
 
+    def set_texture_size(self, texture_size):
+        self.texture_size = texture_size
+        self._redraw_mesh()
+
     def on_edit_start(self):
         if self.on_callback:
             self.on_callback('start', self)

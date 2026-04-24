@@ -365,7 +365,7 @@ def set_image_param(param, img):
     param['original_img_size'] = (width, height)
     param['img_size'] = (width, height)
     set_crop_rect(param, get_crop_rect(param, core.get_initial_crop_rect(width, height)))
-    set_disp_info(param, core.convert_rect_to_info(get_crop_rect(param), config.get_config('preview_size')/max(param['original_img_size'])))
+    set_disp_info(param, core.convert_rect_to_info(get_crop_rect(param), config.get_preview_texture_side()/max(param['original_img_size'])))
     # 新規デコード: pmck 未読込
     clear_lensfun_capability(param)
 
@@ -463,7 +463,7 @@ def _serialize_param(param, include_heavy=True):
             param.pop(k, None)
 
 def _deserialize_param(param, load_heavy=True):
-    param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_config('preview_size')/max(param['original_img_size']))
+    param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_preview_texture_side()/max(param['original_img_size']))
     if load_heavy:
         _inpaint_load(param, 'inpaint_diff_list')
         _inpaint_load(param, 'patchmatch_inpaint_diff_list')
@@ -695,7 +695,8 @@ def param_to_tcg_info(param):
     戻り値: 情報辞書
     """
     tcg_info = {}
-    tcg_info['original_img_size'] = param.get('original_img_size', (config.get_config('preview_size'), config.get_config('preview_size')))
+    preview_side = config.get_preview_texture_side()
+    tcg_info['original_img_size'] = param.get('original_img_size', (preview_side, preview_side))
     tcg_info['disp_info'] = param.get('disp_info', (0, 0, 1.0, 1.0, 1.0))
     tcg_info['rotation'] = math.radians(param.get('rotation', 0.0))
     tcg_info['rotation2'] = math.radians(param.get('rotation2', 0.0))

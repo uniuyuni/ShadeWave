@@ -38,6 +38,7 @@ class LensDistortionWidget(KVFloatLayout):
         self.on_callback = None
         
         # 自動検出ボタン
+        """
         self.auto_detect_btn = MDRaisedButton(
             text="Auto",
             size_hint=(None, None),
@@ -46,7 +47,7 @@ class LensDistortionWidget(KVFloatLayout):
         )
         self.auto_detect_btn.bind(on_press=self.on_auto_detect)
         self.add_widget(self.auto_detect_btn)
-        
+        """
         # プロパティの変更を監視
         self.bind(show_grid=self._on_show_grid_change)
 
@@ -57,6 +58,10 @@ class LensDistortionWidget(KVFloatLayout):
 
     def set_callback(self, callback):
         self.on_callback = callback
+
+    def set_texture_size(self, texture_size):
+        self.texture_size = texture_size
+        self.update_preview()
 
     def on_edit_start(self):
         """編集開始イベント（ヒストリー管理用）"""

@@ -1885,10 +1885,19 @@ def apply_zero_wrap(img, param):
     height = int((disp_info[3]) * disp_info[4])
     width, height = min(width, img.shape[1]), min(height, img.shape[0]) # 安全策
     wrap = np.ones((height, width), dtype=np.float32)
-    preview_width = config.get_config('preview_width')
-    preview_height = config.get_config('preview_height')
-    offset_x, offset_y = (preview_width - wrap.shape[1]) // 2, (preview_height - wrap.shape[0]) // 2
-    wrap = np.pad(wrap, ((offset_y, preview_height-wrap.shape[0]-offset_y), (offset_x, preview_width-wrap.shape[1]-offset_x)), 'constant', constant_values=0.0)
+    # パイプライン出力はプレビュー用テクスチャ解像度と1ピクセル未満の差でずれることがある。
+    # マスクは常に img と同じ形に合わせる（config の preview_* は使わない）。
+    out_w, out_h = int(img.shape[1]), int(img.shape[0])
+    offset_x, offset_y = (out_w - wrap.shape[1]) // 2, (out_h - wrap.shape[0]) // 2
+    wrap = np.pad(
+        wrap,
+        (
+            (offset_y, out_h - wrap.shape[0] - offset_y),
+            (offset_x, out_w - wrap.shape[1] - offset_x),
+        ),
+        "constant",
+        constant_values=0.0,
+    )
 
     # クロップ中は処理しないがクロップしている範囲のzero_countだけ返す
     if param.get('crop_enable', False) == False:

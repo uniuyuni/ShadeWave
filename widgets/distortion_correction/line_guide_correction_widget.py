@@ -90,6 +90,10 @@ class LineGuideCorrectionWidget(KVFloatLayout):
     def set_callback(self, callback):
         self.on_callback = callback
 
+    def set_texture_size(self, texture_size):
+        self.texture_size = texture_size
+        self._redraw_lines()
+
     def on_edit_start(self):
         """編集開始イベント（ヒストリー管理用）"""
         if self.on_callback:
@@ -337,4 +341,3 @@ class LineGuideCorrectionWidget(KVFloatLayout):
 
     def on_lines_change(self):
         pass
-

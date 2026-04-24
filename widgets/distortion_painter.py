@@ -803,7 +803,7 @@ class DistortionCanvas(KVFloatLayout):
 
     # ワールド座標からテクスチャのグローバル座標に
     def _window_to_tcg(self, cx, cy):
-        texture_size = (config.get_config('preview_size'), config.get_config('preview_size'))
+        texture_size = config.get_preview_texture_size()
         return params.window_to_tcg(cx, cy, self, texture_size, self.tcg_info)
 
     

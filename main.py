@@ -49,6 +49,7 @@ if __name__ == '__main__':
     )
     from kivy.clock import Clock as KVClock, mainthread as kvmainthread
     from kivy.graphics.transformation import Matrix as KVMatrix
+    from kivy.uix.label import Label as KVLabel
 
     import threading
     import threads
@@ -238,6 +239,10 @@ if __name__ == '__main__':
 
             self._export_cancel_event = threading.Event()
             self._export_thread = None
+            self._clamping_preview_window = False
+            self._preview_min_w = 0
+            self._preview_min_h = 0
+            self._debug_resize_label = None
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
@@ -281,6 +286,125 @@ if __name__ == '__main__':
                     logging.info(f"is_processing changed: {self.is_processing} -> {should_processing} (queue_empty={queue_empty}, active_shms={active_count}, actively_loading={self._actively_loading})")
                     self.is_processing = should_processing
 
+        def get_preview_window_minimum_size(self):
+            """
+            返す min_w, min_h は Kivy 窓（通常は macOS 論理 pt 系）向け。
+
+            m は ref*dpi（バッキング幅）のまま。窓の最小は min(w, h)/dpi_scale と同じ m_log = m/dpi
+            を make し、0.55 列・上段+bar+viewer(ref) の論理高で揃える。ceil(m/0.55) を
+            バッキングのまま使うと min・cap が画面いっぱいに張り付きがち（Retina）。
+            """
+            m = int(kvutils.preview_min_edge_for_window(config.get_preview_min_size()))
+            if m < 1:
+                return 0, 0, m
+            dps = float(device.dpi_scale())
+            if dps < 0.01:
+                dps = 1.0
+            m_log = m / dps
+            col_frac = 0.55
+            min_w = int(math.ceil(m_log / col_frac))
+            # main.kv: プレビュー下 bar ref 30, 下段 viewer ref 160（論理 ref）
+            min_h = int(math.ceil(m_log + 30.0 + 160.0))
+            return min_w, min_h, m
+
+        def _clamp_window_to_preview_minimum(self):
+            """SDL の minimum_* が効かない環境向け: 手動で窓を既定最小以上に戻す。"""
+            if self._clamping_preview_window:
+                return
+            min_w, min_h = self._preview_min_w, self._preview_min_h
+            if min_w < 1 or min_h < 1:
+                return
+            w, h = KVWindow.size
+            if w + 0.5 >= min_w and h + 0.5 >= min_h:
+                return
+            self._clamping_preview_window = True
+            try:
+                KVWindow.size = (max(int(w), min_w), max(int(h), min_h))
+            finally:
+                self._clamping_preview_window = False
+
+        def sync_preview_widget_min_size(self):
+            """
+            m0=ref*dpi: kvutils.preview_min_edge_for_window（枠は NSScreen ポイント * dpi して m0 と同系で比較）。
+
+            minimum_* / cap の sw, sh は get_window_screen_size() のポイント。min_w, min_h は
+            m/dpi（論理）基準（get_preview_window_minimum_size）で、Retina ではバッキングのまま
+            ceil(m/0.55) を使うと cap が画面いっぱいに張り付きがちになるのを避ける。
+            """
+            min_w, min_h, m = self.get_preview_window_minimum_size()
+            self._preview_min_w, self._preview_min_h = min_w, min_h
+            pw = self.ids.get("preview_widget")
+            if pw is not None:
+                pw.size_hint_min = (m, m)
+            if min_w > 0 and min_h > 0:
+                sw, sh = kvutils.get_window_screen_size()
+                KVWindow.minimum_width = min(min_w, max(1, int(sw * 0.99)))
+                KVWindow.minimum_height = min(min_h, max(1, int(sh * 0.99)))
+
+        def _update_resize_debug_display(self):
+            if not getattr(define, "RESIZE_DEBUG", False):
+                return
+            try:
+                ww, wh = int(KVWindow.size[0]), int(KVWindow.size[1])
+            except Exception:
+                ww, wh = 0, 0
+            try:
+                wkmin = int(getattr(KVWindow, "minimum_width", 0) or 0)
+                wkhmin = int(getattr(KVWindow, "minimum_height", 0) or 0)
+            except Exception:
+                wkmin, wkhmin = 0, 0
+            try:
+                sys_w, sys_h = int(KVWindow.system_size[0]), int(KVWindow.system_size[1])
+            except Exception:
+                sys_w, sys_h = 0, 0
+            pw = self.ids.get("preview_widget")
+            pww, pwh = (int(pw.size[0]), int(pw.size[1])) if pw is not None else (0, 0)
+            tgeo = config.get_preview_texture_size()
+            tw, th = int(tgeo[0]), int(tgeo[1])
+            # get_config("preview_width/height") も同じ（process_pipeline に渡る値）
+            tcfg_w = int(config.get_config("preview_width"))
+            tcfg_h = int(config.get_config("preview_height"))
+            sw, sh = kvutils.get_window_screen_size()
+            pminw, pminh = int(self._preview_min_w), int(self._preview_min_h)
+            mon = None
+            if hasattr(device, "get_app_window_screen_size_points"):
+                try:
+                    mon = device.get_app_window_screen_size_points()
+                except Exception:
+                    mon = None
+            mon_s = f"{int(mon[0])}x{int(mon[1])}" if mon and len(mon) >= 2 else "—"
+            try:
+                dps = float(device.dpi_scale())
+            except Exception:
+                dps = 0.0
+            monb = None
+            if hasattr(device, "get_app_window_screen_backing_pixel_size"):
+                try:
+                    monb = device.get_app_window_screen_backing_pixel_size()
+                except Exception:
+                    monb = None
+            monb_s = f"{int(monb[0])}x{int(monb[1])}" if monb and len(monb) >= 2 else "—"
+            line1 = (
+                f"win {ww}x{wh}  |  kivy_sys {sys_w}x{sys_h}  scn_pt {sw}x{sh}  scn_bak {monb_s}  nss {mon_s}  dpi {dps:.2f}"
+            )
+            if tcfg_w == tw and tcfg_h == th:
+                texpart = f"tex&pipeline {tw}x{th}"
+            else:
+                texpart = f"tex_cfg {tcfg_w}x{tcfg_h}  tex_store {tw}x{th}  (!)"
+            line2 = (
+                f"Kmin {wkmin}x{wkhmin}  pmin {pminw}x{pminh}  |  previewWgt {pww}x{pwh}  |  {texpart}"
+            )
+            print(f"[RESIZE-DEBUG] {line1}", flush=True)
+            print(f"[RESIZE-DEBUG] {line2}", flush=True)
+            logging.info("RESIZE-DEBUG %s  %s", line1, line2)
+            if self._debug_resize_label is not None and pw is not None:
+                self._debug_resize_label.text = f"{line1}\n{line2}"
+                tw0 = max(200.0, float(pw.size[0]) - 8.0)
+                self._debug_resize_label.text_size = (tw0, None)
+                self._debug_resize_label.width = tw0
+                self._debug_resize_label.height = self._debug_resize_label.texture_size[1] + 6.0
+                self._debug_resize_label.pos = (4, 4)
+
         def on_kv_post(self, *args, **kwargs):
             super(MainWidget, self).on_kv_post(*args, **kwargs)
 
@@ -288,6 +412,9 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].disabled = True
             self._set_film_presets()
             self._set_lens_presets()
+
+            KVClock.schedule_once(lambda dt: self.sync_distortion_mode_sliders(), 0)
+            KVClock.schedule_once(lambda dt: self.sync_preview_widget_min_size(), 0)
 
             self.mask2_panel = mask2_content.create_mask2_content_panel(self.ids['mask_editor2'])
             self.ids['masks_box'].add_widget(self.mask2_panel)
@@ -297,8 +424,74 @@ if __name__ == '__main__':
             self.ids['history_box'].add_widget(self.history_panel)
             #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
 
+            if getattr(define, "RESIZE_DEBUG", False):
+                self._debug_resize_label = KVLabel(
+                    text="",
+                    size_hint=(None, None),
+                    halign="left",
+                    valign="bottom",
+                    color=(1, 0.92, 0.15, 0.95),
+                    font_size=10,
+                )
+                self.ids["preview_widget"].add_widget(self._debug_resize_label)
+                KVClock.schedule_once(lambda _dt: self._update_resize_debug_display(), 0.05)
+
+        def get_preview_texture_size(self):
+            preview_widget = self.ids.get('preview_widget')
+            min_side = config.get_config('preview_size')
+            if preview_widget is None:
+                return (min_side, min_side)
+
+            widget_side = min(preview_widget.width, preview_widget.height) / device.dpi_scale()
+            side = max(min_side, int(round(widget_side)))
+            return (side, side)
+
+        def update_preview_texture_size(self, force=False):
+            size = self.get_preview_texture_size()
+            changed = force or size != config.get_preview_texture_size()
+            if changed:
+                config.set_preview_texture_size(*size)
+            return changed
+
+        def sync_distortion_mode_sliders(self):
+            """
+            group 'distortion' 内のトグル: Lens 時はレンズ2本、Trapezoid 時は H/V/焦点、
+            それ以外（Lines / Mesh / Four 等）では5本とも無効。
+            """
+            if "btn_lens" not in self.ids or "btn_trapezoid" not in self.ids:
+                return
+
+            lens_on = self.ids["btn_lens"].state == "down"
+            trap_on = self.ids["btn_trapezoid"].state == "down"
+            self.ids["slider_lens_distortion_strength"].disabled = not lens_on
+            self.ids["slider_lens_distortion_scale"].disabled = not lens_on
+            self.ids["slider_correct_trapezoid_h"].disabled = not trap_on
+            self.ids["slider_correct_trapezoid_v"].disabled = not trap_on
+            self.ids["slider_focal_length"].disabled = not trap_on
+
+        @kvmainthread
+        def refresh_preview_overlays(self, dt=0):
+            # apply_thread 上の draw_image_core から呼ばれるため、ここをメインスレッド化する
+            # （Canvas / グラフィックス操作は Kivy ではメインスレッド専用）
+            texture_size = config.get_preview_texture_size()
+            self.ids['mask_editor2'].set_texture_size(*texture_size)
+
+            if self.inpaint_edit is not None:
+                self.inpaint_edit.set_display_size(texture_size)
+            if self.patchmatch_inpaint_edit is not None:
+                self.patchmatch_inpaint_edit.set_display_size(texture_size)
+
+            geometry_effect = self.primary_effects[0].get('geometry')
+            if geometry_effect is not None:
+                geometry_effect.update_geometry_editor_texture_size()
+
+            crop_effect = self.primary_effects[0].get('crop')
+            if crop_effect is not None and params.has_original_img_size(self.primary_param):
+                crop_effect.update_crop_editor_preview_size(self.primary_param)
+
         def empty_image(self):
             with threads.primary_param_lock:
+                self.update_preview_texture_size()
                 self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
                 self.texture.flip_vertical()
                 self.ids["preview"].texture = None
@@ -373,6 +566,9 @@ if __name__ == '__main__':
                     if not params.has_original_img_size(self.primary_param):
                         logging.warning("draw_image_core: original_img_size 未定義のため描画しません")
                         return
+
+                    self.update_preview_texture_size()
+                    self.refresh_preview_overlays()
 
                     img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos)
                     logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
@@ -503,6 +699,8 @@ if __name__ == '__main__':
                 effect = effect if isinstance(effect, list) else [effect]
                 for e in effect:
                     current_effects[lv][e].set2param(current_param, self)
+            if lv == 0:
+                self.sync_distortion_mode_sliders()
             self.ids['mask_editor2'].set_draw_mask(lv == 3)
             #self.apply_rotation_flip_for_wrapper()
             if sync == False:
@@ -792,6 +990,7 @@ if __name__ == '__main__':
                 card = self.ids['viewer'].get_card(file_path)
                 if card is not None:
                     # 一度も描画してないので値が設定されてない。暫定処置
+                    self.update_preview_texture_size()
                     self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
                     self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
 
@@ -877,7 +1076,7 @@ if __name__ == '__main__':
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
                         self.drag_center_start = None
-                        disp_info = core.convert_rect_to_info(params.get_crop_rect(self.primary_param), config.get_config('preview_size')/max(self.primary_param['original_img_size']))
+                        disp_info = core.convert_rect_to_info(params.get_crop_rect(self.primary_param), config.get_preview_texture_side()/max(self.primary_param['original_img_size']))
                         params.set_disp_info(self.primary_param, disp_info)
 
                     else:
@@ -1100,6 +1299,7 @@ if __name__ == '__main__':
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1
             self.ids['mask_editor2'].disabled = False
+            self.update_preview_texture_size()
             self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
             self.ids['mask_editor2'].set_primary_param(self.primary_param, params.get_disp_info(self.primary_param))
             self.ids['mask_editor2'].update()
@@ -1132,7 +1332,8 @@ if __name__ == '__main__':
 
         def _enable_inpaint_edit(self):
             if self.inpaint_edit is None:
-                self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
+                self.update_preview_texture_size()
+                self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=config.get_preview_texture_size(),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_inpaint_edit)
                 self._set_diff_list_to_inpaint_edit()
@@ -1170,7 +1371,8 @@ if __name__ == '__main__':
 
         def _enable_patchmatch_inpaint_edit(self):
             if self.patchmatch_inpaint_edit is None:
-                self.patchmatch_inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=(config.get_config('preview_width'), config.get_config('preview_height')),
+                self.update_preview_texture_size()
+                self.patchmatch_inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=config.get_preview_texture_size(),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_patchmatch_inpaint_edit)
                 self._set_diff_list_to_patchmatch_inpaint_edit()
@@ -1416,12 +1618,19 @@ if __name__ == '__main__':
                 t.join()
 
         def resize(self):
-            # Update Property for KV Stencil
+            self.sync_preview_widget_min_size()
+            self._clamp_window_to_preview_minimum()
+            preview_changed = self.update_preview_texture_size()
+            if getattr(define, "RESIZE_DEBUG", False):
+                KVClock.schedule_once(lambda _dt: self._update_resize_debug_display(), 0.05)
             if self.imgset is not None and self.imgset.img is not None:
                 h, w = self.imgset.img.shape[:2]
                 self.preview_size = [kvutils.dpi_scale_width(w), kvutils.dpi_scale_height(h)]
-                self.ids["transform_wrapper"].scale = device.dpi_scale()
-                self.ids["transform_wrapper"].center = self.ids['preview_widget'].center
+            self.ids["transform_wrapper"].scale = device.dpi_scale()
+            self.ids["transform_wrapper"].center = self.ids['preview_widget'].center
+            self.refresh_preview_overlays()
+            if preview_changed and self.imgset is not None and self.imgset.img is not None:
+                self.start_draw_image_and_crop(self.imgset)
                 
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
@@ -1526,4 +1735,3 @@ if __name__ == '__main__':
         
     # 終了時にクリーンアップ
     cache_system.shutdown()
-

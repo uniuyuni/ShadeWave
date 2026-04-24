@@ -917,6 +917,9 @@ class GeometryEffect(Effect):
         if self.geometry_editor is not None:
             self.geometry_editor.set_correction_params(param)
 
+        if hasattr(widget, "sync_distortion_mode_sliders"):
+            widget.sync_distortion_mode_sliders()
+
     def set2param(self, param, widget):
         param['rotation'] = widget.ids["slider_rotation"].value
         param['switch_distortion_correction'] = widget.ids["switch_distortion_correction"].active
@@ -939,7 +942,16 @@ class GeometryEffect(Effect):
             
             # Update params from editor if active (BEFORE opening/syncing)
             if self.geometry_editor is not None:
-                    param.update(self.geometry_editor.get_correction_params())
+                d = self.geometry_editor.get_correction_params()
+                # Lens オーバーレイの strength/scale は ParamSlider と共有しておらず、
+                # 毎回 get で上書きするとスライダーで入れた値が潰れる。レンズ2キーは上書きしない。
+                if self.geometry_editor.__class__.__name__ == "LensDistortionWidget":
+                    d = {
+                        k: v
+                        for k, v in d.items()
+                        if k not in ("lens_distortion_strength", "lens_distortion_scale")
+                    }
+                param.update(d)
 
             # Update Matrix Param based on current params (Visual Fix)
             self._update_matrix_param(param)
@@ -1065,7 +1077,7 @@ class GeometryEffect(Effect):
             params.set_matrix(param, None)
 
             # レンズ歪み補正
-            if switch_distortion_correction == True and lens_distortion_strength != 0:
+            if switch_distortion_correction == True and (lens_distortion_strength != 0 or lens_distortion_scale != 0):
                 img = correct_lens_distortion(
                         img,
                         strength=lens_distortion_strength,
@@ -1202,7 +1214,7 @@ class GeometryEffect(Effect):
 
         # 作成
         if self.geometry_editor is None:
-            texture_size = (config.get_config('preview_width'), config.get_config('preview_height'))
+            texture_size = config.get_preview_texture_size()
             match type:
                 case 'Lens': self.geometry_editor = LensDistortionWidget(texture_size, param)
                 case 'Trapezoid': self.geometry_editor = TrapezoidCorrectionWidget(texture_size, param)
@@ -1220,7 +1232,8 @@ class GeometryEffect(Effect):
             if type == 'Lens':
                 #self.geometry_editor.set_image(widget.imgset.img) # なんか重い
                 # Sync Params
-                self.geometry_editor.set_correction_params(param)
+                #self.geometry_editor.set_correction_params(param)
+                pass
 
             elif type == 'Trapezoid':
                 pass
@@ -1249,6 +1262,10 @@ class GeometryEffect(Effect):
             widget.ids[btn_id].state = 'normal'
             widget.ids['preview_widget'].remove_widget(self.geometry_editor)
             self.geometry_editor = None
+
+    def update_geometry_editor_texture_size(self):
+        if self.geometry_editor is not None and hasattr(self.geometry_editor, 'set_texture_size'):
+            self.geometry_editor.set_texture_size(config.get_preview_texture_size())
 
 # クロップ
 class CropEffect(Effect):
@@ -1327,7 +1344,7 @@ class CropEffect(Effect):
             self.hash = None
             param['img_size'] = (param['original_img_size'][0], param['original_img_size'][1])
             msize = max(param['original_img_size'][0], param['original_img_size'][1])
-            scale = config.get_config('preview_size')/msize
+            scale = config.get_preview_texture_side()/msize
             params.set_disp_info(param, (0, 0, msize, msize, scale))
         else:
             param_hash = hash((ce))
@@ -1346,7 +1363,7 @@ class CropEffect(Effect):
 
             input_width, input_height = param['original_img_size']
             x1, y1, x2, y2 = params.get_crop_rect(param)
-            scale = config.get_config('preview_size') * device.dpi_scale() / max(input_width, input_height)
+            scale = config.get_preview_texture_side() * device.dpi_scale() / max(input_width, input_height)
             self.crop_editor = CropEditor(input_width=input_width, input_height=input_height, scale=scale, crop_rect=[x1, y1, x2, y2], aspect_ratio=self._param_to_aspect_ratio(param))
             self.crop_editor.set_editing_callback(self._crop_editing)
             widget.ids["preview_widget"].add_widget(self.crop_editor)
@@ -1377,6 +1394,12 @@ class CropEffect(Effect):
         if self.crop_editor is not None:
             self.crop_editor.input_angle = self._get_param(param, 'rotation') + self._get_param(param, 'rotation2')
             self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
+
+    def update_crop_editor_preview_size(self, param):
+        if self.crop_editor is None:
+            return
+        input_width, input_height = param['original_img_size']
+        self.crop_editor.scale = config.get_preview_texture_side() * device.dpi_scale() / max(input_width, input_height)
 
     # 自動クロップ
     def auto_crop_editor(self, img):
@@ -1579,8 +1602,8 @@ class LightNoiseReductionEffect(Effect):
     def get_param_dict(self, param):
         return {
             'switch_light_noise_reduction': True,
-            'light_noise_reduction': 0,
-            'light_color_noise_reduction': 0,
+            'light_noise_reduction': 20,
+            'light_color_noise_reduction': 20,
         }
 
     def set2widget(self, widget, param):
@@ -3215,7 +3238,7 @@ class LensSimulatorEffect(Effect):
 
     def get_param_dict(self, param):
         return {
-            'switch_lens_simulator': False,
+            'switch_lens_simulator': True,
             'coating_preset': 'None',
             'coating_strength': 100,
             'coating_light': 1.0,
@@ -3645,8 +3668,8 @@ class VignetteEffect(Effect):
         return {
             'switch_vignette': True,
             'vignette_intensity': 0,
-            'vignette_radius_percent': 0,
-            'vignette_softness': 100,
+            'vignette_radius_percent': 80,
+            'vignette_softness': 80,
             'crop_enable': False,
         }
 

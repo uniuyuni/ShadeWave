@@ -57,6 +57,11 @@ class BoundingBoxViewer(KVWidget):
         self.view_x, self.view_y, self.view_w, self.view_h, self.scale = x, y, w, h, scale
         self._check_selection_visibility()
         self.redraw()
+
+    def set_display_size(self, size):
+        """表示用の最大サイズを更新"""
+        self.max_display_width, self.max_display_height = size
+        self.redraw()
         
     def set_style(self, normal_color=None, selected_color=None, line_width=None, selected_line_width=None):
         """描画スタイルを設定"""

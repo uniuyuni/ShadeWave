@@ -219,6 +219,34 @@ def calculate_ppi(width_px, height_px, width_mm, height_mm):
 
 _screens = get_screens_info()
 
+
+def get_primary_display_size_points():
+    """主ディスプレイ（または先頭）の表示サイズ (幅, 高さ) ポイント。フォールバック用。"""
+    if not _screens:
+        return None
+    for m in _screens:
+        if m.get("is_primary"):
+            return int(m["width_points"]), int(m["height_points"])
+    m0 = _screens[0]
+    return int(m0["width_points"]), int(m0["height_points"])
+
+
+def get_primary_display_backing_pixel_size():
+    """
+    主ディスプレイ（または先頭）の枠。ポイント * scale = バッキング画素。
+    kvutils の ref*device.dpi_scale と同じ系の「レイアウト/バッキング」寄りの単位。
+    """
+    if not _screens:
+        return None
+    for m in _screens:
+        if m.get("is_primary"):
+            s = float(m.get("scale", 1.0) or 1.0)
+            return int(round(m["width_points"] * s)), int(round(m["height_points"] * s))
+    m0 = _screens[0]
+    s = float(m0.get("scale", 1.0) or 1.0)
+    return int(round(m0["width_points"] * s)), int(round(m0["height_points"] * s))
+
+
 def get_self_window_position(app_name=None):
     """
     最もシンプルなバージョン - 座標のみ
@@ -282,6 +310,44 @@ def get_window(app_name):
                 return win
     
     return None
+
+
+def get_app_window_screen_size_points():
+    """
+    Platypus ウィンドウが乗っている NSScreen の表示サイズ (幅, 高さ) ポイント。
+    マルチモニタで Kivy Window.system_size が仮想デスクトップ幅になるのを避ける。
+    """
+    try:
+        w = get_window(define.APPNAME)
+        if w is None:
+            return None
+        sc = w.screen()
+        if sc is None:
+            return None
+        f = sc.frame()
+        return int(f.size.width), int(f.size.height)
+    except Exception:
+        return None
+
+
+def get_app_window_screen_backing_pixel_size():
+    """
+    Platypus ウィンドウが乗っている NSScreen の (幅, 高さ) バッキング画素。
+    マルチディスプレイ各々の scale がその画面に反映される。Kivy 座標系には依存しない。
+    """
+    try:
+        w = get_window(define.APPNAME)
+        if w is None:
+            return None
+        sc = w.screen()
+        if sc is None:
+            return None
+        f = sc.frame()
+        s = float(sc.backingScaleFactor())
+        return int(round(f.size.width * s)), int(round(f.size.height * s))
+    except Exception:
+        return None
+
 
 def set_window_autosave(app_name, window_name):
 
