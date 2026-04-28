@@ -2498,62 +2498,154 @@ def side_window_variance_filter(src, r=3):
     return result
 
 def light_denoise(img, its, col):
+    def _safe_guided_filter(guide, src, radius, eps):
+        if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'guidedFilter'):
+            return cv2.ximgproc.guidedFilter(
+                guide=guide, src=src, radius=int(radius), eps=float(eps), dDepth=-1
+            )
+        # Fallback path if ximgproc is unavailable.
+        sigma = max(0.55, float(radius) * 0.45)
+        return cv2.GaussianBlur(src, (0, 0), sigma)
 
-    ycrcb = hlsrgb.linear_rgb_to_ycbcr(img)
-    y, cr, cb = cv2.split(ycrcb)
-    
-    # 輝度チャンネル(Y)のノイズ除去 (Guided Filter)
-    if its > 0:
-        # スライダー 0–100 を [0,1] に正規化（col と同じスケール感に揃える）
-        t = its * 0.01
-        # 低〜中域（例: 10 付近）では効きを穏やかにする（t=1 で従来相当の強さに近づける）
-        t_eff = float(np.clip(t, 0.0, 1.0) ** 1.35)
+    def _filter_cr_cb_with_shared_model(guide, cr_src, cb_src, radius, eps):
+        if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'createGuidedFilter'):
+            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), float(eps))
+            return gf.filter(cr_src), gf.filter(cb_src)
+        return (
+            _safe_guided_filter(guide, cr_src, radius, eps),
+            _safe_guided_filter(guide, cb_src, radius, eps),
+        )
 
-        # 半径（t が小さいとき最小付近まで下げる）
-        radius = max(2, int(2 + 2 * (t_eff ** 1.05)))
-        # イプシロンの計算
-        # Yは0-1スケール (HDR対応)
-        # eps = (閾値)^2
-        # t=1 で (0.2)^2 程度（従来 its=1.0 と同程度）
-        eps = ((t_eff * 0.2) ** 2)
+    def _filter_single_with_shared_model(guide, src, radius, eps):
+        if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'createGuidedFilter'):
+            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), float(eps))
+            return gf.filter(src)
+        return _safe_guided_filter(guide, src, radius, eps)
 
-        # 分散安定化変換: sqrt(Y) をとることで、ショットノイズ(値に比例して分散が増える)を均一化する
-        # これによりハイライト部でもノイズ除去が効くようになる
-        sq_y = np.sqrt(np.maximum(y, 0)).astype(np.float32, copy=False)
-        # ガイドにノイズが乗ったままだと、局所分散が「エッジ」として扱われ平滑が効きにくい。
-        # ガイドだけ微小スケールを落とし、src は生の sq_y のままフィルタする。
-        sigma_guide = float(max(0.35, min(1.4, 0.22 + 0.09 * float(radius))))
-        # スライダー低めではガイド平滑を弱め、全体の「効き」を抑える
-        sigma_guide *= float(0.45 + 0.55 * t)
-        sq_y_guide = cv2.GaussianBlur(sq_y, (0, 0), sigma_guide)
-        sq_y_gf = cv2.ximgproc.guidedFilter(guide=sq_y_guide, src=sq_y, radius=radius, eps=eps)
-        y = sq_y_gf ** 2
+    def _noise_sigma_estimate(channel):
+        hp = channel - cv2.GaussianBlur(channel, (0, 0), 0.8)
+        mad = float(np.median(np.abs(hp)))
+        return max(1e-6, 1.4826 * mad)
 
-    # 色度チャンネル(Cr, Cb)のノイズ除去 (Joint Guided Filter)
-    if col > 0:
-        # 輝度と同様に 0–100 → [0,1]（従来 col をそのまま掛けていたのを正規化し、低域を穏やかに）
-        col_n = float(np.clip(col * 0.01, 0.0, 1.0))
-        col_eff = col_n ** 1.35
-        # 色度ノイズは強めにかけるため半径を大きく（最大付近は従来に近い）
-        radius = max(2, int(2 + 28 * (col_eff ** 1.05)))
-        # 色差も0-1スケール（col_n=1 で従来 col=100 と同等の係数になるよう 0.5 を使用）
-        eps = ((col_eff * 0.5) ** 2)
-        
-        # 輝度(Y)をガイドにして色差(Cr, Cb)をフィルタリング
-        # 輝度NRをオフにしたとき y はノイズのままなので、ジョイントGFが輝度ノイズに引きずられる。
-        # その場合のみガイドを軽く平滑化する。
-        y_guide = y
-        if its <= 0:
-            sigma_y = float(max(0.45, min(1.3, 0.2 * col_n + 0.35)))
-            y_guide = cv2.GaussianBlur(y.astype(np.float32, copy=False), (0, 0), sigma_y)
-        cr = cv2.ximgproc.guidedFilter(guide=y_guide, src=cr, radius=radius, eps=eps)
-        cb = cv2.ximgproc.guidedFilter(guide=y_guide, src=cb, radius=radius, eps=eps)
- 
-    # チャンネルを結合
-    filtered_ycrcb = cv2.merge([y, cr, cb])
-    filtered_rgb = hlsrgb.linear_ycbcr_to_rgb(filtered_ycrcb)
+    ycbcr = hlsrgb.linear_rgb_to_ycbcr(img).astype(np.float32, copy=False)
+    y, cb, cr = cv2.split(ycbcr)
+    y_orig = y.copy()
+    cb_orig = cb.copy()
+    cr_orig = cr.copy()
 
-    return filtered_rgb
+    # Slider [0, 100] -> [0, 1]. The effect is intentionally softened in low range.
+    lum_strength = float(np.clip(its * 0.01, 0.0, 1.0))
+    chr_strength = float(np.clip(col * 0.01, 0.0, 1.0))
+    lum_curve = lum_strength ** 1.8
+    chr_curve = chr_strength ** 1.9
+
+    # Precompute edge map for edge/detail protection.
+    y_for_edge = np.sqrt(np.maximum(y, 0.0)).astype(np.float32, copy=False)
+    gx = cv2.Sobel(y_for_edge, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(y_for_edge, cv2.CV_32F, 0, 1, ksize=3)
+    edge_mag = cv2.magnitude(gx, gy)
+    edge_ref = float(np.percentile(edge_mag, 85.0)) + 1e-6
+    edge_mask = np.exp(-((edge_mag / edge_ref) ** 2)).astype(np.float32, copy=False)
+
+    # ----- Phase 1 & 3: luminance denoise with soft blend + detail protection -----
+    if lum_strength > 0.0:
+        lum_sigma = _noise_sigma_estimate(y_for_edge)
+        radius_y = max(1, int(round(1.0 + 6.0 * (lum_curve ** 0.8))))
+        eps_y = float((lum_sigma * (1.15 + 2.4 * lum_curve)) ** 2)
+
+        sigma_guide = 0.35 + 0.75 * lum_curve
+        guide_y = cv2.GaussianBlur(y_for_edge, (0, 0), sigma_guide)
+        y_filtered = _safe_guided_filter(guide_y, y_for_edge, radius_y, eps_y)
+        y_filtered = np.maximum(y_filtered, 0.0) ** 2
+
+        # Strength blend is reduced on edges so small details survive.
+        alpha_y = (0.08 + 0.82 * lum_curve) * edge_mask
+        y = y + (y_filtered - y) * alpha_y
+
+        # Mild detail compensation to avoid "plastic" flat look.
+        detail_residual = y_orig - y
+        detail_gain = (0.18 * (1.0 - lum_curve) + 0.07) * (1.0 - edge_mask * 0.7)
+        y += detail_residual * detail_gain
+
+    # ----- Phase 2 & 4: chroma denoise, neutral protection, drift correction, faster path -----
+    if chr_strength > 0.0:
+        sigma_cb = _noise_sigma_estimate(cb)
+        sigma_cr = _noise_sigma_estimate(cr)
+
+        radius_c = max(1, int(round(1.0 + 10.0 * (chr_curve ** 0.85))))
+        eps_cb = float((sigma_cb * (2.0 + 4.2 * chr_curve)) ** 2)
+        eps_cr = float((sigma_cr * (1.8 + 3.4 * chr_curve)) ** 2)
+
+        y_guide = y.astype(np.float32, copy=False)
+        if lum_strength <= 1e-6:
+            y_guide = cv2.GaussianBlur(y_guide, (0, 0), 0.45 + 0.75 * chr_curve)
+
+        h, w = y.shape[:2]
+        use_half_res = (h * w >= 700 * 700) and (radius_c >= 3)
+        if use_half_res:
+            size_half = (max(1, w // 2), max(1, h // 2))
+            y_half = cv2.resize(y_guide, size_half, interpolation=cv2.INTER_AREA)
+            cb_half = cv2.resize(cb, size_half, interpolation=cv2.INTER_AREA)
+            cr_half = cv2.resize(cr, size_half, interpolation=cv2.INTER_AREA)
+
+            cb_half_f = _filter_single_with_shared_model(
+                y_half, cb_half, max(1, radius_c // 2), eps_cb
+            )
+            cr_half_f = _filter_single_with_shared_model(
+                y_half, cr_half, max(1, radius_c // 2), eps_cr
+            )
+
+            cb_filtered = cv2.resize(cb_half_f, (w, h), interpolation=cv2.INTER_LINEAR)
+            cr_filtered = cv2.resize(cr_half_f, (w, h), interpolation=cv2.INTER_LINEAR)
+        else:
+            cb_filtered, _ = _filter_cr_cb_with_shared_model(y_guide, cb, cb, radius_c, eps_cb)
+            cr_filtered, _ = _filter_cr_cb_with_shared_model(y_guide, cr, cr, radius_c, eps_cr)
+
+        # Neutral-color preservation: reduce chroma denoise around low-saturation pixels.
+        chroma = np.sqrt(cb_orig * cb_orig + cr_orig * cr_orig)
+        rel_sat = chroma / (np.maximum(y_orig, 0.0) + 1e-4)
+        neutral_mask = np.exp(-rel_sat * 7.5).astype(np.float32, copy=False)  # near-gray -> 1.0
+
+        alpha_c_base = 0.06 + 0.88 * chr_curve
+        alpha_cb = alpha_c_base * (1.0 - 0.55 * neutral_mask)
+        alpha_cr = (alpha_c_base * 0.88) * (1.0 - 0.65 * neutral_mask)
+        cb = cb + (cb_filtered - cb) * alpha_cb
+        cr = cr + (cr_filtered - cr) * alpha_cr
+
+        # Drift correction: preserve global chroma means to avoid color cast (e.g. reddish tint).
+        cb += float(np.mean(cb_orig) - np.mean(cb))
+        cr += float(np.mean(cr_orig) - np.mean(cr))
+
+    # Channel merge
+    filtered_ycbcr = cv2.merge((y, cb, cr))
+    return hlsrgb.linear_ycbcr_to_rgb(filtered_ycbcr)
+
+
+def evaluate_light_denoise_metrics(rgb_before, rgb_after):
+    """
+    Compute quick quality metrics for tuning light_denoise parameters.
+
+    Returns:
+        dict with:
+            detail_retention: ratio of high-frequency luma energy (1.0 is neutral)
+            chroma_drift_cb: global Cb mean shift
+            chroma_drift_cr: global Cr mean shift
+    """
+    ycbcr_before = hlsrgb.linear_rgb_to_ycbcr(rgb_before.astype(np.float32, copy=False))
+    ycbcr_after = hlsrgb.linear_rgb_to_ycbcr(rgb_after.astype(np.float32, copy=False))
+    y0, cb0, cr0 = cv2.split(ycbcr_before)
+    y1, cb1, cr1 = cv2.split(ycbcr_after)
+
+    hf0 = y0 - cv2.GaussianBlur(y0, (0, 0), 1.0)
+    hf1 = y1 - cv2.GaussianBlur(y1, (0, 0), 1.0)
+    e0 = float(np.mean(hf0 * hf0) + 1e-8)
+    e1 = float(np.mean(hf1 * hf1))
+
+    return {
+        'detail_retention': e1 / e0,
+        'chroma_drift_cb': float(np.mean(cb1) - np.mean(cb0)),
+        'chroma_drift_cr': float(np.mean(cr1) - np.mean(cr0)),
+    }
 
 #-------------------------------------------------
 
