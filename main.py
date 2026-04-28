@@ -1633,7 +1633,7 @@ if __name__ == '__main__':
                 self.start_draw_image_and_crop(self.imgset)
                 
         def on_key_down(self, window, key, scancode, codepoint, modifier):
-            print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
+            #print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
 
             if key == 32:
                 if self.is_press_space == False:
