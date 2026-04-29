@@ -26,27 +26,48 @@ def to_texture(pos, widget):
 
     return (tex_x, tex_y)
 
-def str_to_orientation(str):
-    if str == "Horizontal (normal)":
-        orientation = 1
-    if str == "Mirror horizontal":
-        orientation = 2
-    if str == "Rotate 180":
-        orientation = 3
-    if str  == "Mirror vertical":
-        orientation = 4
-    if str == "Mirror horizontal and rotate 90 CW":
-        orientation = 5
-    if str == "Rotate 90 CW":
-        orientation = 6
-    if str == "Mirror horizontal and rotate 270 CW":
-        orientation = 7
-    if str == "Rotate 270 CW":
-        orientation = 8
-    else:
-        orientation = 1
+def normalize_exif_orientation(value):
+    """EXIF Orientation を 1〜8 に正規化する。
 
-    return orientation
+    PyExifTool は英語の説明文字列のほか、整数 1〜8 だけを返すことがある。
+    整数を str_to_orientation に渡すと常に 1 になっていた（縦横の入れ替えが効かない）。
+    """
+    if value is None:
+        return 1
+    if isinstance(value, int):
+        return value if 1 <= value <= 8 else 1
+    if isinstance(value, str):
+        s = value.strip()
+        if s.isdigit():
+            i = int(s)
+            return i if 1 <= i <= 8 else 1
+        return str_to_orientation(s)
+    return 1
+
+
+def str_to_orientation(tag):
+    """EXIF Orientation 文字列（Exif.Photo にある英語表現）から内部 orient 値へ。
+
+    旧実装では最後の if/else が「Rotate 270 CW」専用になっており、
+    「Rotate 90 CW」等は else で 1 に上書きされていて縦構図の寸法ずれになるバグだった。
+    """
+    if tag == "Horizontal (normal)":
+        return 1
+    if tag == "Mirror horizontal":
+        return 2
+    if tag == "Rotate 180":
+        return 3
+    if tag == "Mirror vertical":
+        return 4
+    if tag == "Mirror horizontal and rotate 90 CW":
+        return 5
+    if tag == "Rotate 90 CW":
+        return 6
+    if tag == "Mirror horizontal and rotate 270 CW":
+        return 7
+    if tag == "Rotate 270 CW":
+        return 8
+    return 1
 
 def split_orientation(orientation):
     rad, flip = 0, 0

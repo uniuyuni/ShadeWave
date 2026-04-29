@@ -1179,7 +1179,8 @@ def get_exif_image_size_with_orientation(exif_data):
         # クロップとexifデータの回転
         top, left, width, height = get_exif_image_size(exif_data)
         if "Orientation" in exif_data:
-            rad, flip = utils.split_orientation(utils.str_to_orientation(exif_data.get("Orientation", "")))
+            o = utils.normalize_exif_orientation(exif_data.get("Orientation"))
+            rad, flip = utils.split_orientation(o)
             if rad < 0.0:
                 top, left = left, top
                 width, height = height, width
@@ -1190,20 +1191,26 @@ def get_exif_image_size_with_orientation(exif_data):
 def _estimate_depth_map(img, params=(0.121779, 0.959710, -0.780245), sigma=0.5):
     """
     色線形変換先行法（Color Attenuation Prior）を使用して深度マップを推定
-    
-    img: 入力画像（0-1の範囲のfloat32、RGB形式）
-    params: 線形モデルの係数 (β0, β1, β2)
+
+    img: 線形 RGB（float32）。SDR でも HDR（>1）でも可。
+    params: 線形モデルの係数 (β0, β1, β2) — 論文は OpenCV HSV の V,S 前提で学習。
     sigma: ガウシアンフィルタのシグマ値
-    
-    Zhu らの論文 "Fast Single Image Haze Removal Using Color Attenuation Prior" に基づく
+
+    Zhu ら "Fast Single Image Haze Removal Using Color Attenuation Prior" の
+    d ≈ β0 + β1*V + β2*S を、hlsrgb.rgb2hls の **L**（gain 正規化後の輝度）と **S**
+    （彩度）に置換。OpenCV の HSV は float でも内部が SDR 寄りで V が HDR で不自然に
+    なりやすいため。
+
+    β は従来値のまま維持しているが、特徴の分布が変わるため効き具合が変わり得る。
     """
-    # RGB画像をHSV色空間に変換
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    h, s, v = cv2.split(hsv)
-    
-    # 線形モデルを使用して深度を推定: d = β0 + β1 * v + β2 * s
+    img_f = np.ascontiguousarray(img, dtype=np.float32)
+    # H[0,360), L[0,1], S[0,1], Gain（HDR 時 max(R,G,B)）
+    hls = hlsrgb.rgb2hls(img_f)
+    l_chan = hls[:, :, 1]
+    s_chan = hls[:, :, 2]
+
     beta0, beta1, beta2 = params
-    depth = beta0 + beta1 * v + beta2 * s
+    depth = beta0 + beta1 * l_chan + beta2 * s_chan
     
     # フィルタリングで深度マップを滑らかにする
     depth = cv2.GaussianBlur(depth, (0, 0), sigma)
@@ -1290,9 +1297,9 @@ def _kernel_fog_apply_2d(img, transmission_map):
 def dehaze_image(img, strength=0.5):
     """
     色線形変換先行法を使用した霞除去・霧追加 (Numba Optimized)
-    
-    img: 入力画像（0-1の範囲のfloat32、RGB形式）
-    strength: 霞除去（正の値）または霧追加（負の値）の強さ、-1から1の範囲
+
+    img: float32 RGB（線形プロファイル想定）。SDR/HDR のいずれでも可。
+    strength: 霞除去（正の値）または霧追加（負の値）の強さ、-1〜1 の範囲
     """
     
     if strength >= 0:
@@ -2498,37 +2505,59 @@ def side_window_variance_filter(src, r=3):
     return result
 
 def light_denoise(img, its, col):
+    """Luma / chroma denoise. Chroma path uses guided filters; sanitize non-finite values to avoid NaN cascades."""
+
+    def _finite32(a):
+        """Remove NaN/Inf introduced by filters or extreme HDR before blend / mean."""
+        if a is None:
+            return a
+        if not np.isfinite(a).all():
+            a = np.nan_to_num(np.asarray(a, dtype=np.float32), nan=0.0, posinf=65504.0, neginf=-65504.0)
+        # NumPy<2 は asarray に copy 引数なし（2.0+ の copy=False と同等で十分）
+        return np.asarray(a, dtype=np.float32)
+
     def _safe_guided_filter(guide, src, radius, eps):
+        eps = max(float(eps), 1e-12)
         if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'guidedFilter'):
-            return cv2.ximgproc.guidedFilter(
-                guide=guide, src=src, radius=int(radius), eps=float(eps), dDepth=-1
+            out = cv2.ximgproc.guidedFilter(
+                guide=guide, src=src, radius=int(radius), eps=eps, dDepth=-1
             )
+            return _finite32(out)
         # Fallback path if ximgproc is unavailable.
         sigma = max(0.55, float(radius) * 0.45)
         return cv2.GaussianBlur(src, (0, 0), sigma)
 
     def _filter_cr_cb_with_shared_model(guide, cr_src, cb_src, radius, eps):
+        eps = max(float(eps), 1e-12)
         if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'createGuidedFilter'):
-            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), float(eps))
-            return gf.filter(cr_src), gf.filter(cb_src)
+            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), eps)
+            return _finite32(gf.filter(cr_src)), _finite32(gf.filter(cb_src))
         return (
             _safe_guided_filter(guide, cr_src, radius, eps),
             _safe_guided_filter(guide, cb_src, radius, eps),
         )
 
     def _filter_single_with_shared_model(guide, src, radius, eps):
+        eps = max(float(eps), 1e-12)
         if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'createGuidedFilter'):
-            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), float(eps))
-            return gf.filter(src)
+            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), eps)
+            return _finite32(gf.filter(src))
         return _safe_guided_filter(guide, src, radius, eps)
 
     def _noise_sigma_estimate(channel):
         hp = channel - cv2.GaussianBlur(channel, (0, 0), 0.8)
         mad = float(np.median(np.abs(hp)))
+        if not np.isfinite(mad):
+            mad = 1e-6
         return max(1e-6, 1.4826 * mad)
+
+    img = np.asarray(img, dtype=np.float32, order="C")
+    if not np.isfinite(img).all():
+        img = np.nan_to_num(img, nan=0.0, posinf=50.0, neginf=-50.0)
 
     ycbcr = hlsrgb.linear_rgb_to_ycbcr(img).astype(np.float32, copy=False)
     y, cb, cr = cv2.split(ycbcr)
+    y, cb, cr = _finite32(y), _finite32(cb), _finite32(cr)
     y_orig = y.copy()
     cb_orig = cb.copy()
     cr_orig = cr.copy()
@@ -2538,33 +2567,37 @@ def light_denoise(img, its, col):
     chr_strength = float(np.clip(col * 0.01, 0.0, 1.0))
     lum_curve = lum_strength ** 1.8
     chr_curve = chr_strength ** 1.9
+    # スライダー100相当の抑圧力を調整前比1.5倍（NaN対策後の弱さの補正）
+    _dn_gain = 1.5
 
     # Precompute edge map for edge/detail protection.
     y_for_edge = np.sqrt(np.maximum(y, 0.0)).astype(np.float32, copy=False)
     gx = cv2.Sobel(y_for_edge, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(y_for_edge, cv2.CV_32F, 0, 1, ksize=3)
     edge_mag = cv2.magnitude(gx, gy)
+    edge_mag = np.nan_to_num(edge_mag, nan=0.0, posinf=1e30, neginf=0.0)
     edge_ref = float(np.percentile(edge_mag, 85.0)) + 1e-6
     edge_mask = np.exp(-((edge_mag / edge_ref) ** 2)).astype(np.float32, copy=False)
 
     # ----- Phase 1 & 3: luminance denoise with soft blend + detail protection -----
     if lum_strength > 0.0:
         lum_sigma = _noise_sigma_estimate(y_for_edge)
-        radius_y = max(1, int(round(1.0 + 6.0 * (lum_curve ** 0.8))))
-        eps_y = float((lum_sigma * (1.15 + 2.4 * lum_curve)) ** 2)
+        radius_y = max(1, int(round(1.0 + 6.0 * (lum_curve ** 0.8) * _dn_gain)))
+        eps_y = max(float((lum_sigma * (1.15 + 2.4 * lum_curve * _dn_gain)) ** 2), 1e-12)
 
-        sigma_guide = 0.35 + 0.75 * lum_curve
+        sigma_guide = min(4.0, 0.35 + 0.75 * lum_curve * _dn_gain)
         guide_y = cv2.GaussianBlur(y_for_edge, (0, 0), sigma_guide)
         y_filtered = _safe_guided_filter(guide_y, y_for_edge, radius_y, eps_y)
         y_filtered = np.maximum(y_filtered, 0.0) ** 2
 
         # Strength blend is reduced on edges so small details survive.
-        alpha_y = (0.08 + 0.82 * lum_curve) * edge_mask
+        alpha_y = np.minimum(1.0, (0.08 + 0.82 * lum_curve) * _dn_gain) * edge_mask
         y = y + (y_filtered - y) * alpha_y
 
         # Mild detail compensation to avoid "plastic" flat look.
+        lum_f = float(np.minimum(1.0, lum_curve * _dn_gain))
         detail_residual = y_orig - y
-        detail_gain = (0.18 * (1.0 - lum_curve) + 0.07) * (1.0 - edge_mask * 0.7)
+        detail_gain = (0.18 * (1.0 - lum_f) + 0.07) * (1.0 - edge_mask * 0.7)
         y += detail_residual * detail_gain
 
     # ----- Phase 2 & 4: chroma denoise, neutral protection, drift correction, faster path -----
@@ -2572,13 +2605,13 @@ def light_denoise(img, its, col):
         sigma_cb = _noise_sigma_estimate(cb)
         sigma_cr = _noise_sigma_estimate(cr)
 
-        radius_c = max(1, int(round(1.0 + 10.0 * (chr_curve ** 0.85))))
-        eps_cb = float((sigma_cb * (2.0 + 4.2 * chr_curve)) ** 2)
-        eps_cr = float((sigma_cr * (1.8 + 3.4 * chr_curve)) ** 2)
+        radius_c = max(1, int(round(1.0 + 10.0 * (chr_curve ** 0.85) * _dn_gain)))
+        eps_cb = max(float((sigma_cb * (2.0 + 4.2 * chr_curve * _dn_gain)) ** 2), 1e-12)
+        eps_cr = max(float((sigma_cr * (1.8 + 3.4 * chr_curve * _dn_gain)) ** 2), 1e-12)
 
         y_guide = y.astype(np.float32, copy=False)
         if lum_strength <= 1e-6:
-            y_guide = cv2.GaussianBlur(y_guide, (0, 0), 0.45 + 0.75 * chr_curve)
+            y_guide = cv2.GaussianBlur(y_guide, (0, 0), min(4.0, 0.45 + 0.75 * chr_curve * _dn_gain))
 
         h, w = y.shape[:2]
         use_half_res = (h * w >= 700 * 700) and (radius_c >= 3)
@@ -2597,28 +2630,43 @@ def light_denoise(img, its, col):
 
             cb_filtered = cv2.resize(cb_half_f, (w, h), interpolation=cv2.INTER_LINEAR)
             cr_filtered = cv2.resize(cr_half_f, (w, h), interpolation=cv2.INTER_LINEAR)
+            cb_filtered = _finite32(cb_filtered)
+            cr_filtered = _finite32(cr_filtered)
         else:
             cb_filtered, _ = _filter_cr_cb_with_shared_model(y_guide, cb, cb, radius_c, eps_cb)
             cr_filtered, _ = _filter_cr_cb_with_shared_model(y_guide, cr, cr, radius_c, eps_cr)
 
+        cb_filtered = _finite32(cb_filtered)
+        cr_filtered = _finite32(cr_filtered)
+
         # Neutral-color preservation: reduce chroma denoise around low-saturation pixels.
-        chroma = np.sqrt(cb_orig * cb_orig + cr_orig * cr_orig)
-        rel_sat = chroma / (np.maximum(y_orig, 0.0) + 1e-4)
+        chroma = np.sqrt(np.maximum(cb_orig * cb_orig + cr_orig * cr_orig, 0.0))
+        y_safe = np.maximum(y_orig, 0.0)
+        rel_sat = chroma / np.maximum(y_safe, 1e-4)
+        rel_sat = np.clip(rel_sat, 0.0, 80.0)
         neutral_mask = np.exp(-rel_sat * 7.5).astype(np.float32, copy=False)  # near-gray -> 1.0
 
-        alpha_c_base = 0.06 + 0.88 * chr_curve
+        alpha_c_base = np.minimum(1.0, (0.06 + 0.88 * chr_curve) * _dn_gain)
         alpha_cb = alpha_c_base * (1.0 - 0.55 * neutral_mask)
         alpha_cr = (alpha_c_base * 0.88) * (1.0 - 0.65 * neutral_mask)
         cb = cb + (cb_filtered - cb) * alpha_cb
         cr = cr + (cr_filtered - cr) * alpha_cr
+        cb, cr = _finite32(cb), _finite32(cr)
 
         # Drift correction: preserve global chroma means to avoid color cast (e.g. reddish tint).
-        cb += float(np.mean(cb_orig) - np.mean(cb))
-        cr += float(np.mean(cr_orig) - np.mean(cr))
+        mcb_o, mcb = float(np.nanmean(cb_orig)), float(np.nanmean(cb))
+        mcr_o, mcr = float(np.nanmean(cr_orig)), float(np.nanmean(cr))
+        if np.isfinite(mcb_o) and np.isfinite(mcb):
+            cb += mcb_o - mcb
+        if np.isfinite(mcr_o) and np.isfinite(mcr):
+            cr += mcr_o - mcr
+        cb, cr = _finite32(cb), _finite32(cr)
 
     # Channel merge
+    y = _finite32(y)
     filtered_ycbcr = cv2.merge((y, cb, cr))
-    return hlsrgb.linear_ycbcr_to_rgb(filtered_ycbcr)
+    out = hlsrgb.linear_ycbcr_to_rgb(filtered_ycbcr)
+    return _finite32(out)
 
 
 def evaluate_light_denoise_metrics(rgb_before, rgb_after):

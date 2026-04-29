@@ -1047,6 +1047,14 @@ if __name__ == '__main__':
                         self.primary_param['exif_data'] = param['exif_data']
                     self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
                     self.primary_param['auto_exposure'] = param['auto_exposure']
+                    # プレビュー段階で入った original_img_size / crop / disp_info のままだと
+                    # フル解像バッファとずれて crop_image が空領域になり黒画面になる
+                    for _k in ('original_img_size', 'img_size', 'crop_rect', 'disp_info'):
+                        if _k in param:
+                            self.primary_param[_k] = param[_k]
+                    self.ids['mask_editor2'].set_primary_param(
+                        self.primary_param, params.get_disp_info(self.primary_param)
+                    )
 
                 self.imgset = imgset
 
