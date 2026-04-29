@@ -296,7 +296,7 @@ class ImageSet:
             if config.get_config('raw_auto_exposure') == True:
                 
                 Ev, _ = core.calc_ev_from_image(core.normalize_image(img_array))
-                Ev *= 0.75
+                #Ev *= 0.75
                 
                 # ここで補正
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")

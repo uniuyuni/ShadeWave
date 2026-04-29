@@ -1,11 +1,10 @@
 """
-Advanced Chromatic Aberration and Purple Fringe Removal - v2.2 ULTRA FAST
+Advanced Chromatic Aberration and Purple Fringe Removal - v2.3
 
-Major improvements:
-1. MASSIVE speed optimization (3-5x faster)
-2. Extended value range support (values > 1.0 allowed, will be clipped)
-3. Simplified operations for speed
-4. Minimal memory allocation
+Failure-aware improvements:
+1. Limit correction to edge-polarity-consistent fringe regions
+2. Protect broad genuine-purple objects (flowers/signs/fabrics)
+3. Replace hard channel swapping with gradual chroma attenuation
 """
 
 import numpy as np
@@ -46,7 +45,7 @@ class FringeRemoverFast:
         self.min_saturation = min_saturation
         self.fringe_width = np.clip(fringe_width, 1, 100)  # Extended range
     
-    def remove_fringe(self, image: np.ndarray) -> np.ndarray:
+    def remove_fringe(self, image: np.ndarray, roi_mask: np.ndarray = None) -> np.ndarray:
         """
         Remove chromatic aberration - ULTRA FAST version.
         """
@@ -65,9 +64,9 @@ class FringeRemoverFast:
             result = self._correct_lateral_ca_fast(result)
         
         # Axial chromatic aberration (fringe) removal - OPTIMIZED
-        result = self._remove_axial_ca_fast(result)
+        result = self._remove_axial_ca_fast(result, roi_mask=roi_mask)
         
-        # Final clip to [0, 1]
+        # Keep HDR headroom (no final clipping).
         return result
     
     def _correct_lateral_ca_fast(self, image: np.ndarray) -> np.ndarray:
@@ -77,149 +76,125 @@ class FringeRemoverFast:
         # Skip if effect is minimal
         return image  # Lateral correction has minimal effect, skip for speed
     
-    def _remove_axial_ca_fast(self, image: np.ndarray) -> np.ndarray:
+    def _remove_axial_ca_fast(self, image: np.ndarray, roi_mask: np.ndarray = None) -> np.ndarray:
         """
-        Ultra-fast axial chromatic aberration removal.
-        
-        Optimizations:
-        - Vectorized edge detection using simple gradient
-        - Fast binary dilation using maximum_filter
-        - Minimal HSV conversion (only where needed)
-        - In-place operations where possible
+        Failure-aware axial chromatic aberration removal.
+
+        Baseline failure categories addressed:
+        - False positive desaturation on non-fringe colors
+        - Missed correction on weak/wide purple fringes
+        - Over-correction on genuine broad purple objects
         """
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
-        # Shared HSV components to avoid recompute
         maxc = np.maximum(np.maximum(r, g), b)
         minc = np.minimum(np.minimum(r, g), b)
         deltac = maxc - minc
         s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
-        
-        # Fast edge detection using simple gradient
         luminance = 0.299 * r + 0.587 * g + 0.114 * b
-        edges = self._detect_edges_fast(luminance)
-        
-        # Create masks - OPTIMIZED
+        edge_info = self._compute_edge_features(luminance)
+
         if self.purple_amount > 0:
-            purple_mask = self._create_purple_mask_fast(image, edges, maxc=maxc, minc=minc, deltac=deltac, s=s)
-            if purple_mask.max() > 0.01:  # Only process if mask is significant
+            purple_mask = self._create_purple_mask_fast(
+                image,
+                edge_info=edge_info,
+                maxc=maxc,
+                minc=minc,
+                deltac=deltac,
+                s=s,
+                roi_mask=roi_mask,
+            )
+            if purple_mask.max() > 0.01:
                 image = self._correct_purple_fringe_fast(image, purple_mask)
-        
+
         if self.green_amount > 0:
-            green_mask = self._create_green_mask_fast(image, edges, maxc=maxc, minc=minc, deltac=deltac, s=s)
+            green_mask = self._create_green_mask_fast(
+                image,
+                edge_info=edge_info,
+                maxc=maxc,
+                minc=minc,
+                deltac=deltac,
+                s=s,
+                roi_mask=roi_mask,
+            )
             if green_mask.max() > 0.01:
                 image = self._correct_green_fringe_fast(image, green_mask)
-        
+
         return image
-    
-    def _detect_edges_fast(self, luminance: np.ndarray) -> np.ndarray:
-        """
-        Ultra-fast edge detection using simple operations.
-        """
-        # Super fast gradient (avoid scipy completely)
+
+    def _adaptive_percentile(self, values: np.ndarray, percentile: float, default: float) -> float:
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return default
+        return float(np.percentile(finite, percentile))
+
+    def _compute_edge_features(self, luminance: np.ndarray) -> dict:
+        # Fast edge estimation (np.diff is cheaper than Sobel).
         grad_y = np.abs(np.diff(luminance, axis=0, prepend=luminance[0:1]))
         grad_x = np.abs(np.diff(luminance, axis=1, prepend=luminance[:, 0:1]))
-        
-        # Simple magnitude
-        gradient = grad_x + grad_y  # L1 norm is faster than L2
-        
-        # Normalize
-        g_max = gradient.max()
-        if g_max > 0:
-            gradient /= g_max
-        
-        # Binary threshold
-        # エッジ検出閾値を緩和（より多くのエッジを検出）
-        edges = (gradient > self.edge_threshold).astype(np.uint8)
-        
-        # Fast dilation
-        if self.fringe_width > 1:
-            # サイズの上限を設定（高速化）
-            size = self.fringe_width * 2 + 1
-            # OpenCV dilate（scipyより2-3倍高速）
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
-            edges = cv2.dilate(edges.astype(np.uint8), kernel).astype(np.float32)
-        
-        return edges.astype(np.float32)
-    
-    def _create_purple_mask_fast(self, image: np.ndarray, edges: np.ndarray,
-                                 maxc: np.ndarray = None,
-                                 minc: np.ndarray = None,
-                                 deltac: np.ndarray = None,
-                                 s: np.ndarray = None) -> np.ndarray:
-        """
-        Fast purple fringe mask creation.
-        """
-        if edges.max() <= 0:
-            return edges.astype(np.float32)
-        r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
-        
-        # Fast HSV conversion (only H and S needed)
-        if maxc is None or minc is None:
-            maxc = np.maximum(np.maximum(r, g), b)
-            minc = np.minimum(np.minimum(r, g), b)
-        
-        # Saturation
-        if deltac is None:
-            deltac = maxc - minc
-        if s is None:
-            s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
-        
-        # Hue (simplified, only compute where needed)
-        h = np.zeros_like(maxc)
-        mask_r = (maxc == r) & (deltac > 1e-6)
-        mask_g = (maxc == g) & (deltac > 1e-6)
-        mask_b = (maxc == b) & (deltac > 1e-6)
-        
+        gradient = grad_x + grad_y
+        grad_norm = gradient / (float(gradient.max()) + 1e-6)
+        grad_norm = np.clip(grad_norm, 0.0, 1.0)
+
+        edge_t = max(self.edge_threshold, self._adaptive_percentile(grad_norm, 86.0, self.edge_threshold))
+        edges = (grad_norm >= edge_t).astype(np.float32)
+
+        radius = max(1, int(min(self.fringe_width, 6)))
+        size = radius * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+        edge_band = cv2.dilate(edges.astype(np.uint8), kernel).astype(np.float32)
+
+        local_max = cv2.dilate(luminance, kernel)
+        local_min = cv2.erode(luminance, kernel)
+        local_contrast = np.maximum(local_max - local_min, 0)
+        contrast_t = self._adaptive_percentile(local_contrast, 75.0, 0.05)
+        contrast_gate = (local_contrast >= max(0.02, contrast_t)).astype(np.float32)
+
+        bright_t = self._adaptive_percentile(luminance, 92.0, 0.7)
+        bright_nearby = (local_max > max(0.5, bright_t)).astype(np.float32)
+
+        # Fringe tends to appear on the darker side of bright-dark transitions.
+        side_delta_t = self._adaptive_percentile(local_contrast[edge_band > 0], 55.0, 0.05)
+        dark_side = (luminance < (local_max - max(0.03, side_delta_t * 0.5))).astype(np.float32)
+
+        return {
+            "edges": edges,
+            "edge_band": edge_band,
+            "contrast": local_contrast,
+            "contrast_gate": contrast_gate,
+            "bright_nearby": bright_nearby,
+            "dark_side": dark_side,
+        }
+
+    def _finalize_mask_strict(self, raw_mask: np.ndarray, edge_band: np.ndarray) -> np.ndarray:
+        # Conservative automatic mode: binary mask, strictly edge-limited.
+        return ((raw_mask > 0.10) & (edge_band > 0)).astype(np.float32)
+
+    def _compute_hue(self, r: np.ndarray, g: np.ndarray, b: np.ndarray, deltac: np.ndarray, maxc: np.ndarray) -> np.ndarray:
+        h = np.zeros_like(maxc, dtype=np.float32)
+        valid = deltac > 1e-6
+        mask_r = (maxc == r) & valid
+        mask_g = (maxc == g) & valid
+        mask_b = (maxc == b) & valid
+
         h[mask_r] = 60 * (((g[mask_r] - b[mask_r]) / (deltac[mask_r] + 1e-10)) % 6)
         h[mask_g] = 60 * (((b[mask_g] - r[mask_g]) / (deltac[mask_g] + 1e-10)) + 2)
         h[mask_b] = 60 * (((r[mask_b] - g[mask_b]) / (deltac[mask_b] + 1e-10)) + 4)
-        h = h % 360
-        
-        # Hue mask
-        if self.purple_hue_lo < self.purple_hue_hi:
-            hue_mask = (h >= self.purple_hue_lo) & (h <= self.purple_hue_hi)
-        else:
-            hue_mask = (h >= self.purple_hue_lo) | (h <= self.purple_hue_hi)
-        
-        # Color profile (vectorized)
-        # color_profile の閾値を緩和（0.05 → 0.01、0.1 → 0.02）
-        color_profile = ((r - g) > 0.01) & ((b - g) > 0.01) & ((r + b) > (2 * g + 0.02))
-        
-        # Saturation and value masks
-        # 彩度: 下限（フリンジ検出）と上限（鮮やかな花を除外）
-        sat_mask = (s > self.min_saturation) & (s < 0.7)
-        # 輝度: 下限を上げて暗い部分（花など）を除外
-        value_mask = (maxc > 0.3)
-        # value_mask = (maxc > 0.1) & (maxc < 0.95) # 上限があると明るいフリンジが消えない
-        
-        # Combine (all vectorized boolean operations)
-        purple_mask = edges * hue_mask * color_profile * sat_mask * value_mask
-        
-        # マスクのブラー処理を強化（マダラ防止）
-        if purple_mask.max() > 0:
-            # fringe_widthに応じて動的調整、より強くブラー
-            blur_sigma = max(1.5, self.fringe_width / 10.0)
-            # OpenCV GaussianBlur（scipyより3-5倍高速）
-            ksize = 2 * int(3 * blur_sigma) + 1
-            ksize = max(3, ksize)  # 最小値3（奇数）
-            purple_mask = cv2.GaussianBlur(purple_mask.astype(np.float32), (ksize, ksize), blur_sigma)
-        
-        # Apply amount and clip
-        return np.clip(purple_mask * self.purple_amount, 0, 1)
-    
-    def _create_green_mask_fast(self, image: np.ndarray, edges: np.ndarray,
-                                maxc: np.ndarray = None,
-                                minc: np.ndarray = None,
-                                deltac: np.ndarray = None,
-                                s: np.ndarray = None) -> np.ndarray:
-        """
-        Fast green fringe mask creation.
-        """
-        if edges.max() <= 0:
-            return edges.astype(np.float32)
+        return h % 360
+
+    def _create_purple_mask_fast(
+        self,
+        image: np.ndarray,
+        edge_info: dict,
+        maxc: np.ndarray = None,
+        minc: np.ndarray = None,
+        deltac: np.ndarray = None,
+        s: np.ndarray = None,
+        roi_mask: np.ndarray = None,
+    ) -> np.ndarray:
+        if edge_info["edge_band"].max() <= 0:
+            return edge_info["edge_band"]
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
-        
-        # Fast HSV (only what's needed)
+
         if maxc is None or minc is None:
             maxc = np.maximum(np.maximum(r, g), b)
             minc = np.minimum(np.minimum(r, g), b)
@@ -227,87 +202,160 @@ class FringeRemoverFast:
             deltac = maxc - minc
         if s is None:
             s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
-        
-        # Hue (only compute for green range)
-        h = np.zeros_like(maxc)
-        mask = (maxc == g) & (deltac > 1e-6)
-        h[mask] = 60 * (((b[mask] - r[mask]) / (deltac[mask] + 1e-10)) + 2)
-        h = h % 360
-        
-        # Masks (all vectorized)
-        hue_mask = (h >= self.green_hue_lo) & (h <= self.green_hue_hi)
-        color_profile = (g > r + 0.05) & (g > b + 0.05)
-        # 彩度: 下限と上限
-        sat_mask = (s > self.min_saturation) & (s < 0.7)
-        # 輝度: 下限を上げる
-        value_mask = (maxc > 0.3)
-        
-        green_mask = edges * hue_mask * color_profile * sat_mask * value_mask
-        
-        # マスクのブラー処理を強化（マダラ防止）
-        if green_mask.max() > 0:
-            blur_sigma = max(1.5, self.fringe_width / 10.0)
-            # OpenCV GaussianBlur（scipyより3-5倍高速）
-            ksize = 2 * int(3 * blur_sigma) + 1
-            ksize = max(3, ksize)  # 最小値3（奇数）
-            green_mask = cv2.GaussianBlur(green_mask.astype(np.float32), (ksize, ksize), blur_sigma)
-        
+
+        h = self._compute_hue(r, g, b, deltac, maxc)
+        if self.purple_hue_lo < self.purple_hue_hi:
+            hue_mask = ((h >= self.purple_hue_lo) & (h <= self.purple_hue_hi)).astype(np.float32)
+        else:
+            hue_mask = ((h >= self.purple_hue_lo) | (h <= self.purple_hue_hi)).astype(np.float32)
+
+        purple_excess = ((r + b) * 0.5) - g
+        edge_pixels = purple_excess[edge_info["edge_band"] > 0]
+        purple_t = max(0.003, self._adaptive_percentile(edge_pixels, 52.0, 0.008))
+        purple_strength = np.clip((purple_excess - purple_t) / (purple_t + 1e-6), 0.0, 1.0)
+        min_rb = np.minimum(r, b)
+        max_rb = np.maximum(r, b)
+        rb_ratio = min_rb / (max_rb + 1e-6)
+
+        # Permissive enough to catch fringe, strict enough to avoid broad color edits.
+        purple_floor = max(0.001, purple_t * 0.10)
+        purple_profile = (((r + b) - (2.0 * g)) > (-1.5 * purple_floor)).astype(np.float32)
+        sky_blue_like = ((h >= 200) & (h <= 248) & (b > g) & (g >= (r * 0.95))).astype(np.float32)
+        sky_flat = (edge_info["contrast"] < 0.18).astype(np.float32)
+        weak_red_support = (rb_ratio < 0.22).astype(np.float32)
+        weak_purple_signal = (purple_excess < (purple_t * 1.2)).astype(np.float32)
+        sky_protect = sky_blue_like * np.maximum(sky_flat, weak_red_support) * weak_purple_signal
+
+        sat_mask = (s > max(self.min_saturation, 0.06)).astype(np.float32)
+        value_mask = (maxc > 0.06).astype(np.float32)
+        highlight_gate = 1.0 - ((s < 0.08) & (maxc > 0.85)).astype(np.float32) * 0.30
+        roi_gate = 1.0 if roi_mask is None else (roi_mask > 0).astype(np.float32)
+
+        raw_purple_mask = (
+            edge_info["edge_band"]
+            * edge_info["edges"]
+            * edge_info["contrast_gate"]
+            * edge_info["bright_nearby"]
+            * edge_info["dark_side"]
+            * hue_mask
+            * purple_profile
+            * sat_mask
+            * value_mask
+            * highlight_gate
+            * purple_strength
+            * (1.0 - sky_protect)
+            * roi_gate
+        )
+        purple_mask = self._finalize_mask_strict(raw_purple_mask, edge_info["edge_band"])
+        return np.clip(purple_mask * self.purple_amount, 0, 1)
+
+    def _create_green_mask_fast(
+        self,
+        image: np.ndarray,
+        edge_info: dict,
+        maxc: np.ndarray = None,
+        minc: np.ndarray = None,
+        deltac: np.ndarray = None,
+        s: np.ndarray = None,
+        roi_mask: np.ndarray = None,
+    ) -> np.ndarray:
+        if edge_info["edge_band"].max() <= 0:
+            return edge_info["edge_band"]
+        r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
+
+        if maxc is None or minc is None:
+            maxc = np.maximum(np.maximum(r, g), b)
+            minc = np.minimum(np.minimum(r, g), b)
+        if deltac is None:
+            deltac = maxc - minc
+        if s is None:
+            s = np.where(maxc > 1e-6, deltac / (maxc + 1e-10), 0)
+
+        h = self._compute_hue(r, g, b, deltac, maxc)
+        hue_mask = ((h >= self.green_hue_lo) & (h <= self.green_hue_hi)).astype(np.float32)
+        green_excess = g - ((r + b) * 0.5)
+        edge_pixels = green_excess[edge_info["edge_band"] > 0]
+        green_t = max(0.010, self._adaptive_percentile(edge_pixels, 76.0, 0.018))
+        green_strength = np.clip((green_excess - green_t) / (green_t + 1e-6), 0.0, 1.0)
+
+        sat_mask = (s > max(self.min_saturation, 0.08)).astype(np.float32)
+        value_mask = (maxc > 0.08).astype(np.float32)
+        # Keep green correction conservative in bright regions to avoid green/yellow cast.
+        highlight_protect = np.clip((maxc - 0.82) / 0.20, 0.0, 1.0)
+        neutral_highlight = ((s < 0.24) & (maxc > 0.70)).astype(np.float32)
+        highlight_gate = 1.0 - np.maximum(highlight_protect * 0.95, neutral_highlight * 0.95)
+        roi_gate = 1.0 if roi_mask is None else (roi_mask > 0).astype(np.float32)
+
+        raw_green_mask = (
+            edge_info["edge_band"]
+            * edge_info["edges"]
+            * edge_info["contrast_gate"]
+            * edge_info["bright_nearby"]
+            * edge_info["dark_side"]
+            * hue_mask
+            * sat_mask
+            * value_mask
+            * highlight_gate
+            * green_strength
+            * roi_gate
+        )
+        green_mask = self._finalize_mask_strict(raw_green_mask, edge_info["edge_band"])
         return np.clip(green_mask * self.green_amount, 0, 1)
-    
+
+    def _smooth_strength(self, mask: np.ndarray) -> np.ndarray:
+        mask = np.clip(mask, 0.0, 1.0)
+        return mask * mask * (3.0 - 2.0 * mask)
+
     def _correct_purple_fringe_fast(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """
-        Fast purple fringe correction.
-        """
-        # Only process where mask is significant
         if mask.max() < 0.01:
             return image
-        
-        # In-place correction for speed
+
+        strength = self._smooth_strength(mask)
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
-        
-        # Calculate luminance
-        luminance = 0.299 * r + 0.587 * g + 0.114 * b
-        
-        # Vectorized correction
-        inv_mask = 1 - mask
-        image[:, :, 0] = r * inv_mask + g * mask
-        image[:, :, 2] = b * inv_mask + g * mask
-        
-        # Preserve luminance (vectorized)
-        new_luminance = 0.299 * image[:, :, 0] + 0.587 * image[:, :, 1] + 0.114 * image[:, :, 2]
-        ratio = np.where(new_luminance > 1e-6, luminance / (new_luminance + 1e-6), 1.0)
-        ratio = np.clip(ratio, 0.5, 1.5)
-        
-        image[:, :, 0] *= ratio
-        image[:, :, 2] *= ratio
-        
-        return image
-    
+        old_maxc = np.maximum(np.maximum(r, g), b)
+        old_b = b.copy()
+
+        r_excess = np.maximum(0.0, r - g)
+        b_excess = np.maximum(0.0, b - g)
+
+        # Reduce shared magenta component only where mask says fringe.
+        common_excess = np.minimum(r_excess, b_excess)
+        highlight_relief = np.clip((old_maxc - 0.75) / 0.30, 0.0, 1.0)
+        eff_strength = strength * (1.0 - 0.65 * highlight_relief)
+        delta_common = common_excess * eff_strength
+
+        # Small residual asymmetric correction for stubborn fringes.
+        residual_r = np.maximum(0.0, r_excess - common_excess)
+        residual_b = np.maximum(0.0, b_excess - common_excess)
+        image[:, :, 0] = r - delta_common - (residual_r * eff_strength * 0.20)
+        image[:, :, 2] = b - delta_common - (residual_b * eff_strength * 0.20)
+
+        # Prevent over-reduction of blue around highlights (yellow cast guard).
+        blue_floor = old_b * (1.0 - 0.40 * eff_strength)
+        image[:, :, 2] = np.maximum(image[:, :, 2], blue_floor)
+
+        # Residual anti-green guard around bright corrected areas.
+        maxc_new = np.maximum(np.maximum(image[:, :, 0], image[:, :, 1]), image[:, :, 2])
+        minc_new = np.minimum(np.minimum(image[:, :, 0], image[:, :, 1]), image[:, :, 2])
+        sat_like = (maxc_new - minc_new) / (maxc_new + 1e-6)
+        bright_band = np.clip((maxc_new - 0.55) / 0.35, 0.0, 1.0)
+        cast_guard = strength * bright_band * (1.0 - np.clip((sat_like - 0.08) / 0.22, 0.0, 1.0))
+        rb_mean = 0.5 * (image[:, :, 0] + image[:, :, 2])
+        g_excess = np.maximum(0.0, image[:, :, 1] - (rb_mean + 1e-4))
+        image[:, :, 1] -= g_excess * cast_guard * 0.95
+        return np.clip(image, 0, None)
+
     def _correct_green_fringe_fast(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """
-        Fast green fringe correction.
-        """
         if mask.max() < 0.01:
             return image
-        
+
+        strength = self._smooth_strength(mask)
         r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
-        
-        luminance = 0.299 * r + 0.587 * g + 0.114 * b
-        rb_avg = (r + b) * 0.5
-        target_g = np.maximum(rb_avg, np.maximum(r, b))
-        
-        # Vectorized correction
-        inv_mask = 1 - mask
-        image[:, :, 1] = g * inv_mask + target_g * mask
-        
-        # Preserve luminance
-        new_luminance = 0.299 * image[:, :, 0] + 0.587 * image[:, :, 1] + 0.114 * image[:, :, 2]
-        ratio = np.where(new_luminance > 1e-6, luminance / (new_luminance + 1e-6), 1.0)
-        ratio = np.clip(ratio, 0.5, 1.5)
-        
-        image[:, :, 1] *= ratio
-        
-        return image
+
+        g_ref = np.maximum(r, b)
+        g_excess = np.maximum(0.0, g - g_ref)
+        image[:, :, 1] = g - (g_excess * strength)
+        return np.clip(image, 0, None)
 
 
 def remove_chromatic_aberration(image: np.ndarray,
@@ -316,7 +364,8 @@ def remove_chromatic_aberration(image: np.ndarray,
                                 lateral_correction: bool = False,
                                 edge_threshold: float = 0.10,
                                 min_saturation: float = 0.30,
-                                fringe_width: int = 4) -> np.ndarray:
+                                fringe_width: int = 4,
+                                roi_mask: np.ndarray = None) -> np.ndarray:
     """
     Remove chromatic aberration and fringing from an image.
     v2.2 ULTRA FAST - 5-10x faster than v2.1!
@@ -360,7 +409,7 @@ def remove_chromatic_aberration(image: np.ndarray,
         fringe_width=fringe_width
     )
     
-    return remover.remove_fringe(image)
+    return remover.remove_fringe(image, roi_mask=roi_mask)
 
 
 def remove_chromatic_aberration_advanced(image: np.ndarray,
@@ -371,7 +420,8 @@ def remove_chromatic_aberration_advanced(image: np.ndarray,
                                         lateral_correction: bool = False,
                                         edge_threshold: float = 0.10,
                                         min_saturation: float = 0.30,
-                                        fringe_width: int = 4) -> np.ndarray:
+                                        fringe_width: int = 4,
+                                        roi_mask: np.ndarray = None) -> np.ndarray:
     """
     Advanced version with custom hue range control - ULTRA FAST.
     """
@@ -388,7 +438,7 @@ def remove_chromatic_aberration_advanced(image: np.ndarray,
         fringe_width=fringe_width
     )
     
-    return remover.remove_fringe(image)
+    return remover.remove_fringe(image, roi_mask=roi_mask)
 
 
 if __name__ == "__main__":
