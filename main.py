@@ -941,13 +941,12 @@ if __name__ == '__main__':
 
             if card is not None:
                 self._expected_file_path = card.file_path
+                self._clear_exif_data()
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
-                exif_data, _ = self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
-
-                # とりあえずEXIF表示（imgset 未設定でもパスを渡し XMP 星の追読を可能にする）
-                self._set_exif_data(exif_data, file_path=card.file_path)
+                self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
             else:
                 self._expected_file_path = None
+                self._clear_exif_data()
                 # カードなし（フォルダ空など）— get_file が呼ばれず loading が解除されないのを防ぐ
                 self.loading = False
                 self._actively_loading = False
@@ -1074,6 +1073,12 @@ if __name__ == '__main__':
 
                 effects.reeffect_all(self.primary_effects)
                 self.start_draw_image_and_crop(imgset)
+            if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE) or (
+                stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw'
+            ):
+                display_exif = self.primary_param.get("exif_data", exif_data)
+                if isinstance(display_exif, dict) and display_exif:
+                    self._set_exif_data(display_exif, file_path=file_path)
             self._sync_exif_rating_row()
 
         def on_image_touch_down(self, touch):
@@ -1473,6 +1478,31 @@ if __name__ == '__main__':
             for _key, data in CoatingSimulator().presets.items():
                 presets.append(data['name'])
             self.ids['spinner_coating_preset'].values = presets
+
+        def _clear_exif_data(self):
+            for exif_id in (
+                'exif_file_name',
+                'exif_file_size',
+                'exif_create_date',
+                'exif_image_size',
+                'exif_iso_speed',
+                'exif_aperture',
+                'exif_shutter_speed',
+                'exif_exposure_compensation',
+                'exif_flash',
+                'exif_white_balance',
+                'exif_focal_length',
+                'exif_exposure_program',
+                'exif_make',
+                'exif_model',
+                'exif_lens_model',
+                'exif_software',
+            ):
+                self.ids[exif_id].value = '-'
+
+            row = self.ids.get("exif_rating_row", None)
+            if row is not None:
+                row.rating = 0
 
         def _set_exif_data(self, exif_data, file_path=None):
             fp = file_path or (self.imgset.file_path if self.imgset is not None else None)
