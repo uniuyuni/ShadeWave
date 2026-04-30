@@ -27,7 +27,8 @@ def init_config(widget):
         'cat': "cat16",
         'base_resolution_scale': [4096, 4096],
         'display_output_dither': False,
-        'display_output_downscale': True
+        'display_output_downscale': True,
+        'debug_nan_inf_check': False
     })
     _preview_texture_size = (_config['preview_size'], _config['preview_size'])
 

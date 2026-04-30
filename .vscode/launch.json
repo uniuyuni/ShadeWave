@@ -41,6 +41,64 @@
             }
         },
         {
+            "name": "Platypus: main.py (pipeline計測)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
+            "pythonArgs": ["-X", "frozen_modules=off"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true,
+            "env": {
+                "PATH": "${workspaceFolder}/.pixi/envs/default/bin:${env:PATH}",
+                "CONDA_PREFIX": "${workspaceFolder}/.pixi/envs/default",
+                "CONDA_DEFAULT_ENV": "platypus",
+                "PIXI_PROJECT_ROOT": "${workspaceFolder}",
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}",
+                "LIBRAW_LOCAL_PREFIX": "${workspaceFolder}/third_party/libraw-install",
+                "PKG_CONFIG_PATH": "${workspaceFolder}/third_party/libraw-install/lib/pkgconfig:${env:PKG_CONFIG_PATH}",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1",
+                "OMP_DISPLAY_ENV": "FALSE",
+                "KMP_WARNINGS": "0",
+                "LIBOMP_VERBOSE": "0",
+                "ENABLE_PJRT_COMPATIBILITY": "1",
+                "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
+                "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+                "PYTORCH_MPS_FAST_MATH": "1",
+                "KMP_DUPLICATE_LIB_OK": "FALSE",
+                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
+                "PLATYPUS_PIPELINE_TIMING": "1",
+                "PLATYPUS_PIPELINE_TIMING_EVERY": "1"
+            }
+        },
+        {
+            "name": "Platypus: main.py (デバッグ + py-spy プロファイル)",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 5678
+            },
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "subProcess": true,
+            "preLaunchTask": "platypus: py-spy launch (main.py + debugpy)"
+        },
+        {
+            "name": "Platypus: main.py (py-spyのみ / no debugpy)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "/bin/bash \"${workspaceFolder}/scripts/run_pyspy_profile_main.sh\""
+        },
+        {
+            "name": "Platypus: main.py (py-spy定常区間 P0: warmup+duration)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "/bin/bash \"${workspaceFolder}/scripts/run_pyspy_profile_main_steady.sh\""
+        },
+        {
             "name": "Platypus: main.py (デバッグコンソール)",
             "type": "debugpy",
             "request": "launch",
