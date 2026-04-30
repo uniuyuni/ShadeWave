@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 
 import cores.core as core
+import cores.hlsrgb as hlsrgb
 
 def apply_clarity(rgb_image, clarity_amount):
     """
@@ -184,25 +185,21 @@ def apply_microcontrast(image, strength):
     # 強度を正規化 (-1.0 to 1.0)
     normalized_strength = strength
     
-    # RGB→LAB変換（明度のみ処理）
-    # HDR値（>1.0）がクリップされるのを防ぐため、最大値で正規化する
-    max_val = max(1.0, float(np.max(image)))
-    normalized_image = image / max_val
-    
-    lab = cv2.cvtColor(normalized_image, cv2.COLOR_RGB2LAB)
-    L = lab[..., 0] / 100.0  # 0-1範囲に正規化
-    
+    # HDR対応の線形YCbCr空間で輝度(Y)のみを処理する。
+    # グローバル正規化を行わないため、極端なハイライトに引っ張られにくい。
+    image_f32 = image.astype(np.float32, copy=False)
+    ycbcr = hlsrgb.linear_rgb_to_ycbcr(image_f32)
+    y_channel = ycbcr[..., 0]
+
     # 多段階ガイドフィルタによる局所適応処理
-    enhanced_L = _multi_scale_local_contrast(L, normalized_strength)
-    
-    # LAB→RGB変換
-    lab[..., 0] = enhanced_L * 100.0
-    result = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-    
-    # HDR値を復元
-    result = result * max_val
-    
-    return result
+    enhanced_y = _multi_scale_local_contrast(y_channel, normalized_strength)
+
+    # 色差は維持しつつ輝度のみ更新してRGBへ戻す
+    result_ycbcr = ycbcr.copy()
+    result_ycbcr[..., 0] = enhanced_y
+    result = hlsrgb.linear_ycbcr_to_rgb(result_ycbcr)
+
+    return result.astype(np.float32, copy=False)
 
 def _multi_scale_local_contrast(luminance, strength):
     """
