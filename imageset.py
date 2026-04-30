@@ -127,6 +127,27 @@ class ImageSet:
         params.set_temperature_to_param(param, *core.invert_RGB2TempTint(wb))
         return img_array
 
+    def _override_exif_size_from_raw_geometry(self, raw, exif_data, half_size=False):
+        """
+        LibRaw側の最終出力ジオメトリで EXIF サイズ情報を補正する。
+        まずは Fuji honeycomb のようなセンサー固有変換に対応。
+        """
+        try:
+            geometry = raw.get_output_geometry(half_size=half_size)
+            if not geometry.get("is_fuji_rotated_output", False):
+                return
+
+            width = int(geometry.get("width", 0))
+            height = int(geometry.get("height", 0))
+            if width <= 0 or height <= 0:
+                return
+
+            top, left, _, _ = core.get_exif_image_size(exif_data)
+            core.set_exif_image_size(exif_data, top, left, width, height)
+            logging.info(f"EXIF size overridden by raw geometry: {width}x{height}")
+        except Exception as e:
+            logging.warning(f"Failed to override EXIF size from raw geometry: {e}")
+
     def _delete_exif_orientation(self, exif_data):
         top, left, width, height = core.get_exif_image_size_with_orientation(exif_data)
         core.set_exif_image_size(exif_data, top, left, width, height)
@@ -139,6 +160,19 @@ class ImageSet:
     def _load_raw_preview(self, raw, file_path, exif_data, param):
         t0 = time.perf_counter()
         try:
+            # Fuji honeycomb などセンサー固有ジオメトリをプレビューにも反映
+            # （後段は既存の EXIF サイズベース処理をそのまま利用）
+            if raw is not None:
+                self._override_exif_size_from_raw_geometry(raw, exif_data, half_size=False)
+            else:
+                try:
+                    with lre.imread(file_path) as raw_for_geometry:
+                        self._override_exif_size_from_raw_geometry(
+                            raw_for_geometry, exif_data, half_size=False
+                        )
+                except Exception as e:
+                    logging.warning(f"Failed to load raw for preview geometry: {e}")
+
             # exifのプレビューを展開
             preview_base64 = exif_data.get('PreviewImage', None)
             if preview_base64 is not None:
@@ -209,6 +243,7 @@ class ImageSet:
         raw = None
         try:
             raw = lre.imread(file_path)
+            self._override_exif_size_from_raw_geometry(raw, exif_data, half_size=False)
 
             # AI demosaicフラグ
             ai_demosaic = config.get_config('ai_demosaic')
