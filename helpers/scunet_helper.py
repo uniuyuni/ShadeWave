@@ -127,7 +127,14 @@ def predict_scunet_helper(model, np_image):
 
     logging.info("SCUNet Finalizing...")
     waitinfo.set_text("ai_noise_reduction", "Finalizing...")
-    result = aiutils.apply_low_frequency_transfer(result, org_image, sigma=75)
+    result = aiutils.apply_low_frequency_transfer(
+        result,
+        org_image,
+        sigma=75,
+        highlight_threshold=0.70,
+        highlight_transition=0.40,
+        highlight_detail_strength=0.20,
+    )
 
     logging.info(f"SCUNet Completed. {time.time() - t1:.2f} seconds")
     waitinfo.set_text("ai_noise_reduction", "")

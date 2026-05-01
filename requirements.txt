@@ -51,3 +51,4 @@ torchvision
 tqdm
 watchfiles
 wheel
+zstandard

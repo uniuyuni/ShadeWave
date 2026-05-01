@@ -1,17 +1,18 @@
 
-from importlib.machinery import BYTECODE_SUFFIXES
 import math
 import cv2
 import numpy as np
 import json
 import logging
-import numpy as np
-import pyvips
+import zstandard as zstd
 
 import tempfile
 import io
 from contextlib import redirect_stdout, redirect_stderr
 import time
+
+_IMAGE_SERIALIZE_VERSION = 1
+_IMAGE_ZSTD_LEVEL = 3
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -153,20 +154,54 @@ def print_nan_inf(img, label=""):
     if nan_count > 0 or inf_count > 0:
         logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
 
+def _byte_shuffle_array(arr: np.ndarray) -> tuple[bytes, str]:
+    itemsize = arr.dtype.itemsize
+    if itemsize <= 1:
+        return arr.tobytes(), "none"
+
+    byte_view = arr.view(np.uint8).reshape(-1, itemsize)
+    return byte_view.T.ravel().tobytes(), "byte"
+
+
+def _byte_unshuffle_array(raw: bytes, dtype: np.dtype, shape) -> np.ndarray:
+    itemsize = dtype.itemsize
+    if itemsize <= 1:
+        return np.frombuffer(raw, dtype=dtype).reshape(shape).copy()
+
+    shuffled = np.frombuffer(raw, dtype=np.uint8).reshape(itemsize, -1)
+    unshuffled = shuffled.T.copy().reshape(-1)
+    return unshuffled.view(dtype).reshape(shape).copy()
+
+
 def convert_image_to_list(img):
+    arr = np.ascontiguousarray(img)
+    raw, shuffle = _byte_shuffle_array(arr)
+    buffer = zstd.ZstdCompressor(level=_IMAGE_ZSTD_LEVEL).compress(raw)
 
-    # データ読み込み
-    vips = pyvips.Image.new_from_array(img)
-    buffer = vips.write_to_buffer('.tiff', compression="zstd", level=22)
+    return {
+        "version": _IMAGE_SERIALIZE_VERSION,
+        "codec": "zstd",
+        "level": _IMAGE_ZSTD_LEVEL,
+        "shuffle": shuffle,
+        "shape": arr.shape,
+        "dtype": str(arr.dtype),
+        "data": buffer,
+    }
 
-    return (buffer, img.shape)
 
 def convert_image_from_list(save_data):
-    # データを復元
-    list_buffer, shape = save_data
-    img = pyvips.Image.new_from_buffer(list_buffer, "").numpy()
+    if save_data.get("version") != _IMAGE_SERIALIZE_VERSION:
+        raise ValueError(f"Unsupported image serialization version: {save_data.get('version')}")
+    if save_data.get("codec") != "zstd":
+        raise ValueError(f"Unsupported image serialization codec: {save_data.get('codec')}")
 
-    return img
+    dtype = np.dtype(save_data["dtype"])
+    shape = tuple(save_data["shape"])
+    raw = zstd.ZstdDecompressor().decompress(save_data["data"])
+
+    if save_data.get("shuffle") == "byte":
+        return _byte_unshuffle_array(raw, dtype, shape)
+    return np.frombuffer(raw, dtype=dtype).reshape(shape).copy()
 
 def pack_uint8_to_uint32(uint8_arr):
     """

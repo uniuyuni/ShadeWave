@@ -192,7 +192,14 @@ def print_model_structure(model, indent=0):
             print_model_structure(module, indent + 1)
 
 
-def apply_low_frequency_transfer(restored_img, reference_img, sigma=30):
+def apply_low_frequency_transfer(
+    restored_img,
+    reference_img,
+    sigma=30,
+    highlight_threshold=None,
+    highlight_transition=0.35,
+    highlight_detail_strength=0.25,
+):
     """
     復元画像（restored_img）の高周波成分（ディテール）と、
     参照画像（reference_img）の低周波成分（色・明るさ）を合成します。
@@ -208,6 +215,9 @@ def apply_low_frequency_transfer(restored_img, reference_img, sigma=30):
                      値が大きいほど「広い範囲の色」を参照し、
                      値が小さいほど「細かい模様」まで参照画像からコピーします。
                      通常は 20〜100 程度で調整します。
+        highlight_threshold (float | None): 指定時、参照画像の明部ほどAI由来の高周波を弱めます。
+        highlight_transition (float): 明部保護マスクが最大になるまでの幅。
+        highlight_detail_strength (float): 明部で残すAI高周波の割合。
 
     Returns:
         numpy.ndarray: 色補正された画像
@@ -231,6 +241,19 @@ def apply_low_frequency_transfer(restored_img, reference_img, sigma=30):
     # 4. 高周波成分（ディテール）を抽出
     # 復元画像 - その低周波 = 復元されたテクスチャやエッジのみの情報
     high_freq_restored = restored_float - low_freq_restored
+
+    if highlight_threshold is not None:
+        if reference_float.ndim == 2:
+            luminance = reference_float
+            mask = np.clip((luminance - highlight_threshold) / highlight_transition, 0.0, 1.0)
+            mask = mask * mask * (3.0 - 2.0 * mask)
+            detail_scale = 1.0 - mask * (1.0 - highlight_detail_strength)
+        else:
+            luminance = np.max(reference_float, axis=2)
+            mask = np.clip((luminance - highlight_threshold) / highlight_transition, 0.0, 1.0)
+            mask = mask * mask * (3.0 - 2.0 * mask)
+            detail_scale = 1.0 - mask[..., np.newaxis] * (1.0 - highlight_detail_strength)
+        high_freq_restored = high_freq_restored * detail_scale
 
     # 5. 合成（低周波転送）
     # 参照画像の低周波（正しい色） + 復元画像の高周波（高精細なディテール）
