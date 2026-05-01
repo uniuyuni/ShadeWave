@@ -3478,10 +3478,12 @@ class Mask2Effect(Effect):
         return param.get(key, Mask2Effect.get_param_dict(param)[key])
 
     @staticmethod
-    def get_param_dict(param):
-        return {
+    def get_param_dict(param, subname=None):
+        param_dict = {
             'switch_mask2_settings': True,
             'mask2_invert': False,
+            'mask2_allow_over_one': False,
+            'mask2_allow_under_zero': False,
             'switch_mask2_depth': True,
             'mask2_depth_min': 0,
             'mask2_depth_max': 255,
@@ -3501,6 +3503,12 @@ class Mask2Effect(Effect):
             'mask2_blur': 0,
             'mask2_open_space': 0,
             'mask2_close_space': 0,
+            'mask2_freedraw_brush_hardness': 100,
+            'switch_mask2_draw_effects': True,
+            'mask2_color_dodge': 0,
+            'mask2_color_burn': 0,
+            'mask2_mix_black': 0,
+            'mask2_mix_white': 0,
             'switch_mask2_face': True,            
             'mask2_face_face': True,
             'mask2_face_brows': True,
@@ -3509,10 +3517,24 @@ class Mask2Effect(Effect):
             'mask2_face_mouth': True,
             'mask2_face_lips': True,
         }
+        if subname == 'mask2_draw_effects':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_draw_effects',
+                    'mask2_color_dodge',
+                    'mask2_color_burn',
+                    'mask2_mix_black',
+                    'mask2_mix_white',
+                )
+            }
+        return param_dict
 
     def set2widget(self, widget, param):
         widget.ids["switch_mask2_settings"].active = self._get_param(param, 'switch_mask2_settings')
         widget.ids["checkbox_mask2_invert"].active = self._get_param(param, 'mask2_invert')
+        widget.ids["checkbox_mask2_allow_over_one"].active = False
+        widget.ids["checkbox_mask2_allow_under_zero"].active = False
         widget.ids["switch_mask2_depth"].active = self._get_param(param, 'switch_mask2_depth')
         widget.ids["slider_mask2_depth_min"].set_slider_value(self._get_param(param, 'mask2_depth_min'))
         widget.ids["slider_mask2_depth_max"].set_slider_value(self._get_param(param, 'mask2_depth_max'))
@@ -3532,6 +3554,12 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_blur"].set_slider_value(self._get_param(param, 'mask2_blur'))
         widget.ids["slider_mask2_open_space"].set_slider_value(self._get_param(param, 'mask2_open_space'))
         widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
+        widget.ids["slider_mask2_freedraw_brush_hardness"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_hardness'))
+        widget.ids["switch_mask2_draw_effects"].active = self._get_param(param, 'switch_mask2_draw_effects')
+        widget.ids["slider_mask2_color_dodge"].set_slider_value(self._get_param(param, 'mask2_color_dodge'))
+        widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
+        widget.ids["slider_mask2_mix_black"].set_slider_value(self._get_param(param, 'mask2_mix_black'))
+        widget.ids["slider_mask2_mix_white"].set_slider_value(self._get_param(param, 'mask2_mix_white'))
         widget.ids["switch_mask2_face"].active = self._get_param(param, 'switch_mask2_face')
         widget.ids["checkbox_mask2_face_face"].active = self._get_param(param, 'mask2_face_face')
         widget.ids["checkbox_mask2_face_brows"].active = self._get_param(param, 'mask2_face_brows')
@@ -3543,6 +3571,8 @@ class Mask2Effect(Effect):
     def set2param(self, param, widget):
         param['switch_mask2_settings'] = widget.ids["switch_mask2_settings"].active
         param['mask2_invert'] = widget.ids["checkbox_mask2_invert"].active
+        param['mask2_allow_over_one'] = False
+        param['mask2_allow_under_zero'] = False
         param['switch_mask2_depth'] = widget.ids["switch_mask2_depth"].active
         param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value
         param['mask2_depth_max'] = widget.ids["slider_mask2_depth_max"].value
@@ -3562,6 +3592,12 @@ class Mask2Effect(Effect):
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
         param['mask2_open_space'] = widget.ids["slider_mask2_open_space"].value
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
+        param['mask2_freedraw_brush_hardness'] = widget.ids["slider_mask2_freedraw_brush_hardness"].value
+        param['switch_mask2_draw_effects'] = widget.ids["switch_mask2_draw_effects"].active
+        param['mask2_color_dodge'] = widget.ids["slider_mask2_color_dodge"].value
+        param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value
+        param['mask2_mix_black'] = widget.ids["slider_mask2_mix_black"].value
+        param['mask2_mix_white'] = widget.ids["slider_mask2_mix_white"].value
         param['switch_mask2_face'] = widget.ids["switch_mask2_face"].active
         param['mask2_face_face'] = widget.ids["checkbox_mask2_face_face"].active
         param['mask2_face_brows'] = widget.ids["checkbox_mask2_face_brows"].active

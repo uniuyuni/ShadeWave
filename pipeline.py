@@ -22,6 +22,10 @@ _PIPELINE_TIMING_LOCK = threading.Lock()
 _PIPELINE_TIMING_FRAME_SEQ = 0
 _PIPELINE_TIMING_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M%S")
 
+def _effective_mask2_draw_effect_param(composit_mask):
+    """Draw Effects は Composit レイヤーの設定だけを使う。"""
+    return composit_mask.effects_param
+
 
 def _is_nan_inf_debug_enabled():
     env = os.getenv("PLATYPUS_DEBUG_NAN_INF")
@@ -422,10 +426,11 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
             img2 = core.type_convert(img2, np.ndarray)
             img3 = core.type_convert(img3, np.ndarray)
 
-            if crop is None:
-                img3 = core.apply_mask(img3, mask.get_mask_image(), img2)
-            else:
-                img3 = core.apply_mask(img3, mask.get_mask_image()[crop[1]:crop[3], crop[0]:crop[2], :], img2)
+            mask_image = mask.get_mask_image()
+            if crop is not None:
+                mask_image = mask_image[crop[1]:crop[3], crop[0]:crop[2]]
+            mask2_param = _effective_mask2_draw_effect_param(mask)
+            img3 = core.apply_mask_draw_effects(img3, mask_image, img2, mask2_param)
 
     return img3, lv1reset
 

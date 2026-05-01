@@ -591,6 +591,81 @@ def apply_mask(img1, msk, img2):
     
     return result
 
+
+def _mask2_param_percent(param, key):
+    return float(param.get(key, 0)) / 100.0
+
+
+def _ks_reflectance_to_ratio(reflectance):
+    r = np.clip(reflectance, 1e-6, 1.0)
+    return ((1.0 - r) * (1.0 - r)) / (2.0 * r)
+
+
+def _ks_ratio_to_reflectance(ks_ratio):
+    x = np.maximum(ks_ratio, 0.0)
+    return 1.0 + x - np.sqrt(x * x + 2.0 * x)
+
+
+def mix_pigment_white_black_ks_rgb(rgb, black_amount=0.0, white_amount=0.0):
+    """RGB 反射率を K/S 比へ写して白・黒顔料を混ぜる軽量近似。"""
+    result = np.asarray(rgb, dtype=np.float32)
+
+    def mix_pigment(src, amount, pigment_k, pigment_s):
+        amount = np.clip(np.asarray(amount, dtype=np.float32), 0.0, 1.0)
+        if np.max(amount) <= 0.0:
+            return src
+        ks_src = _ks_reflectance_to_ratio(src)
+        k_mix = (1.0 - amount) * ks_src + amount * pigment_k
+        s_mix = (1.0 - amount) + amount * pigment_s
+        return _ks_ratio_to_reflectance(k_mix / np.maximum(s_mix, 1e-6)).astype(np.float32)
+
+    result = mix_pigment(result, black_amount, 8.0, 0.05)
+    result = mix_pigment(result, white_amount, 0.0, 1.0)
+    return result
+
+
+def apply_mask_draw_effects(base, msk, layer_img, mask2_param):
+    """Mask2 の Photoshop 風 Draw Effects を適用してからマスク合成する。"""
+    base = np.asarray(base, dtype=np.float32)
+    raw_mask = np.asarray(msk, dtype=np.float32)
+    mask_alpha = np.clip(raw_mask, 0.0, 1.0)
+    mask_alpha = mask_alpha[:, :, np.newaxis] if mask_alpha.ndim == 2 else mask_alpha
+    mask_boost = np.maximum(raw_mask, 1.0)
+    mask_boost = mask_boost[:, :, np.newaxis] if mask_boost.ndim == 2 else mask_boost
+
+    effect_img = base + (np.asarray(layer_img, dtype=np.float32) - base) * mask_boost
+    if not mask2_param.get("switch_mask2_draw_effects", True):
+        return base * (1.0 - mask_alpha) + effect_img * mask_alpha
+
+    backdrop = np.clip(np.asarray(base, dtype=np.float32), 0.0, 1.0)
+    source = np.clip(effect_img, 0.0, 1.0)
+    eps = 1e-6
+
+    dodge_amount = _mask2_param_percent(mask2_param, "mask2_color_dodge")
+    if dodge_amount > 0.0:
+        dodge_amount = np.clip(dodge_amount * mask_boost, 0.0, 1.0)
+        dodge = np.clip(backdrop / np.maximum(1.0 - source, eps), 0.0, 1.0)
+        effect_img = effect_img * (1.0 - dodge_amount) + dodge * dodge_amount
+        source = np.clip(effect_img, 0.0, 1.0)
+
+    burn_amount = _mask2_param_percent(mask2_param, "mask2_color_burn")
+    if burn_amount > 0.0:
+        burn_amount = np.clip(burn_amount * mask_boost, 0.0, 1.0)
+        burn = np.clip(1.0 - ((1.0 - backdrop) / np.maximum(source, eps)), 0.0, 1.0)
+        effect_img = effect_img * (1.0 - burn_amount) + burn * burn_amount
+        source = np.clip(effect_img, 0.0, 1.0)
+
+    black_amount = _mask2_param_percent(mask2_param, "mask2_mix_black") * mask_boost
+    white_amount = _mask2_param_percent(mask2_param, "mask2_mix_white") * mask_boost
+    if np.max(black_amount) > 0.0 or np.max(white_amount) > 0.0:
+        effect_img = mix_pigment_white_black_ks_rgb(
+            np.clip(effect_img, 0.0, 1.0),
+            black_amount=black_amount,
+            white_amount=white_amount,
+        )
+
+    return base * (1.0 - mask_alpha) + effect_img * mask_alpha
+
 #--------------------------------------------------
 # 周辺減光効果
 #def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):

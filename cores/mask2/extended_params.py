@@ -15,6 +15,8 @@ def get_mask_hash_tuple(effects_param):
     return (
         effects.Mask2Effect.get_param(effects_param, "switch_mask2_settings"),
         effects.Mask2Effect.get_param(effects_param, "mask2_invert"),
+        effects.Mask2Effect.get_param(effects_param, "mask2_allow_over_one"),
+        effects.Mask2Effect.get_param(effects_param, "mask2_allow_under_zero"),
         effects.Mask2Effect.get_param(effects_param, "switch_mask2_depth"),
         effects.Mask2Effect.get_param(effects_param, "mask2_depth_min"),
         effects.Mask2Effect.get_param(effects_param, "mask2_depth_max"),
@@ -34,6 +36,7 @@ def get_mask_hash_tuple(effects_param):
         effects.Mask2Effect.get_param(effects_param, "mask2_blur"),
         effects.Mask2Effect.get_param(effects_param, "mask2_open_space"),
         effects.Mask2Effect.get_param(effects_param, "mask2_close_space"),
+        effects.Mask2Effect.get_param(effects_param, "mask2_freedraw_brush_hardness"),
     )
 
 

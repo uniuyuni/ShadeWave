@@ -10,7 +10,7 @@ import numpy as np
 
 
 class Line:
-    def __init__(self, is_erasing=False, size=10, soft=1.2):
+    def __init__(self, is_erasing=False, size=10, soft=100):
         self.is_erasing = is_erasing
         self.size = size
         self.soft = soft
@@ -21,16 +21,39 @@ class Line:
 
 
 class _Raster:
-    def create_natural_brush(self, size, softness=1.2):
+    def create_natural_brush(self, size, hardness=100):
         brush_size = int(size)
         brush_radius = brush_size // 2
         kernel = np.zeros((brush_size, brush_size), np.float32)
-        cv2.circle(kernel, (brush_radius, brush_radius), brush_radius // 2, 1, -1)
-        kz = int(max(1, brush_radius * softness)) | 1
-        kernel = cv2.GaussianBlur(kernel, (kz, kz), 0)
+        hardness = float(hardness)
+        hard_ratio = np.clip(hardness / 100.0, 0.0, 1.0)
+        inner_radius = int(max(1, brush_radius * hard_ratio))
+        cv2.circle(kernel, (brush_radius, brush_radius), inner_radius, 1, -1)
+        if hard_ratio < 1.0:
+            softness = 1.0 - hard_ratio
+            kz = int(max(1, brush_radius * softness * 2.0)) | 1
+            kernel = cv2.GaussianBlur(kernel, (kz, kz), 0)
         return kernel
 
-    def apply_brush_at_point(self, image, x, y, brush, is_erasing=False, opacity=1.0, blend_mode="max"):
+    def clip_mask_range(self, image, allow_over_one=False, allow_under_zero=False):
+        min_value = None if allow_under_zero else 0
+        max_value = None if allow_over_one else 1
+        if min_value is None and max_value is None:
+            return image
+        return np.clip(image, min_value, max_value)
+
+    def apply_brush_at_point(
+        self,
+        image,
+        x,
+        y,
+        brush,
+        is_erasing=False,
+        opacity=1.0,
+        blend_mode="max",
+        allow_over_one=False,
+        allow_under_zero=False,
+    ):
         if brush.size == 0:
             return
         brush_h, brush_w = brush.shape
@@ -66,23 +89,42 @@ class _Raster:
                     target_region, brush_part
                 )
             elif is_erasing:
-                image[img_y_min_clipped:img_y_max_clipped, img_x_min_clipped:img_x_max_clipped] = np.maximum(
-                    0, target_region - brush_part
+                image[img_y_min_clipped:img_y_max_clipped, img_x_min_clipped:img_x_max_clipped] = self.clip_mask_range(
+                    target_region - brush_part, allow_over_one, allow_under_zero
                 )
             else:
-                image[img_y_min_clipped:img_y_max_clipped, img_x_min_clipped:img_x_max_clipped] = np.minimum(
-                    1, target_region + brush_part
+                image[img_y_min_clipped:img_y_max_clipped, img_x_min_clipped:img_x_max_clipped] = self.clip_mask_range(
+                    target_region + brush_part, allow_over_one, allow_under_zero
                 )
         except (IndexError, ValueError):
             pass
 
-    def draw_smooth_line(self, image, points, brush_size, softness, is_erasing=False, blend_mode="add"):
+    def draw_smooth_line(
+        self,
+        image,
+        points,
+        brush_size,
+        softness,
+        is_erasing=False,
+        blend_mode="add",
+        allow_over_one=False,
+        allow_under_zero=False,
+    ):
         if len(points) == 0:
             return
         brush = self.create_natural_brush(brush_size, softness)
         if len(points) == 1:
             p = points[0]
-            self.apply_brush_at_point(image, int(p[0]), int(p[1]), brush, is_erasing, blend_mode=blend_mode)
+            self.apply_brush_at_point(
+                image,
+                int(p[0]),
+                int(p[1]),
+                brush,
+                is_erasing,
+                blend_mode=blend_mode,
+                allow_over_one=allow_over_one,
+                allow_under_zero=allow_under_zero,
+            )
             return
         texture_points = points
         opacity = 1.0 if blend_mode == "max" else 0.5
@@ -95,9 +137,19 @@ class _Raster:
                 t = j / max(1, steps)
                 x = p1[0] + t * (p2[0] - p1[0])
                 y = p1[1] + t * (p2[1] - p1[1])
-                self.apply_brush_at_point(image, int(x), int(y), brush, is_erasing, opacity, blend_mode=blend_mode)
+                self.apply_brush_at_point(
+                    image,
+                    int(x),
+                    int(y),
+                    brush,
+                    is_erasing,
+                    opacity,
+                    blend_mode=blend_mode,
+                    allow_over_one=allow_over_one,
+                    allow_under_zero=allow_under_zero,
+                )
 
-    def draw_line(self, image_size, lines):
+    def draw_line(self, image_size, lines, allow_over_one=False, allow_under_zero=False):
         try:
             width, height = image_size
             if width <= 0 or height <= 0:
@@ -127,9 +179,13 @@ class _Raster:
                 self.draw_smooth_line(stroke_buffer, local_points, brush_size, brush_soft, False, blend_mode="max")
                 target_region = image[min_y:max_y, min_x:max_x]
                 if is_erasing:
-                    image[min_y:max_y, min_x:max_x] = np.maximum(0, target_region - stroke_buffer)
+                    image[min_y:max_y, min_x:max_x] = self.clip_mask_range(
+                        target_region - stroke_buffer, allow_over_one, allow_under_zero
+                    )
                 else:
-                    image[min_y:max_y, min_x:max_x] = np.minimum(1, target_region + stroke_buffer)
+                    image[min_y:max_y, min_x:max_x] = self.clip_mask_range(
+                        target_region + stroke_buffer, allow_over_one, allow_under_zero
+                    )
             return image
         except Exception:
             return np.zeros((max(1, image_size[1]), max(1, image_size[0])), dtype=np.float32)
@@ -138,5 +194,5 @@ class _Raster:
 _r = _Raster()
 
 
-def draw_line_texture(image_size, lines):
-    return _r.draw_line(image_size, lines)
+def draw_line_texture(image_size, lines, allow_over_one=False, allow_under_zero=False):
+    return _r.draw_line(image_size, lines, allow_over_one, allow_under_zero)

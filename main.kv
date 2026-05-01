@@ -2556,6 +2556,59 @@
                                 ref_padding: 4
 
                                 HeadLabel:
+                                    id: switch_mask2_draw_effects
+                                    text: " Draw Effects"
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+                                    on_active: root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+
+                                ParamSlider:
+                                    id: slider_mask2_color_dodge
+                                    text: "Color Dodge"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+
+                                ParamSlider:
+                                    id: slider_mask2_color_burn
+                                    text: "Color Burn"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+
+                                ParamSlider:
+                                    id: slider_mask2_mix_black
+                                    text: "Mix Black"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+
+                                ParamSlider:
+                                    id: slider_mask2_mix_white
+                                    text: "Mix White"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+
+                                VSeparator:
+
+                                HeadLabel:
                                     id: switch_face
                                     text: ' Face'
                                     on_press: root.begin_history_effect_ctrl(1, 'face')
@@ -2639,27 +2692,48 @@
                                     on_active: root.apply_effects_lv(3, 'mask2')
                                     on_release: root.end_history_effect_ctrl(3, 'mask2')
 
-                                MDGridLayout:
+                                AnchorLayout:
+                                    anchor_x: 'right'
+                                    anchor_y: 'center'
                                     size_hint_y: None
-                                    ref_height: 20
-                                    cols: 6
+                                    ref_height: 24
 
-                                    ParamLabel:          
-                                        text: "Invert"
-                                    ParamCheckBox:
-                                        id: checkbox_mask2_invert
-                                        active: False
-                                        on_press: root.begin_history_effect_ctrl(3, 'mask2')
-                                        on_active: root.apply_effects_lv(3, 'mask2')
-                                        on_release: root.end_history_effect_ctrl(3, 'mask2')
-                                    ParamLabel:           
-                                        text: " "
-                                    Label:          
-                                        text: " "
-                                    ParamLabel:           
-                                        text: " "
-                                    Label:          
-                                        text: " "
+                                    MDGridLayout:
+                                        size_hint: None, None
+                                        ref_width: 256
+                                        ref_height: 20
+                                        cols: 6
+                                        ref_spacing: 2
+
+                                        ParamLabel:
+                                            text: "Invert"
+                                            ref_width: 58
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_invert
+                                            active: False
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "> 1.0"
+                                            ref_width: 68
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_allow_over_one
+                                            disabled: True
+                                            active: False
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+                                        ParamLabel:
+                                            text: "< 0.0"
+                                            ref_width: 64
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_allow_under_zero
+                                            disabled: True
+                                            active: False
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 VSeparator:
 
@@ -2902,6 +2976,17 @@
                                     min: -100
                                     max: 100
                                     value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                ParamSlider:
+                                    id: slider_mask2_freedraw_brush_hardness
+                                    text: "Brush Hardness"
+                                    min: 0
+                                    max: 100
+                                    value: 100
                                     step: 1
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')

@@ -51,6 +51,14 @@ from cores.mask2 import elliptical_raster, freedraw_raster, gradient_raster
 from cores.mask2.cutout_guided import create_cutout_mask_guided
 
 
+def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
+    min_value = None if allow_under_zero else 0
+    max_value = None if allow_over_one else 1
+    if min_value is None and max_value is None:
+        return image
+    return np.clip(image, min_value, max_value)
+
+
 class TextInputDialog(KVPopup):
     def __init__(self, callback, **kwargs):
         super().__init__(**kwargs)
@@ -307,6 +315,8 @@ class BaseMask(KVWidget):
     def get_hash_items(self):
         return (effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_allow_over_one'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_allow_under_zero'),
                 effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max'),
@@ -325,7 +335,8 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'))
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'))
 
     def _apply_mask_space(self, image):
         switch_mask2_options = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options')
@@ -569,14 +580,18 @@ class CompositMask(BaseMask):
     def get_mask_image(self):
         # 合成マスクの画像作成
         composit = np.zeros((int(self.editor.texture_size[1]), int(self.editor.texture_size[0])), dtype=np.float32)
+        allow_over_one = False
+        allow_under_zero = False
 
         for mask, maskop in reversed(self.mask_list):
             mimage = mask.get_mask_image()
+            mask_allow_over_one = False
+            mask_allow_under_zero = False
             match(maskop):
                 case 'Add':
-                    composit = np.clip(composit + mimage, 0, 1)
+                    composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
                 case 'Subtract':
-                    composit = np.clip(composit - mimage, 0, 1)
+                    composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
                 case _:
                     logger.error(f"Unknown mask operation: {maskop}")
                     assert False
@@ -1240,7 +1255,7 @@ class FullMask(BaseMask):
 class FreeDrawMask(BaseMask):
 
     class Line:
-        def __init__(self, is_erasing=False, size=10, soft=1.2):
+        def __init__(self, is_erasing=False, size=10, soft=100):
             self.is_erasing = is_erasing
             self.size = size
             self.soft = soft
@@ -1257,6 +1272,7 @@ class FreeDrawMask(BaseMask):
         self.lines = []  # 複数の線を保持
         self.current_line = None
         self.brush_size = 300
+        self._stroke_history_started = False
 
         with self.canvas:
             KVPushMatrix()
@@ -1362,7 +1378,12 @@ class FreeDrawMask(BaseMask):
 
         # 右クリックで消去モード、左クリックで描画モード
         is_erasing = (touch.button == 'right')            
-        self.current_line = FreeDrawMask.Line(is_erasing, self.brush_size)
+        if not self.initializing:
+            get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
+            self._stroke_history_started = True
+
+        hardness = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
+        self.current_line = FreeDrawMask.Line(is_erasing, self.brush_size, hardness)
         self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
         self.editor.set_active_mask(self)
         self.lines.append(self.current_line)
@@ -1392,6 +1413,9 @@ class FreeDrawMask(BaseMask):
             # マスクを更新
             self.update_mask()
             self.editor.start_draw_image()        
+            if self._stroke_history_started:
+                get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
+                self._stroke_history_started = False
             return True
         
         return super().on_touch_up(touch)
@@ -1430,10 +1454,6 @@ class FreeDrawMask(BaseMask):
     def get_mask_image(self):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        nline = len(self.lines)
-        npoint = 0
-        for line in self.lines:
-            npoint += len(line.points)
         copy_lines = []
         for i, src_line in enumerate(self.lines):
             copy_line = FreeDrawMask.Line(src_line.is_erasing, self.editor.tcg_to_image_scale(src_line.size, 0)[0], src_line.soft)
@@ -1441,10 +1461,20 @@ class FreeDrawMask(BaseMask):
                 copy_line.add_point(*self.editor.tcg_to_texture(*point))
             copy_lines.append(copy_line)
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, nline, npoint))
+        line_hash = tuple(
+            (line.is_erasing, line.size, line.soft, tuple(line.points))
+            for line in self.lines
+        )
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, line_hash))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-             
-            mask = freedraw_raster.draw_line_texture(image_size, copy_lines)
+            allow_over_one = False
+            allow_under_zero = False
+            mask = freedraw_raster.draw_line_texture(
+                image_size,
+                copy_lines,
+                allow_over_one=allow_over_one,
+                allow_under_zero=allow_under_zero,
+            )
 
             # ルミナンスとマスクを作成
             mask = self._apply_extened_params(mask)
@@ -2320,6 +2350,22 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.__set_image_info()
         #self.update()
 
+    def refresh_active_mask_overlay(self):
+        mask = self.get_active_mask()
+        if mask is not None and mask.is_draw_mask == True:
+            mask.update_mask()
+
+    def _get_mask_image_rect(self):
+        scale = device.dpi_scale()
+        px, py = self.to_window(*self.pos)
+        marginx = (self.size[0] - self.texture_size[0] * scale) / 2
+        marginy = (self.size[1] - self.texture_size[1] * scale) / 2
+        return (px + marginx, py + marginy), (self.texture_size[0] * scale, self.texture_size[1] * scale)
+
+    def reposition_mask_image(self):
+        if self.rectangle is not None:
+            self.rectangle.pos, self.rectangle.size = self._get_mask_image_rect()
+
     def get_hash_items(self):
         return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'] + self.tcg_info['rotation2'], self.tcg_info['flip_mode'], tuple(self.tcg_info['matrix'].flatten()))
 
@@ -2482,6 +2528,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if glayimg is not None:
             with self.mask_container.canvas.before:
                 # マスクをアルファとして扱い、ルミナンスを白(1.0)にする
+                glayimg = np.clip(glayimg, 0, 1)
                 h, w = glayimg.shape[:2]
                 la_img = np.empty((h, w, 2), dtype=np.float32)
                 la_img[..., 0] = 1.0  # Luminance = White
@@ -2489,12 +2536,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 texture = KVTexture.create(size=(w, h), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.blit_buffer(la_img.tobytes(), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.flip_vertical()
-                px, py = self.to_window(*self.pos)
-                scale = device.dpi_scale()
-                marginx, marginy = (self.size[0]-self.texture_size[0]*scale)/2, (self.size[1]-self.texture_size[1]*scale)/2
-                px, py = px+marginx, py+marginy
+                pos, size = self._get_mask_image_rect()
                 KVColor(1, 0, 0, 0.4)
-                self.rectangle = KVRectangle(texture=texture, pos=(px, py), size=(self.texture_size[0]*scale, self.texture_size[1]*scale))
+                self.rectangle = KVRectangle(texture=texture, pos=pos, size=size)
 
                 # cv2.imwrite('combined_mask.png', (glayimg*255).astype(np.uint8))
 
@@ -2504,6 +2548,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         mask = self._create_mask(type, index)
         self.set_active_mask(None)
         self.created_mask = mask
+        if self.root is not None:
+            self.root.update_mask2_options_enabled()
 
         # ここで履歴の更新を始める
         get_history_ctrl().begin_history_layer_ctrl(self, "Delete", self.get_mask_list().index(self.created_mask), op_type)
@@ -2692,7 +2738,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         # Mask2パネルのON / OFF
         if self.root is not None:
-            self.root.ids['mask2_panel'].disabled = self.active_mask is None or self.active_mask.is_composit()
+            self.root.update_mask2_options_enabled()
  
     def get_rotate_rad(self, rotate_rad):
         # 画像の回転角度を取得する

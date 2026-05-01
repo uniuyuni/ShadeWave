@@ -60,8 +60,6 @@ class HeadlessFreeDrawMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
-        nline = len(self.lines)
-        npoint = sum(len(line.points) for line in self.lines)
         copy_lines = []
         for src_line in self.lines:
             copy_line = Line(
@@ -73,13 +71,24 @@ class HeadlessFreeDrawMask:
                 copy_line.add_point(*self.ctx.tcg_to_texture(*point))
             copy_lines.append(copy_line)
 
+        line_hash = tuple(
+            (line.is_erasing, line.size, line.soft, tuple(line.points))
+            for line in self.lines
+        )
         newhash = hash(
-            (self.get_hash_items(), self.ctx.get_hash_items(), image_size, nline, npoint)
+            (self.get_hash_items(), self.ctx.get_hash_items(), image_size, line_hash)
         )
         if (
             self.image_mask_cache is None or self.image_mask_cache_hash != newhash
         ) and not self.initializing:
-            mask = draw_line_texture(image_size, copy_lines)
+            allow_over_one = False
+            allow_under_zero = False
+            mask = draw_line_texture(
+                image_size,
+                copy_lines,
+                allow_over_one=allow_over_one,
+                allow_under_zero=allow_under_zero,
+            )
             mask = extended_params.apply_extended_params(
                 self.ctx, self.effects_param, mask, self.center
             )

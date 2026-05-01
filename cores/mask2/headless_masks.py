@@ -16,6 +16,14 @@ from cores.mask2.exceptions import HeadlessMaskNotSupported
 from cores.mask2.mask_types import MaskTypeStr
 
 
+def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
+    min_value = None if allow_under_zero else 0
+    max_value = None if allow_over_one else 1
+    if min_value is None and max_value is None:
+        return image
+    return np.clip(image, min_value, max_value)
+
+
 class HeadlessCompositMask:
     def __init__(self, ctx, pipeline):
         self.ctx = ctx
@@ -55,13 +63,17 @@ class HeadlessCompositMask:
             (int(self.ctx.texture_size[1]), int(self.ctx.texture_size[0])),
             dtype=np.float32,
         )
+        allow_over_one = False
+        allow_under_zero = False
         for mask, maskop in reversed(self.mask_list):
             mimage = mask.get_mask_image()
+            mask_allow_over_one = False
+            mask_allow_under_zero = False
             match maskop:
                 case "Add":
-                    composit = np.clip(composit + mimage, 0, 1)
+                    composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
                 case "Subtract":
-                    composit = np.clip(composit - mimage, 0, 1)
+                    composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
                 case _:
                     logging.error("Unknown mask operation: %s", maskop)
                     raise ValueError(maskop)

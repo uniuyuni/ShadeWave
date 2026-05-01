@@ -246,6 +246,7 @@ if __name__ == '__main__':
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
+            KVClock.schedule_once(lambda _dt: self.update_mask2_options_enabled(), 0)
 
         def on_start(self, *args, **kwargs):
             #self.ids['preview_widget'].ref_size_hint_min = (config.get_config("preview_width"), config.get_config("preview_height"))
@@ -474,7 +475,10 @@ if __name__ == '__main__':
             # apply_thread 上の draw_image_core から呼ばれるため、ここをメインスレッド化する
             # （Canvas / グラフィックス操作は Kivy ではメインスレッド専用）
             texture_size = config.get_preview_texture_size()
-            self.ids['mask_editor2'].set_texture_size(*texture_size)
+            mask_editor = self.ids['mask_editor2']
+            mask_editor.set_texture_size(*texture_size)
+            if self._is_mask2_enabled():
+                mask_editor.reposition_mask_image()
 
             if self.inpaint_edit is not None:
                 self.inpaint_edit.set_display_size(texture_size)
@@ -488,6 +492,12 @@ if __name__ == '__main__':
             crop_effect = self.primary_effects[0].get('crop')
             if crop_effect is not None and params.has_original_img_size(self.primary_param):
                 crop_effect.update_crop_editor_preview_size(self.primary_param)
+
+        @kvmainthread
+        def refresh_mask2_overlay(self, dt=0):
+            mask_editor = self.ids.get('mask_editor2')
+            if mask_editor is not None and self._is_mask2_enabled():
+                mask_editor.refresh_active_mask_overlay()
 
         def empty_image(self):
             with threads.primary_param_lock:
@@ -550,6 +560,7 @@ if __name__ == '__main__':
             self.ids["preview"].texture = self.texture
 
             self.resize()
+            self.refresh_mask2_overlay()
 
             #Singnalを送る
             import signals
@@ -664,7 +675,7 @@ if __name__ == '__main__':
                 case 'end':
                     self.end_history_effect_ctrl(0, 'crop')
 
-        def _get_active_effects(self, mask_id=None, lv=None):
+        def _get_active_effects(self, mask_id=None, lv=None, subname=None):
             if mask_id is None:
                 mask = self.ids['mask_editor2'].get_active_mask()
             else:
@@ -677,8 +688,8 @@ if __name__ == '__main__':
             if lv is not None:
                 composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
                 if lv == 3:
-                    # Mask2パラメータは常に自分自身
-                    pass
+                    if subname == 'mask2_draw_effects' and not mask.is_composit():
+                        mask = composit_mask
                 else: 
                     # それ以外は親のCompositMaskへ（自分がCompositMaskなら自分へ）
                     if not mask.is_composit():
@@ -688,11 +699,11 @@ if __name__ == '__main__':
 
             return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
-        def apply_effects_lv(self, lv, effect, sync=False):
+        def apply_effects_lv(self, lv, effect, sync=False, subname=None):
             if self.run_set2widget_all == True:
                 return
                 
-            current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
+            current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
             if effect is None:
                 effects.set2param_all(current_effects, current_param, self)
             else:
@@ -819,7 +830,7 @@ if __name__ == '__main__':
             effects.set2widget_all(self, self.primary_effects, self.primary_param)
 
         def begin_history_effect_ctrl(self, lv, effect, subname=None):
-            current_effects, current_param, mask_id = self._get_active_effects(lv=lv)
+            current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
             effect_list = effect if isinstance(effect, list) else [effect]
             self.current_op = history.Operation(lv, effect_list, subname, mask_id)
             self.current_op.set_backup(current_effects, current_param, subname)
@@ -839,7 +850,9 @@ if __name__ == '__main__':
             if self.current_op.lv != lv or self.current_op.effect_list != effect_list:
                 logging.warning(f"MainWidget.end_history_effect_ctrl LV or Effect Unmatching. {effect_list}")
 
-            current_effects, current_param, mask_id = self._get_active_effects(self.current_op.mask_id, lv=lv)
+            current_effects, current_param, mask_id = self._get_active_effects(
+                self.current_op.mask_id, lv=lv, subname=subname or effect
+            )
             if self.current_op.set_update(current_effects, current_param, subname) is not None:
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
@@ -930,6 +943,7 @@ if __name__ == '__main__':
             if 'mask2' in self.ids:
                 # ファイル切替時: 状態を戻してから無効化
                 self.ids['mask2'].state = 'normal'
+            self.update_mask2_options_enabled()
             self._actively_loading = True  # アニメーション表示開始
             with threads.primary_param_lock:
                 # 前の設定を保存
@@ -950,6 +964,7 @@ if __name__ == '__main__':
                 # カードなし（フォルダ空など）— get_file が呼ばれず loading が解除されないのを防ぐ
                 self.loading = False
                 self._actively_loading = False
+                self.update_mask2_options_enabled()
         
         @kvmainthread
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, stage):
@@ -984,6 +999,7 @@ if __name__ == '__main__':
                 stage == LoadStage.FULL_DECODE and getattr(imgset, 'fidelity', None) == ImageFidelity.FULL
             ):
                 self.mask2_wait_full_load = False
+            self.update_mask2_options_enabled()
 
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
                 card = self.ids['viewer'].get_card(file_path)
@@ -1025,6 +1041,7 @@ if __name__ == '__main__':
                             pass
                     logging.debug("[PERF] on_fcs_get_file: Merged Params. Time: %s", time.time())
                     self.set2widget_all(self.primary_effects, self.primary_param)
+                    self.update_mask2_options_enabled()
 
                     # 特別あつかいでエディタを起動できるなら起動する
                     self.apply_effects_lv(1, 'distortion')
@@ -1309,6 +1326,98 @@ if __name__ == '__main__':
         def _is_mask2_enabled(self):
             return self.ids['mask_editor2'].opacity == 1 and self.ids['mask_editor2'].disabled == False
 
+        def _set_disabled_for_ids(self, id_names, disabled):
+            for id_name in id_names:
+                widget = self.ids.get(id_name)
+                if widget is not None:
+                    widget.disabled = disabled
+
+        def update_mask2_options_enabled(self):
+            editor = self.ids.get('mask_editor2')
+            mask2_button = self.ids.get('mask2')
+            mask2_panel = self.ids.get('mask2_panel')
+            if editor is None or mask2_button is None or mask2_panel is None:
+                return
+            mask2_enabled = (
+                mask2_button.state == 'down'
+                and self.mask2_wait_full_load == False
+                and editor.disabled == False
+            )
+            active_mask = editor.get_active_mask() if mask2_enabled else None
+            created_mask = editor.get_created_mask() if mask2_enabled else None
+            current_mask = created_mask if created_mask is not None else active_mask
+            has_mask_context = mask2_enabled and current_mask is not None
+            is_composit = bool(has_mask_context and current_mask.is_composit())
+            class_name = current_mask.__class__.__name__ if current_mask is not None else ''
+            is_freedraw = class_name == 'FreeDrawMask'
+            is_face = class_name == 'FaceMask'
+            mask_specific_enabled = has_mask_context and not is_composit
+
+            mask2_panel.disabled = not has_mask_context
+
+            self._set_disabled_for_ids(
+                (
+                    'switch_mask2_draw_effects',
+                    'slider_mask2_color_dodge',
+                    'slider_mask2_color_burn',
+                    'slider_mask2_mix_black',
+                    'slider_mask2_mix_white',
+                ),
+                not has_mask_context,
+            )
+            self._set_disabled_for_ids(
+                (
+                    'switch_mask2_settings',
+                    'checkbox_mask2_invert',
+                    'switch_mask2_depth',
+                    'slider_mask2_depth_min',
+                    'slider_mask2_depth_max',
+                    'switch_mask2_hue',
+                    'slider_mask2_hue_distance',
+                    'slider_mask2_hue_min',
+                    'slider_mask2_hue_max',
+                    'switch_mask2_lum',
+                    'slider_mask2_lum_distance',
+                    'slider_mask2_lum_min',
+                    'slider_mask2_lum_max',
+                    'switch_mask2_sat',
+                    'slider_mask2_sat_distance',
+                    'slider_mask2_sat_min',
+                    'slider_mask2_sat_max',
+                    'switch_mask2_options',
+                    'slider_mask2_blur',
+                    'slider_mask2_open_space',
+                    'slider_mask2_close_space',
+                ),
+                not mask_specific_enabled,
+            )
+            self._set_disabled_for_ids(
+                (
+                    'slider_mask2_freedraw_brush_hardness',
+                ),
+                not (mask_specific_enabled and is_freedraw),
+            )
+            self._set_disabled_for_ids(
+                (
+                    'switch_mask2_face',
+                    'grid_mask2_face',
+                    'checkbox_mask2_face_face',
+                    'checkbox_mask2_face_brows',
+                    'checkbox_mask2_face_eyes',
+                    'checkbox_mask2_face_nose',
+                    'checkbox_mask2_face_mouth',
+                    'checkbox_mask2_face_lips',
+                ),
+                not (mask_specific_enabled and is_face),
+            )
+            self._set_disabled_for_ids(
+                (
+                    'checkbox_mask2_allow_over_one',
+                    'checkbox_mask2_allow_under_zero',
+                ),
+                True,
+            )
+
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1
             self.ids['mask_editor2'].disabled = False
@@ -1316,12 +1425,14 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
             self.ids['mask_editor2'].set_primary_param(self.primary_param, params.get_disp_info(self.primary_param))
             self.ids['mask_editor2'].update()
+            self.update_mask2_options_enabled()
 
         def _disable_mask2(self):
             self.ids['mask_editor2'].opacity = 0
             self.ids['mask_editor2'].disabled = True
             self.ids['mask_editor2'].set_active_mask(None)
             self.ids['mask_editor2'].end()
+            self.update_mask2_options_enabled()
 
         def on_mask2_press(self, value):
             if self.mask2_wait_full_load:
