@@ -199,6 +199,20 @@ class ParamSlider(KVBoxLayout):
         self.ids['slider'].value = value
         self.disabled = False
 
+    def set_slider_range(self, min_value, max_value, step=None):
+        self.disabled = True
+        self.min = min_value
+        self.max = max_value
+        if step is not None:
+            self.step = step
+            self.ids['slider'].step = step
+        self.ids['slider'].min = min_value
+        self.ids['slider'].max = max_value
+        self.ids['slider'].value = min(max(self.ids['slider'].value, min_value), max_value)
+        self.value = self.ids['slider'].value
+        self.ids['input'].set_value(self.ids['slider'].value)
+        self.disabled = False
+
     def set_slider_reset(self, value):
         self.reset_value = value
     

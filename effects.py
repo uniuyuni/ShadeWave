@@ -2036,196 +2036,89 @@ class HLS2RGBEffect(Effect):
 
     
 class HLSEffect(Effect):
+    HLS_COLORS = ("red", "skin", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta")
+    FULL_RANGE_HUE_STEP = 0.1
+    LOCAL_RANGE_HUE_STEP = 0.01
+
+    @staticmethod
+    def _circular_delta(target_hue, source_hue):
+        return ((target_hue - source_hue + 180.0) % 360.0) - 180.0
+
+    @classmethod
+    def _hue_slider_range(cls, color_name, full_range):
+        if full_range:
+            return -180.0, 180.0, cls.FULL_RANGE_HUE_STEP
+
+        color_index = cls.HLS_COLORS.index(color_name)
+        prev_color = cls.HLS_COLORS[color_index - 1]
+        next_color = cls.HLS_COLORS[(color_index + 1) % len(cls.HLS_COLORS)]
+        center = core.HLS_COLOR_SETTING[color_name]["center"]
+        min_hue = cls._circular_delta(core.HLS_COLOR_SETTING[prev_color]["center"], center)
+        max_hue = cls._circular_delta(core.HLS_COLOR_SETTING[next_color]["center"], center)
+        return min_hue, max_hue, cls.LOCAL_RANGE_HUE_STEP
+
+    @classmethod
+    def _set_hue_slider_range(cls, widget, color_name, full_range):
+        min_hue, max_hue, step = cls._hue_slider_range(color_name, full_range)
+        slider = widget.ids[f"slider_hls_{color_name}_hue"]
+        slider.set_slider_range(min_hue, max_hue, step)
 
     def get_param_dict(self, param):
-        return {
+        param_dict = {
             "switch_color_mixer": True,
-            "switch_hls_red": True,
-            "switch_hls_orange": True,
-            "switch_hls_yellow": True,
-            "switch_hls_green": True,
-            "switch_hls_cyan": True,
-            "switch_hls_blue": True,
-            "switch_hls_purple": True,
-            "switch_hls_magenta": True,
-            "hls_red_hue": 0,
-            "hls_red_lum": 0,
-            "hls_red_sat": 0,
-            "hls_orange_hue": 0,
-            "hls_orange_lum": 0,
-            "hls_orange_sat": 0,
-            "hls_yellow_hue": 0,
-            "hls_yellow_lum": 0,
-            "hls_yellow_sat": 0,
-            "hls_green_hue": 0,
-            "hls_green_lum": 0,
-            "hls_green_sat": 0,
-            "hls_cyan_hue": 0,
-            "hls_cyan_lum": 0,
-            "hls_cyan_sat": 0,
-            "hls_blue_hue": 0,
-            "hls_blue_lum": 0,
-            "hls_blue_sat": 0,
-            "hls_purple_hue": 0,
-            "hls_purple_lum": 0,
-            "hls_purple_sat": 0,
-            "hls_magenta_hue": 0,
-            "hls_magenta_lum": 0,
-            "hls_magenta_sat": 0,
         }
+        for color_name in self.HLS_COLORS:
+            param_dict[f"switch_hls_{color_name}"] = True
+            param_dict[f"hls_{color_name}_hue"] = 0
+            param_dict[f"hls_{color_name}_lum"] = 0
+            param_dict[f"hls_{color_name}_sat"] = 0
+            param_dict[f"hls_{color_name}_hue_full_range"] = False
+        return param_dict
 
     def set2widget(self, widget, param):
         widget.ids["switch_color_mixer"].active = self._get_param(param, "switch_color_mixer")
-        widget.ids["switch_hls_red"].active = self._get_param(param, "switch_hls_red")
-        widget.ids["switch_hls_orange"].active = self._get_param(param, "switch_hls_orange")
-        widget.ids["switch_hls_yellow"].active = self._get_param(param, "switch_hls_yellow")
-        widget.ids["switch_hls_green"].active = self._get_param(param, "switch_hls_green")
-        widget.ids["switch_hls_cyan"].active = self._get_param(param, "switch_hls_cyan")
-        widget.ids["switch_hls_blue"].active = self._get_param(param, "switch_hls_blue")
-        widget.ids["switch_hls_purple"].active = self._get_param(param, "switch_hls_purple")
-        widget.ids["switch_hls_magenta"].active = self._get_param(param, "switch_hls_magenta")
-        widget.ids["slider_hls_red_hue"].set_slider_value(self._get_param(param, "hls_red_hue"))
-        widget.ids["slider_hls_red_lum"].set_slider_value(self._get_param(param, "hls_red_lum"))
-        widget.ids["slider_hls_red_sat"].set_slider_value(self._get_param(param, "hls_red_sat"))
-        widget.ids["slider_hls_orange_hue"].set_slider_value(self._get_param(param, "hls_orange_hue"))
-        widget.ids["slider_hls_orange_lum"].set_slider_value(self._get_param(param, "hls_orange_lum"))
-        widget.ids["slider_hls_orange_sat"].set_slider_value(self._get_param(param, "hls_orange_sat"))
-        widget.ids["slider_hls_yellow_hue"].set_slider_value(self._get_param(param, "hls_yellow_hue"))
-        widget.ids["slider_hls_yellow_lum"].set_slider_value(self._get_param(param, "hls_yellow_lum"))
-        widget.ids["slider_hls_yellow_sat"].set_slider_value(self._get_param(param, "hls_yellow_sat"))
-        widget.ids["slider_hls_green_hue"].set_slider_value(self._get_param(param, "hls_green_hue"))
-        widget.ids["slider_hls_green_lum"].set_slider_value(self._get_param(param, "hls_green_lum"))
-        widget.ids["slider_hls_green_sat"].set_slider_value(self._get_param(param, "hls_green_sat"))
-        widget.ids["slider_hls_cyan_hue"].set_slider_value(self._get_param(param, "hls_cyan_hue"))
-        widget.ids["slider_hls_cyan_lum"].set_slider_value(self._get_param(param, "hls_cyan_lum"))
-        widget.ids["slider_hls_cyan_sat"].set_slider_value(self._get_param(param, "hls_cyan_sat"))
-        widget.ids["slider_hls_blue_hue"].set_slider_value(self._get_param(param, "hls_blue_hue"))
-        widget.ids["slider_hls_blue_lum"].set_slider_value(self._get_param(param, "hls_blue_lum"))
-        widget.ids["slider_hls_blue_sat"].set_slider_value(self._get_param(param, "hls_blue_sat"))
-        widget.ids["slider_hls_purple_hue"].set_slider_value(self._get_param(param, "hls_purple_hue"))
-        widget.ids["slider_hls_purple_lum"].set_slider_value(self._get_param(param, "hls_purple_lum"))
-        widget.ids["slider_hls_purple_sat"].set_slider_value(self._get_param(param, "hls_purple_sat"))
-        widget.ids["slider_hls_magenta_hue"].set_slider_value(self._get_param(param, "hls_magenta_hue"))
-        widget.ids["slider_hls_magenta_lum"].set_slider_value(self._get_param(param, "hls_magenta_lum"))
-        widget.ids["slider_hls_magenta_sat"].set_slider_value(self._get_param(param, "hls_magenta_sat"))
+        for color_name in self.HLS_COLORS:
+            full_range = self._get_param(param, f"hls_{color_name}_hue_full_range")
+            widget.ids[f"switch_hls_{color_name}"].active = self._get_param(param, f"switch_hls_{color_name}")
+            widget.ids[f"checkbox_hls_{color_name}_hue_full_range"].active = full_range
+            widget.ids[f"slider_hls_{color_name}_hue"].set_slider_value(self._get_param(param, f"hls_{color_name}_hue"))
+            self._set_hue_slider_range(widget, color_name, full_range)
+            widget.ids[f"slider_hls_{color_name}_lum"].set_slider_value(self._get_param(param, f"hls_{color_name}_lum"))
+            widget.ids[f"slider_hls_{color_name}_sat"].set_slider_value(self._get_param(param, f"hls_{color_name}_sat"))
 
     def set2param(self, param, widget):
         param["switch_color_mixer"] = widget.ids["switch_color_mixer"].active
-        param["switch_hls_red"] = widget.ids["switch_hls_red"].active
-        param["switch_hls_orange"] = widget.ids["switch_hls_orange"].active
-        param["switch_hls_yellow"] = widget.ids["switch_hls_yellow"].active
-        param["switch_hls_green"] = widget.ids["switch_hls_green"].active
-        param["switch_hls_cyan"] = widget.ids["switch_hls_cyan"].active
-        param["switch_hls_blue"] = widget.ids["switch_hls_blue"].active
-        param["switch_hls_purple"] = widget.ids["switch_hls_purple"].active
-        param["switch_hls_magenta"] = widget.ids["switch_hls_magenta"].active
-        param["hls_red_hue"] = widget.ids["slider_hls_red_hue"].value
-        param["hls_red_lum"] = widget.ids["slider_hls_red_lum"].value
-        param["hls_red_sat"] = widget.ids["slider_hls_red_sat"].value
-        param["hls_orange_hue"] = widget.ids["slider_hls_orange_hue"].value
-        param["hls_orange_lum"] = widget.ids["slider_hls_orange_lum"].value
-        param["hls_orange_sat"] = widget.ids["slider_hls_orange_sat"].value
-        param["hls_yellow_hue"] = widget.ids["slider_hls_yellow_hue"].value
-        param["hls_yellow_lum"] = widget.ids["slider_hls_yellow_lum"].value
-        param["hls_yellow_sat"] = widget.ids["slider_hls_yellow_sat"].value
-        param["hls_green_hue"] = widget.ids["slider_hls_green_hue"].value
-        param["hls_green_lum"] = widget.ids["slider_hls_green_lum"].value
-        param["hls_green_sat"] = widget.ids["slider_hls_green_sat"].value
-        param["hls_cyan_hue"] = widget.ids["slider_hls_cyan_hue"].value
-        param["hls_cyan_lum"] = widget.ids["slider_hls_cyan_lum"].value
-        param["hls_cyan_sat"] = widget.ids["slider_hls_cyan_sat"].value
-        param["hls_blue_hue"] = widget.ids["slider_hls_blue_hue"].value
-        param["hls_blue_lum"] = widget.ids["slider_hls_blue_lum"].value
-        param["hls_blue_sat"] = widget.ids["slider_hls_blue_sat"].value
-        param["hls_purple_hue"] = widget.ids["slider_hls_purple_hue"].value
-        param["hls_purple_lum"] = widget.ids["slider_hls_purple_lum"].value
-        param["hls_purple_sat"] = widget.ids["slider_hls_purple_sat"].value
-        param["hls_magenta_hue"] = widget.ids["slider_hls_magenta_hue"].value
-        param["hls_magenta_lum"] = widget.ids["slider_hls_magenta_lum"].value
-        param["hls_magenta_sat"] = widget.ids["slider_hls_magenta_sat"].value
+        for color_name in self.HLS_COLORS:
+            full_range = widget.ids[f"checkbox_hls_{color_name}_hue_full_range"].active
+            self._set_hue_slider_range(widget, color_name, full_range)
+            param[f"switch_hls_{color_name}"] = widget.ids[f"switch_hls_{color_name}"].active
+            param[f"hls_{color_name}_hue_full_range"] = full_range
+            param[f"hls_{color_name}_hue"] = widget.ids[f"slider_hls_{color_name}_hue"].value
+            param[f"hls_{color_name}_lum"] = widget.ids[f"slider_hls_{color_name}_lum"].value
+            param[f"hls_{color_name}_sat"] = widget.ids[f"slider_hls_{color_name}_sat"].value
 
     def make_diff(self, hls, param, efconfig):
         switch_color_mixer = self._get_param(param, "switch_color_mixer")
-        switch_hls_red = self._get_param(param, "switch_hls_red")
-        switch_hls_orange = self._get_param(param, "switch_hls_orange")
-        switch_hls_yellow = self._get_param(param, "switch_hls_yellow")
-        switch_hls_green = self._get_param(param, "switch_hls_green")
-        switch_hls_cyan = self._get_param(param, "switch_hls_cyan")
-        switch_hls_blue = self._get_param(param, "switch_hls_blue")
-        switch_hls_purple = self._get_param(param, "switch_hls_purple")
-        switch_hls_magenta = self._get_param(param, "switch_hls_magenta")
-        red_hue = self._get_param(param, "hls_red_hue")
-        red_lum = self._get_param(param, "hls_red_lum")
-        red_sat = self._get_param(param, "hls_red_sat")
-        orange_hue = self._get_param(param, "hls_orange_hue")
-        orange_lum = self._get_param(param, "hls_orange_lum")
-        orange_sat = self._get_param(param, "hls_orange_sat")
-        yellow_hue = self._get_param(param, "hls_yellow_hue")
-        yellow_lum = self._get_param(param, "hls_yellow_lum")
-        yellow_sat = self._get_param(param, "hls_yellow_sat")
-        green_hue = self._get_param(param, "hls_green_hue")
-        green_lum = self._get_param(param, "hls_green_lum")
-        green_sat = self._get_param(param, "hls_green_sat")
-        cyan_hue = self._get_param(param, "hls_cyan_hue")
-        cyan_lum = self._get_param(param, "hls_cyan_lum")
-        cyan_sat = self._get_param(param, "hls_cyan_sat")
-        blue_hue = self._get_param(param, "hls_blue_hue")
-        blue_lum = self._get_param(param, "hls_blue_lum")
-        blue_sat = self._get_param(param, "hls_blue_sat")
-        purple_hue = self._get_param(param, "hls_purple_hue")
-        purple_lum = self._get_param(param, "hls_purple_lum")
-        purple_sat = self._get_param(param, "hls_purple_sat")
-        magenta_hue = self._get_param(param, "hls_magenta_hue")
-        magenta_lum = self._get_param(param, "hls_magenta_lum")
-        magenta_sat = self._get_param(param, "hls_magenta_sat")
+        params_map = {}
+        for color_name in self.HLS_COLORS:
+            params_map[color_name] = (
+                self._get_param(param, f"switch_hls_{color_name}"),
+                self._get_param(param, f"hls_{color_name}_hue"),
+                self._get_param(param, f"hls_{color_name}_lum"),
+                self._get_param(param, f"hls_{color_name}_sat"),
+            )
+
         if (   switch_color_mixer == False
-            or (    (switch_hls_red == False or (red_hue == 0 and red_lum == 0 and red_sat == 0))
-                and (switch_hls_orange == False or (orange_hue == 0 and orange_lum == 0 and orange_sat == 0))
-                and (switch_hls_yellow == False or (yellow_hue == 0 and yellow_lum == 0 and yellow_sat == 0))
-                and (switch_hls_green == False or (green_hue == 0 and green_lum == 0 and green_sat == 0))
-                and (switch_hls_cyan == False or (cyan_hue == 0 and cyan_lum == 0 and cyan_sat == 0))
-                and (switch_hls_blue == False or (blue_hue == 0 and blue_lum == 0 and blue_sat == 0))
-                and (switch_hls_purple == False or (purple_hue == 0 and purple_lum == 0 and purple_sat == 0))
-                and (switch_hls_magenta == False or (magenta_hue == 0 and magenta_lum == 0 and magenta_sat == 0))
-            )):
+            or all((not switch) or (h == 0 and l == 0 and s == 0) for switch, h, l, s in params_map.values())):
             self.diff = None
             self.hash = None        
         else:
-            param_hash = hash((
-                switch_hls_red, red_hue, red_lum, red_sat,
-                switch_hls_orange, orange_hue, orange_lum, orange_sat,
-                switch_hls_yellow, yellow_hue, yellow_lum, yellow_sat,
-                switch_hls_green, green_hue, green_lum, green_sat,
-                switch_hls_cyan, cyan_hue, cyan_lum, cyan_sat,
-                switch_hls_blue, blue_hue, blue_lum, blue_sat,
-                switch_hls_purple, purple_hue, purple_lum, purple_sat,
-                switch_hls_magenta, magenta_hue, magenta_lum, magenta_sat
-            ))
+            param_hash = hash(tuple(params_map.items()))
             if self.hash != param_hash:
                 self.hash = param_hash
 
-                # 全色の設定を作成
                 color_settings = []
-                colors = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
-                
-                # ローカル変数から値を取得するためのマップ
-                # (変数名が動的ではないので、明示的にマッピングするか、条件分岐で記述する)
-                # ここではスマートに実装するため、変数名をマップするのではなく、
-                # 上記で取得済みの変数をリスト化して処理する。
-                
-                # パラメータ取得済み変数のリスト化
-                params_map = {
-                    'red': (switch_hls_red, red_hue, red_lum, red_sat),
-                    'orange': (switch_hls_orange, orange_hue, orange_lum, orange_sat),
-                    'yellow': (switch_hls_yellow, yellow_hue, yellow_lum, yellow_sat),
-                    'green': (switch_hls_green, green_hue, green_lum, green_sat),
-                    'cyan': (switch_hls_cyan, cyan_hue, cyan_lum, cyan_sat),
-                    'blue': (switch_hls_blue, blue_hue, blue_lum, blue_sat),
-                    'purple': (switch_hls_purple, purple_hue, purple_lum, purple_sat),
-                    'magenta': (switch_hls_magenta, magenta_hue, magenta_lum, magenta_sat),
-                }
-
-                for color_name in colors:
+                for color_name in self.HLS_COLORS:
                     switch, h, l, s = params_map[color_name]
                     
                     if not switch:
@@ -2234,11 +2127,8 @@ class HLSEffect(Effect):
                     if h == 0 and l == 0 and s == 0:
                         continue
                         
-                    # 設定のコピーと調整値の反映
-                    # core.HLS_COLOR_SETTING はグローバル定数なのでコピーして使う
                     if color_name in core.HLS_COLOR_SETTING:
                         setting = core.HLS_COLOR_SETTING[color_name].copy()
-                        # core.adjust_hls_color_oneの実装に合わせる (Lum/Satは%指定なので /100)
                         setting['adjust'] = [h, l/100.0, s/100.0]
                         color_settings.append(setting)
 

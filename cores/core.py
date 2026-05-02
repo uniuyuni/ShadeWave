@@ -1680,7 +1680,12 @@ def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
         else:
             cs.fade_width = np.array(f_val, dtype=np.float32)
 
-        cs.adjust = np.array(s['adjust'], dtype=np.float32)
+        adjust = np.array(s['adjust'], dtype=np.float32)
+        if adjust[0] >= 180.0:
+            adjust[0] -= 360.0
+        elif adjust[0] < -180.0:
+            adjust[0] += 360.0
+        cs.adjust = adjust
         cs.l_range = np.array(s['l_range'], dtype=np.float32)
         cs.s_range = np.array(s['s_range'], dtype=np.float32)
         cs.kernel_size = np.float32(s['kernel_size'])
