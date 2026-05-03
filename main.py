@@ -856,7 +856,113 @@ if __name__ == '__main__':
             if self.current_op.set_update(current_effects, current_param, subname) is not None:
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
-                self.current_op = None
+            self.current_op = None
+
+        def reset_switch_defaults_for_label(self, head_label):
+            switch_id = None
+            # self.ids の値はしばしば WeakProxy なので `is head_label` では一致しない。
+            # 実体との比較は `==` に任せつつ、既に無効になったプロキシは ReferenceError とする。
+            for key in self.ids:
+                try:
+                    value = self.ids[key]
+                except ReferenceError:
+                    continue
+                if value is head_label:
+                    switch_id = key
+                    break
+                try:
+                    if value == head_label:
+                        switch_id = key
+                        break
+                except ReferenceError:
+                    continue
+            if switch_id is None:
+                return False
+
+            target = self._switch_reset_targets().get(switch_id)
+            if target is None:
+                return False
+
+            lv, effect, subname = target
+            self._reset_effect_defaults(lv, effect, subname)
+            return True
+
+        def _switch_reset_targets(self):
+            hls_targets = {
+                f"switch_hls_{color}": (2, "hls", color)
+                for color in effects.HLSEffect.HLS_COLORS
+            }
+            targets = {
+                "switch_white_balance": (2, "color_temperature", None),
+                "switch_exposure_contrast": (2, ["exposure", "contrast"], None),
+                "switch_tone": (2, "tone", None),
+                "switch_level": (2, "level", None),
+                "switch_precence": (2, ["clarity", "texture", "microcontrast", "dehaze", "clahe"], None),
+                "switch_saturation": (2, "vs_and_saturation", "saturation"),
+                "switch_color_mixer": (2, "hls", None),
+                "switch_unsharp_mask": (2, "unsharp_mask", None),
+                "switch_vignette": (4, "vignette", None),
+                "switch_lens_modifier": (0, "lens_modifier", None),
+                "switch_tone_curves": (2, "curves", "tone_curves"),
+                "switch_color_gradings": (2, "curves", "color_gradings"),
+                "switch_color_curves": (2, "vs_and_saturation", "color_curves"),
+                "switch_hue_vs_hue": (2, "vs_and_saturation", "HuevsHue"),
+                "switch_hue_vs_lum": (2, "vs_and_saturation", "HuevsLum"),
+                "switch_hue_vs_sat": (2, "vs_and_saturation", "HuevsSat"),
+                "switch_lum_vs_lum": (2, "vs_and_saturation", "LumvsLum"),
+                "switch_lum_vs_sat": (2, "vs_and_saturation", "LumvsSat"),
+                "switch_sat_vs_lum": (2, "vs_and_saturation", "SatvsLum"),
+                "switch_sat_vs_sat": (2, "vs_and_saturation", "SatvsSat"),
+                "switch_ai_noise_reduction": (0, "ai_noise_reduction", None),
+                "switch_light_noise_reduction": (2, "light_noise_reduction", None),
+                "switch_details": (0, ["inpaint", "patchmatch_inpaint", "subpixel_shift"], None),
+                "switch_lut": (2, "lut", None),
+                "switch_solid_color": (2, "solid_color", None),
+                "switch_global": (2, ["highlight_compress", "remove_muddy_color"], None),
+                "switch_fringe_removal": (0, "remove_chromatic_aberration", None),
+                "switch_film_simulation": (2, "film_emulation", None),
+                "switch_lens_simulator": (2, "lens_simulator", None),
+                "switch_filters": (1, ["lensblur_filter", "scratch", "frosted_glass", "mosaic"], None),
+                "switch_orton_effect": (1, "orton", None),
+                "switch_glow_effect": (2, "glow", None),
+                "switch_grain": (4, "grain", None),
+                "switch_cross_filter": (0, "cross_filter", None),
+                "switch_distortion_correction": (0, "geometry", None),
+                "switch_mask2_draw_effects": (3, "mask2", "mask2_draw_effects"),
+                "switch_face": (1, "face", None),
+                "switch_mask2_settings": (3, "mask2", "mask2_settings"),
+                "switch_mask2_depth": (3, "mask2", "mask2_depth"),
+                "switch_mask2_hue": (3, "mask2", "mask2_hue"),
+                "switch_mask2_lum": (3, "mask2", "mask2_lum"),
+                "switch_mask2_sat": (3, "mask2", "mask2_sat"),
+                "switch_mask2_options": (3, "mask2", "mask2_options"),
+                "switch_mask2_face": (3, "mask2", "mask2_face"),
+                "switch_distortion": (1, "distortion", None),
+            }
+            targets.update(hls_targets)
+            return targets
+
+        def _reset_effect_defaults(self, lv, effect, subname=None):
+            effect_list = effect if isinstance(effect, list) else [effect]
+            if not self.begin_history_effect_ctrl(lv, effect, subname):
+                return
+
+            current_effects, current_param, _ = self._get_active_effects(lv=lv, subname=subname or effect)
+            if subname is not None:
+                default_params = current_effects[lv][effect_list[0]].get_param_dict(current_param, subname)
+            else:
+                default_params = {}
+                for effect_name in effect_list:
+                    default_params.update(current_effects[lv][effect_name].get_param_dict(current_param))
+
+            for key, value in default_params.items():
+                current_param[key] = value.copy() if isinstance(value, list) else value
+
+            for effect_name in effect_list:
+                current_effects[lv][effect_name].set2widget(self, current_param)
+
+            self.apply_effects_lv(lv, effect, subname=subname)
+            self.end_history_effect_ctrl(lv, effect, subname)
 
         def _undo(self):        
             if self.history.can_undo():

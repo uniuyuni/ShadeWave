@@ -57,15 +57,10 @@ class Operation:
         self.name = "Reset" if self.effect_list[0] is None else effects[self.lv][self.effect_list[0]].__class__.__name__
         self.effects = effects
         self.effects_param = param
+        ef_dict = self._get_effect_param_dict(effects, param, subname)
 
-        # パラメータ辞書を取得
-        if self.effect_list[0] is None:
-            ef_dict = param # 全部
-        else:
-            if subname is not None:
-                ef_dict = effects[self.lv][self.effect_list[0]].get_param_dict(param, subname)
-            else:
-                ef_dict = effects[self.lv][self.effect_list[0]].get_param_dict(param)
+        if ef_dict is None:
+            return (self.lv, self.effect_list)
 
         # バックアップを作成
         for key in ef_dict.keys():
@@ -76,6 +71,20 @@ class Operation:
                 self.backup[key] = val
         
         return (self.lv, self.effect_list)
+
+    def _get_effect_param_dict(self, effects, param, subname=None):
+        if self.effect_list[0] is None:
+            return param
+
+        if subname is not None:
+            return effects[self.lv][self.effect_list[0]].get_param_dict(param, subname)
+
+        ef_dict = {}
+        for effect in self.effect_list:
+            part = effects[self.lv][effect].get_param_dict(param)
+            if part:
+                ef_dict.update(part)
+        return ef_dict
     
     def set_update(self, _effects, param, subname=None):
         if self.effect_list is None:
@@ -86,14 +95,7 @@ class Operation:
             logging.warning("Operation.set_update param is not match.")
             return None
 
-        # パラメータ辞書を取得
-        if self.effect_list[0] is None:
-            ef_dict = param # 全部
-        else:
-            if subname is not None:
-                ef_dict = _effects[self.lv][self.effect_list[0]].get_param_dict(param, subname)
-            else:
-                ef_dict = _effects[self.lv][self.effect_list[0]].get_param_dict(param)
+        ef_dict = self._get_effect_param_dict(_effects, param, subname)
         if ef_dict is None:
             return None
 

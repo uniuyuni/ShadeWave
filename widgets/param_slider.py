@@ -76,6 +76,15 @@ class HeadLabel(KVBoxLayout):
     active = KVBooleanProperty(True)
     release = KVBooleanProperty(True)
 
+    def on_label_touch_down(self, touch):
+        if not touch.is_double_tap:
+            return False
+        app = MDApp.get_running_app()
+        main_widget = getattr(app, "main_widget", None) if app else None
+        if main_widget and hasattr(main_widget, "reset_switch_defaults_for_label"):
+            return bool(main_widget.reset_switch_defaults_for_label(self))
+        return False
+
 class ParamSlider(KVBoxLayout):
     text = KVStringProperty()
     min = KVNumericProperty(-100)

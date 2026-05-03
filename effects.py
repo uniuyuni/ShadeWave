@@ -1445,7 +1445,9 @@ class AINoiseReductonEffect(Effect):
     def set2widget(self, widget, param):
         widget.ids["switch_ai_noise_reduction"].active = self._get_param(param, 'switch_ai_noise_reduction')
         widget.ids["chip_ai_noise_reduction"].active = self._get_param(param, 'ai_noise_reduction')
-        widget.ids["slider_ai_noise_reduction_intensity"].value = self._get_param(param, 'ai_noise_reduction_intensity')
+        widget.ids["slider_ai_noise_reduction_intensity"].set_slider_value(
+            self._get_param(param, "ai_noise_reduction_intensity")
+        )
 
     def set2param(self, param, widget):
         param['switch_ai_noise_reduction'] = widget.ids["switch_ai_noise_reduction"].active
@@ -2063,7 +2065,7 @@ class HLSEffect(Effect):
         slider = widget.ids[f"slider_hls_{color_name}_hue"]
         slider.set_slider_range(min_hue, max_hue, step)
 
-    def get_param_dict(self, param):
+    def get_param_dict(self, param, subname=None):
         param_dict = {
             "switch_color_mixer": True,
         }
@@ -2073,6 +2075,17 @@ class HLSEffect(Effect):
             param_dict[f"hls_{color_name}_lum"] = 0
             param_dict[f"hls_{color_name}_sat"] = 0
             param_dict[f"hls_{color_name}_hue_full_range"] = False
+        if subname in self.HLS_COLORS:
+            return {
+                key: param_dict[key]
+                for key in (
+                    f"switch_hls_{subname}",
+                    f"hls_{subname}_hue",
+                    f"hls_{subname}_lum",
+                    f"hls_{subname}_sat",
+                    f"hls_{subname}_hue_full_range",
+                )
+            }
         return param_dict
 
     def set2widget(self, widget, param):
@@ -2468,6 +2481,20 @@ class CLAHEEffect(Effect):
 class CurvesEffect(Effect):
 
     def get_param_dict(self, param, subname=None):
+        if subname == 'tone_curves':
+            param_dict = {
+                'switch_tone_curves': True,
+            }
+            for name in ('tonecurve', 'tonecurve_red', 'tonecurve_green', 'tonecurve_blue'):
+                param_dict.update(self.effects[name].get_param_dict(param))
+            return param_dict
+        if subname == 'color_gradings':
+            param_dict = {
+                'switch_color_gradings': True,
+            }
+            for name in ('grading1', 'grading2'):
+                param_dict.update(self.effects[name].get_param_dict(param))
+            return param_dict
         if subname is None:
             return {
                 'switch_tone_curves': True,
@@ -2708,6 +2735,13 @@ class GradingEffect(Effect):
 class VSandSaturationEffect(Effect):
 
     def get_param_dict(self, param, subname=None):
+        if subname == 'color_curves':
+            param_dict = {
+                'switch_color_curves': True,
+            }
+            for name in ('HuevsHue', 'HuevsLum', 'LumvsLum', 'SatvsLum', 'HuevsSat', 'LumvsSat', 'SatvsSat'):
+                param_dict.update(self.effects[name].get_param_dict(param))
+            return param_dict
         if subname is None:
             return {
                 'switch_color_curves': True,
@@ -3416,6 +3450,79 @@ class Mask2Effect(Effect):
                     'mask2_color_burn',
                     'mask2_mix_black',
                     'mask2_mix_white',
+                )
+            }
+        if subname == 'mask2_settings':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_settings',
+                    'mask2_invert',
+                    'mask2_allow_over_one',
+                    'mask2_allow_under_zero',
+                )
+            }
+        if subname == 'mask2_depth':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_depth',
+                    'mask2_depth_min',
+                    'mask2_depth_max',
+                )
+            }
+        if subname == 'mask2_hue':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_hue',
+                    'mask2_hue_distance',
+                    'mask2_hue_min',
+                    'mask2_hue_max',
+                )
+            }
+        if subname == 'mask2_lum':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_lum',
+                    'mask2_lum_distance',
+                    'mask2_lum_min',
+                    'mask2_lum_max',
+                )
+            }
+        if subname == 'mask2_sat':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_sat',
+                    'mask2_sat_distance',
+                    'mask2_sat_min',
+                    'mask2_sat_max',
+                )
+            }
+        if subname == 'mask2_options':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_options',
+                    'mask2_blur',
+                    'mask2_open_space',
+                    'mask2_close_space',
+                    'mask2_freedraw_brush_hardness',
+                )
+            }
+        if subname == 'mask2_face':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_face',
+                    'mask2_face_face',
+                    'mask2_face_brows',
+                    'mask2_face_eyes',
+                    'mask2_face_nose',
+                    'mask2_face_mouth',
+                    'mask2_face_lips',
                 )
             }
         return param_dict
