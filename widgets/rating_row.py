@@ -2,12 +2,18 @@
 5 段レーティング。slot 1～5 をタップ。
 EXIF 左パネルでは ref_width/ref_height を kv で与え、traverse で寸法を確保。
 サムネ側は ref_*=0 のまま親レイアウトに幅・高さを任せる。
-表示は ASCII（* / 空スロットは -）。MDLabel で KivyMD テーマ上も文字色を明示する。
+表示は assets の PNG アイコン（星 / 点）。
 """
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.label import MDLabel
 
 from kivy.properties import NumericProperty, ObjectProperty, BooleanProperty
+from kivy.uix.image import Image as KVImage
+
+from utils.paths import rel
+
+
+_STAR_ICON = rel("assets", "rating_star.png")
+_DOT_ICON = rel("assets", "rating_dot.png")
 
 
 class RatingRow(MDBoxLayout):
@@ -30,17 +36,14 @@ class RatingRow(MDBoxLayout):
         self.padding = (0, 0, 0, 0)
         self.md_bg_color = [0, 0, 0, 0]
         for i in range(5):
-            lb = MDLabel(
-                text="-",
-                font_style="Body2",
-                font_size="12sp",
-                theme_text_color="Custom",
-                text_color=(0.92, 0.92, 0.92, 1.0),
+            icon = KVImage(
+                source=_DOT_ICON,
                 size_hint_x=0.2,
-                halign="center",
-                valign="middle",
+                size_hint_y=1,
+                allow_stretch=True,
+                keep_ratio=True,
+                mipmap=True,
             )
-            lb.bind(size=lb.setter("text_size"))
             slot = i + 1
 
             def _on_touch(w, touch, s=slot):
@@ -49,9 +52,9 @@ class RatingRow(MDBoxLayout):
                     return True
                 return False
 
-            lb.bind(on_touch_down=_on_touch)
-            self._labels.append(lb)
-            self.add_widget(lb)
+            icon.bind(on_touch_down=_on_touch)
+            self._labels.append(icon)
+            self.add_widget(icon)
         self.bind(rating=self._apply_display)
         self._apply_display()
 
@@ -71,5 +74,5 @@ class RatingRow(MDBoxLayout):
         if not labels:
             return
         r = int(self.rating or 0)
-        for i, lb in enumerate(labels):
-            lb.text = "*" if i < r else "-"
+        for i, icon in enumerate(labels):
+            icon.source = _STAR_ICON if i < r else _DOT_ICON
