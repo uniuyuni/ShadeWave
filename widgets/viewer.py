@@ -17,6 +17,7 @@ from kivy.core.window import Window as KVWindow
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivy.uix.image import Image as KVImage
 from kivy.uix.label import Label as KVLabel
+from kivy.uix.floatlayout import FloatLayout
 from kivymd.uix.card import MDCard
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
@@ -35,10 +36,15 @@ from widgets.draggable_widget import DraggableWidget
 from widgets.rating_row import RatingRow
 from utils.paths import rel
 
+
+_PMCK_ICON_REF_SIZE = 12
+_PMCK_ICON_MARGIN_REF = 2
+
 class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     file_path = KVStringProperty()
     thumb_source = KVObjectProperty(None, allownone=True, force_dispatch=True)
     rating = KVNumericProperty(0)
+    pmck_exists = KVBooleanProperty(False)
     selected = KVBooleanProperty(False)
     ctx = KVObjectProperty(None)
     index = KVNumericProperty(None)
@@ -57,11 +63,50 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         vbox.ref_padding = 8
 
         # サムネイル表示
-        self.image = KVImage(source=rel("assets", "spinner.gif"), size_hint_y=0.62, anim_delay=0.02)
-        vbox.add_widget(self.image)
+        self.image_box = FloatLayout(size_hint_y=0.62)
+        self.image = KVImage(
+            source=rel("assets", "spinner.gif"),
+            anim_delay=0.02,
+            size_hint=(1, 1),
+            pos_hint={"x": 0, "y": 0},
+        )
+        self.image_box.add_widget(self.image)
+        self.pmck_icon = KVImage(
+            source=rel("assets", "pmck_indicator.png"),
+            size_hint=(None, None),
+            size=(
+                kvutils.dpi_scale_width(_PMCK_ICON_REF_SIZE),
+                kvutils.dpi_scale_height(_PMCK_ICON_REF_SIZE),
+            ),
+            allow_stretch=True,
+            keep_ratio=True,
+            mipmap=True,
+            opacity=0,
+        )
+        self.pmck_icon.ref_width = _PMCK_ICON_REF_SIZE
+        self.pmck_icon.ref_height = _PMCK_ICON_REF_SIZE
+        self.image_box.add_widget(self.pmck_icon)
+        self.image_box.bind(pos=self._update_pmck_icon_layout, size=self._update_pmck_icon_layout)
+        self.image.bind(
+            pos=self._update_pmck_icon_layout,
+            size=self._update_pmck_icon_layout,
+            norm_image_size=self._update_pmck_icon_layout,
+        )
+        vbox.add_widget(self.image_box)
 
         # ファイル名ラベル
-        self.label = KVLabel(text="", bold=True, font_size='9pt', size_hint_y=0.28)
+        self.label = KVLabel(
+            text="",
+            bold=True,
+            font_size='9pt',
+            size_hint_y=0.28,
+            shorten=True,
+            shorten_from="center",
+            max_lines=1,
+            halign="center",
+            valign="middle",
+        )
+        self.label.bind(size=self.label.setter("text_size"))
         vbox.add_widget(self.label)
 
         self.rating_row = RatingRow(size_hint_y=0.1)
@@ -81,6 +126,23 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         if self.parent:
             self.width = self.parent.height * 0.7
 
+    def _update_pmck_icon_layout(self, *_args):
+        if not hasattr(self, "pmck_icon"):
+            return
+        margin = kvutils.dpi_scale_width(_PMCK_ICON_MARGIN_REF)
+        try:
+            image_w, image_h = self.image.norm_image_size
+        except (TypeError, ValueError):
+            image_w, image_h = self.image_box.size
+        if image_w <= 0 or image_h <= 0:
+            image_w, image_h = self.image_box.size
+        image_x = self.image_box.x + max(0, (self.image_box.width - image_w) / 2)
+        image_y = self.image_box.y + max(0, (self.image_box.height - image_h) / 2)
+        self.pmck_icon.pos = (
+            image_x + image_w - self.pmck_icon.width - margin,
+            image_y + margin,
+        )
+
     def update_filename(self, instance, value):
         if value:
             self.label.text = os.path.basename(value)
@@ -94,6 +156,9 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.rating_row.card_index = index
         self.rating_row.ctx = data.get("ctx")
         self.rating_row.exif_pane = False
+        self.pmck_exists = bool(data.get("pmck_exists", False))
+        self.pmck_icon.opacity = 1.0 if self.pmck_exists else 0.0
+        self._update_pmck_icon_layout()
         return r
 
     def on_selected(self, instance, value):
@@ -111,6 +176,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.image.source = ''
         #self.image.size = (thumb.shape[1], thumb.shape[0])
         self.image.texture = self.texture
+        self._update_pmck_icon_layout()
 
     def on_touch_down(self, touch):
         # 子（星スロット）へ先に伝播。ここで丸呑みするとタッチが RatingRow に届かない。
@@ -161,6 +227,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     @kvmainthread
     def _added_file(self, file_path):
+        pmck_image_path = self._image_path_for_pmck_sidecar(file_path)
+        if pmck_image_path is not None:
+            self.set_pmck_indicator_for_path(pmck_image_path, True)
+            return
         if self.is_supported_image(file_path):
             file_list = [d['file_path'] for d in self.data]
             if file_path in file_list:
@@ -173,6 +243,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 'selected': False,
                 'ctx': self,
                 'rating': 0,
+                'pmck_exists': os.path.exists(file_path + ".pmck"),
             }
             
             idx = 0
@@ -188,6 +259,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     @kvmainthread
     def _deleted_file(self, file_path):
+        pmck_image_path = self._image_path_for_pmck_sidecar(file_path)
+        if pmck_image_path is not None:
+            self.set_pmck_indicator_for_path(pmck_image_path, False)
+            return
         for i, d in enumerate(self.data):
             if d['file_path'] == file_path:
                 self.data.pop(i)
@@ -200,6 +275,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
         エクスポート等で「先にファイル作成 → 後から exiftool で星」となると、
         追加 (watch) 時点では星が無い。追記後の modify でメタ＆星表示を再取得する。
         """
+        pmck_image_path = self._image_path_for_pmck_sidecar(file_path)
+        if pmck_image_path is not None:
+            self.set_pmck_indicator_for_path(pmck_image_path, os.path.exists(file_path))
+            return
         if not self.is_supported_image(file_path):
             return
         want = self._norm_path_key(file_path)
@@ -231,6 +310,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     'selected': False,
                     'ctx': self,
                     'rating': 0,
+                    'pmck_exists': os.path.exists(file_path + ".pmck"),
                 })
                 file_path_dict[file_path] = len(new_data) - 1
 
@@ -338,6 +418,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                         item['rating'] = rating_io.read_raw_pmck_rating_value(file_path)
                     else:
                         item['rating'] = rating_utils.parse_exif_rating_value(ex0)
+                    item['pmck_exists'] = os.path.exists(file_path + ".pmck")
                     updates[idx] = item
             
             self._apply_updates(updates)
@@ -350,6 +431,40 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def is_supported_image(self, file_name):
         return file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB) or file_name.lower().endswith(define.SUPPORTED_FORMATS_RAW)
+
+    def _image_path_for_pmck_sidecar(self, file_path):
+        if not file_path:
+            return None
+        s = str(file_path)
+        if not s.lower().endswith(".pmck"):
+            return None
+        image_path = s[:-5]
+        return image_path if self.is_supported_image(image_path) else None
+
+    def set_pmck_indicator_for_path(self, file_path, exists=None):
+        if not file_path:
+            return False
+        want = self._norm_path_key(file_path)
+        found = False
+        pmck_exists = os.path.exists(file_path + ".pmck") if exists is None else bool(exists)
+        for d in self.data:
+            if self._norm_path_key(d.get("file_path") or "") != want:
+                continue
+            d["pmck_exists"] = pmck_exists
+            if rating_utils.is_raw_path(file_path):
+                d["rating"] = rating_io.read_raw_pmck_rating_value(file_path)
+            found = True
+            break
+        if found:
+            self.refresh_from_data()
+            app = MDApp.get_running_app()
+            main_widget = getattr(app, "main_widget", None) if app else None
+            imgset = getattr(main_widget, "imgset", None) if main_widget else None
+            if imgset and self._norm_path_key(getattr(imgset, "file_path", "") or "") == want:
+                sync = getattr(main_widget, "_sync_exif_rating_row", None)
+                if sync:
+                    sync()
+        return found
 
     def process_exif_data(self, file_path_list, exif_data_list):
         thumb_data_list = []

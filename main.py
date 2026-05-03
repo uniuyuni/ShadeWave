@@ -933,6 +933,9 @@ if __name__ == '__main__':
                 if result == False:
                     # 失敗時はファイルを削除
                     params.delete_empty_param_json(self.imgset.file_path)
+                viewer = self.ids.get("viewer")
+                if viewer:
+                    viewer.set_pmck_indicator_for_path(self.imgset.file_path)
         
         @kvmainthread
         def on_select(self, card):
