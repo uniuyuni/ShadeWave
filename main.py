@@ -50,9 +50,14 @@ if __name__ == '__main__':
     from kivy.clock import Clock as KVClock, mainthread as kvmainthread
     from kivy.graphics.transformation import Matrix as KVMatrix
     from kivy.uix.label import Label as KVLabel
+    from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+    from kivy.uix.button import Button as KVButton
+    from kivy.uix.popup import Popup as KVPopup
+    from kivy.uix.textinput import TextInput as KVTextInput
 
     import threading
     import threads
+    import os
 
     import cores.colour_functions as colour_functions
     import re
@@ -76,6 +81,7 @@ if __name__ == '__main__':
     import pipeline
     import utils.utils as utils
     import utils.kvutils as kvutils
+    from utils import preset_utils
     from utils import rating_utils
     from utils import rating_io
     import macos as device
@@ -84,6 +90,7 @@ if __name__ == '__main__':
     from cores.coating_simulator import CoatingSimulator
     import config
     import export
+    import processing_dialog
     from processing_dialog import create_processing_dialog
     from async_worker import AsyncWorker
     import waitinfo
@@ -101,10 +108,13 @@ if __name__ == '__main__':
     import widgets.mask_editor2
     import widgets.history_content as history_content
     import widgets.mask2_content as mask2_content
+    import widgets.preset_content as preset_content
+    from widgets.effect_selector import EffectSelector
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
     import widgets.collapsible_box
     import widgets.compact_switch
     import widgets.modern_checkbox
+    from widgets.switch_reset_map import build_switch_reset_targets
 
 if __name__ != '__main__':
     class ImportBlocker:
@@ -230,6 +240,7 @@ if __name__ == '__main__':
 
             self.history = history.History()
             self.current_op = None
+            self._copied_effect_param = None
 
             self.run_set2widget_all = False
 
@@ -243,6 +254,7 @@ if __name__ == '__main__':
             self._preview_min_w = 0
             self._preview_min_h = 0
             self._debug_resize_label = None
+            preset_utils.ensure_preset_dir()
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
@@ -420,6 +432,9 @@ if __name__ == '__main__':
             self.mask2_panel = mask2_content.create_mask2_content_panel(self.ids['mask_editor2'])
             self.ids['masks_box'].add_widget(self.mask2_panel)
             #self.ids['masks_box'].ids['content'].add_widget(self.mask2_panel)
+
+            self.preset_panel = preset_content.create_preset_content_panel()
+            self.ids['presets_box'].add_widget(self.preset_panel)
 
             self.history_panel = history_content.create_history_content_panel(self._on_history_selected)
             self.ids['history_box'].add_widget(self.history_panel)
@@ -888,59 +903,7 @@ if __name__ == '__main__':
             return True
 
         def _switch_reset_targets(self):
-            hls_targets = {
-                f"switch_hls_{color}": (2, "hls", color)
-                for color in effects.HLSEffect.HLS_COLORS
-            }
-            targets = {
-                "switch_white_balance": (2, "color_temperature", None),
-                "switch_exposure_contrast": (2, ["exposure", "contrast"], None),
-                "switch_tone": (2, "tone", None),
-                "switch_level": (2, "level", None),
-                "switch_precence": (2, ["clarity", "texture", "microcontrast", "dehaze", "clahe"], None),
-                "switch_saturation": (2, "vs_and_saturation", "saturation"),
-                "switch_color_mixer": (2, "hls", None),
-                "switch_unsharp_mask": (2, "unsharp_mask", None),
-                "switch_vignette": (4, "vignette", None),
-                "switch_lens_modifier": (0, "lens_modifier", None),
-                "switch_tone_curves": (2, "curves", "tone_curves"),
-                "switch_color_gradings": (2, "curves", "color_gradings"),
-                "switch_color_curves": (2, "vs_and_saturation", "color_curves"),
-                "switch_hue_vs_hue": (2, "vs_and_saturation", "HuevsHue"),
-                "switch_hue_vs_lum": (2, "vs_and_saturation", "HuevsLum"),
-                "switch_hue_vs_sat": (2, "vs_and_saturation", "HuevsSat"),
-                "switch_lum_vs_lum": (2, "vs_and_saturation", "LumvsLum"),
-                "switch_lum_vs_sat": (2, "vs_and_saturation", "LumvsSat"),
-                "switch_sat_vs_lum": (2, "vs_and_saturation", "SatvsLum"),
-                "switch_sat_vs_sat": (2, "vs_and_saturation", "SatvsSat"),
-                "switch_ai_noise_reduction": (0, "ai_noise_reduction", None),
-                "switch_light_noise_reduction": (2, "light_noise_reduction", None),
-                "switch_details": (0, ["inpaint", "patchmatch_inpaint", "subpixel_shift"], None),
-                "switch_lut": (2, "lut", None),
-                "switch_solid_color": (2, "solid_color", None),
-                "switch_global": (2, ["highlight_compress", "remove_muddy_color"], None),
-                "switch_fringe_removal": (0, "remove_chromatic_aberration", None),
-                "switch_film_simulation": (2, "film_emulation", None),
-                "switch_lens_simulator": (2, "lens_simulator", None),
-                "switch_filters": (1, ["lensblur_filter", "scratch", "frosted_glass", "mosaic"], None),
-                "switch_orton_effect": (1, "orton", None),
-                "switch_glow_effect": (2, "glow", None),
-                "switch_grain": (4, "grain", None),
-                "switch_cross_filter": (0, "cross_filter", None),
-                "switch_distortion_correction": (0, "geometry", None),
-                "switch_mask2_draw_effects": (3, "mask2", "mask2_draw_effects"),
-                "switch_face": (1, "face", None),
-                "switch_mask2_settings": (3, "mask2", "mask2_settings"),
-                "switch_mask2_depth": (3, "mask2", "mask2_depth"),
-                "switch_mask2_hue": (3, "mask2", "mask2_hue"),
-                "switch_mask2_lum": (3, "mask2", "mask2_lum"),
-                "switch_mask2_sat": (3, "mask2", "mask2_sat"),
-                "switch_mask2_options": (3, "mask2", "mask2_options"),
-                "switch_mask2_face": (3, "mask2", "mask2_face"),
-                "switch_distortion": (1, "distortion", None),
-            }
-            targets.update(hls_targets)
-            return targets
+            return build_switch_reset_targets()
 
         def _reset_effect_defaults(self, lv, effect, subname=None):
             effect_list = effect if isinstance(effect, list) else [effect]
@@ -1042,6 +1005,208 @@ if __name__ == '__main__':
                 viewer = self.ids.get("viewer")
                 if viewer:
                     viewer.set_pmck_indicator_for_path(self.imgset.file_path)
+
+        def _snapshot_current_param(self):
+            snap = params.serialize(self.primary_param, self.ids['mask_editor2']) or {"primary_param": {}}
+            params.copy_special_param(snap["primary_param"], self.primary_param)
+            params.copy_remain_param(snap["primary_param"], self.primary_param)
+            return snap
+
+        def _open_effect_selector(self, on_decide):
+            selected = preset_utils.get_saved_selector_switch_keys(config)
+            dialog = EffectSelector(selected_switch_keys=selected)
+
+            def _decide(inst, _selection):
+                switch_keys = inst.get_selected_switch_keys()
+                preset_utils.save_selector_switch_keys(config, switch_keys)
+                on_decide(switch_keys)
+
+            dialog.bind(on_decide=_decide)
+            dialog.open()
+
+        def _can_use_effect_settings_transfer(self):
+            return (
+                self.imgset is not None
+                and self.loading is False
+                and self.mask2_wait_full_load is False
+                and self.primary_param.get("image_fidelity") == ImageFidelity.FULL.value
+            )
+
+        def _warn_effect_settings_transfer_not_ready(self):
+            self.show_warning_dialog("Please wait until the image finishes loading.")
+
+        def copy_effect_settings(self):
+            if not self._can_use_effect_settings_transfer() or not self.primary_param:
+                self._warn_effect_settings_transfer_not_ready()
+                return
+
+            def _copy(switch_keys):
+                partial = preset_utils.collect_selected_primary_param(
+                    self.primary_effects, self.primary_param, switch_keys
+                )
+                self._copied_effect_param = {
+                    "switch_keys": list(switch_keys),
+                    "primary_param": partial,
+                }
+
+            self._open_effect_selector(_copy)
+
+        def _apply_partial_to_current(self, partial_param, history_name="Paste Settings"):
+            if self.imgset is None:
+                return False
+            op = history.Operation(type="All")
+            op.set_backup_all(self.primary_param, self.ids['mask_editor2'])
+            preset_utils.apply_partial_primary_param(self.primary_param, partial_param)
+            self.set2widget_all(self.primary_effects, self.primary_param)
+            self.start_draw_image()
+            if op.set_update_all(self.primary_param, self.ids['mask_editor2'], history_name) is not None:
+                self.history.append(op)
+                self.history_panel.set_history(self.history)
+            self.save_current_sidecar()
+            return True
+
+        def paste_effect_settings(self):
+            if not self._can_use_effect_settings_transfer():
+                self._warn_effect_settings_transfer_not_ready()
+                return
+            copied = self._copied_effect_param
+            if not copied or not copied.get("primary_param"):
+                self.show_warning_dialog("No copied settings.")
+                return
+            cards = self.ids['viewer'].get_selected_cards()
+            if not cards:
+                if self.imgset is None:
+                    return
+                self._apply_partial_to_current(copied["primary_param"])
+                return
+            if len(cards) == 1:
+                card = cards[0]
+                if self.imgset is not None and card.file_path == self.imgset.file_path:
+                    self._apply_partial_to_current(copied["primary_param"])
+                    return
+            self._paste_effect_settings_to_cards(cards, copied["primary_param"])
+
+        def _paste_effect_settings_to_cards(self, cards, partial_param):
+            current_path = self.imgset.file_path if self.imgset is not None else None
+            current_backup = self._snapshot_current_param() if current_path and any(c.file_path == current_path for c in cards) else None
+
+            def _job():
+                items = []
+                for card in cards:
+                    item = preset_utils.backup_pmck_for_batch(card.file_path)
+                    preset_utils.apply_partial_to_pmck_file(card.file_path, partial_param)
+                    items.append(item)
+                return items
+
+            items = processing_dialog.wait_prosessing(_job)
+            if current_backup is not None:
+                preset_utils.apply_partial_primary_param(self.primary_param, partial_param)
+                self.set2widget_all(self.primary_effects, self.primary_param)
+                self.start_draw_image()
+            current_update = self._snapshot_current_param() if current_backup is not None else None
+            op = history.Operation(type="BatchPaste")
+            op.set_batch_paste(items, current_backup=current_backup, current_update=current_update)
+            self.history.append(op)
+            self.history_panel.set_history(self.history)
+            for item in items:
+                self._refresh_pmck_indicator_for_image_path(item.get("image_path"))
+
+        def _refresh_pmck_indicator_for_image_path(self, image_path):
+            viewer = self.ids.get("viewer")
+            if viewer and image_path:
+                viewer.set_pmck_indicator_for_path(
+                    image_path, exists=os.path.exists(image_path + ".pmck")
+                )
+
+        def show_warning_dialog(self, message):
+            layout = KVBoxLayout(orientation="vertical", padding=10, spacing=10)
+            layout.add_widget(KVLabel(text=message))
+            btn = KVButton(text="OK", size_hint_y=None, height=40)
+            layout.add_widget(btn)
+            popup = KVPopup(title="Warning", content=layout, size_hint=(0.34, 0.22), auto_dismiss=True)
+            btn.bind(on_release=popup.dismiss)
+            popup.open()
+
+        def start_add_preset(self):
+            if not self._can_use_effect_settings_transfer() or not self.primary_param:
+                self._warn_effect_settings_transfer_not_ready()
+                return
+
+            def _selected(switch_keys):
+                partial = preset_utils.collect_selected_primary_param(
+                    self.primary_effects, self.primary_param, switch_keys
+                )
+                self._open_preset_name_dialog(partial)
+
+            self._open_effect_selector(_selected)
+
+        def _open_preset_name_dialog(self, partial_param):
+            layout = KVBoxLayout(orientation="vertical", padding=10, spacing=10)
+            text_input = KVTextInput(multiline=False, hint_text="Preset name")
+            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=8)
+            cancel_btn = KVButton(text="Cancel")
+            ok_btn = KVButton(text="OK")
+            buttons.add_widget(cancel_btn)
+            buttons.add_widget(ok_btn)
+            layout.add_widget(text_input)
+            layout.add_widget(buttons)
+            popup = KVPopup(title="Save Preset", content=layout, size_hint=(0.36, 0.24), auto_dismiss=False)
+
+            def _save(*_args):
+                try:
+                    path = preset_utils.preset_path_for_name(text_input.text)
+                    preset_utils.save_preset_json(path, preset_utils.build_preset_dict(partial_param))
+                except Exception as e:
+                    self.show_warning_dialog(str(e))
+                    return
+                popup.dismiss()
+                self.refresh_preset_panel()
+
+            ok_btn.bind(on_release=_save)
+            cancel_btn.bind(on_release=popup.dismiss)
+            text_input.bind(on_text_validate=_save)
+            popup.open()
+
+        def refresh_preset_panel(self):
+            panel = getattr(self, "preset_panel", None)
+            if panel is not None:
+                panel.refresh_list()
+
+        def apply_preset_path(self, preset_path):
+            if self.imgset is None:
+                return
+            try:
+                partial = preset_utils.load_preset_json(preset_path)
+            except Exception as e:
+                self.show_warning_dialog(str(e))
+                return
+            self._apply_partial_to_current(partial, history_name="Apply Preset")
+
+        def confirm_delete_preset(self, preset_name, preset_path):
+            layout = KVBoxLayout(orientation="vertical", padding=10, spacing=10)
+            layout.add_widget(KVLabel(text=f'Delete preset "{preset_name}"?'))
+            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=8)
+            cancel_btn = KVButton(text="Cancel")
+            delete_btn = KVButton(text="Delete")
+            buttons.add_widget(cancel_btn)
+            buttons.add_widget(delete_btn)
+            layout.add_widget(buttons)
+            popup = KVPopup(title="Delete Preset", content=layout, size_hint=(0.36, 0.24), auto_dismiss=False)
+
+            def _delete(*_args):
+                try:
+                    os.remove(preset_path)
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    self.show_warning_dialog(str(e))
+                    return
+                popup.dismiss()
+                self.refresh_preset_panel()
+
+            cancel_btn.bind(on_release=popup.dismiss)
+            delete_btn.bind(on_release=_delete)
+            popup.open()
         
         @kvmainthread
         def on_select(self, card):
@@ -1866,6 +2031,13 @@ if __name__ == '__main__':
 
         def shutdown(self):
             #self.processor.stop()
+            viewer = self.ids.get("viewer")
+            if viewer and getattr(viewer, "watch_directory", None):
+                preset_utils.cleanup_pmck_backup_files(viewer.watch_directory)
+            for op in getattr(self.history, "operations", []):
+                if getattr(op, "type", None) == "BatchPaste":
+                    for item in getattr(op, "batch_items", []):
+                        preset_utils.finalize_batch_item(item)
             if self.async_worker:
                 self.async_worker.stop()
             
@@ -1902,12 +2074,22 @@ if __name__ == '__main__':
             if (key == 115 and ('ctrl' in modifier or 'meta' in modifier)):  # Sキー
                 self.save_current_sidecar()
                 return True
+
+            if (key == 99 and ('ctrl' in modifier or 'meta' in modifier)):  # Cキー
+                self.copy_effect_settings()
+                return True
+
+            if (key == 118 and ('ctrl' in modifier or 'meta' in modifier)):  # Vキー
+                self.paste_effect_settings()
+                return True
                                 
             if (key == 122 and ('shift' not in modifier) and ('ctrl' in modifier or 'meta' in modifier)):  # Zキー
                 self._undo()
+                return True
                     
             if (key == 122 and ('shift' in modifier) and ('ctrl' in modifier or 'meta' in modifier)):  # shift-Zキー
                 self._redo()
+                return True
 
         def on_key_up(self, window, key, *args):
             if key == 32:

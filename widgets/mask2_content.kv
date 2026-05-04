@@ -65,7 +65,8 @@
     Button:
         text: "Add Layer"
         size_hint_y: None
-        height: 32
+        ref_height: 20
+        height: kvutils.dpi_scale_height(self.ref_height)
         on_release: root.add_layer()
 
     RecycleView:

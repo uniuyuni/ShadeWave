@@ -1,0 +1,58 @@
+#:import kvutils utils.kvutils
+
+<PresetItem>:
+    orientation: 'horizontal'
+    size_hint_y: None
+    ref_height: 24
+    height: kvutils.dpi_scale_height(self.ref_height)
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    Label:
+        text: root.text
+        size_hint_x: 0.88
+        halign: 'left'
+        valign: 'middle'
+        text_size: self.size
+        font_size: '9pt'
+        padding_x: '5dp'
+        shorten: True
+        color: .8, .8, .8, 1
+
+    Button:
+        text: 'x'
+        size_hint_x: 0.12
+        on_release: root.delete_item()
+        background_color: 0.7, 0.1, 0.1, 1
+
+<PresetContentPanel>:
+    orientation: "vertical"
+    size_hint_y: None
+    height: self.minimum_height
+
+    Button:
+        text: "Add Preset"
+        size_hint_y: None
+        ref_height: 20
+        height: kvutils.dpi_scale_height(self.ref_height)
+        on_release: root.add_preset()
+
+    RecycleView:
+        id: preset_rv
+        viewclass: 'PresetItem'
+        do_scroll_y: False
+        scroll_type: ['bars', 'content']
+        size_hint_y: None
+        height: layout.minimum_height
+
+        PresetRecycleBoxLayout:
+            id: layout
+            orientation: 'vertical'
+            default_size_hint: 1, None
+            default_size: None, None
+            size_hint_y: None
+            height: self.minimum_height

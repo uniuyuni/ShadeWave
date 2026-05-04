@@ -7,6 +7,7 @@ import logging
 import effects
 import params
 import utils.utils as utils
+from utils import preset_utils
 
 class LayerCtrl:
     def update_layer(self, op, type, index, op_type, param):
@@ -120,15 +121,36 @@ class Operation:
         return (self.lv, self.effect_list)
 
     def set_backup_all(self, param, mask_editor):
-        temp_param = params.serialize(param, mask_editor)
+        temp_param = params.serialize(param, mask_editor) or {"primary_param": {}}
         params.copy_special_param(temp_param['primary_param'], param)
+        params.copy_remain_param(temp_param['primary_param'], param)
         self.name = "Reset"
         self.backup['dict'] = temp_param
 
-    def check_backup_all(self, param, mask_editor):
-        temp_param = params.serialize(param, mask_editor)
+    def set_update_all(self, param, mask_editor, name=None):
+        temp_param = params.serialize(param, mask_editor) or {"primary_param": {}}
         params.copy_special_param(temp_param['primary_param'], param)
+        params.copy_remain_param(temp_param['primary_param'], param)
+        self.update['dict'] = temp_param
+        if name:
+            self.name = name
+        self.diff = [["All", "", name or self.name or "Update"]]
+        return None if utils.dict_equal_with_ndarray(self.backup.get('dict'), temp_param) else self.update
+
+    def check_backup_all(self, param, mask_editor):
+        temp_param = params.serialize(param, mask_editor) or {"primary_param": {}}
+        params.copy_special_param(temp_param['primary_param'], param)
+        params.copy_remain_param(temp_param['primary_param'], param)
         return utils.dict_equal_with_ndarray(self.backup['dict'], temp_param)
+
+    def set_batch_paste(self, items, current_backup=None, current_update=None):
+        self.type = "BatchPaste"
+        self.name = "Batch Paste"
+        self.batch_items = items
+        self.batch_state = "can_undo"
+        self.current_backup = current_backup
+        self.current_update = current_update
+        self.diff = [["Batch Paste", "", f"{len(items)} files"]]
 
     def undo(self, widget):
         if self.type == "Effect":
@@ -147,6 +169,21 @@ class Operation:
             dict = self.backup['dict']
             if dict is not None:
                 params.deserialize(dict, widget.primary_param, widget.ids['mask_editor2'])
+                widget.set2widget_all(widget.primary_effects, widget.primary_param)
+
+        elif self.type == "BatchPaste":
+            if getattr(self, "batch_state", "") != "can_undo":
+                widget.show_warning_dialog("Batch paste cannot be undone any further.")
+                return False
+            for item in getattr(self, "batch_items", []):
+                preset_utils.undo_batch_item(item)
+                widget._refresh_pmck_indicator_for_image_path(item.get("image_path"))
+            if getattr(self, "current_backup", None) is not None:
+                widget.primary_param.clear()
+                params.deserialize(self.current_backup, widget.primary_param, widget.ids['mask_editor2'])
+                widget.set2widget_all(widget.primary_effects, widget.primary_param)
+            self.batch_state = "can_redo"
+            return True
 
     def redo(self, widget):
         if self.type == "Effect":
@@ -168,7 +205,27 @@ class Operation:
             self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['op_type'], self.update['dict'])
 
         elif self.type == "All":
-            widget.reset_all()
+            widget.primary_param.clear()
+            dict = self.update.get('dict')
+            if dict is not None:
+                params.deserialize(dict, widget.primary_param, widget.ids['mask_editor2'])
+                widget.set2widget_all(widget.primary_effects, widget.primary_param)
+            else:
+                widget.reset_all()
+
+        elif self.type == "BatchPaste":
+            if getattr(self, "batch_state", "") != "can_redo":
+                widget.show_warning_dialog("Batch paste cannot be redone any further.")
+                return False
+            for item in getattr(self, "batch_items", []):
+                preset_utils.redo_batch_item(item)
+                widget._refresh_pmck_indicator_for_image_path(item.get("image_path"))
+            if getattr(self, "current_update", None) is not None:
+                widget.primary_param.clear()
+                params.deserialize(self.current_update, widget.primary_param, widget.ids['mask_editor2'])
+                widget.set2widget_all(widget.primary_effects, widget.primary_param)
+            self.batch_state = "can_undo"
+            return True
 
 class History:
     """操作履歴マネージャー"""
@@ -183,6 +240,10 @@ class History:
         result = self.current_index
 
         # 現在位置より後ろの操作を削除（redoスタックをクリア）
+        for op in self.operations[self.current_index + 1:]:
+            if getattr(op, "type", None) == "BatchPaste":
+                for item in getattr(op, "batch_items", []):
+                    preset_utils.finalize_batch_item(item)
         self.operations = self.operations[:self.current_index + 1]
         
         # 新しい操作を追加
@@ -191,7 +252,10 @@ class History:
         
         # 履歴上限チェック
         if len(self.operations) > self.max_history:
-            self.operations.pop(0)
+            old = self.operations.pop(0)
+            if getattr(old, "type", None) == "BatchPaste":
+                for item in getattr(old, "batch_items", []):
+                    preset_utils.finalize_batch_item(item)
             self.current_index -= 1
 
         return result
@@ -199,7 +263,9 @@ class History:
     def undo(self, widget) -> bool:
         """1つ前の状態に戻す"""
         if self.can_undo():
-            self.operations[self.current_index].undo(widget)
+            result = self.operations[self.current_index].undo(widget)
+            if result is False:
+                return False
             self.current_index -= 1
             return True
         return False
@@ -207,7 +273,9 @@ class History:
     def redo(self, widget) -> bool:
         """1つ先の状態に進む"""
         if self.can_redo():
-            self.operations[self.current_index+1].redo(widget)
+            result = self.operations[self.current_index+1].redo(widget)
+            if result is False:
+                return False
             self.current_index += 1
             return True
         return False

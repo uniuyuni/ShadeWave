@@ -1,64 +1,125 @@
+#:import ModernCheckBox widgets.modern_checkbox.ModernCheckBox
+
 <EffectSelectionItem>:
     orientation: 'horizontal'
+    size_hint_x: 1
     size_hint_y: None
-    height: "40dp"
-    padding: "4dp"
-    spacing: "8dp"
-    
-    MDCheckbox:
-        id: checkbox
+    height: root.row_height
+    ref_height: root.row_height
+    ref_spacing: 8
+
+    ModernCheckBox:
+        id: row_chk
         size_hint: None, None
-        size: "30dp", "30dp"
+        ref_width: 22
+        ref_height: 22
         pos_hint: {'center_y': .5}
+        box_color: 1, 1, 1, 1
+        border_color_inactive: [0.9, 0.91, 0.94, 1]
+        border_color_active: [0.45, 0.72, 0.98, 1]
+        check_color: [0.45, 0.72, 0.98, 1]
         active: root.is_selected
         on_active: root.is_selected = self.active
 
     MDLabel:
+        id: effect_lbl
         text: root.text
+        font_style: "Caption"
+        line_height: 1.0
         halign: "left"
-        valign: "center"
-        pos_hint: {'center_y': .5}
+        valign: "middle"
         theme_text_color: "Custom"
-        text_color: 1, 1, 1, 1
+        text_color: 0.9, 0.915, 0.94, 1
+        size_hint_x: 1
+        size_hint_y: 1
+        shorten: True
+        shorten_from: 'right'
 
 <EffectSelector>:
-    title: "Select Effects"
-    size_hint: 0.9, 0.9
+    title: "Export effects"
+    title_color: 0.93, 0.93, 0.95, 1
+    separator_color: 0.35, 0.37, 0.43, 1
     auto_dismiss: False
+    size_hint: None, None
+    ref_width: 860
+    ref_height: 560
+    overlay_color: 0, 0, 0, 0.70
 
     MDBoxLayout:
+        id: main_column
         orientation: "vertical"
-        padding: "10dp"
-        spacing: "10dp"
-        md_bg_color: 0.1, 0.1, 0.1, 1
+        ref_spacing: 8
+        md_bg_color: 0.08, 0.08, 0.11, 1
 
         ScrollView:
-            MDGridLayout:
-                id: container
-                cols: 4
-                adaptive_height: True
-                padding: "10dp"
-                spacing: "10dp"
+            id: sections_scroll
+            size_hint_y: 1
+            size_hint_x: 1
+            bar_width: 6
+            scroll_type: ['bars', 'content']
+            do_scroll_x: False
+
+            MDBoxLayout:
+                id: sections_box
+                orientation: 'vertical'
+                size_hint_y: None
+                size_hint_x: 1
+                ref_spacing: 8
+
+        Widget:
+            id: header_separator
+            size_hint_y: None
+            ref_height: 2
+            height: 2
+            canvas.before:
+                Color:
+                    rgba: 0.42, 0.44, 0.52, 0.95
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
 
         MDBoxLayout:
-            orientation: "horizontal"
+            id: footer_bar
+            orientation: 'horizontal'
             size_hint_y: None
-            height: "50dp"
-            spacing: "10dp"
-            padding: "5dp"
+            ref_height: 42
+            ref_spacing: 8
 
-            MDRaisedButton:
+            Button:
                 id: btn_toggle_all
-                text: "Select All"
+                size_hint: None, None
+                ref_width: 86
+                ref_height: 24
+                background_normal: ''
+                background_down: ''
+                background_color: 0.18, 0.45, 0.72, 1
+                color: 1, 1, 1, 1
+                text: "Select all"
                 on_release: root.on_toggle_all()
-            
+
             Widget:
                 size_hint_x: 1
 
-            MDRectangleFlatButton:
+            Button:
+                id: btn_footer_cancel
+                size_hint: None, None
+                ref_width: 68
+                ref_height: 24
+                background_normal: ''
+                background_down: ''
+                background_color: 0.12, 0.13, 0.16, 1
+                color: 0.92, 0.93, 0.96, 1
                 text: "Cancel"
                 on_release: root.do_cancel()
 
-            MDRaisedButton:
-                text: "Decide"
+            Button:
+                id: btn_footer_ok
+                size_hint: None, None
+                ref_width: 56
+                ref_height: 24
+                background_normal: ''
+                background_down: ''
+                background_color: 0.2, 0.55, 0.42, 1
+                color: 1, 1, 1, 1
+                text: "OK"
                 on_release: root.do_decide()

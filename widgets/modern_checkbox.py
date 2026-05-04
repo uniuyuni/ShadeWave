@@ -122,5 +122,11 @@ class ModernCheckBox(ButtonBehavior, Widget):
     def _focus_radius(self):
         return [self._focus_side * 0.32]
 
+    def _border_line_width(self):
+        s = float(self._box_side)
+        # Pixel座標の Line.width：dp で下限を上げ過ぎると低 DPI で太く見える
+        return max(1.0, min(s * 0.044, s * 0.075))
+
     def _check_line_width(self):
-        return max(dp(1.05), self._box_side * 0.072)
+        s = float(self._box_side)
+        return max(1.0, min(s * 0.058, s * 0.10))

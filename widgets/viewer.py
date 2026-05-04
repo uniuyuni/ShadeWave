@@ -35,6 +35,7 @@ from utils import rating_io
 from widgets.draggable_widget import DraggableWidget
 from widgets.rating_row import RatingRow
 from utils.paths import rel
+from utils import preset_utils
 
 
 _PMCK_ICON_REF_SIZE = 12
@@ -290,6 +291,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             break
 
     def set_path(self, directory):
+        preset_utils.cleanup_pmck_backup_files(directory)
         self.data = []
         self.selected_indices.clear()
         self.last_selected_index = None
@@ -532,12 +534,17 @@ class ViewerWidget(RecycleView, DraggableWidget):
         should_notify = False
         
         if not touch.is_mouse_scrolling and touch.button == 'left':
-            if 'shift' in KVWindow.modifiers and self.last_selected_index is not None:
+            if (
+                'shift' in KVWindow.modifiers
+                and self.last_selected_index is not None
+                and index is not None
+            ):
+                anchor = self.last_selected_index
                 if not( 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers ):
                     self.clear_selection()
                 
-                start = min(self.last_selected_index, index)
-                end = max(self.last_selected_index, index)
+                start = min(anchor, index)
+                end = max(anchor, index)
                 
                 for i in range(start, end + 1):
                     self.select_at(i)
