@@ -19,11 +19,15 @@
 
             # Optional Icon
             Image:
-                source: root.icon
-                size_hint_x: None
-                width: self.height if root.icon else 0
+                source: root.icon_source
+                size_hint: None, None
+                ref_width: root.icon_ref_size if root.icon else 0
+                ref_height: root.icon_ref_size if root.icon else 0
+                pos_hint: {'center_y': .5}
                 opacity: 1 if root.icon else 0
                 allow_stretch: True
+                keep_ratio: True
+                mipmap: True
 
             # Title
             Label:

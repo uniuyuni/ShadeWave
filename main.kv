@@ -14,6 +14,7 @@
 #:include widgets/collapsible_box.kv
 #:include widgets/compact_switch.kv
 #:include widgets/define.kv
+#:import iconutils utils.iconutils
 
 <DistortionEffectButton@ToggleButton>:
     group: 'effect'
@@ -68,7 +69,7 @@
         Rectangle:
             pos: self.center_x - (self.height * 0.7) / 2, self.center_y - (self.height * 0.7) / 2
             size: self.height * 0.7, self.height * 0.7
-            source: root.icon_source
+            source: iconutils.variant_source(root.icon_source, self.height * 0.7)
 
 <TextTabbedPanelItem@TabbedPanelItem>:
     text: ''
@@ -97,6 +98,10 @@
     ref_height: 18
 
 <IconButton@ButtonBehavior+Image>:
+    icon_source: ''
+    source: iconutils.variant_source(root.icon_source, min(self.width, self.height))
+    keep_ratio: True
+    mipmap: True
     background_normal: 'gray'
     md_bg_color: 'gray'
 
@@ -2969,55 +2974,55 @@
                                     ParamLabel:
                                         text: "Color"
                                     IconButton:
-                                        source: "assets/Red.png"
+                                        icon_source: "assets/Red.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('red')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Orange.png"
+                                        icon_source: "assets/Orange.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('orange')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Yellow.png"
+                                        icon_source: "assets/Yellow.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('yellow')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Green.png"
+                                        icon_source: "assets/Green.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('green')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Cyan.png"
+                                        icon_source: "assets/Cyan.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('cyan')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Blue.png"
+                                        icon_source: "assets/Blue.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('blue')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Purple.png"
+                                        icon_source: "assets/Purple.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('purple')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Magenta.png"
+                                        icon_source: "assets/Magenta.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('magenta')
                                         on_release: root.end_history_effect_ctrl(3, 'mask2')
                                     IconButton:
-                                        source: "assets/Skin.png"
+                                        icon_source: "assets/Skin.png"
                                         on_press:
                                             root.begin_history_effect_ctrl(3, 'mask2')
                                             root.set_mask2_hue_range('skin')
