@@ -67,7 +67,7 @@ class CropEditor(KVBoxLayout):
             self.black_line = KVLine(rectangle=(0, 0, 0, 0), width=1)
             KVPopMatrix()
         
-        self.label = KVLabel(font_size=20, bold=True, halign='left')
+        self.label = KVLabel(font_size=20, bold=True, halign='center', valign='middle')
         self.add_widget(self.label)
     
         self.bind(crop_rect=self.update_rect,
@@ -153,7 +153,9 @@ class CropEditor(KVBoxLayout):
             line.points = [x1, y1 + third, x2, y1 + third]
         
         # 大きさ表示
-        self.label.x, self.label.y = 0, 0 #int(self.translate.x), int(self.translate.y)
+        self.label.pos = self.pos
+        self.label.size = self.size
+        self.label.text_size = self.size
         w = abs(int(round(width / self.scale)))
         h = abs(int(round(height / self.scale)))
         gcd = math.gcd(w, h)

@@ -104,7 +104,7 @@ class ParamSlider(KVBoxLayout):
         super().on_kv_post(*args, **kwargs)
 
         self.disabled = True
-        self.reset_value = self.value
+        self.set_slider_reset(self.value)
         self.ids['label'].text = self.text
         #self.ids['label'].width = self.label_width
         self.ids['slider'].max = self.max

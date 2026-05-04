@@ -728,7 +728,7 @@ if __name__ == '__main__':
                     current_effects[lv][e].set2param(current_param, self)
             if lv == 0:
                 self.sync_distortion_mode_sliders()
-            self.ids['mask_editor2'].set_draw_mask(lv == 3)
+            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, subname))
             #self.apply_rotation_flip_for_wrapper()
             if sync == False:
                 self.start_draw_image()
@@ -741,9 +741,12 @@ if __name__ == '__main__':
 
             current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
-            self.ids['mask_editor2'].set_draw_mask(lv == 3)
+            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, None))
             #self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
+
+        def _should_draw_mask_overlay(self, lv, subname=None):
+            return lv == 3 and subname != 'mask2_draw_effects'
 
         def apply_rotation_flip_for_wrapper(self):
             # Calculate Rotation/Flip for Hardware
