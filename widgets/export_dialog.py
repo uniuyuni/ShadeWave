@@ -11,6 +11,7 @@ from kivy.metrics import dp as kv_dp
 from functools import partial
 import json
 
+import utils.dialogutils as dialogutils
 import utils.kvutils as kvutils
 import macos as device
 
@@ -22,33 +23,36 @@ class PresetNameDialog(KVPopup):
     def __init__(self, save_callback, **kwargs):
         super().__init__(**kwargs)
         self.title = "Save Preset"
-        self.size_hint = (0.3, None)
-        self.ref_height = kvutils.dpi_scale_height(64)
-        self.bind(pos=self.on_popup_resize)
-        #self.bind(size=self.on_popup_resize)
+        self.size_hint = (None, None)
+        self.ref_width = 280
+        self.ref_height = 120
         
         layout = KVBoxLayout(orientation='vertical')
         #layout.pos_hint = {'left': 0, 'top': 0}
-        layout.ref_padding = kvutils.dpi_scale_width(5)
+        layout.ref_padding = 5
+        layout.ref_spacing = 5
 
         self.preset_name = KVTextInput(multiline=False, size_hint_y=None)
-        self.preset_name.ref_height = kvutils.dpi_scale_height(14)
+        self.preset_name.ref_height = 28
 
-        button_layout = KVBoxLayout(orientation='horizontal')
+        button_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None)
+        button_layout.ref_height = 30
+        button_layout.ref_spacing = 5
 
         cancel_button = KVButton(text='Cancel', size_hint_y=None)
-        cancel_button.ref_height = kvutils.dpi_scale_height(15)
+        cancel_button.ref_height = 30
         cancel_button.bind(on_press=lambda x: self.dismiss())
         button_layout.add_widget(cancel_button)
 
         save_button = KVButton(text='Save', size_hint_y=None)
-        save_button.ref_height = kvutils.dpi_scale_height(15)
+        save_button.ref_height = 30
         save_button.bind(on_press=lambda x: self.save_preset(save_callback))        
         button_layout.add_widget(save_button)
 
         layout.add_widget(self.preset_name)
         layout.add_widget(button_layout)
         self.content = layout
+        dialogutils.install_ref_scaling(self)
 
     def save_preset(self, callback):
         if self.preset_name.text:
@@ -65,9 +69,12 @@ class ExportConfirmDialog(KVPopup):
 
         self.title = "Target file already exsists"
         self.size_hint = (None, None)
-        self.size = (kv_dp(400), kv_dp(300))
+        self.ref_width = 400
+        self.ref_height = 300
         
-        layout = KVBoxLayout(orientation='vertical', padding=kv_dp(5), spacing=kv_dp(5))
+        layout = KVBoxLayout(orientation='vertical')
+        layout.ref_padding = 5
+        layout.ref_spacing = 5
         rename_button = KVButton(text='Rename')
         rename_button.bind(on_press=lambda x: self._on_callback(callback('Rename', preset)))
         layout.add_widget(rename_button)
@@ -79,6 +86,7 @@ class ExportConfirmDialog(KVPopup):
         layout.add_widget(overwrite_button)
 
         self.content = layout
+        dialogutils.install_ref_scaling(self)
 
     def _on_callback(self, callback):
         self.dismiss()
@@ -120,6 +128,7 @@ class ExportDialog(KVModalView):
     
     def on_kv_post(self, *args, **kwargs):
         self.bind(on_dismiss=self.handle_dismiss)
+        dialogutils.install_ref_scaling(self)
 
         self._load_default_presets()
         self._load_json()

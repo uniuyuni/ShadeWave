@@ -265,7 +265,22 @@ def get_self_window_position(app_name=None):
     mouse_location = NSEvent.mouseLocation()
     return (mouse_location.x, mouse_location.y, 0, 0, None)
 
+def get_app_window_scale():
+    try:
+        window = get_window(define.APPNAME)
+        if window is None:
+            return None
+        screen = window.screen()
+        if screen is None:
+            return None
+        return float(screen.backingScaleFactor())
+    except Exception:
+        return None
+
 def dpi_scale():
+    scale = get_app_window_scale()
+    if scale:
+        return scale
     display = get_current_display()
     return _screens[display['display']]['scale']
 

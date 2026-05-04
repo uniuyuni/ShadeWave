@@ -624,16 +624,35 @@ def mix_pigment_white_black_ks_rgb(rgb, black_amount=0.0, white_amount=0.0):
     return result
 
 
+def _resize_mask_draw_input(src, target_shape, interpolation):
+    target_h, target_w = target_shape[:2]
+    if src.shape[:2] == (target_h, target_w):
+        return src
+    resized = cv2.resize(src, (target_w, target_h), interpolation=interpolation)
+    if src.ndim == 3 and resized.ndim == 2:
+        resized = resized[:, :, np.newaxis]
+    return resized
+
+
 def apply_mask_draw_effects(base, msk, layer_img, mask2_param):
     """Mask2 の Photoshop 風 Draw Effects を適用してからマスク合成する。"""
     base = np.asarray(base, dtype=np.float32)
-    raw_mask = np.asarray(msk, dtype=np.float32)
+    layer_img = _resize_mask_draw_input(
+        np.asarray(layer_img, dtype=np.float32),
+        base.shape,
+        cv2.INTER_LINEAR,
+    )
+    raw_mask = _resize_mask_draw_input(
+        np.asarray(msk, dtype=np.float32),
+        base.shape,
+        cv2.INTER_LINEAR,
+    )
     mask_alpha = np.clip(raw_mask, 0.0, 1.0)
     mask_alpha = mask_alpha[:, :, np.newaxis] if mask_alpha.ndim == 2 else mask_alpha
     mask_boost = np.maximum(raw_mask, 1.0)
     mask_boost = mask_boost[:, :, np.newaxis] if mask_boost.ndim == 2 else mask_boost
 
-    effect_img = base + (np.asarray(layer_img, dtype=np.float32) - base) * mask_boost
+    effect_img = base + (layer_img - base) * mask_boost
     if not mask2_param.get("switch_mask2_draw_effects", True):
         return base * (1.0 - mask_alpha) + effect_img * mask_alpha
 
@@ -2952,4 +2971,3 @@ def boost_detail_from_tone_change(
 
     out = b * (Y2 / Yb)[..., None]
     return np.maximum(out, 0.0)
-

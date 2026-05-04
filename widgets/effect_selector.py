@@ -14,6 +14,7 @@ from kivy.uix.widget import Widget as KVWidget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 
+from utils import dialogutils
 from utils import kvutils
 from widgets.modern_checkbox import ModernCheckBox
 from widgets.switch_reset_map import (
@@ -215,23 +216,17 @@ class EffectSelector(KVPopup):
         self._syncing_section_state = False
         super().__init__(**kwargs)
         self.opacity = 0
-        Window.fbind("size", self._on_window_size)
+        dialogutils.install_ref_scaling(self, center=True, on_rescale=self._on_dialog_rescale)
         Clock.schedule_once(lambda _dt: self._build_sections(), 0)
         self.bind(on_open=lambda *_args: Clock.schedule_once(self._show_after_layout, 0))
 
-    def dismiss(self, *args, **kwargs):
-        try:
-            Window.funbind("size", self._on_window_size)
-        except (ValueError, ReferenceError):
-            pass
-        return super().dismiss(*args, **kwargs)
-
-    def _on_window_size(self, *_args):
+    def _on_dialog_rescale(self):
         Clock.schedule_once(lambda _dt: self._rebuild_preserving_state(), 0)
 
     def _rebuild_preserving_state(self):
-        selected = set(self.get_selected_switch_keys())
-        self._initial_selected_switch_keys = selected
+        if self._effect_items:
+            selected = set(self.get_selected_switch_keys())
+            self._initial_selected_switch_keys = selected
         self._build_sections()
 
     def _build_sections(self):
@@ -306,7 +301,10 @@ class EffectSelector(KVPopup):
             row_default_height=_sh(_REF_ROW_H),
             row_force_default=True,
         )
-        grid.ref_spacing = [_REF_SECTION_SPACING, _REF_GRID_ROW_SPACING]
+        grid._effect_selector_ref_spacing = (
+            _REF_SECTION_SPACING,
+            _REF_GRID_ROW_SPACING,
+        )
         for key in keys:
             label = _SWITCH_LABELS.get(
                 key, key.replace("switch_", "").replace("_", " ").title()
@@ -408,7 +406,13 @@ class EffectSelector(KVPopup):
             self._scale_footer_button("btn_footer_ok", _REF_OK_BTN_W)
         for row in self._effect_items:
             row._apply_layout()
+        for section in self.ids.sections_box.children:
+            for child in getattr(section, "children", []):
+                spacing = getattr(child, "_effect_selector_ref_spacing", None)
+                if spacing is not None:
+                    child.spacing = [_sw(spacing[0]), _sw(spacing[1])]
         self._sync_sections_height()
+        self.center = Window.center
 
     def _show_after_layout(self, *_args):
         self._scale_layout()

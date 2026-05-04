@@ -81,6 +81,7 @@ if __name__ == '__main__':
     import pipeline
     import utils.utils as utils
     import utils.kvutils as kvutils
+    import utils.dialogutils as dialogutils
     from utils import preset_utils
     from utils import rating_utils
     from utils import rating_io
@@ -1119,11 +1120,17 @@ if __name__ == '__main__':
                 )
 
         def show_warning_dialog(self, message):
-            layout = KVBoxLayout(orientation="vertical", padding=10, spacing=10)
+            layout = KVBoxLayout(orientation="vertical")
+            layout.ref_padding = 10
+            layout.ref_spacing = 10
             layout.add_widget(KVLabel(text=message))
-            btn = KVButton(text="OK", size_hint_y=None, height=40)
+            btn = KVButton(text="OK", size_hint_y=None)
+            btn.ref_height = 40
             layout.add_widget(btn)
-            popup = KVPopup(title="Warning", content=layout, size_hint=(0.34, 0.22), auto_dismiss=True)
+            popup = KVPopup(title="Warning", content=layout, size_hint=(None, None), auto_dismiss=True)
+            popup.ref_width = 420
+            popup.ref_height = 160
+            dialogutils.install_ref_scaling(popup)
             btn.bind(on_release=popup.dismiss)
             popup.open()
 
@@ -1141,16 +1148,24 @@ if __name__ == '__main__':
             self._open_effect_selector(_selected)
 
         def _open_preset_name_dialog(self, partial_param):
-            layout = KVBoxLayout(orientation="vertical", padding=10, spacing=10)
-            text_input = KVTextInput(multiline=False, hint_text="Preset name")
-            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=8)
+            layout = KVBoxLayout(orientation="vertical")
+            layout.ref_padding = 10
+            layout.ref_spacing = 10
+            text_input = KVTextInput(multiline=False, hint_text="Preset name", size_hint_y=None)
+            text_input.ref_height = 32
+            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None)
+            buttons.ref_height = 40
+            buttons.ref_spacing = 8
             cancel_btn = KVButton(text="Cancel")
             ok_btn = KVButton(text="OK")
             buttons.add_widget(cancel_btn)
             buttons.add_widget(ok_btn)
             layout.add_widget(text_input)
             layout.add_widget(buttons)
-            popup = KVPopup(title="Save Preset", content=layout, size_hint=(0.36, 0.24), auto_dismiss=False)
+            popup = KVPopup(title="Save Preset", content=layout, size_hint=(None, None), auto_dismiss=False)
+            popup.ref_width = 440
+            popup.ref_height = 180
+            dialogutils.install_ref_scaling(popup)
 
             def _save(*_args):
                 try:
@@ -1183,15 +1198,22 @@ if __name__ == '__main__':
             self._apply_partial_to_current(partial, history_name="Apply Preset")
 
         def confirm_delete_preset(self, preset_name, preset_path):
-            layout = KVBoxLayout(orientation="vertical", padding=10, spacing=10)
+            layout = KVBoxLayout(orientation="vertical")
+            layout.ref_padding = 10
+            layout.ref_spacing = 10
             layout.add_widget(KVLabel(text=f'Delete preset "{preset_name}"?'))
-            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=8)
+            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None)
+            buttons.ref_height = 40
+            buttons.ref_spacing = 8
             cancel_btn = KVButton(text="Cancel")
             delete_btn = KVButton(text="Delete")
             buttons.add_widget(cancel_btn)
             buttons.add_widget(delete_btn)
             layout.add_widget(buttons)
-            popup = KVPopup(title="Delete Preset", content=layout, size_hint=(0.36, 0.24), auto_dismiss=False)
+            popup = KVPopup(title="Delete Preset", content=layout, size_hint=(None, None), auto_dismiss=False)
+            popup.ref_width = 440
+            popup.ref_height = 180
+            dialogutils.install_ref_scaling(popup)
 
             def _delete(*_args):
                 try:
@@ -1440,7 +1462,6 @@ if __name__ == '__main__':
             self.save_current_sidecar()
 
             dialog = ExportDialog(callback=self.handle_export_dialog)
-            dialog.bind(pos=MDApp.get_running_app()._widget_pos)
             dialog.open()
 
         def handle_export_dialog(self, preset):

@@ -8,7 +8,7 @@ from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivymd.uix.list import OneLineListItem as MDOneLineListItem
 from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
-from utils import kvutils
+from utils import dialogutils, kvutils
 
 import re
 
@@ -80,7 +80,12 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         import widgets.mask_editor2 as me2
 
         content = KVBoxLayout(orientation='vertical')
-        popup = KVPopup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(0.25, 0.4))
+        content.ref_padding = 5
+        content.ref_spacing = 5
+        popup = KVPopup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(None, None))
+        popup.ref_width = 300
+        popup.ref_height = 420
+        dialogutils.install_ref_scaling(popup)
         
         types = [
             ('Circle', me2.MaskType.CIRCULAR),
@@ -94,7 +99,8 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         ]
 
         for name, type_key in types:
-            btn = KVButton(text=name)
+            btn = KVButton(text=name, size_hint_y=None)
+            btn.ref_height = 36
             btn.bind(on_release=partial(self._add_child_mask, type_key, maskop, popup))
             content.add_widget(btn)
         
@@ -163,5 +169,3 @@ def create_mask2_content_panel(mask2_editor):
     panel = Mask2ContentPanel(mask2_editor)
     panel.id = 'mask2_content_panel'
     return panel
-
-

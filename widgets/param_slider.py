@@ -224,6 +224,7 @@ class ParamSlider(KVBoxLayout):
 
     def set_slider_reset(self, value):
         self.reset_value = value
+        self.ids['slider'].anchor_value = value
     
 class Param_SliderApp(MDApp):
     def __init__(self, **kwargs):

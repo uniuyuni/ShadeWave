@@ -42,6 +42,7 @@ import cores.hlsrgb as hlsrgb
 import params
 import effects
 import config
+import utils.dialogutils as dialogutils
 import utils.utils as utils
 from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
@@ -63,17 +64,20 @@ class TextInputDialog(KVPopup):
     def __init__(self, callback, **kwargs):
         super().__init__(**kwargs)
         self.title = "Input Target Text in English"
-        self.size_hint = (0.4, None)
-        self.height = 240
+        self.size_hint = (None, None)
+        self.ref_width = 420
         self.ref_height = 240
         
-        layout = KVBoxLayout(orientation='vertical', padding=10, spacing=10)
-        self.text_input = KVTextInput(multiline=False, size_hint_y=None, height=50)
-        self.ref_height = 50
+        layout = KVBoxLayout(orientation='vertical')
+        layout.ref_padding = 10
+        layout.ref_spacing = 10
+        self.text_input = KVTextInput(multiline=False, size_hint_y=None)
+        self.text_input.ref_height = 50
         self.text_input.bind(on_text_validate=lambda x: self.save(callback))
         
-        btn_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
+        btn_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None)
         btn_layout.ref_height = 40
+        btn_layout.ref_spacing = 10
         save_button = KVButton(text='OK')
         save_button.bind(on_press=lambda x: self.save(callback))
         btn_layout.add_widget(save_button)
@@ -81,6 +85,7 @@ class TextInputDialog(KVPopup):
         layout.add_widget(self.text_input)
         layout.add_widget(btn_layout)
         self.content = layout
+        dialogutils.install_ref_scaling(self)
 
     def save(self, callback):
         text = self.text_input.text
