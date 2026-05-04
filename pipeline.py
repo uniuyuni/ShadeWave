@@ -303,6 +303,8 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig.is_zoomed = is_zoomed
     efconfig.mode = EffectMode.PREVIEW
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
+    efconfig.current_tab = current_tab
+    efconfig.crop_editing = current_tab == "Ge"
     
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag
@@ -375,6 +377,8 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.is_zoomed = True
     efconfig.mode = EffectMode.EXPORT
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
+    efconfig.current_tab = None
+    efconfig.crop_editing = False
     efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
 

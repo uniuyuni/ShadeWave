@@ -3,6 +3,7 @@ import uuid
 from typing import List, Dict, Any
 import numpy as np
 import logging
+import copy
 
 import effects
 import params
@@ -66,10 +67,7 @@ class Operation:
         # バックアップを作成
         for key in ef_dict.keys():
             val = param.get(key, ef_dict[key])
-            if isinstance(val, list):
-                self.backup[key] = val.copy()
-            else:
-                self.backup[key] = val
+            self.backup[key] = self._copy_history_value(val)
         
         return (self.lv, self.effect_list)
 
@@ -103,10 +101,7 @@ class Operation:
         # アップデートを作成
         for key in ef_dict.keys():
             val = param.get(key, ef_dict[key])
-            if isinstance(val, list):
-                self.update[key] = val.copy()
-            else:
-                self.update[key] = val
+            self.update[key] = self._copy_history_value(val)
 
         # 差分を作成
         self.diff = [
@@ -165,10 +160,13 @@ class Operation:
             self.layer_ctrl.update_layer(self.backup['op'], self.backup['index'], self.backup['op_type'], self.backup['dict'])
         
         elif self.type == "All":
+            runtime_special = {}
+            params.copy_special_param(runtime_special, widget.primary_param)
             widget.primary_param.clear()
             dict = self.backup['dict']
             if dict is not None:
                 params.deserialize(dict, widget.primary_param, widget.ids['mask_editor2'])
+                self._restore_missing_runtime_special(widget.primary_param, runtime_special)
                 widget.set2widget_all(widget.primary_effects, widget.primary_param)
 
         elif self.type == "BatchPaste":
@@ -179,8 +177,11 @@ class Operation:
                 preset_utils.undo_batch_item(item)
                 widget._refresh_pmck_indicator_for_image_path(item.get("image_path"))
             if getattr(self, "current_backup", None) is not None:
+                runtime_special = {}
+                params.copy_special_param(runtime_special, widget.primary_param)
                 widget.primary_param.clear()
                 params.deserialize(self.current_backup, widget.primary_param, widget.ids['mask_editor2'])
+                self._restore_missing_runtime_special(widget.primary_param, runtime_special)
                 widget.set2widget_all(widget.primary_effects, widget.primary_param)
             self.batch_state = "can_redo"
             return True
@@ -205,12 +206,16 @@ class Operation:
             self.layer_ctrl.update_layer(self.update['op'], self.update['index'], self.update['op_type'], self.update['dict'])
 
         elif self.type == "All":
+            runtime_special = {}
+            params.copy_special_param(runtime_special, widget.primary_param)
             widget.primary_param.clear()
             dict = self.update.get('dict')
             if dict is not None:
                 params.deserialize(dict, widget.primary_param, widget.ids['mask_editor2'])
+                self._restore_missing_runtime_special(widget.primary_param, runtime_special)
                 widget.set2widget_all(widget.primary_effects, widget.primary_param)
             else:
+                widget.primary_param.update(runtime_special)
                 widget.reset_all()
 
         elif self.type == "BatchPaste":
@@ -221,11 +226,24 @@ class Operation:
                 preset_utils.redo_batch_item(item)
                 widget._refresh_pmck_indicator_for_image_path(item.get("image_path"))
             if getattr(self, "current_update", None) is not None:
+                runtime_special = {}
+                params.copy_special_param(runtime_special, widget.primary_param)
                 widget.primary_param.clear()
                 params.deserialize(self.current_update, widget.primary_param, widget.ids['mask_editor2'])
+                self._restore_missing_runtime_special(widget.primary_param, runtime_special)
                 widget.set2widget_all(widget.primary_effects, widget.primary_param)
             self.batch_state = "can_undo"
             return True
+
+    def _restore_missing_runtime_special(self, target, runtime_special):
+        for key, value in runtime_special.items():
+            if key not in target:
+                target[key] = value
+
+    def _copy_history_value(self, value):
+        if isinstance(value, np.ndarray):
+            return value.copy()
+        return copy.deepcopy(value)
 
 class History:
     """操作履歴マネージャー"""

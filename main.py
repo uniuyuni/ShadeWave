@@ -440,6 +440,7 @@ if __name__ == '__main__':
             self.history_panel = history_content.create_history_content_panel(self._on_history_selected)
             self.ids['history_box'].add_widget(self.history_panel)
             #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
+            self.update_load_dependent_panels_enabled()
 
             if getattr(define, "RESIZE_DEBUG", False):
                 self._debug_resize_label = KVLabel(
@@ -610,13 +611,14 @@ if __name__ == '__main__':
                                             apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
                     # ヒストグラム表示
-                    img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param)
+                    crop_editing = self.ids["effects"].current_tab.text == "Ge"
+                    img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
                     hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
                     self.draw_histogram_view(hist_data)
 
                     # プレビュー表示
                     img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
-                    img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param)
+                    img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param, crop_editing=crop_editing)
                     img_draw = np.clip(img_draw, 0, 1)
 
                     #描画をスケジューリング
@@ -821,10 +823,10 @@ if __name__ == '__main__':
 
         def reset_all(self):
             
-            # セーブしないパラメータ（メタデータ等）と、維持するパラメータ（クロップ、色収差等）は維持する
+            # セーブしないパラメータ（メタデータ等）は維持する。
+            # 全体Resetでは crop_rect などの編集内容は維持しない。
             temp_param = {}
             params.copy_special_param(temp_param, self.primary_param)
-            params.copy_remain_param(temp_param, self.primary_param)
             
             self.primary_param.clear()
             self.primary_param.update(temp_param)
@@ -837,6 +839,9 @@ if __name__ == '__main__':
             self._disable_mask2()
             self.ids['mask_editor2'].clear_mask()
             
+            # UIを先に初期値へ同期しないと、apply_effects_lv が古いウィジェット値をparamへ戻してしまう。
+            self.set2widget_all(self.primary_effects, self.primary_param)
+
             # クロップエディタ起動時はそれの初期化も行う
             self.primary_effects[0]['crop'].reset2_crop_editor(self.primary_param)
             self.primary_effects[0]['crop'].reset_crop_editor()
@@ -846,7 +851,7 @@ if __name__ == '__main__':
             self.save_current_sidecar()
            
             # UIと表示の更新
-            effects.set2widget_all(self, self.primary_effects, self.primary_param)
+            self.set2widget_all(self.primary_effects, self.primary_param)
 
         def begin_history_effect_ctrl(self, lv, effect, subname=None):
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
@@ -876,6 +881,15 @@ if __name__ == '__main__':
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
             self.current_op = None
+
+        def apply_crop_button_action(self, action):
+            if not self.begin_history_effect_ctrl(0, 'crop'):
+                return
+            self.primary_effects[0]['crop'].apply_crop_button_action(self.primary_param, self, action)
+            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(0, None))
+            self.start_draw_image_and_crop(self.imgset)
+            self.end_history_effect_ctrl(0, 'crop')
+            self.save_current_sidecar()
 
         def reset_switch_defaults_for_label(self, head_label):
             switch_id = None
@@ -938,7 +952,8 @@ if __name__ == '__main__':
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
                     self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                     self._set_diff_list_to_inpaint_edit()
-                    self.start_draw_image()
+                    self._sync_editor_modes_after_history()
+                    self.start_draw_image_and_crop(self.imgset)
 
         def _redo(self):        
             if self.history.can_redo():
@@ -947,9 +962,13 @@ if __name__ == '__main__':
                     #self.ids['mask_editor2'].set_draw_mask(lv == 3)
                     self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                     self._set_diff_list_to_inpaint_edit()
-                    self.start_draw_image()
+                    self._sync_editor_modes_after_history()
+                    self.start_draw_image_and_crop(self.imgset)
 
         def _on_history_selected(self, index):
+            if self.mask2_wait_full_load:
+                return
+
             if index < self.history.current_index:
                 n = self.history.current_index - index
                 for _ in range(n):
@@ -958,7 +977,8 @@ if __name__ == '__main__':
                 #self.ids['mask_editor2'].set_draw_mask(lv == 3)
                 self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                 self._set_diff_list_to_inpaint_edit()
-                self.start_draw_image()
+                self._sync_editor_modes_after_history()
+                self.start_draw_image_and_crop(self.imgset)
 
             elif index >= self.history.current_index:
                 n = index - self.history.current_index
@@ -968,7 +988,11 @@ if __name__ == '__main__':
                 #self.ids['mask_editor2'].set_draw_mask(lv == 3)
                 self.ids['mask_editor2'].update()       # MaskEditor2の表示を更新
                 self._set_diff_list_to_inpaint_edit()
-                self.start_draw_image()
+                self._sync_editor_modes_after_history()
+                self.start_draw_image_and_crop(self.imgset)
+
+        def _sync_editor_modes_after_history(self):
+            self.primary_effects[0]['crop'].sync_crop_editor_mode_from_widget(self, self.primary_param)
 
         def reset_param(self, param):
             param.clear()
@@ -1138,6 +1162,8 @@ if __name__ == '__main__':
             popup.open()
 
         def start_add_preset(self):
+            if self.mask2_wait_full_load:
+                return
             if not self._can_use_effect_settings_transfer() or not self.primary_param:
                 self._warn_effect_settings_transfer_not_ready()
                 return
@@ -1191,6 +1217,8 @@ if __name__ == '__main__':
                 panel.refresh_list()
 
         def apply_preset_path(self, preset_path):
+            if self.mask2_wait_full_load:
+                return
             if self.imgset is None:
                 return
             try:
@@ -1201,6 +1229,8 @@ if __name__ == '__main__':
             self._apply_partial_to_current(partial, history_name="Apply Preset")
 
         def confirm_delete_preset(self, preset_name, preset_path):
+            if self.mask2_wait_full_load:
+                return
             layout = KVBoxLayout(orientation="vertical")
             layout.ref_padding = 10
             layout.ref_spacing = 10
@@ -1298,6 +1328,7 @@ if __name__ == '__main__':
                 stage == LoadStage.FULL_DECODE and getattr(imgset, 'fidelity', None) == ImageFidelity.FULL
             ):
                 self.mask2_wait_full_load = False
+            self.update_load_dependent_panels_enabled()
             self.update_mask2_options_enabled()
 
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
@@ -1362,14 +1393,22 @@ if __name__ == '__main__':
                         self.primary_param['exif_data'] = param['exif_data']
                     self.primary_param['rgb_or_raw'] = param['rgb_or_raw']
                     self.primary_param['auto_exposure'] = param['auto_exposure']
-                    # プレビュー段階で入った original_img_size / crop / disp_info のままだと
-                    # フル解像バッファとずれて crop_image が空領域になり黒画面になる
-                    for _k in ('original_img_size', 'img_size', 'crop_rect', 'disp_info'):
+                    # プレビュー段階で入った original_img_size / img_size のままだと
+                    # フル解像バッファとずれて crop_image が空領域になり黒画面になる。
+                    # FULL_DECODEは履歴外で来るため、ユーザー編集値 crop_rect 自体は上書きしない。
+                    for _k in ('original_img_size', 'img_size'):
                         if _k in param:
                             self.primary_param[_k] = param[_k]
+                    if params.get_crop_rect(self.primary_param) is not None:
+                        disp_info = core.convert_rect_to_info(
+                            params.get_crop_rect(self.primary_param),
+                            config.get_preview_texture_side()/max(self.primary_param['original_img_size'])
+                        )
+                        params.set_disp_info(self.primary_param, disp_info)
                     self.ids['mask_editor2'].set_primary_param(
                         self.primary_param, params.get_disp_info(self.primary_param)
                     )
+                    self.primary_effects[0]['crop'].sync_crop_editor_mode_from_widget(self, self.primary_param)
 
                 self.imgset = imgset
 
@@ -1631,6 +1670,7 @@ if __name__ == '__main__':
                     widget.disabled = disabled
 
         def update_mask2_options_enabled(self):
+            self.update_load_dependent_panels_enabled()
             editor = self.ids.get('mask_editor2')
             mask2_button = self.ids.get('mask2')
             mask2_panel = self.ids.get('mask2_panel')
@@ -1715,6 +1755,13 @@ if __name__ == '__main__':
                 ),
                 True,
             )
+
+        def update_load_dependent_panels_enabled(self):
+            disabled = bool(self.mask2_wait_full_load)
+            for panel_name in ("preset_panel", "history_panel"):
+                panel = getattr(self, panel_name, None)
+                if panel is not None:
+                    panel.disabled = disabled
 
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1

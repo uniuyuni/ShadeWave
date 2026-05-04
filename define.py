@@ -2,7 +2,7 @@
 import os
 
 APPNAME = "Platypus"
-VERSION = "1.48.8"
+VERSION = "1.48.12"
 
 # 画面リサイズ時にウィンドウ/プレビュー/テクスチャ等を表示（本番は False）
 RESIZE_DEBUG = True

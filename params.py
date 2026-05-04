@@ -241,6 +241,11 @@ SPECIAL_PARAM = [
     'ai_noise_reduction_content_key',
 ]
 
+DO_NOT_COPY_SPECIAL_PARAM = {
+    # Geometryタブ表示中かどうかは実行時状態。履歴やReset復元には混ぜない。
+    'crop_enable',
+}
+
 # セーブするが、初期化時にリセットするパラメータ
 REMAIN_PARAM = [
     "crop_rect",
@@ -409,6 +414,8 @@ def delete_not_special_param(param):
 
 def copy_special_param(tar, src):
     for key in SPECIAL_PARAM:
+        if key in DO_NOT_COPY_SPECIAL_PARAM:
+            continue
         try:
             val = src[key]
             tar[key] = val

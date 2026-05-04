@@ -1982,7 +1982,7 @@ def get_icc_profile_name(pil_image):
     
     return profile.profile.profile_description
 
-def apply_zero_wrap(img, param):
+def apply_zero_wrap(img, param, crop_editing=False):
     """
     Zero-wrapフィルタを適用する関数
     """        
@@ -2006,7 +2006,7 @@ def apply_zero_wrap(img, param):
     )
 
     # クロップ中は処理しないがクロップしている範囲のzero_countだけ返す
-    if param.get('crop_enable', False) == False:
+    if not crop_editing:
         img = img * wrap[..., np.newaxis]
 
     return (img, wrap.size - np.count_nonzero(wrap))

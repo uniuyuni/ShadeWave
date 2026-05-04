@@ -94,8 +94,8 @@ class ParamSlider(KVBoxLayout):
     for_float = KVBooleanProperty(False)
     slider = KVNumericProperty(float('inf')) #　最初の変更は必ずコールバックが呼ばれるようにする
     label_width = KVNumericProperty(100)
-    before_edit = KVNumericProperty(float('inf'))
-    after_edit = KVNumericProperty(float('inf'))
+    before_edit = KVNumericProperty(0)
+    after_edit = KVNumericProperty(0)
 
     #def __init__(self, **kwargs):
     #    super(ParamSlider, self).__init__(**kwargs)
@@ -145,21 +145,21 @@ class ParamSlider(KVBoxLayout):
                 val = int(self.ids['input'].get_value())
         except ValueError:
             val = self.reset_value
-        self.before_edit = self.value
+        self._notify_before_edit()
         val = min(self.max, max(self.min, val))
         self.ids['input'].set_value(val)
         self.value = val
         self.ids['slider'].value = self.value
-        self.after_edit = self.value
+        self._notify_after_edit()
 
     def on_button_press(self, step):
-        self.before_edit = self.value
+        self._notify_before_edit()
         self.value = min(self.max, max(self.min, self.ids['slider'].value + step))
         self.ids['slider'].value = self.value
-        self.after_edit = self.value
+        self._notify_after_edit()
 
     def on_input_scrub_begin(self):
-        self.before_edit = self.value
+        self._notify_before_edit()
         self._input_scrub_accum = 0.0
 
     def on_input_scrub_pixels(self, dx):
@@ -181,27 +181,33 @@ class ParamSlider(KVBoxLayout):
             self.ids['slider'].value = new_val
 
     def on_input_scrub_end(self):
-        self.after_edit = self.value
+        self._notify_after_edit()
         self._input_scrub_accum = 0.0
 
     def on_slider_touch_down(self, touch):
         if touch.is_double_tap:
             if self.ids['label'].collide_point(*touch.pos):
-                self.before_edit = self.value
+                self._notify_before_edit()
                 self.ids['slider'].value = self.reset_value
                 return True
 
         # 以前ここで reset_value へ戻しており、MultiSlider の on_touch 後に
         # これが走るとスライダーが常に初期値(例: レンズ歪み 0)のままになる。
         if self.ids['slider'].collide_point(*touch.pos):
-            self.before_edit = self.value
+            self._notify_before_edit()
             return True
 
         return False
 
     def on_slider_touch_up(self, touch):
-        self.after_edit = self.value
+        self._notify_after_edit()
         return False
+
+    def _notify_before_edit(self):
+        self.before_edit += 1
+
+    def _notify_after_edit(self):
+        self.after_edit += 1
 
     def set_slider_value(self, value):
         self.disabled = True
@@ -240,4 +246,3 @@ class Param_SliderApp(MDApp):
 
 if __name__ == '__main__':
     Param_SliderApp().run()
-

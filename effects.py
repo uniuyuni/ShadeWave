@@ -73,6 +73,8 @@ class EffectConfig():
         self.upstream_hash = 0
         self.loading_flag = -1
         self.image_fidelity = None  # primary_param['image_fidelity'] を pipeline が渡す場合あり
+        self.current_tab = None
+        self.crop_editing = False
 
 # 補正基底クラス
 class Effect():
@@ -887,11 +889,15 @@ class GeometryEffect(Effect):
             self.geometry_editor_callback(type, widget)
 
     def get_param_dict(self, param):
+        param2 = param.copy()
+        params.set_crop_rect(param2, core.get_initial_crop_rect(*param['original_img_size']))
+        params.set_disp_info(param2, core.convert_rect_to_info(params.get_crop_rect(param2), config.get_preview_texture_side()/max(param['original_img_size'])))
         return {
             'rotation': 0,
             'rotation2': 0,
             'flip_mode': 0,
-            'crop_enable': False,
+            'crop_rect': param2['crop_rect'],
+            'disp_info': param2['disp_info'],
             'switch_distortion_correction': True,
             'lens_distortion_strength': 0,
             'lens_distortion_scale': 0,
@@ -1052,7 +1058,7 @@ class GeometryEffect(Effect):
         ang = self._get_param(param, 'rotation')
         ang2 = self._get_param(param, 'rotation2')
         flp = self._get_param(param, 'flip_mode')
-        crop_enable = self._get_param(param, 'crop_enable')
+        crop_editing = getattr(efconfig, 'crop_editing', False)
         switch_distortion_correction = self._get_param(param, 'switch_distortion_correction')
         lens_distortion_strength = self._get_param(param, 'lens_distortion_strength')
         lens_distortion_scale = self._get_param(param, 'lens_distortion_scale')
@@ -1070,7 +1076,7 @@ class GeometryEffect(Effect):
         cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
         mesh_hash = tuple(mesh_size)
         
-        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_enable, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
+        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_editing, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         if self.hash != param_hash:
             self.hash = param_hash
             
@@ -1089,7 +1095,7 @@ class GeometryEffect(Effect):
             # 回転
             img = core.rotation(img, ang + ang2, flp,
                     inter_mode='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    border_mode="reflect" if crop_enable == False else "constant")
+                    border_mode="constant" if crop_editing else "reflect")
 
             tcg_info = params.param_to_tcg_info(param)
             # 基準サイズ（回転後を想定して max(w, h) の正方形）
@@ -1292,7 +1298,6 @@ class CropEffect(Effect):
         return {
             'rotation': 0,
             'rotation2': 0,
-            'crop_enable': False,
             'crop_rect': param2['crop_rect'],
             'aspect_ratio': "None",
             'auto_crop': False,
@@ -1300,23 +1305,21 @@ class CropEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids["spinner_acpect_ratio"].set_text(param.get('aspect_ratio', "None"))
-
-        if self.crop_editor is not None:
-            self.crop_editor.set_to_local_crop_rect(params.get_crop_rect(param))
+        self.sync_crop_editor_from_param(param)
 
     def set2param(self, param, widget):
-        param['crop_enable'] = False if widget.ids["effects"].current_tab.text != "Ge" else True
+        crop_editing = widget.ids["effects"].current_tab.text == "Ge"
         param['aspect_ratio'] = widget.ids["spinner_acpect_ratio"].text
 
         # crop_rect がないのはマスク
         if params.get_crop_rect(param) is not None:
 
             # クロップエディタを開く
-            if param['crop_enable'] == True:
+            if crop_editing:
                 self._open_crop_editor(param, widget)
 
             # クロップエディタを閉じる
-            elif param['crop_enable'] == False:
+            else:
                 self._close_crop_editor(param, widget)
 
             # クロップ範囲をリセット
@@ -1333,13 +1336,43 @@ class CropEffect(Effect):
             if self.crop_editor is not None:
                 params.set_crop_rect(param, self.crop_editor.get_crop_rect())
 
+    def apply_crop_button_action(self, param, widget, action):
+        if params.get_crop_rect(param) is None:
+            return
+
+        param['aspect_ratio'] = widget.ids["spinner_acpect_ratio"].text
+        self._open_crop_editor(param, widget)
+
+        if action == "reset":
+            self.reset_crop_editor()
+
+        self.reset2_crop_editor(param)
+
+        if action == "auto":
+            self.auto_crop_editor(self.backup_img)
+
+        if self.crop_editor is not None:
+            params.set_crop_rect(param, self.crop_editor.get_crop_rect())
+            params.set_disp_info(param, self.crop_editor.get_disp_info())
+
+    def sync_crop_editor_mode_from_widget(self, widget, param):
+        crop_editing = widget.ids["effects"].current_tab.text == "Ge"
+        if params.get_crop_rect(param) is None:
+            return
+
+        if crop_editing:
+            self._open_crop_editor(param, widget)
+            self.sync_crop_editor_from_param(param)
+        else:
+            self._close_crop_editor(param, widget)
+
     def make_diff(self, img, param, efconfig):
-        ce = self._get_param(param, 'crop_enable')
+        crop_editing = getattr(efconfig, 'crop_editing', False)
         disp_info = params.get_disp_info(param)
 
         self.backup_img = img
 
-        if ce == True or disp_info is None:
+        if crop_editing or disp_info is None:
             self.diff = None
             self.hash = None
             param['img_size'] = (param['original_img_size'][0], param['original_img_size'][1])
@@ -1347,7 +1380,7 @@ class CropEffect(Effect):
             scale = config.get_preview_texture_side()/msize
             params.set_disp_info(param, (0, 0, msize, msize, scale))
         else:
-            param_hash = hash((ce))
+            param_hash = hash((crop_editing))
             if self.hash != param_hash:
                 self.diff = disp_info
                 self.hash = param_hash
@@ -1395,11 +1428,30 @@ class CropEffect(Effect):
             self.crop_editor.input_angle = self._get_param(param, 'rotation') + self._get_param(param, 'rotation2')
             self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
 
+    def sync_crop_editor_from_param(self, param):
+        if self.crop_editor is None:
+            return
+        crop_rect = params.get_crop_rect(param)
+        if crop_rect is None:
+            return
+
+        input_width, input_height = param['original_img_size']
+        self.crop_editor.input_width = input_width
+        self.crop_editor.input_height = input_height
+        self.crop_editor.scale = config.get_preview_texture_side() * device.dpi_scale() / max(input_width, input_height)
+        self.crop_editor.input_angle = self._get_param(param, 'rotation') + self._get_param(param, 'rotation2')
+
+        # set_aspect_ratio may resize the current editor rect; restore the saved param rect last.
+        self.crop_editor.set_to_local_crop_rect(crop_rect)
+        self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
+        self.crop_editor.set_to_local_crop_rect(crop_rect)
+        self.crop_editor.update_rect()
+        self.crop_editor.update_centering()
+
     def update_crop_editor_preview_size(self, param):
         if self.crop_editor is None:
             return
-        input_width, input_height = param['original_img_size']
-        self.crop_editor.scale = config.get_preview_texture_side() * device.dpi_scale() / max(input_width, input_height)
+        self.sync_crop_editor_from_param(param)
 
     # 自動クロップ
     def auto_crop_editor(self, img):
@@ -3703,7 +3755,6 @@ class VignetteEffect(Effect):
             'vignette_intensity': 0,
             'vignette_radius_percent': 80,
             'vignette_softness': 80,
-            'crop_enable': False,
         }
 
     def set2widget(self, widget, param):
@@ -3723,7 +3774,7 @@ class VignetteEffect(Effect):
         vi = self._get_param(param, 'vignette_intensity')
         vr = self._get_param(param, 'vignette_radius_percent')
         vs = self._get_param(param, 'vignette_softness')
-        pce = self._get_param(param, 'crop_enable')
+        pce = getattr(efconfig, 'crop_editing', False)
         if switch_vignette == False or (vi == 0 and vr == 0) or pce == True:
             self.diff = None
             self.hash = None

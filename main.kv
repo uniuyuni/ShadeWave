@@ -2550,9 +2550,7 @@
                                         id: button_crop_reset
                                         size_hint_x: None
                                         ref_width: 60
-                                        on_press: root.begin_history_effect_ctrl(0, 'crop')
-                                        on_press: root.apply_effects_lv(0, 'crop')
-                                        on_release: root.end_history_effect_ctrl(0, 'crop')
+                                        on_release: root.apply_crop_button_action('reset')
                                         ParamChipText:
                                             text: "Reset"
 
@@ -2566,9 +2564,7 @@
                                         id: button_crop_auto
                                         size_hint_x: None
                                         ref_width: 60
-                                        on_press: root.begin_history_effect_ctrl(0, 'crop')
-                                        on_press: root.apply_effects_lv(0, 'crop')
-                                        on_release: root.end_history_effect_ctrl(0, 'crop')
+                                        on_release: root.apply_crop_button_action('auto')
                                         ParamChipText:
                                             text: "Crop"
 
