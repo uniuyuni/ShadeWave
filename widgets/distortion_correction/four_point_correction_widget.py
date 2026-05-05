@@ -70,10 +70,20 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.updating_handles = False
         self.is_dragging = False
         self.grab_current = -1
+        self._using_default_corners = True
         #self.bind(corner_positions_tcg=self._on_corners_change)
         self.bind(size=self._sync_tcg_to_kivy, pos=self._sync_tcg_to_kivy)
 
         self._reset_corners()
+
+    @staticmethod
+    def _default_corners():
+        return [
+            (-0.5, -0.5),
+            (0.5, -0.5),
+            (0.5, 0.5),
+            (-0.5, 0.5),
+        ]
 
     def set_callback(self, callback):
         self.on_callback = callback
@@ -105,12 +115,8 @@ class FourPointCorrectionWidget(KVFloatLayout):
     def _reset_corners(self):        
         # TCG座標系で四隅を設定（正規化座標）
         # 画像の四隅に対応
-        self.corner_positions_tcg = [
-            (-0.5, -0.5),   # 左上
-            (0.5, -0.5),    # 右上
-            (0.5, 0.5),     # 右下
-            (-0.5, 0.5)     # 左下
-        ]
+        self._using_default_corners = True
+        self.corner_positions_tcg = self._default_corners()
         self._sync_tcg_to_kivy()
         self._apply_corners()
 
@@ -131,6 +137,8 @@ class FourPointCorrectionWidget(KVFloatLayout):
         Returns:
             dict: {"four_points": [(x,y), ...]}
         """
+        if self._using_default_corners:
+            return {"four_points": []}
         return {"four_points": list(self.corner_positions_tcg)}
     
     def set_correction_params(self, param: dict):
@@ -140,14 +148,14 @@ class FourPointCorrectionWidget(KVFloatLayout):
         Args:
             param: dict、{"four_points": [(x,y), ...]}
         """
-        # マトリックス情報などを最新化
-        self.tcg_info = params.param_to_tcg_info(param)
-        
         four_points = param.get('four_points', [])
-        if four_points != []:
-            self.corner_positions_tcg = four_points
-            self._sync_tcg_to_kivy()
-            self.update_preview()
+        self._using_default_corners = four_points == []
+        # 未設定の Four Points は param としては [] のまま扱う。
+        # 表示時だけ、四隅に置いたマーカー中心が画面外へ出ないよう補正する。
+        self.tcg_info = params.param_to_tcg_info(param)
+        self.corner_positions_tcg = list(four_points) if four_points != [] else self._default_corners()
+        self._sync_tcg_to_kivy()
+        self.update_preview()
     
     @kvmainthread
     def update_preview(self, *args):
@@ -170,6 +178,8 @@ class FourPointCorrectionWidget(KVFloatLayout):
     
             for i, (tx, ty) in enumerate(self.corner_positions_tcg):
                 kx, ky = params.tcg_to_window(tx, ty, self, self.texture_size, self.tcg_info)
+                if self._using_default_corners:
+                    kx, ky = self._clamp_handle_center_to_widget(kx, ky, self.handles[i])
                 self.handles[i].center = (kx, ky)
             
             # 接続線を描画
@@ -177,14 +187,35 @@ class FourPointCorrectionWidget(KVFloatLayout):
         finally:
             self.updating_handles = False
     
-    def _sync_kivy_to_tcg(self):
+    def _sync_kivy_to_tcg(self, moved_index=None, preserve_default_corners=False):
         """Kivy座標をTCG座標に同期"""
 
         self.corner_positions_tcg = []
-        for handle in self.handles:
+        default_corners = self._default_corners()
+        for i, handle in enumerate(self.handles):
+            if preserve_default_corners and i != moved_index:
+                self.corner_positions_tcg.append(default_corners[i])
+                continue
             kx, ky = handle.center
             tx, ty = params.window_to_tcg(kx, ky, self, self.texture_size, self.tcg_info)
             self.corner_positions_tcg.append((tx, ty))
+
+    def _clamp_handle_center_to_widget(self, x, y, handle):
+        half_w = handle.width / 2
+        half_h = handle.height / 2
+        wx, wy = self.to_window(*self.pos)
+        min_x = wx + half_w
+        min_y = wy + half_h
+        max_x = wx + self.width - half_w
+        max_y = wy + self.height - half_h
+        if max_x < min_x:
+            min_x = max_x = wx + self.width / 2
+        if max_y < min_y:
+            min_y = max_y = wy + self.height / 2
+        return (
+            min(max(x, min_x), max_x),
+            min(max(y, min_y), max_y),
+        )
             
     def _create_handle(self, index: int, pos: tuple):
         """ハンドルを作成"""
@@ -218,11 +249,16 @@ class FourPointCorrectionWidget(KVFloatLayout):
             return
         
         self.is_dragging = True
+        preserve_default_corners = self._using_default_corners
         self.on_edit_start()
 
         self.grab_current = index
         
-        self._sync_kivy_to_tcg()
+        self._sync_kivy_to_tcg(
+            moved_index=index,
+            preserve_default_corners=preserve_default_corners,
+        )
+        self._using_default_corners = False
         # 範囲制限
         for i, pos in enumerate(self.corner_positions_tcg):
             if pos[0] < -0.5:

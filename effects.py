@@ -60,6 +60,118 @@ def _loading_flag_ready_for_heavy_effects(loading_flag):
     return loading_flag <= 0
 
 
+def _build_geometry_valid_mask(param):
+    width, height = param['original_img_size']
+    mask = np.ones((height, width, 3), dtype=np.float32)
+    temp_param = param.copy()
+
+    switch_distortion_correction = temp_param.get('switch_distortion_correction', True)
+    lens_distortion_strength = temp_param.get('lens_distortion_strength', 0)
+    lens_distortion_scale = temp_param.get('lens_distortion_scale', 0)
+    correct_horizontal = temp_param.get('correct_horizontal', 0)
+    correct_vertical = temp_param.get('correct_vertical', 0)
+    focal_length = temp_param.get('focal_length', 20)
+    four_points = temp_param.get('four_points', [])
+    reference_lines = temp_param.get('reference_lines', [])
+    mesh_size = temp_param.get('mesh_size', [4, 4])
+    control_points = temp_param.get('control_points', {})
+
+    params.set_matrix(temp_param, None)
+
+    if switch_distortion_correction and (lens_distortion_strength != 0 or lens_distortion_scale != 0):
+        mask = correct_lens_distortion(
+            mask,
+            strength=lens_distortion_strength,
+            scale=lens_distortion_scale / 100.0 + 1.0,
+            interpolation='bilinear',
+            grid_size=4,
+        )
+
+    rotation_limit_mask = core.rotation(
+        np.ones((height, width, 3), dtype=np.float32),
+        temp_param.get('rotation', 0) + temp_param.get('rotation2', 0),
+        temp_param.get('flip_mode', 0),
+        inter_mode='bilinear',
+        border_mode="constant",
+    )
+
+    mask = core.rotation(
+        mask,
+        temp_param.get('rotation', 0) + temp_param.get('rotation2', 0),
+        temp_param.get('flip_mode', 0),
+        inter_mode='bilinear',
+        border_mode="constant",
+    )
+
+    tcg_info = params.param_to_tcg_info(temp_param)
+    size = max(mask.shape[0], mask.shape[1])
+    half_size = size / 2
+
+    if switch_distortion_correction:
+        if correct_horizontal != 0 or correct_vertical != 0:
+            base_f = np.max(mask.shape[:2])
+            multiplier = 0.5 + (focal_length * 0.025)
+            f_pixel = base_f * multiplier
+            mask, H = correct_trapezoid(
+                mask,
+                horizontal=correct_horizontal * 0.5,
+                vertical=correct_vertical * 0.5,
+                focal_length=f_pixel,
+                interpolation='bilinear',
+            )
+            params.add_matrix(temp_param, H, offset=(half_size, half_size))
+
+        reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+        if four_points != [] and four_points != reset_points:
+            src_point = []
+            for cx, cy in four_points:
+                src_point.append(params.tcg_to_ref_image(cx, cy, mask, tcg_info))
+            dst_point = []
+            for cx, cy in reset_points:
+                dst_point.append(params.tcg_to_ref_image(cx, cy, mask, tcg_info))
+
+            mask, H = correct_four_points(
+                mask,
+                src_point,
+                dst_point,
+                interpolation='bilinear',
+            )
+            params.add_matrix(temp_param, H, offset=(half_size, half_size))
+
+        if len(reference_lines) > 0:
+            mask, H = correct_with_lines(
+                mask,
+                reference_lines,
+                tcg_info=tcg_info,
+                interpolation='bilinear',
+            )
+            if H is not None:
+                params.add_matrix(temp_param, H, offset=(half_size, half_size))
+
+        if control_points:
+            cp = {}
+            for k, v in control_points.items():
+                if isinstance(k, str):
+                    try:
+                        parts = k.strip('()').split(',')
+                        key = (int(parts[0]), int(parts[1]))
+                    except Exception:
+                        continue
+                else:
+                    key = tuple(k)
+                cp[key] = tuple(v)
+
+            mask = warp_mesh(
+                mask,
+                mesh_size if mesh_size else (4, 4),
+                cp,
+                tcg_info=tcg_info,
+                interpolation='bilinear',
+            )
+
+    return np.minimum(mask, rotation_limit_mask)
+
+
 class EffectConfig():
 
     def __init__(self, **kwargs):
@@ -888,7 +1000,14 @@ class GeometryEffect(Effect):
         if self.geometry_editor_callback:
             self.geometry_editor_callback(type, widget)
 
-    def get_param_dict(self, param):
+    def get_param_dict(self, param, subname=None):
+        if subname == "rotation":
+            return {
+                'rotation': 0,
+                'rotation2': 0,
+                'flip_mode': 0,
+            }
+
         param2 = param.copy()
         params.set_crop_rect(param2, core.get_initial_crop_rect(*param['original_img_size']))
         params.set_disp_info(param2, core.convert_rect_to_info(params.get_crop_rect(param2), config.get_preview_texture_side()/max(param['original_img_size'])))
@@ -1283,6 +1402,7 @@ class CropEffect(Effect):
 
         self.crop_editor = None
         self.crop_editor_callback = crop_callback
+        self._rotation_preview_crop_rect = None
 
     def set_editing_callback(self, callback):
         self.crop_editor_callback = callback
@@ -1324,17 +1444,23 @@ class CropEffect(Effect):
 
             # クロップ範囲をリセット
             if widget.ids["button_crop_reset"].state == "down":
+                self.reset2_crop_editor(param)
                 self.reset_crop_editor()
 
             self.reset2_crop_editor(param)
+            if self.crop_editor is not None and self._rotation_preview_crop_rect is not None:
+                self.crop_editor.set_to_local_crop_rect(self._rotation_preview_crop_rect)
+                self.crop_editor.update_crop_size()
 
             # 自動クロップ
             if widget.ids["button_crop_auto"].state == "down":
-                self.auto_crop_editor(self.backup_img)
+                self.auto_crop_editor(self.backup_img, param)
 
             # クロップ情報を更新
             if self.crop_editor is not None:
-                params.set_crop_rect(param, self.crop_editor.get_crop_rect())
+                enforce_bounds = widget.ids["button_crop_auto"].state != "down"
+                if self._rotation_preview_crop_rect is None:
+                    params.set_crop_rect(param, self.crop_editor.get_crop_rect(enforce_bounds=enforce_bounds))
 
     def apply_crop_button_action(self, param, widget, action):
         if params.get_crop_rect(param) is None:
@@ -1344,16 +1470,18 @@ class CropEffect(Effect):
         self._open_crop_editor(param, widget)
 
         if action == "reset":
+            self.reset2_crop_editor(param)
             self.reset_crop_editor()
 
         self.reset2_crop_editor(param)
 
         if action == "auto":
-            self.auto_crop_editor(self.backup_img)
+            self.auto_crop_editor(self.backup_img, param)
 
         if self.crop_editor is not None:
-            params.set_crop_rect(param, self.crop_editor.get_crop_rect())
-            params.set_disp_info(param, self.crop_editor.get_disp_info())
+            enforce_bounds = action != "auto"
+            params.set_crop_rect(param, self.crop_editor.get_crop_rect(enforce_bounds=enforce_bounds))
+            params.set_disp_info(param, self.crop_editor.get_disp_info(enforce_bounds=enforce_bounds))
 
     def sync_crop_editor_mode_from_widget(self, widget, param):
         crop_editing = widget.ids["effects"].current_tab.text == "Ge"
@@ -1418,6 +1546,16 @@ class CropEffect(Effect):
         if self.crop_editor_callback is not None:
             self.crop_editor_callback(proc, widget)
 
+    def begin_rotation_preview(self, param):
+        self._rotation_preview_crop_rect = params.get_crop_rect(param)
+
+    def end_rotation_preview(self, param):
+        if self.crop_editor is not None and self._rotation_preview_crop_rect is not None:
+            self.crop_editor.set_to_local_crop_rect(self._rotation_preview_crop_rect)
+            self.crop_editor.update_crop_size()
+            params.set_crop_rect(param, self.crop_editor.get_crop_rect())
+        self._rotation_preview_crop_rect = None
+
     def reset_crop_editor(self):
         if self.crop_editor is not None:
             self.crop_editor.set_to_local_crop_rect((0, 0, 0, 0))
@@ -1431,7 +1569,11 @@ class CropEffect(Effect):
     def sync_crop_editor_from_param(self, param):
         if self.crop_editor is None:
             return
-        crop_rect = params.get_crop_rect(param)
+        crop_rect = (
+            self._rotation_preview_crop_rect
+            if self._rotation_preview_crop_rect is not None
+            else params.get_crop_rect(param)
+        )
         if crop_rect is None:
             return
 
@@ -1440,6 +1582,12 @@ class CropEffect(Effect):
         self.crop_editor.input_height = input_height
         self.crop_editor.scale = config.get_preview_texture_side() * device.dpi_scale() / max(input_width, input_height)
         self.crop_editor.input_angle = self._get_param(param, 'rotation') + self._get_param(param, 'rotation2')
+
+        if self._rotation_preview_crop_rect is not None:
+            self.crop_editor.set_aspect_ratio(self._param_to_aspect_ratio(param))
+            self.crop_editor.set_to_local_crop_rect(crop_rect)
+            self.crop_editor.update_crop_size()
+            return
 
         # set_aspect_ratio may resize the current editor rect; restore the saved param rect last.
         self.crop_editor.set_to_local_crop_rect(crop_rect)
@@ -1454,7 +1602,7 @@ class CropEffect(Effect):
         self.sync_crop_editor_from_param(param)
 
     # 自動クロップ
-    def auto_crop_editor(self, img):
+    def auto_crop_editor(self, img, param=None):
         import cores.find_bounding_box as find_bounding_box
 
         if img is not None:
@@ -1465,14 +1613,23 @@ class CropEffect(Effect):
                 # aspect_ratioが0でない場合のみ使用
                 if ar is not None and ar > 0:
                     aspect_ratio = ar
-            
-            bbox = find_bounding_box.find_bounding_box(
-                img, 
-                threshold=0.0001, 
-                aspect_ratio=aspect_ratio,
-                verbose=True
-            )
-            self.crop_editor.set_to_local_crop_rect(bbox)
+
+            if param is not None:
+                valid_mask = _build_geometry_valid_mask(param)
+                bbox = find_bounding_box.find_largest_inscribed_rectangle_in_mask(
+                    valid_mask,
+                    aspect_ratio=aspect_ratio,
+                    threshold=0.999,
+                    verbose=True,
+                )
+            else:
+                bbox = find_bounding_box.find_bounding_box(
+                    img,
+                    threshold=0.0001,
+                    aspect_ratio=aspect_ratio,
+                    verbose=True
+                )
+            self.crop_editor.set_to_local_crop_rect(bbox, enforce_bounds=param is None)
 
     def finalize(self, param, widget):
         self._close_crop_editor(param, widget)

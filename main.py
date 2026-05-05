@@ -891,6 +891,12 @@ if __name__ == '__main__':
             self.end_history_effect_ctrl(0, 'crop')
             self.save_current_sidecar()
 
+        def begin_rotation_crop_preview(self):
+            self.primary_effects[0]['crop'].begin_rotation_preview(self.primary_param)
+
+        def end_rotation_crop_preview(self):
+            self.primary_effects[0]['crop'].end_rotation_preview(self.primary_param)
+
         def reset_switch_defaults_for_label(self, head_label):
             switch_id = None
             # self.ids の値はしばしば WeakProxy なので `is head_label` では一致しない。

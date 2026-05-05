@@ -152,6 +152,40 @@ def find_bounding_box(image, threshold=None, margin_ratio=None, aspect_ratio=Non
     
     return (x1, y1, x2, y2)
 
+
+def find_largest_inscribed_rectangle_in_mask(mask, aspect_ratio=None, threshold=0.999, verbose=False):
+    """
+    変形後の有効画素マスク内に完全に収まる最大矩形を返す。
+
+    `find_bounding_box` と違い、輪郭の塗りつぶしや穴埋めを行わないため、
+    Geometry 変形で生じた黒い余白を矩形内へ含めない用途に使う。
+    """
+    if mask.ndim == 3:
+        mask = np.min(mask[:, :, :3], axis=2)
+
+    valid_mask = (mask >= threshold).astype(np.uint8) * 255
+    h, w = valid_mask.shape[:2]
+
+    if np.max(valid_mask) == 0:
+        if verbose:
+            print("[警告] 有効マスク領域なし")
+        return (0, 0, 0, 0)
+
+    if aspect_ratio is not None:
+        x1, y1, x2, y2 = _find_largest_inscribed_rectangle_with_aspect(valid_mask, aspect_ratio)
+    else:
+        x1, y1, x2, y2 = _find_largest_inscribed_rectangle(valid_mask)
+
+    x1 = max(0, min(int(x1), w - 1))
+    y1 = max(0, min(int(y1), h - 1))
+    x2 = max(x1, min(int(x2), w - 1))
+    y2 = max(y1, min(int(y2), h - 1))
+
+    if verbose:
+        print(f"[有効マスク最大矩形] x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+
+    return (x1, y1, x2, y2)
+
 @lock_numba
 @jit(nopython=True, cache=True)
 def _largest_rectangle_in_histogram_jit(histogram):

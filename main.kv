@@ -2475,6 +2475,7 @@
                                 ref_padding: 4
 
                                 HeadLabel:
+                                    id: switch_rotation
                                     text: ' Rotation'
                                     button_enabled: False
 
@@ -2488,8 +2489,12 @@
                                     for_float: True
                                     on_slider: root.apply_effects_lv(0, 'geometry')
                                     on_slider: root.apply_effects_lv(0, 'crop')
-                                    on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+                                    on_before_edit:
+                                        root.begin_history_effect_ctrl(0, 'geometry')
+                                        root.begin_rotation_crop_preview()
+                                    on_after_edit:
+                                        root.end_rotation_crop_preview()
+                                        root.end_history_effect_ctrl(0, 'geometry')
 
                                 VSpacer:
                                 

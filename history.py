@@ -104,9 +104,11 @@ class Operation:
             self.update[key] = self._copy_history_value(val)
 
         # 差分を作成
+        keys = list(self.backup.keys())
+        keys.extend(key for key in self.update.keys() if key not in self.backup)
         self.diff = [
             [key, self.backup[key], self.update.get(key, "Reset")]
-            for key in self.backup.keys() | self.update.keys()
+            for key in keys
             if (not (self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)) == self.update.get(key, effects.get_default_param(self.effects, key, self.effects_param))).all() if isinstance(self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)), np.ndarray)
                 else self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)) != self.update.get(key, effects.get_default_param(self.effects, key, self.effects_param)))
         ]

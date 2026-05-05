@@ -52,6 +52,7 @@ BASE_SWITCH_TARGETS = {
     "switch_glow_effect": (2, "glow", None),
     "switch_grain": (4, "grain", None),
     "switch_cross_filter": (0, "cross_filter", None),
+    "switch_rotation": (0, "geometry", "rotation"),
     "switch_distortion_correction": (0, "geometry", None),
     "switch_mask2_draw_effects": (3, "mask2", "mask2_draw_effects"),
     "switch_face": (1, "face", None),

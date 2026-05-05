@@ -54,8 +54,18 @@ class CropButtonHistorySaveFlowTest(unittest.TestCase):
 
         self.assertIn('if action == "reset":', source)
         self.assertIn('if action == "auto":', source)
-        self.assertIn("params.set_crop_rect(param, self.crop_editor.get_crop_rect())", source)
-        self.assertIn("params.set_disp_info(param, self.crop_editor.get_disp_info())", source)
+        self.assertIn("params.set_crop_rect(param, self.crop_editor.get_crop_rect(enforce_bounds=enforce_bounds))", source)
+        self.assertIn("params.set_disp_info(param, self.crop_editor.get_disp_info(enforce_bounds=enforce_bounds))", source)
+
+    def test_crop_reset_syncs_aspect_ratio_before_resetting_editor(self):
+        for function_name in ("set2param", "apply_crop_button_action"):
+            node = _load_class_function(EFFECTS_PATH, "CropEffect", function_name)
+            source = ast.get_source_segment(EFFECTS_PATH.read_text(), node)
+
+            self.assertLess(
+                source.index("self.reset2_crop_editor(param)"),
+                source.index("self.reset_crop_editor()"),
+            )
 
 
 if __name__ == "__main__":

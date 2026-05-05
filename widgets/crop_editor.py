@@ -16,8 +16,10 @@ import math
 import cores.core as core
 import macos as device
 
-_MIN_CROP_WIDTH = 32
-_MIN_CROP_HEIGHT = 32
+_MIN_CROP_WIDTH = 128
+_MIN_CROP_HEIGHT = 128
+_CROP_MOVE_SLIDE_SOFTNESS = kvdp(4)
+_CROP_MOVE_UNLOCK_MARGIN = kvdp(0.5)
 
 class CropEditor(KVBoxLayout):
     input_width = KVNumericProperty(kvdp(400))
@@ -94,10 +96,13 @@ class CropEditor(KVBoxLayout):
         else:
             self.aspect_ratio = aspect_ratio
 
-    def set_to_local_crop_rect(self, crop_rect):
+    def set_to_local_crop_rect(self, crop_rect, enforce_bounds=True):
 
         # 矩形のサイズを設定 (初期値は画像のサイズと同じ)
         if crop_rect == (0, 0, 0, 0):
+            if self.aspect_ratio > 0:
+                self.crop_rect = self._max_aspect_crop_rect_at_image_center()
+                return
             if int(round(self.input_angle)) // 90 % 2 != 1:
                 w = self.input_width #* self.scale
                 h = self.input_height #* self.scale
@@ -121,7 +126,10 @@ class CropEditor(KVBoxLayout):
         x2 = x1 + crop_width * self.scale
         y2 = y1 + crop_height * self.scale
                     
-        self.crop_rect = (x1, y1, x2, y2)
+        crop_rect = (x1, y1, x2, y2)
+        if enforce_bounds:
+            crop_rect = self._enforce_min_crop_rect(crop_rect)
+        self.crop_rect = crop_rect
 
     def update_crop_size(self, *args):
 
@@ -159,6 +167,7 @@ class CropEditor(KVBoxLayout):
         w = abs(int(round(width / self.scale)))
         h = abs(int(round(height / self.scale)))
         gcd = math.gcd(w, h)
+        gcd = max(gcd, 1)
         self.label.text = str(w) + " x " + str(h) + "  " + str(w / gcd) + ":" + str(h / gcd)
 
     def update_centering(self, *args):
@@ -222,7 +231,7 @@ class CropEditor(KVBoxLayout):
             x1, x2 = x2, x1
         if y1 > y2:
             y1, y2 = y2, y1
-        self.crop_rect = (x1, y1, x2, y2)
+        self.crop_rect = self._enforce_min_crop_rect((x1, y1, x2, y2))
         
         if (    self.callback is not None
             and (
@@ -288,49 +297,14 @@ class CropEditor(KVBoxLayout):
         return (cx1 < x < cx2 and cy1 < y < cy2)
 
     def __move_rect(self, dx, dy):
-        x1, y1, x2, y2 = self.crop_rect
-        width = x2 - x1
-        height = y2 - y1
+        requested_dx, requested_dy = dx, dy
+        dx, dy = self._clamp_move_delta(dx, dy)
+        if abs(dx) < 0.001 and abs(dy) < 0.001:
+            dx, dy = self._unlock_move_delta(requested_dx, requested_dy)
+        if abs(dx) < 0.001 and abs(dy) < 0.001:
+            return
 
-        # 移動を試みる
-        test_x1 = x1 + dx
-        test_y1 = y1 + dy
-        test_x2 = test_x1 + width
-        test_y2 = test_y1 + height
-
-        # 四隅の点それぞれを確認
-        corners = [
-            (test_x1, test_y1),  # 左上
-            (test_x2, test_y1),  # 右上
-            (test_x1, test_y2),  # 左下
-            (test_x2, test_y2)   # 右下
-        ]
-
-        # すべての点が範囲内に収まるかチェック
-        valid_corners = []
-        aflag = False
-        for test_x, test_y in corners:
-            valid_x, valid_y, flag = rotate_and_correct_point(
-                test_x, test_y,
-                test_x, test_y,  # 古い位置は現在のテスト位置を使用
-                self.input_width * self.scale,
-                self.input_height * self.scale,
-                self.input_angle
-            )
-            aflag |= flag
-            valid_corners.append((valid_x, valid_y))
-
-        # 補正された四隅の点から新しい矩形を計算
-        new_x1 = min(x[0] for x in valid_corners[:2])  # 上辺のx座標の最小値
-        new_y1 = min(y[1] for y in valid_corners[::2])  # 左辺のy座標の最小値
-        new_x2 = max(x[0] for x in valid_corners[2:])  # 下辺のx座標の最大値
-        new_y2 = max(y[1] for y in valid_corners[1::2])  # 右辺のy座標の最大値
-
-        # 矩形のサイズを保持
-        if aflag == True:
-            return  # サイズが変わる場合は移動をキャンセル
-
-        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
+        self.crop_rect = self._enforce_min_crop_rect(self._translate_crop_rect(self.crop_rect, dx, dy))
 
     def __resize_by_edge(self, touch):
         x1, y1, x2, y2 = self.crop_rect
@@ -383,7 +357,7 @@ class CropEditor(KVBoxLayout):
             if carf == False:
                 break
 
-        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
+        self.crop_rect = self._enforce_min_crop_rect((new_x1, new_y1, new_x2, new_y2), fix_corners)
 
 
     def __resize_by_corner(self, touch):
@@ -505,7 +479,7 @@ class CropEditor(KVBoxLayout):
                 abs(old_y2 - new_y2) < 0.02):
                 break
 
-        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
+        self.crop_rect = self._enforce_min_crop_rect((new_x1, new_y1, new_x2, new_y2), fix_corners)
 
 
     def __resize_crop(self, touch):
@@ -576,10 +550,12 @@ class CropEditor(KVBoxLayout):
                 abs(old_y2 - new_y2) < 0.02):
                 break
 
-        self.crop_rect = (new_x1, new_y1, new_x2, new_y2)
+        self.crop_rect = self._enforce_min_crop_rect((new_x1, new_y1, new_x2, new_y2))
     
-    def get_crop_rect(self):
+    def get_crop_rect(self, enforce_bounds=True):
         # 上下反転させて返す、パディング削除
+        if enforce_bounds:
+            self.crop_rect = self._enforce_min_crop_rect(self.crop_rect)
         x1, y1, x2, y2 = self.crop_rect
         x1, y1 = int(round(x1 / self.scale)), int(round(y1 / self.scale))
         x2, y2 = int(round(x2 / self.scale)), int(round(y2 / self.scale))
@@ -590,8 +566,10 @@ class CropEditor(KVBoxLayout):
         cy2 = cy1 + (y2 - y1)
         return (cx1, cy1, cx2, cy2)
     
-    def get_disp_info(self):
+    def get_disp_info(self, enforce_bounds=True):
         # 上下反転させて返す。グローバル座標へも変換
+        if enforce_bounds:
+            self.crop_rect = self._enforce_min_crop_rect(self.crop_rect)
         x1, y1, x2, y2 = self.crop_rect
         x1, y1 = int(round(x1 / self.scale)), int(round(y1 / self.scale))
         x2, y2 = int(round(x2 / self.scale)), int(round(y2 / self.scale))
@@ -601,6 +579,259 @@ class CropEditor(KVBoxLayout):
         crop_width = x2 - x1
         crop_height = y2 - y1
         return (crop_x, crop_y, crop_width, crop_height, self.scale)
+
+    def _min_crop_size_local(self):
+        max_width = max(1.0, self.input_width * self.scale)
+        max_height = max(1.0, self.input_height * self.scale)
+        min_width = min(_MIN_CROP_WIDTH * self.scale, max_width)
+        min_height = min(_MIN_CROP_HEIGHT * self.scale, max_height)
+        return min_width, min_height
+
+    def _max_aspect_crop_rect_at_image_center(self):
+        center_x, center_y = self._crop_image_center()
+        aspect_ratio = max(self.aspect_ratio, 0.001)
+        max_side = self._crop_bounds_local()
+        high = min(max_side, max_side / aspect_ratio)
+        low = 0.0
+        best_rect = self.crop_rect
+
+        for _ in range(24):
+            height = (low + high) / 2
+            width = height * aspect_ratio
+            rect = (
+                center_x - width / 2,
+                center_y - height / 2,
+                center_x + width / 2,
+                center_y + height / 2,
+            )
+            if self._crop_rect_inside_image(rect):
+                best_rect = rect
+                low = height
+            else:
+                high = height
+
+        return self._keep_crop_rect_inside_image(best_rect)
+
+    def _enforce_min_crop_rect(self, crop_rect, fixed_points=None):
+        fixed_points = fixed_points or []
+        x1, y1, x2, y2 = crop_rect
+        width = abs(x2 - x1)
+        height = abs(y2 - y1)
+        min_width, min_height = self._min_crop_size_local()
+
+        target_width = max(width, min_width)
+        target_height = max(height, min_height)
+
+        if self.aspect_ratio > 0:
+            current_ratio = max(width, min_width) / max(height, min_height)
+            if (self.aspect_ratio >= 1.0 and current_ratio >= 1) or (self.aspect_ratio < 1.0 and current_ratio <= 1):
+                target_aspect_ratio = self.aspect_ratio
+            else:
+                target_aspect_ratio = 1 / self.aspect_ratio
+            target_height = target_width / target_aspect_ratio
+            if target_height < min_height:
+                target_height = min_height
+                target_width = target_height * target_aspect_ratio
+
+        if width >= target_width and height >= target_height:
+            return self._keep_crop_rect_inside_image(crop_rect)
+
+        sign_x = 1 if x2 >= x1 else -1
+        sign_y = 1 if y2 >= y1 else -1
+
+        if any("right" in p for p in fixed_points) and not any("left" in p for p in fixed_points):
+            x1 = x2 - target_width * sign_x
+        elif any("left" in p for p in fixed_points) and not any("right" in p for p in fixed_points):
+            x2 = x1 + target_width * sign_x
+        else:
+            center_x = (x1 + x2) / 2
+            x1 = center_x - target_width * sign_x / 2
+            x2 = center_x + target_width * sign_x / 2
+
+        if any("bottom" in p for p in fixed_points) and not any("top" in p for p in fixed_points):
+            y1 = y2 - target_height * sign_y
+        elif any("top" in p for p in fixed_points) and not any("bottom" in p for p in fixed_points):
+            y2 = y1 + target_height * sign_y
+        else:
+            center_y = (y1 + y2) / 2
+            y1 = center_y - target_height * sign_y / 2
+            y2 = center_y + target_height * sign_y / 2
+
+        return self._keep_crop_rect_inside_image((x1, y1, x2, y2))
+
+    def _keep_crop_rect_inside_image(self, crop_rect):
+        rect = tuple(crop_rect)
+        for _ in range(8):
+            moved = False
+            for cx, cy in self._crop_rect_corners(rect):
+                valid_x, valid_y, corrected = rotate_and_correct_point(
+                    cx,
+                    cy,
+                    cx,
+                    cy,
+                    self.input_width * self.scale,
+                    self.input_height * self.scale,
+                    self.input_angle,
+                )
+                if corrected:
+                    dx = valid_x - cx
+                    dy = valid_y - cy
+                    rect = self._translate_crop_rect(rect, dx, dy)
+                    moved = True
+            rect = self._keep_crop_rect_inside_square(rect)
+            if not moved:
+                break
+        return self._keep_crop_rect_inside_square(rect)
+
+    def _clamp_move_delta(self, dx, dy):
+        target_rect = self._translate_crop_rect(self.crop_rect, dx, dy)
+        if self._crop_rect_inside_image(target_rect):
+            return dx, dy
+
+        if not self._crop_rect_inside_image(self.crop_rect):
+            return 0, 0
+
+        slide_rect = self._keep_crop_rect_inside_image(target_rect)
+        if (    self._crop_rect_inside_image(slide_rect)
+            and self._same_crop_size(self.crop_rect, slide_rect)
+            and self._crop_rect_shift_distance(target_rect, slide_rect) <= self._crop_move_slide_softness()):
+            return slide_rect[0] - self.crop_rect[0], slide_rect[1] - self.crop_rect[1]
+
+        low = 0.0
+        high = 1.0
+        for _ in range(12):
+            mid = (low + high) / 2
+            rect = self._translate_crop_rect(self.crop_rect, dx * mid, dy * mid)
+            if self._crop_rect_inside_image(rect):
+                low = mid
+            else:
+                high = mid
+
+        return dx * low, dy * low
+
+    def _unlock_move_delta(self, dx, dy):
+        if abs(dx) < 0.001 and abs(dy) < 0.001:
+            return dx, dy
+        if not self._crop_rect_inside_image(self.crop_rect):
+            return dx, dy
+        if self._crop_rect_can_move(self.crop_rect):
+            return dx, dy
+
+        unlocked = self._inset_crop_rect_for_move(self.crop_rect)
+        if unlocked == self.crop_rect or not self._crop_rect_inside_image(unlocked):
+            return dx, dy
+
+        self.crop_rect = unlocked
+        return self._clamp_move_delta(dx, dy)
+
+    def _inset_crop_rect_for_move(self, crop_rect):
+        x1, y1, x2, y2 = crop_rect
+        width = abs(x2 - x1)
+        height = abs(y2 - y1)
+        min_width, min_height = self._min_crop_size_local()
+        margin = min(
+            _CROP_MOVE_UNLOCK_MARGIN,
+            max(0, (width - min_width) / 2),
+            max(0, (height - min_height) / 2),
+        )
+        if margin <= 0:
+            return crop_rect
+
+        sign_x = 1 if x2 >= x1 else -1
+        sign_y = 1 if y2 >= y1 else -1
+        return (
+            x1 + margin * sign_x,
+            y1 + margin * sign_y,
+            x2 - margin * sign_x,
+            y2 - margin * sign_y,
+        )
+
+    def _crop_rect_can_move(self, crop_rect):
+        step = max(0.25, _CROP_MOVE_UNLOCK_MARGIN)
+        for dx, dy in ((step, 0), (-step, 0), (0, step), (0, -step)):
+            if self._crop_rect_inside_image(self._translate_crop_rect(crop_rect, dx, dy)):
+                return True
+        return False
+
+    def _keep_crop_rect_inside_square(self, crop_rect):
+        x1, y1, x2, y2 = crop_rect
+        max_side = self._crop_bounds_local()
+
+        min_x, max_x = min(x1, x2), max(x1, x2)
+        min_y, max_y = min(y1, y2), max(y1, y2)
+
+        if max_x - min_x > max_side:
+            x1, x2 = (0, max_side) if x2 >= x1 else (max_side, 0)
+        else:
+            dx = max(0, -min_x) + min(0, max_side - max_x)
+            x1 += dx
+            x2 += dx
+
+        if max_y - min_y > max_side:
+            y1, y2 = (0, max_side) if y2 >= y1 else (max_side, 0)
+        else:
+            dy = max(0, -min_y) + min(0, max_side - max_y)
+            y1 += dy
+            y2 += dy
+
+        return (x1, y1, x2, y2)
+
+    def _crop_bounds_local(self):
+        return max(self.input_width, self.input_height) * self.scale
+
+    def _crop_rect_inside_image(self, crop_rect):
+        return all(self._point_inside_image(cx, cy) for cx, cy in self._crop_rect_corners(crop_rect))
+
+    def _point_inside_image(self, x, y):
+        if not self._point_inside_square(x, y):
+            return False
+
+        rect_width = self.input_width * self.scale
+        rect_height = self.input_height * self.scale
+        rect_mm = max(rect_width, rect_height)
+        position, _ = get_point_position_in_rotated_rectangle(
+            x - rect_mm / 2,
+            y - rect_mm / 2,
+            rect_width,
+            rect_height,
+            self.input_angle,
+        )
+        return position != PointPosition.OUTSIDE
+
+    def _point_inside_square(self, x, y):
+        max_side = self._crop_bounds_local()
+        return 0 <= x <= max_side and 0 <= y <= max_side
+
+    def _crop_move_slide_softness(self):
+        return _CROP_MOVE_SLIDE_SOFTNESS
+
+    def _same_crop_size(self, rect1, rect2):
+        x1, y1, x2, y2 = rect1
+        a1, b1, a2, b2 = rect2
+        return (
+            abs(abs(x2 - x1) - abs(a2 - a1)) < 0.001
+            and abs(abs(y2 - y1) - abs(b2 - b1)) < 0.001
+        )
+
+    def _crop_rect_shift_distance(self, rect1, rect2):
+        return math.hypot(rect2[0] - rect1[0], rect2[1] - rect1[1])
+
+    def _crop_image_center(self):
+        center = self._crop_bounds_local() / 2
+        return center, center
+
+    def _crop_rect_corners(self, crop_rect):
+        x1, y1, x2, y2 = crop_rect
+        return (
+            (x1, y1),
+            (x2, y1),
+            (x1, y2),
+            (x2, y2),
+        )
+
+    def _translate_crop_rect(self, crop_rect, dx, dy):
+        x1, y1, x2, y2 = crop_rect
+        return (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
     
     def set_editing_callback(self, callback):
         self.callback = callback

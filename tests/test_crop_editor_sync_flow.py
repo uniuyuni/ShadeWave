@@ -45,9 +45,10 @@ class CropEditorSyncFlowTest(unittest.TestCase):
         ):
             self.assertIn(snippet, source)
 
-        first_rect = source.find("self.crop_editor.set_to_local_crop_rect(crop_rect)")
-        aspect = source.find("self.crop_editor.set_aspect_ratio")
-        last_rect = source.rfind("self.crop_editor.set_to_local_crop_rect(crop_rect)")
+        normal_sync = source.split("# set_aspect_ratio may resize the current editor rect; restore the saved param rect last.", 1)[1]
+        first_rect = normal_sync.find("self.crop_editor.set_to_local_crop_rect(crop_rect)")
+        aspect = normal_sync.find("self.crop_editor.set_aspect_ratio")
+        last_rect = normal_sync.rfind("self.crop_editor.set_to_local_crop_rect(crop_rect)")
         self.assertLess(first_rect, aspect)
         self.assertLess(aspect, last_rect)
 

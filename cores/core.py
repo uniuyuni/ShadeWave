@@ -859,6 +859,8 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
 
     # 画像のサイズを取得
     image_height, image_width = image.shape[:2]
+    crop_rect = _clamp_crop_rect_to_image(crop_rect, image_width, image_height)
+    disp_info = _clamp_disp_info_to_image(disp_info, image_width, image_height)
 
     new_width, new_height, offset_x, offset_y = crop_size_and_offset_from_texture(texture_width, texture_height, disp_info)
 
@@ -915,6 +917,8 @@ def crop_image_info(image, disp_info, crop_rect):
     
     # 情報取得
     image_height, image_width = image.shape[:2]
+    crop_rect = _clamp_crop_rect_to_image(crop_rect, image_width, image_height)
+    disp_info = _clamp_disp_info_to_crop_rect(disp_info, crop_rect)
     disp_x, disp_y, disp_width, disp_height, scale = disp_info
 
     # オフセット適用は削除（呼び出し側で計算済み）
@@ -929,6 +933,46 @@ def crop_image_info(image, disp_info, crop_rect):
     cropped_img = image[y:y+disp_height, x:x+disp_width]
 
     return cropped_img, (x, y, disp_width, disp_height, scale)
+
+
+def _clamp_crop_rect_to_image(crop_rect, image_width, image_height):
+    if crop_rect is None:
+        return (0, 0, max(1, image_width), max(1, image_height))
+
+    x1, y1, x2, y2 = crop_rect
+    x1, x2 = sorted((int(round(x1)), int(round(x2))))
+    y1, y2 = sorted((int(round(y1)), int(round(y2))))
+
+    x1 = max(0, min(x1, image_width - 1))
+    y1 = max(0, min(y1, image_height - 1))
+    x2 = max(x1 + 1, min(x2, image_width))
+    y2 = max(y1 + 1, min(y2, image_height))
+    return (x1, y1, x2, y2)
+
+
+def _clamp_disp_info_to_crop_rect(disp_info, crop_rect):
+    x1, y1, x2, y2 = crop_rect
+    crop_width = max(1, x2 - x1)
+    crop_height = max(1, y2 - y1)
+
+    if disp_info is None:
+        return (x1, y1, crop_width, crop_height, 1.0)
+
+    disp_x, disp_y, disp_width, disp_height, scale = disp_info
+    disp_width = int(max(1, min(round(disp_width), crop_width)))
+    disp_height = int(max(1, min(round(disp_height), crop_height)))
+    max_x = x2 - disp_width
+    max_y = y2 - disp_height
+    disp_x = int(max(x1, min(round(disp_x), max_x)))
+    disp_y = int(max(y1, min(round(disp_y), max_y)))
+    return (disp_x, disp_y, disp_width, disp_height, scale)
+
+
+def _clamp_disp_info_to_image(disp_info, image_width, image_height):
+    return _clamp_disp_info_to_crop_rect(
+        disp_info,
+        (0, 0, max(1, image_width), max(1, image_height)),
+    )
 
 #--------------------------------------------------
 def get_multiple_mask_bbox(mask):
