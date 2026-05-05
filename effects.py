@@ -195,6 +195,7 @@ class Effect():
         self.diff = None
         self.hash = None
         self.execution_mode = ExecutionMode.SYNC
+        self.keep_async_result = True
     
     def try_async_execution(self, img, param, efconfig, param_hash):
         """
@@ -228,7 +229,9 @@ class Effect():
             
             if cached and cached['status'] == 'COMPLETE':
                 self.diff = cached['result']
-                self.hash = combined_hash 
+                self.hash = combined_hash
+                if not self.keep_async_result:
+                    efconfig.processor.discard_result(self.__class__.__name__, combined_hash)
                 return True, self.diff
 
             # Upstream complete, check if we are already running
@@ -472,6 +475,11 @@ class LensModifierEffect(Effect):
 # サブピクセルシフト合成
 class SubpixelShiftEffect(Effect):
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
+        self.keep_async_result = False
+
     def get_param_dict(self, param):
         return {
             'switch_details': True,
@@ -489,14 +497,26 @@ class SubpixelShiftEffect(Effect):
     def make_diff(self, img, param, efconfig):
         switch_details = self._get_param(param, 'switch_details')
         ss = self._get_param(param, 'subpixel_shift')
-        if switch_details == False or ss == False:
+        if switch_details == False or ss == False or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
+            if efconfig.processor is not None:
+                efconfig.processor.cancel_effect(self.__class__.__name__)
+                efconfig.processor.discard_effect_results(self.__class__.__name__)
+
             self.diff = None
             self.hash = None
         else:
             param_hash = hash((ss))
-            if self.hash != param_hash:
-                self.hash = param_hash
-                
+
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            if not needed and self.diff is not None:
+                return self.diff
+
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+            if handled:
+                return result
+
+            if needed:
+                self.hash = combined_hash
                 self.diff = subpixel_shift.create_enhanced_image(img)
         
         return self.diff

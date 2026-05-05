@@ -184,6 +184,13 @@ class AsyncPipelineManager:
         )
         return res
 
+    def discard_result(self, effect_name, param_hash):
+        self.cache.pop((effect_name, param_hash), None)
+
+    def discard_effect_results(self, effect_name):
+        for key in [key for key in self.cache if key[0] == effect_name]:
+            del self.cache[key]
+
     def submit_task(self, effect_name, img, params, efconfig, param_hash):
         key = (effect_name, param_hash)
         
