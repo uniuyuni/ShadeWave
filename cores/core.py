@@ -1106,7 +1106,8 @@ def _apply_highlight_neg(val, base, highlights):
     
     suppression_alpha = 10.0
     adaptive_factor = 1.0 / (1.0 + suppression_alpha * abs(detail))
-    detail_boost = 1.02
+    # |detail| が小さいハイライト内の微小コントラストを広げる（大きめにすると縁が乗りやすい）
+    detail_boost = 1.17
     effective_boost = detail_boost * adaptive_factor
     
     desired_boost = 1.0 + smooth_mask * factor * (effective_boost - 1.0)
@@ -1199,7 +1200,8 @@ def _apply_white_neg(val, base, white_level, max_val):
     
     suppression_alpha = 10.0
     adaptive_factor = 1.0 / (1.0 + suppression_alpha * abs(detail))
-    detail_boost = 1.02
+    # _apply_highlight_neg の detail_boost(1.085) に対し (boost-1) を約2倍 (~0.085 -> ~0.17)
+    detail_boost = 1.17
     effective_boost = detail_boost * adaptive_factor
     
     desired_boost = 1.0 + smooth_mask * factor * (effective_boost - 1.0)
@@ -1266,7 +1268,8 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
     
     # Step 3: Highlight -> Black
     if highlights < 0:
-        sigma = 20.0 * resolution_scale
+        # 基底をより低域にして val-base に細かなハイライト起伏を載せやすくする
+        sigma = 26.0 * resolution_scale
         y_blur = gaussian_blur_cv(current_y, sigma=sigma)
         current_y = _kernel_high_neg_black(current_y, y_blur, highlights, black_level)
     else:
@@ -1274,7 +1277,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         
     # Step 4: White -> Final
     if white_level < 0:
-        sigma = 20.0 * resolution_scale
+        sigma = 26.0 * resolution_scale
         y_blur = gaussian_blur_cv(current_y, sigma=sigma)
         max_val_blur = np.max(y_blur)
         res = _kernel_white_neg_final(img, current_y, y_blur, y_orig, white_level, float(max_val_blur))

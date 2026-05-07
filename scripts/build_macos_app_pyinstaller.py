@@ -20,8 +20,7 @@ PyInstaller で macOS 用 .app をビルドする。
   - これは「依存を可能な限り取り込む」第一歩です。libvips・libomp・Torch 周辺など、
     ネイティブライブラリは環境によって追加の --add-binary / フックが必要になることがあります。
   - 署名・公証は別作業です。
-  - config.json は現在 os.getcwd() 依存のため、配布 .app では書き込み先を Application Support 等へ
-    変える必要が出る場合があります（未対応なら初回のみ失敗する可能性）。
+  - config.json などのユーザー編集設定は起動時に ~/Pictures/Platypus へコピーされます。
 """
 
 from __future__ import annotations
@@ -193,7 +192,7 @@ def _build_args(root: Path, name: str, bundle_id: str) -> list[str]:
         "main.kv",
         "file_formats.json",
         "film_presets.json",
-        "export_preset.json",
+        "export_presets.json",
         "config.json",
     ):
         p = root / rel
@@ -201,6 +200,13 @@ def _build_args(root: Path, name: str, bundle_id: str) -> list[str]:
             datas.append(_add_data_mac(p, "."))
         else:
             print(f"警告: 見つかりません（スキップ）: {p}", file=sys.stderr)
+
+    presets_dir = root / "presets"
+    if presets_dir.is_dir():
+        for preset in sorted(presets_dir.rglob("*")):
+            if preset.is_file():
+                dest_dir = str(preset.parent.relative_to(root))
+                datas.append(_add_data_mac(preset, dest_dir))
 
     widgets_dir = root / "widgets"
     if widgets_dir.is_dir():

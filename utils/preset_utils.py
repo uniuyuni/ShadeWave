@@ -9,11 +9,11 @@ import numpy as np
 
 import define
 import params
+from utils import paths
 from widgets.switch_reset_map import build_switch_reset_targets
 
 
 CONFIG_EFFECT_SELECTOR_KEYS = "effect_selector_selected_switch_keys"
-PRESET_DIR_NAME = "preset"
 PRESET_VERSION = 1
 
 _HEAVY_KEYS = set(getattr(params, "HEAVY_PRIMARY_PARAM_KEYS", ())) | {
@@ -31,7 +31,7 @@ _IMAGE_LOCAL_KEYS = {
 
 
 def get_preset_dir():
-    return os.path.join(os.getcwd(), PRESET_DIR_NAME)
+    return str(paths.presets_dir())
 
 
 def ensure_preset_dir():

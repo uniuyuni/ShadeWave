@@ -13,6 +13,7 @@ import json
 
 import utils.dialogutils as dialogutils
 import utils.kvutils as kvutils
+from utils import paths
 import macos as device
 
 import widgets.param_slider
@@ -138,12 +139,12 @@ class ExportDialog(KVModalView):
         self._save_json()
 
     def _save_json(self):
-            file_path = "export_preset.json"
+            file_path = paths.export_presets_path()
             with open(file_path, 'w') as f:
                 json.dump(self.presets, f)
 
     def _load_json(self):
-            file_path = "export_preset.json"
+            file_path = paths.export_presets_path()
             try:
                 with open(file_path, 'r') as f:
                     self.presets = json.load(f)

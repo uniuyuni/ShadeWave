@@ -7,6 +7,7 @@ from scipy.interpolate import interp1d
 
 import cores.core as core
 import utils.utils as utils
+from utils import paths
 
 class FilmEmulator:
 
@@ -197,5 +198,4 @@ class FilmEmulator:
         spots = np.random.random(shape) < density
         return spots
 
-emulator = FilmEmulator("film_presets.json")
-
+emulator = FilmEmulator(paths.film_presets_path())

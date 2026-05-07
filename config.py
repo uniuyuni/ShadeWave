@@ -3,6 +3,8 @@ import os
 import json
 import multiprocessing
 
+from utils import paths
+
 _config = None
 _main_widget = None
 _preview_texture_size = None
@@ -14,7 +16,7 @@ def init_config(widget):
 
     _config.update(
     {
-        'import_path': os.getcwd() + "/test_photos",
+        'import_path': os.getcwd(),
         'lut_path': os.getcwd() + "/lut",
         'preview_size': 640,
         'ai_demosaic': False,
@@ -32,7 +34,7 @@ def init_config(widget):
     })
     _preview_texture_size = (_config['preview_size'], _config['preview_size'])
 
-    if not os.path.exists(os.getcwd() + '/config.json'):
+    if not os.path.exists(paths.config_path()):
         save_config()
 
 
@@ -86,7 +88,7 @@ def _apply_config(key):
     if key == 'lut_path':
         _main_widget.set_lut_path(_config.get('lut_path', os.getcwd() + "/lut"))
     elif key == 'import_path':
-        _main_widget.ids['viewer'].set_path(_config.get('import_path', os.getcwd() + "/test_photos"))
+        _main_widget.ids['viewer'].set_path(_config.get('import_path', os.getcwd()))
     elif key in ['display_output_dither', 'display_output_downscale']:
         _main_widget.texture = None
     elif key == 'preview_size' and _main_widget is not None:
@@ -100,13 +102,13 @@ def apply_config():
 
 def save_config():
     global _config
-    file_path = os.getcwd() + '/config.json'
+    file_path = paths.config_path()
     with open(file_path, 'w') as f:
         json.dump(dict(_config), f)
 
 def load_config():
     global _config
-    file_path = os.getcwd() + '/config.json'
+    file_path = paths.config_path()
     try:
         with open(file_path, 'r') as f:
             _config.update(json.load(f))
