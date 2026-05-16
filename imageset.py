@@ -6,6 +6,7 @@ import rawpy
 import logging
 import io
 from functools import partial
+import importlib.metadata
 from PIL import Image as PILImage, ImageOps as PILImageOps, ImageCms
 from multiprocessing import shared_memory
 import base64
@@ -24,6 +25,20 @@ import cores.local_contrast as local_contrast
 import cores.colour_functions as colour_functions
 import cores.color as color
 from enums import ImageFidelity, LoadStage
+
+def _log_lre_info():
+    try:
+        # metadata からバージョンを取得 (pip install されている場合)
+        v = importlib.metadata.version("libraw_enhanced")
+        logging.info(f"libraw_enhanced version: {v} (from metadata)")
+    except importlib.metadata.PackageNotFoundError:
+        try:
+            logging.info(f"libraw_enhanced version: {lre.__version__} (from module)")
+        except AttributeError:
+            logging.warning("libraw_enhanced version attribute not found. Installation might be corrupted.")
+    logging.info(f"libraw_enhanced file path: {lre.__file__}")
+
+_log_lre_info()
 
 #print(f"libraw version:{rawpy.libraw_version}")
 
@@ -248,6 +263,13 @@ class ImageSet:
             # AI demosaicフラグ
             ai_demosaic = config.get_config('ai_demosaic')
 
+            if ai_demosaic:
+                # AIデモザイク時は preprocess=True となり、LibRawの内部処理が途中で終わるため、
+                # LibRaw側の defringe は実質的に機能しません。
+                logging.warning("AI Demosaic is ENABLED. LibRaw's internal defringe will be SKIPPED due to preprocess=True.")
+            else:
+                logging.info("LibRaw internal processing with defringe=True.")
+
             # デモザイク、AI demosaicするときは preprocessだけ
             img_array = raw.postprocess(output_color=lre.ColorSpace.ProPhotoRGB,
                                         demosaic_algorithm=lre.DemosaicAlgorithm.AMaZE,
@@ -259,7 +281,11 @@ class ImageSet:
                                         half_size=False,
                                         #user_black=0,
                                         #no_auto_bright=True,
-                                        highlight_mode=5, # 5にするとtonemappingが行われる
+                                        highlight_mode=5,
+                                        defringe=True,
+                                        defringe_green=True,
+                                        lateral_ca_correction=True,
+                                        axial_ca_correction=True,
                                         use_gpu_acceleration=True,
                                         preprocess=ai_demosaic)
             print(f"[DEBUG] postprocess min={img_array.min()} max={img_array.max()}")
