@@ -109,8 +109,10 @@ class Operation:
         self.diff = [
             [key, self.backup[key], self.update.get(key, "Reset")]
             for key in keys
-            if (not (self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)) == self.update.get(key, effects.get_default_param(self.effects, key, self.effects_param))).all() if isinstance(self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)), np.ndarray)
-                else self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)) != self.update.get(key, effects.get_default_param(self.effects, key, self.effects_param)))
+            if self._values_differ(
+                self.backup.get(key, effects.get_default_param(self.effects, key, self.effects_param)),
+                self.update.get(key, effects.get_default_param(self.effects, key, self.effects_param)),
+            )
         ]
         if len(self.diff) == 0:
             return None
@@ -246,6 +248,21 @@ class Operation:
         if isinstance(value, np.ndarray):
             return value.copy()
         return copy.deepcopy(value)
+
+    @staticmethod
+    def _values_differ(a, b):
+        a_arr = isinstance(a, np.ndarray)
+        b_arr = isinstance(b, np.ndarray)
+        if a_arr and b_arr:
+            if a.shape != b.shape or a.dtype != b.dtype:
+                return True
+            return not np.array_equal(a, b)
+        if a_arr or b_arr:
+            return True
+        try:
+            return a != b
+        except Exception:
+            return True
 
 class History:
     """操作履歴マネージャー"""

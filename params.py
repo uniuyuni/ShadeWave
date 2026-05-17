@@ -22,6 +22,7 @@ HEAVY_PRIMARY_PARAM_KEYS = (
     'ai_noise_reduction_result',
     'inpaint_diff_list',
     'patchmatch_inpaint_diff_list',
+    'color_match_source_image',
     'heavy_saved_at_fidelity',
 )
 
@@ -35,6 +36,9 @@ def _param2_has_substantive_heavy_payload(param2: dict) -> bool:
         w = param2.get(k, None)
         if w and isinstance(w, (list, tuple)) and len(w) > 0:
             return True
+    v = param2.get("color_match_source_image", None)
+    if v is not None and not (isinstance(v, (list, tuple)) and len(v) == 0):
+        return True
     return False
 
 # レンズ3: lensfun 実効（color/subpixel/geometry）の書き戻しは SPECIAL、.pmck の primary には出さない。
@@ -189,6 +193,9 @@ def _param2_strips_nonsubstance_mutable(p: dict) -> None:
         w = p.get(k, None)
         if w is None or (isinstance(w, (list, tuple)) and len(w) == 0):
             p.pop(k, None)
+    v = p.get("color_match_source_image", None)
+    if v is None or (isinstance(v, (list, tuple)) and len(v) == 0):
+        p.pop("color_match_source_image", None)
     if not _param2_has_substantive_heavy_payload(p):
         p.pop("heavy_saved_at_fidelity", None)
 
@@ -459,11 +466,22 @@ def _ai_noise_reduction_load(param):
         ai_noise_reduction_result = utils.convert_image_from_list(ai_noise_reduction_result)
         param['ai_noise_reduction_result'] = ai_noise_reduction_result
 
+def _color_match_source_dump(param):
+    src = param.get('color_match_source_image', None)
+    if src is not None:
+        param['color_match_source_image'] = utils.convert_image_to_list(src)
+
+def _color_match_source_load(param):
+    src = param.get('color_match_source_image', None)
+    if src is not None and not isinstance(src, np.ndarray):
+        param['color_match_source_image'] = utils.convert_image_from_list(src)
+
 def _serialize_param(param, include_heavy=True):
     if include_heavy:
         _inpaint_dump(param, 'inpaint_diff_list')
         _inpaint_dump(param, 'patchmatch_inpaint_diff_list')
         _ai_noise_reduction_dump(param)
+        _color_match_source_dump(param)
         param['heavy_saved_at_fidelity'] = ImageFidelity.FULL.value
     else:
         for k in HEAVY_PRIMARY_PARAM_KEYS:
@@ -475,8 +493,10 @@ def _deserialize_param(param, load_heavy=True):
         _inpaint_load(param, 'inpaint_diff_list')
         _inpaint_load(param, 'patchmatch_inpaint_diff_list')
         _ai_noise_reduction_load(param)
+        _color_match_source_load(param)
     else:
         param.pop('ai_noise_reduction_result', None)
+        param.pop('color_match_source_image', None)
         param['inpaint_diff_list'] = []
         param['patchmatch_inpaint_diff_list'] = []
         param.pop('heavy_saved_at_fidelity', None)
@@ -580,12 +600,13 @@ def merge_heavy_from_pmck(file_path, param, mask_editor2):
     pp = d.get('primary_param')
     if not pp or pp.get('heavy_saved_at_fidelity') != ImageFidelity.FULL.value:
         return
-    for k in ('ai_noise_reduction_result', 'inpaint_diff_list', 'patchmatch_inpaint_diff_list'):
+    for k in ('ai_noise_reduction_result', 'inpaint_diff_list', 'patchmatch_inpaint_diff_list', 'color_match_source_image'):
         if k in pp:
             param[k] = pp[k]
     _ai_noise_reduction_load(param)
     _inpaint_load(param, 'inpaint_diff_list')
     _inpaint_load(param, 'patchmatch_inpaint_diff_list')
+    _color_match_source_load(param)
 
 def save_json(file_path, param, mask_editor2, raw_sidecar_rating: int = 0):
     if file_path is None:

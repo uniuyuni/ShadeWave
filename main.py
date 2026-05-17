@@ -1899,6 +1899,69 @@ if __name__ == '__main__':
 
         #--------------------------------
 
+        def on_color_match_select_source(self):
+            device.FileChooser(
+                title="Select Color Match Source Image",
+                mode="open",
+                filters=[("Image Files", "*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff", "*.webp")],
+                on_selection=self.handle_for_color_match_source,
+            ).run()
+
+        def handle_for_color_match_source(self, selection):
+            if selection is None or len(selection) == 0:
+                return
+            path = selection[0]
+            if isinstance(path, bytes):
+                path = path.decode()
+            try:
+                import io as _io
+                import pyvips
+                from PIL import ImageCms
+                import cores.colour_functions as colour_functions
+                with pyvips.Image.new_from_file(path) as vips_image:
+                    long_side = max(vips_image.width, vips_image.height)
+                    if long_side > 1024:
+                        vips_image = vips_image.resize(1024.0 / long_side)
+                    # imageset._load_rgb と同じ手順で ICC プロファイル名を取得
+                    try:
+                        icc_data = vips_image.get("icc-profile-data")
+                        if icc_data is None:
+                            src_icc_profile_name = "sRGB"
+                        else:
+                            profile = ImageCms.ImageCmsProfile(_io.BytesIO(icc_data))
+                            src_icc_profile_name = ImageCms.getProfileDescription(profile).strip()
+                    except Exception:
+                        src_icc_profile_name = "sRGB"
+                    arr = np.array(vips_image)
+                if arr.ndim == 3 and arr.shape[2] > 3:
+                    arr = arr[:, :, :3]
+                arr = core.convert_to_float32(arr)
+                if arr.ndim == 2 or (arr.ndim == 3 and arr.shape[2] == 1):
+                    arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+                src_space = core.ICC_PROFILE_TO_COLOR_SPACE.get(src_icc_profile_name, 'sRGB')
+                arr = colour_functions.RGB_to_RGB(
+                    arr, src_space, 'ProPhoto RGB', config.get_config('cat'),
+                    apply_cctf_decoding=True, apply_gamut_mapping=True,
+                ).astype(np.float32)
+                # MKL を知覚均等空間で走らせるため、保存時点で sRGB ガンマエンコード済みにしておく
+                import cores.color as color
+                arr = color.srgb_gamma_encode(arr).astype(np.float32)
+                arr = np.ascontiguousarray(arr)
+            except Exception as e:
+                logging.warning(f"on_color_match_select_source failed to load {path}: {e}")
+                return
+
+            if self.imgset is None:
+                return
+
+            self.begin_history_effect_ctrl(0, 'color_match')
+            self.primary_param['color_match_source_image'] = arr
+            self.apply_effects_lv(0, 'color_match')
+            self.end_history_effect_ctrl(0, 'color_match')
+            self.save_current_sidecar()
+
+        #--------------------------------
+
         def on_current_tab(self, current):
             if current.text == "Ge":
                 self.is_zoomed = False

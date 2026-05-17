@@ -1854,6 +1854,46 @@
                                 VSeparator:
 
                                 HeadLabel:
+                                    id: switch_color_match
+                                    text: ' Color Match'
+                                    on_press: root.begin_history_effect_ctrl(0, 'color_match')
+                                    on_active: root.apply_effects_lv(0, 'color_match')
+                                    on_release: root.end_history_effect_ctrl(0, 'color_match')
+
+                                ParamBoxLayout:
+                                    VSpacer:
+                                        size_hint_x: 1
+                                    Button:
+                                        pos_hint: {'center_y': .5}
+                                        size_hint: None, None
+                                        ref_width: 32
+                                        ref_height: 20
+                                        text: '...'
+                                        font_size: '9pt'
+                                        on_press: root.on_color_match_select_source()
+                                    VSpacer:
+                                        size_hint_x: None
+                                        ref_width: 8
+                                    ParamSwitch:
+                                        id: switch_color_match_active
+                                        on_pre_active: root.begin_history_effect_ctrl(0, 'color_match')
+                                        on_active: root.apply_effects_lv(0, 'color_match')
+                                        on_post_active: root.end_history_effect_ctrl(0, 'color_match')
+
+                                ParamSlider:
+                                    id: slider_color_match_intensity
+                                    text: "Intensity"
+                                    min: 0
+                                    max: 100
+                                    value: 100
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(0, 'color_match')
+                                    on_before_edit: root.begin_history_effect_ctrl(0, 'color_match')
+                                    on_after_edit: root.end_history_effect_ctrl(0, 'color_match')
+
+                                VSeparator:
+
+                                HeadLabel:
                                     id: switch_solid_color
                                     text: ' Solid Color'
                                     on_press: root.begin_history_effect_ctrl(2, 'solid_color')

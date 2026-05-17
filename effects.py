@@ -875,6 +875,90 @@ class CrossFilterEffect(Effect):
 
         return self.diff
 
+# 色合わせ (Color Match)
+class ColorMatchEffect(Effect):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # predict 結果はメモリのみ。pmck には保存しない。
+        self._cached_predict = None
+        self._cached_predict_key = None
+
+    def get_param_dict(self, param):
+        return {
+            'switch_color_match': True,
+            'switch_color_match_active': False,
+            'color_match_intensity': 100,
+            'color_match_source_image': None,
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["switch_color_match"].active = self._get_param(param, 'switch_color_match')
+        widget.ids["switch_color_match_active"].active = self._get_param(param, 'switch_color_match_active')
+        widget.ids["slider_color_match_intensity"].set_slider_value(self._get_param(param, 'color_match_intensity'))
+
+    def set2param(self, param, widget):
+        param['switch_color_match'] = widget.ids["switch_color_match"].active
+        param['switch_color_match_active'] = widget.ids["switch_color_match_active"].active
+        param['color_match_intensity'] = widget.ids["slider_color_match_intensity"].value
+
+    def reeffect(self):
+        super().reeffect()
+        # predict キャッシュは入力ハッシュで判断するので維持。
+
+    def make_diff(self, img, param, efconfig):
+        switch = self._get_param(param, 'switch_color_match')
+        active = self._get_param(param, 'switch_color_match_active')
+        intensity = self._get_param(param, 'color_match_intensity')
+        source = self._get_param(param, 'color_match_source_image')
+
+        if not switch or not active or source is None or not isinstance(source, np.ndarray) or intensity == 0:
+            self.diff = None
+            self.hash = None
+            return self.diff
+
+        # 強度は最終ブレンドにのみ効く。predict 自体は (source, img.shape, upstream) で決まる。
+        predict_key = (id(source), tuple(img.shape), efconfig.upstream_hash)
+        if self._cached_predict_key != predict_key or self._cached_predict is None:
+            import helpers.color_matcher_helper as cmh
+            import cores.color as color
+            # MKL は知覚均等空間で安定するため sRGB ガンマでエンコードしてから掛ける。
+            # source は読み込み時にエンコード済み。
+            img_enc = color.srgb_gamma_encode(np.ascontiguousarray(img, dtype=np.float32)).astype(np.float32)
+            src_in = np.ascontiguousarray(source, dtype=np.float32)
+            try:
+                predict_enc = cmh.predict(img_enc, src_in)
+                # リニア ProPhoto に戻して以降のブレンドに渡す
+                self._cached_predict = color.srgb_gamma_decode(predict_enc).astype(np.float32)
+                self._cached_predict_key = predict_key
+            except Exception as e:
+                logging.warning(f"ColorMatchEffect predict failed: {e}")
+                self._cached_predict = None
+                self._cached_predict_key = None
+                self.diff = None
+                self.hash = None
+                return self.diff
+
+        final_hash = hash((predict_key, intensity))
+        if self.hash == final_hash and self.diff is not None:
+            return self.diff
+
+        result = self._cached_predict
+        if result is None or result.shape != img.shape:
+            self.diff = None
+            self.hash = None
+            return self.diff
+
+        alpha = float(intensity) / 100.0
+        if alpha >= 1.0:
+            self.diff = result
+        else:
+            base = np.ascontiguousarray(img, dtype=np.float32)
+            self.diff = cv2.addWeighted(result, alpha, base, 1.0 - alpha, 0.0)
+
+        self.hash = final_hash
+        return self.diff
+
 # 変形描画
 class DistortionEffect(Effect):
 
@@ -3985,6 +4069,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['inpaint'] = InpaintEffect()
     lv0['patchmatch_inpaint'] = PatchmatchInpaintEffect()
     lv0['cross_filter'] = CrossFilterEffect()
+    lv0['color_match'] = ColorMatchEffect()
     lv0['geometry'] = GeometryEffect(geometry_callback=geometry_callback)
     lv0['crop'] = CropEffect(crop_callback=crop_callback)
 
