@@ -14,6 +14,15 @@ if __name__ == '__main__':
     _os_early.environ.setdefault("KMP_WARNINGS", "0")
     _os_early.environ.setdefault("LIBOMP_VERBOSE", "0")
     _os_early.environ.setdefault("KIVY_NO_ARGS", "1")  # 子プロセスでの Kivy 引数誤解釈を防ぐ
+    # Finder から起動した .app は PATH が /usr/bin:/bin:/usr/sbin:/sbin に絞られ、
+    # /usr/local/bin (公式 ExifTool) や /opt/homebrew/bin (Homebrew) が含まれない
+    if _sys_early.platform == "darwin":
+        _extra_paths = [p for p in ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin")
+                        if _os_early.path.isdir(p)]
+        _path_parts = _os_early.environ.get("PATH", "").split(_os_early.pathsep)
+        _missing_paths = [p for p in _extra_paths if p not in _path_parts]
+        if _missing_paths:
+            _os_early.environ["PATH"] = _os_early.pathsep.join(_missing_paths + _path_parts)
     _mp_early.freeze_support()  # frozen 実行時の multiprocessing 子プロセス分岐を早期処理
 
     try:

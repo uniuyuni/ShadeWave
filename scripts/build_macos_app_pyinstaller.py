@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,61 @@ from pathlib import Path
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _build_icns_from_png(png: Path, out_dir: Path, base_name: str = "Platypus") -> Path | None:
+    """assets/icon.png から .icns を生成して返す。失敗時は None。"""
+    if not png.is_file():
+        print(f"警告: アイコン PNG が見つかりません: {png}", file=sys.stderr)
+        return None
+    if not shutil.which("sips") or not shutil.which("iconutil"):
+        print("警告: sips/iconutil が見つからないため .icns を生成しません。", file=sys.stderr)
+        return None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    iconset = out_dir / f"{base_name}.iconset"
+    if iconset.exists():
+        shutil.rmtree(iconset)
+    iconset.mkdir()
+
+    # (px, filename) — Apple 推奨 iconset の全エントリ
+    entries = [
+        (16, "icon_16x16.png"),
+        (32, "icon_16x16@2x.png"),
+        (32, "icon_32x32.png"),
+        (64, "icon_32x32@2x.png"),
+        (128, "icon_128x128.png"),
+        (256, "icon_128x128@2x.png"),
+        (256, "icon_256x256.png"),
+        (512, "icon_256x256@2x.png"),
+        (512, "icon_512x512.png"),
+        (1024, "icon_512x512@2x.png"),
+    ]
+    for size, name in entries:
+        dst = iconset / name
+        try:
+            subprocess.run(
+                ["sips", "-z", str(size), str(size), str(png), "--out", str(dst)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"警告: sips でのリサイズに失敗 ({size}x{size}): {e}", file=sys.stderr)
+            return None
+
+    icns = out_dir / f"{base_name}.icns"
+    try:
+        subprocess.run(
+            ["iconutil", "-c", "icns", str(iconset), "-o", str(icns)],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"警告: iconutil 失敗: {e}", file=sys.stderr)
+        return None
+
+    print(f"アイコン生成: {icns}", file=sys.stderr)
+    return icns
 
 
 def _strip_lensfun_duplicate_dylibs(app_path: Path) -> None:
@@ -184,7 +240,7 @@ def _kivy_pyinstaller_flags() -> list[str]:
     return extra
 
 
-def _build_args(root: Path, name: str, bundle_id: str) -> list[str]:
+def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> list[str]:
     datas: list[str] = []
 
     # ルートの KV / JSON（実行時は main.py 側で sys._MEIPASS に chdir）
@@ -255,7 +311,6 @@ def _build_args(root: Path, name: str, bundle_id: str) -> list[str]:
         "kivymd",
         "PIL",
         "PIL._imagingtk",
-        "pkg_resources.py2_warn",
     ]
 
     rth_libintl = root / "scripts" / "pyinstaller" / "rth_darwin_libintl.py"
@@ -276,6 +331,9 @@ def _build_args(root: Path, name: str, bundle_id: str) -> list[str]:
         f"--paths={root}",
         "--noupx",
     ]
+
+    if icon is not None:
+        args.extend(["--icon", str(icon)])
 
     # cv2 / lensfunpy の libintl 競合対策（main より前に実行）
     if rth_libintl.is_file():
@@ -344,7 +402,9 @@ def main() -> None:
     distpath = args.distpath or (root / "dist")
     workpath = args.workpath or (root / "build")
 
-    pyi_args = _build_args(root, args.name, args.bundle_id)
+    icon_path = _build_icns_from_png(root / "assets" / "icon.png", workpath, args.name)
+
+    pyi_args = _build_args(root, args.name, args.bundle_id, icon_path)
     pyi_args.extend(
         [
             f"--distpath={distpath}",

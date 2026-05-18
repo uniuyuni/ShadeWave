@@ -32,6 +32,7 @@ import cores.core as core
 import utils.kvutils as kvutils
 from utils import rating_utils
 from utils import rating_io
+from utils.exiftool_safe import safe_get_metadata
 from widgets.draggable_widget import DraggableWidget
 from widgets.rating_row import RatingRow
 from utils.paths import rel
@@ -395,35 +396,36 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def load_images_thread(self, file_path_dict, chunk_size):
         file_path_list = list(file_path_dict.keys())
-        
+
         for i in range(0, len(file_path_list), chunk_size):
             chunk = file_path_list[i:i + chunk_size]
-            
-            with exiftool.ExifToolHelper(common_args=['-b', '-s']) as et:
-                exif_data_list = et.get_metadata(chunk)
-            exif_data_list = self._merge_exif_xmp_ratings_for_chunk(chunk, exif_data_list)
-        
-            thumb_data_list = self.process_exif_data(chunk, exif_data_list)
-            
-            updates = {}
-            for k in range(len(chunk)):
-                file_path = chunk[k]
-                if file_path not in file_path_dict: continue
-                idx = file_path_dict[file_path]
-                
-                if idx < len(self.data) and self.data[idx]['file_path'] == file_path:
-                    item = self.data[idx]
-                    item['thumb_source'] = thumb_data_list[k]
-                    item['exif_data'] = exif_data_list[k]
-                    ex0 = exif_data_list[k] or {}
-                    if rating_utils.is_raw_path(file_path):
-                        item['rating'] = rating_io.read_raw_pmck_rating_value(file_path)
-                    else:
-                        item['rating'] = rating_utils.parse_exif_rating_value(ex0)
-                    item['pmck_exists'] = os.path.exists(file_path + ".pmck")
-                    updates[idx] = item
-            
-            self._apply_updates(updates)
+            try:
+                exif_data_list = safe_get_metadata(chunk, common_args=['-b', '-s'])
+                exif_data_list = self._merge_exif_xmp_ratings_for_chunk(chunk, exif_data_list)
+
+                thumb_data_list = self.process_exif_data(chunk, exif_data_list)
+
+                updates = {}
+                for k in range(len(chunk)):
+                    file_path = chunk[k]
+                    if file_path not in file_path_dict: continue
+                    idx = file_path_dict[file_path]
+
+                    if idx < len(self.data) and self.data[idx]['file_path'] == file_path:
+                        item = self.data[idx]
+                        item['thumb_source'] = thumb_data_list[k]
+                        item['exif_data'] = exif_data_list[k]
+                        ex0 = exif_data_list[k] or {}
+                        if rating_utils.is_raw_path(file_path):
+                            item['rating'] = rating_io.read_raw_pmck_rating_value(file_path)
+                        else:
+                            item['rating'] = rating_utils.parse_exif_rating_value(ex0)
+                        item['pmck_exists'] = os.path.exists(file_path + ".pmck")
+                        updates[idx] = item
+
+                self._apply_updates(updates)
+            except Exception:
+                logging.exception("load_images_thread: chunk 処理失敗。スキップして続行 (chunk size=%d)", len(chunk))
 
     @kvmainthread
     def _apply_updates(self, updates):

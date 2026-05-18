@@ -15,6 +15,7 @@ import msgpack
 import json
 import define
 from utils import rating_utils
+from utils.exiftool_safe import safe_run_exiftool
 
 _EXIF = shutil.which("exiftool") or "exiftool"
 
@@ -164,12 +165,7 @@ def merge_raw_pmck_rating(file_path: str, rating: int) -> bool:
 
 
 def _run_exiftool(argv: list[str]) -> None:
-    r = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    r = safe_run_exiftool(argv, timeout=120, retries=2, backoff=0.3)
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "").strip() or f"exiftool exit {r.returncode}"
         raise RuntimeError(err)
