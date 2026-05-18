@@ -348,9 +348,10 @@ def blend_overlay(base, over):
 
 # スクリーン合成
 def blend_screen(base, over):
-    result = 1 - (1.0-base)*(1-over)
-
-    return result
+    # Reinhard 領域 (f(x)=x/(1+x)) で screen を取って戻すと a+b+ab に帰着する。
+    # 標準 screen 1-(1-a)(1-b) は HDR (>1) で破綻して負値や色ズレを生むのに対し、
+    # この式は全域 C∞・単調・非負・常に >=max(a,b) で破綻しない。
+    return base + over + base * over
 
 #--------------------------------------------------
 # 露出補正
