@@ -11,6 +11,7 @@ import sys
 import imageset
 import config
 import utils.utils as utils
+from utils import perf_trace
 from enums import LoadStage, ImageFidelity
 
 # warm-up用のダミー関数（pickle化可能なトップレベル関数）
@@ -31,13 +32,23 @@ def _task_callback(file_callbacks, shared_resources, future):
             file_path, imgset, exif_data, param, stage = future
 
         # Memmap化 (キャッシュ投入前)
-        if imgset is not None and imgset.img is not None:
-             # しきい値: 1MB
-            if imgset.img.nbytes > 1 * 1024 * 1024:
-                mm, backing = utils.array_to_memmap(imgset.img)
-                imgset.img = mm
-                imgset.backing = backing
-                logging.info(f"FCS: Converted {file_path} to memmap. Backing: {backing}")
+        # RAW プレビュー段階は短命（直後にフルデコードで置換される）なので
+        # memmap 化に伴う temp ファイル書き出しコストを払う価値がなくスキップする。
+        # しきい値はディスク I/O コストとメモリ常駐コストのトレードオフから 32MB。
+        # 24MP データを多数キャッシュする実運用を想定（max_cache_size=100、float32 換算で
+        # 1 枚 288MB のため、閾値を高くすると数 GB 級の RAM を消費し得る）。
+        if (
+            imgset is not None
+            and imgset.img is not None
+            and getattr(imgset, "fidelity", None) != ImageFidelity.PREVIEW
+            and imgset.img.nbytes > 32 * 1024 * 1024
+        ):
+            perf_trace.event("fcs.memmap_begin", nbytes=int(imgset.img.nbytes))
+            mm, backing = utils.array_to_memmap(imgset.img)
+            imgset.img = mm
+            imgset.backing = backing
+            logging.info(f"FCS: Converted {file_path} to memmap. Backing: {backing}")
+            perf_trace.event("fcs.memmap_done")
 
         # キャッシュに追加
         # 既存のキャッシュがある場合はHistoryを維持する

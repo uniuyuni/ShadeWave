@@ -25,6 +25,7 @@ import cores.local_contrast as local_contrast
 import cores.colour_functions as colour_functions
 import cores.color as color
 from enums import ImageFidelity, LoadStage
+from utils import perf_trace
 
 def _log_lre_info():
     try:
@@ -174,19 +175,23 @@ class ImageSet:
 
     def _load_raw_preview(self, raw, file_path, exif_data, param):
         t0 = time.perf_counter()
+        perf_trace.event("raw_preview.enter")
         try:
-            # Fuji honeycomb などセンサー固有ジオメトリをプレビューにも反映
-            # （後段は既存の EXIF サイズベース処理をそのまま利用）
-            if raw is not None:
-                self._override_exif_size_from_raw_geometry(raw, exif_data, half_size=False)
-            else:
-                try:
-                    with lre.imread(file_path) as raw_for_geometry:
-                        self._override_exif_size_from_raw_geometry(
-                            raw_for_geometry, exif_data, half_size=False
-                        )
-                except Exception as e:
-                    logging.warning(f"Failed to load raw for preview geometry: {e}")
+            # Fuji honeycomb などセンサー固有ジオメトリをプレビューにも反映する必要があるのは
+            # Fuji 機のみ。他社機では _override_exif_size_from_raw_geometry が早期 return するだけ
+            # なので、ここで lre.imread を呼ぶ価値はない。Make を見て Fuji の場合だけ raw を開く。
+            make = str(exif_data.get('Make', '') or '').upper()
+            if 'FUJI' in make:
+                if raw is not None:
+                    self._override_exif_size_from_raw_geometry(raw, exif_data, half_size=False)
+                else:
+                    try:
+                        with lre.imread(file_path) as raw_for_geometry:
+                            self._override_exif_size_from_raw_geometry(
+                                raw_for_geometry, exif_data, half_size=False
+                            )
+                    except Exception as e:
+                        logging.warning(f"Failed to load raw for preview geometry: {e}")
 
             # exifのプレビューを展開
             preview_base64 = exif_data.get('PreviewImage', None)
@@ -201,23 +206,23 @@ class ImageSet:
 
             t1 = time.perf_counter()
             logging.info(f"PERF: Preview image decoded. {t1-t0:.4f}s Size: {img.size}")
+            perf_trace.event("raw_preview.jpeg_decoded", size=list(img.size))
 
 
             # float32へ
             img_array = core.convert_to_float32(img_array)
 
-            # 色空間変換
-            #スキップ
-            #import cores.colour_functions as colour_functions
-            #img_array = colour_functions.RGB_to_RGB(img_array, 'sRGB', 'ProPhoto RGB', 'cat02',
-            #                    apply_cctf_encoding=False, apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
+            # ガンマ補正は resize より先に「小さい配列」のうちにかけて演算量を削減する。
+            # INTER_AREA は線形空間で重み付き平均する補間なので、本来 gamma decode 済みの値で
+            # 補間する方が物理的にも正しい。
             import cores.color as color
             img_array = color.rgb_gamma_decode(img_array, 'sRGB') # ガンマ補正だけは必須
             self.color_space = 'sRGB'
             t2 = time.perf_counter()
             logging.info(f"PERF: Color conversion took {t2-t1:.4f}s")
-            
-            # ホワイトバランス定義
+            perf_trace.event("raw_preview.gamma_done")
+
+            # ホワイトバランス定義（小さい配列のうちに）
             img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
             # クロップとexifデータの回転
@@ -227,6 +232,7 @@ class ImageSet:
             img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)
             t3 = time.perf_counter()
             logging.info(f"PERF: Resize took {t3-t2:.4f}s. Target size: {width}x{height}")
+            perf_trace.event("raw_preview.resize_done", width=int(width), height=int(height))
 
             # 自動露出調整値を適当に設定する
             param['rgb_or_raw'] = 'rgb'
@@ -244,10 +250,12 @@ class ImageSet:
             self.fidelity = ImageFidelity.PREVIEW
             
             logging.info(f"PERF: _load_raw_preview finished. Shape: {img_array.shape}")
+            perf_trace.event("raw_preview.done")
 
         except Exception as e:
             logging.error(f"raw error {file_path} {e}")
-        
+            perf_trace.event("raw_preview.error", error=str(e))
+
         return (file_path, self, exif_data, param, LoadStage.FIRST_PAINTABLE)
 
     def _load_raw_full(self, raw, file_path, exif_data, param):
@@ -394,9 +402,11 @@ class ImageSet:
         return (file_path, self, exif_data, param)
 
     def _load_rgb(self, raw, file_path, exif_data, param):
+        perf_trace.event("rgb_load.enter")
         # RGB画像で読み込んでみる
         with pyvips.Image.new_from_file(file_path) as vips_image:
             img_array = np.array(vips_image)
+            perf_trace.event("rgb_load.vips_decoded", shape=list(img_array.shape))
             if img_array.ndim == 3 and img_array.shape[2] > 3:
                 img_array = img_array[:, :, :3]
 
@@ -449,7 +459,8 @@ class ImageSet:
             
         self.img = np.array(img_array)
         self.fidelity = ImageFidelity.FULL
-        
+        perf_trace.event("rgb_load.done")
+
         return (file_path, self, exif_data, param, LoadStage.RGB_DONE)
 
     class Result():

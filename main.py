@@ -91,6 +91,7 @@ if __name__ == '__main__':
     import utils.utils as utils
     import utils.kvutils as kvutils
     import utils.dialogutils as dialogutils
+    from utils import perf_trace
     from utils import preset_utils
     from utils import rating_utils
     from utils import rating_io
@@ -202,6 +203,18 @@ if __name__ == '__main__':
         return False
 
     class MainWidget(MDBoxLayout):
+        # === 読み込み状態フラグの役割分担 ===
+        # loading:              on_select 直後 〜 最初のピクセル表示可能 (FIRST_PAINTABLE/RGB_DONE)
+        #                       Select/Export 等の「ロード中は触らせたくない」UI を無効化する短期フラグ。
+        # image_loaded:         imgset が確定して編集可能な状態か (起動時/フォルダ切替時=False)。
+        #                       全パラメータ UI の gate。loading とは独立で、loading=False でも
+        #                       image_loaded=False の局面が存在する（起動直後・フォルダ切替直後）。
+        # mask2_wait_full_load: RAW プレビュー段階では True、フル復号完了で False。Mask2 専用 gate。
+        # _actively_loading:    ファイル選択開始 〜 フル復号完了。スピナーアニメ用 is_processing 算出の入力。
+        # is_processing:        _actively_loading or 非同期タスク有り（スピナー表示）。
+        # === 内部状態（UI 非連動） ===
+        # _last_image_fidelity: 直前 fid。PREVIEW→FULL 遷移時の pmck heavy merge 判定。
+        # _expected_file_path:  期待しているファイル。遅延 FCS コールバックを破棄するため。
         loading = KVBooleanProperty(False)
         mask2_wait_full_load = KVBooleanProperty(True)
         preview_size = KVListProperty([100, 100])
@@ -209,6 +222,7 @@ if __name__ == '__main__':
         export_in_progress = KVBooleanProperty(False)
         export_done = KVNumericProperty(0)
         export_total = KVNumericProperty(0)
+        image_loaded = KVBooleanProperty(False)
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -527,6 +541,12 @@ if __name__ == '__main__':
 
         def empty_image(self):
             with threads.primary_param_lock:
+                # 画像が無い状態。編集系 UI は全て無効化する。
+                self.image_loaded = False
+                # mask2/preset/history パネルも未選択状態に同期させる。
+                # update_mask2_options_enabled 内で update_load_dependent_panels_enabled も
+                # 走るので、両方の連動 UI が一度で正しく無効化される。
+                self.update_mask2_options_enabled()
                 self.update_preview_texture_size()
                 self.texture = KVTexture.create(size=(config.get_config('preview_width'), config.get_config('preview_height')), colorfmt='rgb', bufferfmt='float')
                 self.texture.flip_vertical()
@@ -563,6 +583,7 @@ if __name__ == '__main__':
         @kvmainthread
         def blit_image(self, img, dt=0):
             logging.debug("[PERF] blit_image: Start. Time: %s", time.time())
+            perf_trace.event("blit_image.enter", shape=list(img.shape))
             # Texture Resizing logic
             is_dither = config.get_config('display_output_dither')
             is_downscale = config.get_config('display_output_downscale')
@@ -592,6 +613,10 @@ if __name__ == '__main__':
             import signals
             signals.blit_image.emit()
 
+            # 1 トレース = 1 画像表示。ここで JSONL に書き出す。
+            perf_trace.event("blit_image.done")
+            perf_trace.flush(reason="blit_done")
+
         @kvmainthread
         def draw_histogram_view(self, hist_data):
             #logging.debug(f"draw_histogram_view")
@@ -609,6 +634,7 @@ if __name__ == '__main__':
 
                     img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos)
                     logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
+                    perf_trace.event("draw_image_core.pipeline_done")
                     if img is None:
                         return
 
@@ -726,10 +752,10 @@ if __name__ == '__main__':
 
             return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
-        def apply_effects_lv(self, lv, effect, sync=False, subname=None):
+        def apply_effects_lv(self, lv, effect, sync=False, subname=None, defer_draw=False):
             if self.run_set2widget_all == True:
                 return
-                
+
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
             if effect is None:
                 effects.set2param_all(current_effects, current_param, self)
@@ -741,6 +767,10 @@ if __name__ == '__main__':
                 self.sync_distortion_mode_sliders()
             self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, subname))
             #self.apply_rotation_flip_for_wrapper()
+            # defer_draw=True のとき呼び出し側は後でまとめて start/sync を発火する想定。
+            # pipeline_version の無駄な多段進行と apply_thread の捨て描画を避ける。
+            if defer_draw:
+                return
             if sync == False:
                 self.start_draw_image()
             else:
@@ -1281,6 +1311,8 @@ if __name__ == '__main__':
         @kvmainthread
         def on_select(self, card):
             logging.debug("[PERF] on_select: Start. Time: %s", time.time())
+            perf_trace.select_start(card.file_path if card is not None else None)
+            perf_trace.event("on_select.enter")
             # ロード開始
             self.loading = True
             self.mask2_wait_full_load = True
@@ -1300,6 +1332,8 @@ if __name__ == '__main__':
             if card is not None:
                 self._expected_file_path = card.file_path
                 self._clear_exif_data()
+                # 別ファイルへ切り替わるので前回の pmck キャッシュを破棄
+                self._last_pmck_dict = None
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
                 self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
             else:
@@ -1321,6 +1355,7 @@ if __name__ == '__main__':
                 )
                 return
             logging.debug("[PERF] on_fcs_get_file: Called. stage: %s, Time: %s", stage, time.time())
+            perf_trace.event("on_fcs_get_file.enter", stage=str(stage))
             _img = getattr(imgset, "img", None) if imgset is not None else None
             shape_str = getattr(_img, "shape", None) if _img is not None else None
             print(f"Load image SHAPE: {shape_str} fidelity: {getattr(imgset, 'fidelity', None)}, Proc: {stage}")
@@ -1332,10 +1367,16 @@ if __name__ == '__main__':
                     self.processor.cancel_all()
                 self.loading = False
                 self._actively_loading = False
+                # 失敗パスはここで終わり blit_image に到達しない。トレースを取りこぼさないよう
+                # ここで明示的に flush する。
+                perf_trace.event("on_fcs_get_file.load_failed", stage=str(stage))
+                perf_trace.flush(reason="load_failed")
                 return
 
             if _load_stage_allows_ui(stage, imgset):
                 self.loading = False
+                # ここで初めて param と imgset が編集可能な対になる。UI 全体を解禁。
+                self.image_loaded = True
             if _load_stage_ends_file_loading_indicator(stage, imgset):
                 self._actively_loading = False
             # Mask2 はフル読み込み完了までは無効化
@@ -1357,7 +1398,10 @@ if __name__ == '__main__':
                     # フル解像のときだけ pmck から重い結果を復元（RAW プレビュー段階ではスキップ）
                     param['image_fidelity'] = getattr(imgset, 'fidelity', ImageFidelity.FULL).value
                     load_heavy = param['image_fidelity'] == ImageFidelity.FULL.value
-                    params.load_json(file_path, param, self.ids['mask_editor2'], load_heavy=load_heavy)
+                    pmck_dict = params.load_json(file_path, param, self.ids['mask_editor2'], load_heavy=load_heavy)
+                    # RAW: プレビュー段階で読んだ dict を保持しておき、FULL_DECODE 遷移時の
+                    # merge_heavy_from_pmck で再パースを避ける。
+                    self._last_pmck_dict = (file_path, pmck_dict)
 
             # Cancel previous background tasks
             if self.processor:
@@ -1385,12 +1429,14 @@ if __name__ == '__main__':
                         except Exception:
                             pass
                     logging.debug("[PERF] on_fcs_get_file: Merged Params. Time: %s", time.time())
+                    perf_trace.event("on_fcs_get_file.params_merged")
                     self.set2widget_all(self.primary_effects, self.primary_param)
                     self.update_mask2_options_enabled()
 
-                    # 特別あつかいでエディタを起動できるなら起動する
-                    self.apply_effects_lv(1, 'distortion')
-                    self.apply_effects_lv(0, 'crop')
+                    # 特別あつかいでエディタを起動できるなら起動する。
+                    # ここでは描画キックを抑止し、後段の start_draw_image_and_crop に集約する。
+                    self.apply_effects_lv(1, 'distortion', defer_draw=True)
+                    self.apply_effects_lv(0, 'crop', defer_draw=True)
 
                     # ヒストリーの設定
                     if history_obj is None:
@@ -1431,7 +1477,13 @@ if __name__ == '__main__':
                 self.primary_param['image_fidelity'] = fid.value
                 prev_fid = getattr(self, '_last_image_fidelity', None)
                 if fid == ImageFidelity.FULL and prev_fid == ImageFidelity.PREVIEW:
-                    params.merge_heavy_from_pmck(file_path, self.primary_param, self.ids['mask_editor2'])
+                    cached_pmck = None
+                    last = getattr(self, '_last_pmck_dict', None)
+                    if last is not None and last[0] == file_path:
+                        cached_pmck = last[1]
+                    params.merge_heavy_from_pmck(
+                        file_path, self.primary_param, self.ids['mask_editor2'], cached_dict=cached_pmck
+                    )
                 self._last_image_fidelity = fid
 
                 params.apply_original_geometry_if_missing(self.primary_param, imgset.img)
@@ -1439,6 +1491,8 @@ if __name__ == '__main__':
                     logging.error("on_fcs_get_file: デコード画像からも original_img_size を確定できません")
                     self.loading = False
                     self._actively_loading = False
+                    perf_trace.event("on_fcs_get_file.no_geometry", stage=str(stage))
+                    perf_trace.flush(reason="no_geometry")
                     return
 
                 effects.reeffect_all(self.primary_effects)
@@ -1451,8 +1505,23 @@ if __name__ == '__main__':
                     self._set_exif_data(display_exif, file_path=file_path)
             self._sync_exif_rating_row()
 
+        def _image_interaction_ready(self):
+            """ズーム／ドラッグ等のプレビュー上の操作を受け付けて良い状態か。
+
+            画像が確定していない間（起動直後・フォルダ切替直後・ロード途中）に操作させると、
+            is_zoomed 等の内部状態だけが変化して描画は走らず、見た目の整合性が崩れる。
+            """
+            return (
+                self.image_loaded
+                and self.imgset is not None
+                and getattr(self.imgset, 'img', None) is not None
+            )
+
         def on_image_touch_down(self, touch):
             if self.ids['preview_widget'].collide_point(*touch.pos):
+                # 画像未確定の間は preview 上のジェスチャを受け付けない
+                if not self._image_interaction_ready():
+                    return False
                 # ズーム操作
                 if touch.is_double_tap == True and self.ids["effects"].current_tab.text != "Ge":
                     self.is_zoomed = not self.is_zoomed
@@ -1470,13 +1539,13 @@ if __name__ == '__main__':
                     self.start_draw_image_and_crop(self.imgset)
 
                 # ドラッグ操作
-                elif self.is_zoomed == True:                    
+                elif self.is_zoomed == True:
                     # ドラッグ開始時の中心位置を計算して保存
                     disp_info = params.get_disp_info(self.primary_param)
                     if disp_info is not None:
                         dx, dy, dw, dh, scale = disp_info
                         self.drag_center_start = (dx + dw/2, dy + dh/2)
-            
+
             return False
 
         def on_image_touch_move(self, touch):
@@ -1772,7 +1841,8 @@ if __name__ == '__main__':
             )
 
         def update_load_dependent_panels_enabled(self):
-            disabled = bool(self.mask2_wait_full_load)
+            # ファイル未選択時はプリセット／ヒストリ系パネルも無効化する。
+            disabled = bool(self.mask2_wait_full_load) or not bool(self.image_loaded)
             for panel_name in ("preset_panel", "history_panel"):
                 panel = getattr(self, panel_name, None)
                 if panel is not None:
@@ -1894,6 +1964,20 @@ if __name__ == '__main__':
 
         def handle_for_dir_selection(self, selection):
             if selection is not None:
+                # フォルダ切替で viewer.data は刷新されるが、MainWidget は直前の imgset を
+                # 保持し続けてしまう。新フォルダから新たに選択されるまで編集 UI を無効化する。
+                with threads.primary_param_lock:
+                    self.save_current_sidecar()
+                    effects.finalize_all(self.primary_effects, self.primary_param, self)
+                    self.empty_image()  # image_loaded=False / imgset=None
+                self._expected_file_path = None
+                self._last_pmck_dict = None
+                self._clear_exif_data()
+                # フォルダ切替時は「何もロードしていない」状態に戻す。
+                # 前回 on_select 直後にフォルダ切替が走った場合に loading=True が残るのを防ぐ。
+                self.loading = False
+                self._actively_loading = False
+                self.update_mask2_options_enabled()
                 config.set_config('import_path', selection[0].decode())
 
         #--------------------------------

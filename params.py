@@ -584,19 +584,25 @@ def deserialize(ser, param, mask_editor2, load_heavy=True):
         mask_editor2.deserialize(ser)
 
 
-def merge_heavy_from_pmck(file_path, param, mask_editor2):
+def merge_heavy_from_pmck(file_path, param, mask_editor2, cached_dict=None):
     """
     RAW がプレビュー→フルに遷移したとき等、既に軽い内容だけ読み込んだ後に
     pmck から重いペイロードだけをマージする。
+
+    cached_dict: load_json で取得済みの msgpack デコード結果。渡されればファイル再読込・
+    再パースをスキップする。
     """
     if file_path is None:
         return
-    fp = file_path + '.pmck'
-    try:
-        with open(fp, 'rb') as f:
-            d = msgpack.unpackb(f.read(), raw=False)
-    except FileNotFoundError:
-        return
+    if cached_dict is not None:
+        d = cached_dict
+    else:
+        fp = file_path + '.pmck'
+        try:
+            with open(fp, 'rb') as f:
+                d = msgpack.unpackb(f.read(), raw=False)
+        except FileNotFoundError:
+            return
     pp = d.get('primary_param')
     if not pp or pp.get('heavy_saved_at_fidelity') != ImageFidelity.FULL.value:
         return

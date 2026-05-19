@@ -379,7 +379,9 @@
                         id: mask2
                         size_hint_x: 0.1
                         text: "Mask2"
-                        disabled: root.loading == True or root.mask2_wait_full_load == True
+                        # image_loaded==False の間は loading==True の局面を内包するので loading 判定は不要。
+                        # mask2_wait_full_load は RAW プレビュー〜フル復号間のみ True になる Mask2 専用 gate。
+                        disabled: root.image_loaded == False or root.mask2_wait_full_load == True
                         on_state: root.on_mask2_press(self.state)
                         on_state: geometry.disabled = True if mask2.state == 'down' else False
                     HSpacer:
@@ -407,7 +409,9 @@
                             color: 1, 1, 1, 1
                         Button:
                             text: 'Cancel' if root.export_in_progress else 'Export'
-                            disabled: root.loading == True and not root.export_in_progress
+                            # image_loaded==False は loading==True を内包するので 1 条件で十分。
+                            # Export 進行中は Cancel として常に有効。
+                            disabled: root.image_loaded == False and not root.export_in_progress
                             size_hint_x: 0.8
                             on_press: root.on_export_bar_press()
 
@@ -436,6 +440,7 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Reset"
+                        disabled: root.image_loaded == False
                         on_press: root.begin_history_reset_all()
                         on_release:
                             root.reset_all()
@@ -448,6 +453,7 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Preset"
+                        disabled: root.image_loaded == False
                         #on_state: root.on_preset_press(self.state)
 
 
@@ -456,9 +462,10 @@
                     do_default_tab: False
                     tab_width: self.width * 0.12
                     tab_height: self.height * 0.05
-                    disabled: root.loading == True
+                    # image_loaded==False は loading==True を内包するので 1 条件で十分。
+                    disabled: root.image_loaded == False
                     on_current_tab: root.on_current_tab(self.current_tab)
-                    on_current_tab: mask2.disabled = self.current_tab.text == "Ge" or root.loading == True or root.mask2_wait_full_load == True
+                    on_current_tab: mask2.disabled = self.current_tab.text == "Ge" or root.image_loaded == False or root.mask2_wait_full_load == True
 
                     IconTabbedPanelItem:
                         text: 'Ba'
