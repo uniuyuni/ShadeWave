@@ -441,7 +441,10 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
             if crop is not None:
                 mask_image = mask_image[crop[1]:crop[3], crop[0]:crop[2]]
             mask2_param = _effective_mask2_draw_effect_param(mask)
-            img3 = core.apply_mask_draw_effects(img3, mask_image, img2, mask2_param)
+            img3 = core.apply_mask_draw_effects(
+                img3, mask_image, img2, mask2_param,
+                resolution_scale=getattr(efconfig, "resolution_scale", 1.0),
+            )
 
     return img3, lv1reset
 

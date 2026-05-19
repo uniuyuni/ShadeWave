@@ -3746,6 +3746,8 @@ class Mask2Effect(Effect):
             'mask2_color_burn': 0,
             'mask2_mix_black': 0,
             'mask2_mix_white': 0,
+            'mask2_skin_smooth_amount': 0,
+            'mask2_skin_smooth_radius_bias': 0,
             'switch_mask2_face': True,            
             'mask2_face_face': True,
             'mask2_face_brows': True,
@@ -3763,6 +3765,8 @@ class Mask2Effect(Effect):
                     'mask2_color_burn',
                     'mask2_mix_black',
                     'mask2_mix_white',
+                    'mask2_skin_smooth_amount',
+                    'mask2_skin_smooth_radius_bias',
                 )
             }
         if subname == 'mask2_settings':
@@ -3870,6 +3874,8 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
         widget.ids["slider_mask2_mix_black"].set_slider_value(self._get_param(param, 'mask2_mix_black'))
         widget.ids["slider_mask2_mix_white"].set_slider_value(self._get_param(param, 'mask2_mix_white'))
+        widget.ids["slider_mask2_skin_smooth_amount"].set_slider_value(self._get_param(param, 'mask2_skin_smooth_amount'))
+        widget.ids["slider_mask2_skin_smooth_radius_bias"].set_slider_value(self._get_param(param, 'mask2_skin_smooth_radius_bias'))
         widget.ids["switch_mask2_face"].active = self._get_param(param, 'switch_mask2_face')
         widget.ids["checkbox_mask2_face_face"].active = self._get_param(param, 'mask2_face_face')
         widget.ids["checkbox_mask2_face_brows"].active = self._get_param(param, 'mask2_face_brows')
@@ -3908,6 +3914,8 @@ class Mask2Effect(Effect):
         param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value
         param['mask2_mix_black'] = widget.ids["slider_mask2_mix_black"].value
         param['mask2_mix_white'] = widget.ids["slider_mask2_mix_white"].value
+        param['mask2_skin_smooth_amount'] = widget.ids["slider_mask2_skin_smooth_amount"].value
+        param['mask2_skin_smooth_radius_bias'] = widget.ids["slider_mask2_skin_smooth_radius_bias"].value
         param['switch_mask2_face'] = widget.ids["switch_mask2_face"].active
         param['mask2_face_face'] = widget.ids["checkbox_mask2_face_face"].active
         param['mask2_face_brows'] = widget.ids["checkbox_mask2_face_brows"].active

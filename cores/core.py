@@ -635,8 +635,12 @@ def _resize_mask_draw_input(src, target_shape, interpolation):
     return resized
 
 
-def apply_mask_draw_effects(base, msk, layer_img, mask2_param):
-    """Mask2 の Photoshop 風 Draw Effects を適用してからマスク合成する。"""
+def apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale=1.0):
+    """Mask2 の Photoshop 風 Draw Effects を適用してからマスク合成する。
+
+    resolution_scale: 効果の半径を解像度に追従させるための係数。
+    pipeline 側で efconfig.resolution_scale を渡す。
+    """
     base = np.asarray(base, dtype=np.float32)
     layer_img = _resize_mask_draw_input(
         np.asarray(layer_img, dtype=np.float32),
@@ -660,6 +664,21 @@ def apply_mask_draw_effects(base, msk, layer_img, mask2_param):
     backdrop = np.clip(np.asarray(base, dtype=np.float32), 0.0, 1.0)
     source = np.clip(effect_img, 0.0, 1.0)
     eps = 1e-6
+
+    # Skin Smooth (Inverted High Pass) — Dodge/Burn より先に肌のムラを均しておくと
+    # コントラスト系の効果が安定する。
+    skin_amount_raw = _mask2_param_percent(mask2_param, "mask2_skin_smooth_amount")
+    if skin_amount_raw > 0.0:
+        from cores import skin_smooth as _skin_smooth
+        radius_bias = float(mask2_param.get("mask2_skin_smooth_radius_bias", 0))
+        sigma = _skin_smooth.compute_sigma(resolution_scale, radius_bias)
+        if sigma > 0.0:
+            smoothed_full = _skin_smooth.inverted_high_pass(
+                np.clip(effect_img, 0.0, 1.0), sigma
+            )
+            skin_amount = np.clip(skin_amount_raw * mask_boost, 0.0, 1.0)
+            effect_img = effect_img * (1.0 - skin_amount) + smoothed_full * skin_amount
+            source = np.clip(effect_img, 0.0, 1.0)
 
     dodge_amount = _mask2_param_percent(mask2_param, "mask2_color_dodge")
     if dodge_amount > 0.0:

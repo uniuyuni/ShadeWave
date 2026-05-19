@@ -1784,6 +1784,8 @@ if __name__ == '__main__':
                     'slider_mask2_color_burn',
                     'slider_mask2_mix_black',
                     'slider_mask2_mix_white',
+                    'slider_mask2_skin_smooth_amount',
+                    'slider_mask2_skin_smooth_radius_bias',
                 ),
                 not has_mask_context,
             )

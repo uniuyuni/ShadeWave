@@ -1354,7 +1354,15 @@ class FreeDrawMask(BaseMask):
     def on_mouse_pos(self, window, pos):
         self.update_brush_cursor(pos[0], pos[1])
 
+    def _pan_mode_active(self):
+        """スペースキー押下中はパン優先。Draw 描画系の touch を完全に無効化する。"""
+        root = getattr(self.editor, 'root', None)
+        return bool(getattr(root, 'is_press_space', False))
+
     def on_touch_down(self, touch):
+        if self._pan_mode_active():
+            # マスク側はイベントを掴まない。親 (preview_widget) の panning handler に流す。
+            return False
         if self.editor.get_active_mask() != self and self.editor.get_created_mask() != self:
             return super().on_touch_down(touch)
         
@@ -1404,25 +1412,38 @@ class FreeDrawMask(BaseMask):
         return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
+        if self._pan_mode_active():
+            return False
         if self.current_line is not None:
             self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
             self.update_mask()
-            self.editor.start_draw_image()        
+            self.editor.start_draw_image()
             return True
 
         return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
+        if self._pan_mode_active():
+            # パンモード抜け遅延（touch_up が先に来る場合）に備え、
+            # ストロークの後始末は通常パスでも行う。ここでは描画動作だけ抑止する。
+            if self.current_line is not None:
+                self.current_line = None
+                self.update_mask()
+                self.editor.start_draw_image()
+                if self._stroke_history_started:
+                    get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
+                    self._stroke_history_started = False
+            return False
         if self.current_line is not None:
             self.current_line = None
             # マスクを更新
             self.update_mask()
-            self.editor.start_draw_image()        
+            self.editor.start_draw_image()
             if self._stroke_history_started:
                 get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
                 self._stroke_history_started = False
             return True
-        
+
         return super().on_touch_up(touch)
 
     def create_control_points(self):
