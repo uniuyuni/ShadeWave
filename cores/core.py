@@ -1098,7 +1098,7 @@ def _apply_highlight_neg(val, base, highlights):
     strength = factor * 1.0
     compressed_base = base / (1.0 + strength * max(base, 0.0))
     
-    threshold = 0.6
+    threshold = 0.95
     transition_width = 0.4
     t = (base - threshold) / transition_width
     if t < 0.0: t = 0.0
@@ -1192,7 +1192,7 @@ def _apply_white_neg(val, base, white_level, max_val):
     
     compressed_base = min(safe_base, base * (1.0 - factor) + target * factor)
     
-    threshold = 0.8
+    threshold = 0.95
     transition_width = 0.4
     t = (base - threshold) / transition_width
     if t < 0.0: t = 0.0
@@ -1270,7 +1270,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
     # Step 3: Highlight -> Black
     if highlights < 0:
         # 基底をより低域にして val-base に細かなハイライト起伏を載せやすくする
-        sigma = 26.0 * resolution_scale
+        sigma = 0.5 * resolution_scale
         y_blur = gaussian_blur_cv(current_y, sigma=sigma)
         current_y = _kernel_high_neg_black(current_y, y_blur, highlights, black_level)
     else:
@@ -1278,7 +1278,7 @@ def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_le
         
     # Step 4: White -> Final
     if white_level < 0:
-        sigma = 26.0 * resolution_scale
+        sigma = 0.5 * resolution_scale
         y_blur = gaussian_blur_cv(current_y, sigma=sigma)
         max_val_blur = np.max(y_blur)
         res = _kernel_white_neg_final(img, current_y, y_blur, y_orig, white_level, float(max_val_blur))
