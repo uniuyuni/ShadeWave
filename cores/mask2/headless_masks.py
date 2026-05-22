@@ -315,6 +315,7 @@ def instantiate_mask_from_type(ctx, pipeline, mask_type: str):
         return HeadlessFullMask(ctx)
     if mt in (
         MaskTypeStr.FREEDRAW,
+        MaskTypeStr.POLYLINE,
         MaskTypeStr.SEGMENT,
         MaskTypeStr.DEPTHMAP,
         MaskTypeStr.FACE,

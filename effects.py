@@ -1532,7 +1532,13 @@ class CropEffect(Effect):
         self.sync_crop_editor_from_param(param)
 
     def set2param(self, param, widget):
-        crop_editing = widget.ids["effects"].current_tab.text == "Ge"
+        on_ge = widget.ids["effects"].current_tab.text == "Ge"
+        try:
+            mask2_on = widget.ids["mask2"].state == "down"
+        except Exception:
+            mask2_on = False
+        # マスク Geometry モードではクロップエディタを開かない
+        crop_editing = on_ge and not mask2_on
         param['aspect_ratio'] = widget.ids["spinner_acpect_ratio"].text
 
         # crop_rect がないのはマスク
@@ -1588,7 +1594,13 @@ class CropEffect(Effect):
             params.set_disp_info(param, self.crop_editor.get_disp_info(enforce_bounds=enforce_bounds))
 
     def sync_crop_editor_mode_from_widget(self, widget, param):
-        crop_editing = widget.ids["effects"].current_tab.text == "Ge"
+        # マスク Geometry モード (Mask2 ON + Ge タブ) ではクロップエディタを開かない
+        on_ge = widget.ids["effects"].current_tab.text == "Ge"
+        try:
+            mask2_on = widget.ids["mask2"].state == "down"
+        except Exception:
+            mask2_on = False
+        crop_editing = on_ge and not mask2_on
         if params.get_crop_rect(param) is None:
             return
 
@@ -3748,13 +3760,23 @@ class Mask2Effect(Effect):
             'mask2_mix_white': 0,
             'mask2_skin_smooth_amount': 0,
             'mask2_skin_smooth_radius_bias': 0,
-            'switch_mask2_face': True,            
+            'switch_mask2_face': True,
             'mask2_face_face': True,
             'mask2_face_brows': True,
             'mask2_face_eyes': True,
             'mask2_face_nose': True,
             'mask2_face_mouth': True,
             'mask2_face_lips': True,
+            # マスク Geometry (マスク自身を変形)
+            'switch_mask_geometry': False,
+            'mask_rotation': 0.0,            # degrees
+            'mask_flip_mode': 0,             # 0=none, 1=H, 2=V, 3=both
+            'mask_translation_x': 0.0,       # 画像短辺基準の比率 [-1, 1]
+            'mask_translation_y': 0.0,
+            'mask_scale_x': 1.0,
+            'mask_scale_y': 1.0,
+            'mask_mesh_size': [4, 4],        # Step 4 用 (placeholder)
+            'mask_mesh_control_points': {},  # Step 4 用 (placeholder)
         }
         if subname == 'mask2_draw_effects':
             return {
@@ -3829,6 +3851,21 @@ class Mask2Effect(Effect):
                     'mask2_freedraw_brush_hardness',
                 )
             }
+        if subname == 'mask_geometry':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask_geometry',
+                    'mask_rotation',
+                    'mask_flip_mode',
+                    'mask_translation_x',
+                    'mask_translation_y',
+                    'mask_scale_x',
+                    'mask_scale_y',
+                    'mask_mesh_size',
+                    'mask_mesh_control_points',
+                )
+            }
         if subname == 'mask2_face':
             return {
                 key: param_dict[key]
@@ -3883,6 +3920,7 @@ class Mask2Effect(Effect):
         widget.ids["checkbox_mask2_face_nose"].active = self._get_param(param, 'mask2_face_nose')
         widget.ids["checkbox_mask2_face_mouth"].active = self._get_param(param, 'mask2_face_mouth')
         widget.ids["checkbox_mask2_face_lips"].active = self._get_param(param, 'mask2_face_lips')
+        # Mask Geometry は MaskGeometryEffect が担当するためここでは扱わない
 
     def set2param(self, param, widget):
         param['switch_mask2_settings'] = widget.ids["switch_mask2_settings"].active
@@ -3923,6 +3961,7 @@ class Mask2Effect(Effect):
         param['mask2_face_nose'] = widget.ids["checkbox_mask2_face_nose"].active
         param['mask2_face_mouth'] = widget.ids["checkbox_mask2_face_mouth"].active
         param['mask2_face_lips'] = widget.ids["checkbox_mask2_face_lips"].active
+        # Mask Geometry は MaskGeometryEffect が担当するためここでは扱わない
 
     def make_diff(self, rgb, param, efconfig):
         """
@@ -3962,6 +4001,70 @@ class Mask2Effect(Effect):
                 self.diff = None
         """
         return self.diff
+
+class MaskGeometryEffect(Effect):
+    """マスク自身の Geometry 変形パラメータ専用 Effect。
+    Mask2Effect とは分離して、CompositMask 直下に書き込むことで
+    『どのマスクを選択していても Composit のパラメータとして機能』する設計に合わせる。"""
+
+    @staticmethod
+    def get_param(param, key, default=None):
+        if default is not None:
+            return param.get(key, default)
+        # 共通の既定値は Mask2Effect.get_param_dict が保有しているのでそちらに委譲
+        return Mask2Effect.get_param(param, key)
+
+    def get_param_dict(self, param, subname=None):
+        # 既定値は Mask2Effect 側に一括定義されている。重複定義を避けるため流用する。
+        full = Mask2Effect.get_param_dict(param)
+        return {
+            key: full[key]
+            for key in (
+                'switch_mask_geometry',
+                'mask_rotation',
+                'mask_flip_mode',
+                'mask_translation_x',
+                'mask_translation_y',
+                'mask_scale_x',
+                'mask_scale_y',
+                'mask_mesh_size',
+                'mask_mesh_control_points',
+            )
+        }
+
+    def set2widget(self, widget, param):
+        if "switch_mask_geometry" not in widget.ids:
+            return
+        widget.ids["switch_mask_geometry"].active = self._get_param(param, 'switch_mask_geometry')
+        widget.ids["slider_mask_rotation"].set_slider_value(self._get_param(param, 'mask_rotation'))
+        flip = int(self._get_param(param, 'mask_flip_mode'))
+        widget.ids["checkbox_mask_flip_h"].active = bool(flip & 1)
+        widget.ids["checkbox_mask_flip_v"].active = bool(flip & 2)
+        widget.ids["slider_mask_translation_x"].set_slider_value(self._get_param(param, 'mask_translation_x') * 100.0)
+        widget.ids["slider_mask_translation_y"].set_slider_value(self._get_param(param, 'mask_translation_y') * 100.0)
+        widget.ids["slider_mask_scale_x"].set_slider_value(self._get_param(param, 'mask_scale_x') * 100.0)
+        widget.ids["slider_mask_scale_y"].set_slider_value(self._get_param(param, 'mask_scale_y') * 100.0)
+
+    def set2param(self, param, widget):
+        if "switch_mask_geometry" not in widget.ids:
+            return
+        param['switch_mask_geometry'] = widget.ids["switch_mask_geometry"].active
+        param['mask_rotation'] = float(widget.ids["slider_mask_rotation"].value)
+        flip = 0
+        if widget.ids["checkbox_mask_flip_h"].active:
+            flip |= 1
+        if widget.ids["checkbox_mask_flip_v"].active:
+            flip |= 2
+        param['mask_flip_mode'] = flip
+        param['mask_translation_x'] = float(widget.ids["slider_mask_translation_x"].value) / 100.0
+        param['mask_translation_y'] = float(widget.ids["slider_mask_translation_y"].value) / 100.0
+        param['mask_scale_x'] = float(widget.ids["slider_mask_scale_x"].value) / 100.0
+        param['mask_scale_y'] = float(widget.ids["slider_mask_scale_y"].value) / 100.0
+
+    def make_diff(self, img, param, efconfig):
+        # 実際の変形は cores/mask2/mask_geometry.py が CompositMask.get_mask_image から呼ぶ。
+        return None
+
 
 class GrainEffect(Effect):
 
@@ -4132,6 +4235,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
 
     lv3 = effects[3]
     lv3['mask2'] = Mask2Effect()
+    lv3['mask_geometry'] = MaskGeometryEffect()
 
     lv4 = effects[4]
     lv4['grain'] = GrainEffect()

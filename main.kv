@@ -383,7 +383,8 @@
                         # mask2_wait_full_load は RAW プレビュー〜フル復号間のみ True になる Mask2 専用 gate。
                         disabled: root.image_loaded == False or root.mask2_wait_full_load == True
                         on_state: root.on_mask2_press(self.state)
-                        on_state: geometry.disabled = True if mask2.state == 'down' else False
+                        # マスク編集中も Geometry タブを開けるようにするため、Ge タブの disabled 強制は廃止。
+                        # マスク Active 時は Ge タブの中身が「マスク Geometry」セットに切り替わる仕様。
                     HSpacer:
                         size_hint_x: 0.05
                     BoxLayout:
@@ -465,7 +466,8 @@
                     # image_loaded==False は loading==True を内包するので 1 条件で十分。
                     disabled: root.image_loaded == False
                     on_current_tab: root.on_current_tab(self.current_tab)
-                    on_current_tab: mask2.disabled = self.current_tab.text == "Ge" or root.image_loaded == False or root.mask2_wait_full_load == True
+                    # マスク編集中も Ge タブを許可するため Ge 条件は外し、画像ロード/Mask2 待機の 2 条件のみで disabled を決定する
+                    on_current_tab: mask2.disabled = root.image_loaded == False or root.mask2_wait_full_load == True
 
                     IconTabbedPanelItem:
                         text: 'Ba'
@@ -2521,6 +2523,7 @@
                                 md_bg_color: dark_color
                                 ref_padding: 4
 
+
                                 HeadLabel:
                                     id: switch_rotation
                                     text: ' Rotation'
@@ -2752,6 +2755,7 @@
                                     on_slider: root.apply_effects_lv(0, 'geometry')
                                     on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
                                     on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+
 
                     IconTabbedPanelItem:
                         text: 'Lo'

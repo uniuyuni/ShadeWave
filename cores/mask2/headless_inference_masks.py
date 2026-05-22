@@ -13,6 +13,7 @@ import utils.utils as utils
 
 from cores.mask2 import extended_params, inference_runtime
 from cores.mask2.freedraw_raster import Line, draw_line_texture
+from cores.mask2.polyline_raster import Polyline as RasterPolyline, draw_polyline_texture
 from cores.mask2.mask_types import MaskTypeStr
 
 
@@ -88,6 +89,94 @@ class HeadlessFreeDrawMask:
                 copy_lines,
                 allow_over_one=allow_over_one,
                 allow_under_zero=allow_under_zero,
+            )
+            mask = extended_params.apply_extended_params(
+                self.ctx, self.effects_param, mask, self.center
+            )
+            self.image_mask_cache = mask
+            self.image_mask_cache_hash = newhash
+
+        return (
+            self.image_mask_cache
+            if self.image_mask_cache is not None
+            else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+        )
+
+
+class HeadlessPolylineMask:
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.name = "Polyline"
+        self.effects = effects.create_effects()
+        self.effects_param = {}
+        params.set_image_param_for_mask2(self.effects_param, ctx.get_image_size())
+        params.set_temperature_to_param(
+            self.effects_param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0))
+        )
+        self.polylines: list = []
+        self.center = (0.0, 0.0)
+        self.initializing = False
+        self.image_mask_cache = None
+        self.image_mask_cache_hash = None
+        self.is_draw_mask = True
+        self.do_draw_composit_mask = True
+
+    def is_composit(self):
+        return False
+
+    def deserialize(self, d):
+        self.initializing = False
+        self.name = d["name"]
+        cx, cy = d["center"]
+        self.effects_param.update(d["effects_param"])
+        polys = []
+        for p in d.get("polylines", []):
+            polyobj = RasterPolyline(
+                is_erasing=p.get("is_erasing", False),
+                size=p.get("size", 10),
+                soft=p.get("soft", 100),
+                is_closed=p.get("is_closed", False),
+                is_filled=p.get("is_filled", True),
+            )
+            for point in p.get("points", []):
+                polyobj.add_point(*point)
+            polys.append(polyobj)
+        self.polylines = polys
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
+
+    def get_hash_items(self):
+        return extended_params.get_mask_hash_tuple(self.effects_param)
+
+    def get_mask_image(self):
+        image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        copy_polys = []
+        for src in self.polylines:
+            tex_poly = RasterPolyline(
+                is_erasing=src.is_erasing,
+                size=self.ctx.tcg_to_image_scale(src.size, 0)[0],
+                soft=src.soft,
+                is_closed=src.is_closed,
+                is_filled=src.is_filled and src.is_closed,
+            )
+            for point in src.points:
+                tex_poly.add_point(*self.ctx.tcg_to_texture(*point))
+            copy_polys.append(tex_poly)
+
+        poly_hash = tuple(
+            (p.is_erasing, p.size, p.soft, p.is_closed, p.is_filled, tuple(p.points))
+            for p in self.polylines
+        )
+        newhash = hash(
+            (self.get_hash_items(), self.ctx.get_hash_items(), image_size, poly_hash)
+        )
+        if (
+            self.image_mask_cache is None or self.image_mask_cache_hash != newhash
+        ) and not self.initializing:
+            mask = draw_polyline_texture(
+                image_size,
+                copy_polys,
+                allow_over_one=False,
+                allow_under_zero=False,
             )
             mask = extended_params.apply_extended_params(
                 self.ctx, self.effects_param, mask, self.center
@@ -531,6 +620,8 @@ def instantiate_inference_mask(ctx, mask_type: str):
     mt = str(mask_type)
     if mt == MaskTypeStr.FREEDRAW:
         return HeadlessFreeDrawMask(ctx)
+    if mt == MaskTypeStr.POLYLINE:
+        return HeadlessPolylineMask(ctx)
     if mt == MaskTypeStr.SEGMENT:
         return HeadlessSegmentMask(ctx)
     if mt == MaskTypeStr.DEPTHMAP:

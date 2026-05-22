@@ -743,7 +743,10 @@ if __name__ == '__main__':
                 if lv == 3:
                     if subname == 'mask2_draw_effects' and not mask.is_composit():
                         mask = composit_mask
-                else: 
+                    elif subname == 'mask_geometry' and not mask.is_composit():
+                        # マスク自身の Geometry 変形は Composit 直下に保存・適用する
+                        mask = composit_mask
+                else:
                     # それ以外は親のCompositMaskへ（自分がCompositMaskなら自分へ）
                     if not mask.is_composit():
                         composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
@@ -833,7 +836,13 @@ if __name__ == '__main__':
             if self.current_op is None:
                 logging.warning("MainWidget.end_history_layer_ctrl None.")
                 return
-            
+
+            # current_op が Layer 型でない場合 (effect 系の begin が混入したケース等) は安全に抜ける
+            if getattr(self.current_op, 'type', None) != 'Layer' or not hasattr(self.current_op, 'layer_ctrl'):
+                logging.warning(f"MainWidget.end_history_layer_ctrl Type Mismatch (got type={getattr(self.current_op, 'type', None)}).")
+                self.current_op = None
+                return
+
             if self.current_op.layer_ctrl is not layer_ctrl:
                 logging.warning("MainWidget.end_history_layer_ctrl Unmatching.")
                 return
@@ -1517,13 +1526,53 @@ if __name__ == '__main__':
                 and getattr(self.imgset, 'img', None) is not None
             )
 
+        def _is_mask2_on(self):
+            """Mask2 トグルが ON 状態か。マスク編集モードの判定軸。
+            個別マスクが Active かどうかではなく、Mask2 パネル全体が有効か否かで判定する
+            (ON 中ならマスク未選択でも『マスク Geometry モード』として扱う)。"""
+            try:
+                return self.ids['mask2'].state == 'down'
+            except Exception:
+                return False
+
+        def _is_image_geometry_mode(self):
+            """Geometry タブを開いていて、かつ Mask2 が OFF の状態。
+            画像本体の Geometry を編集している状態として、ズームは禁止する。
+            Mask2 ON 中 (= マスク Geometry モード) はズームを許可する。"""
+            try:
+                if self.ids["effects"].current_tab.text != "Ge":
+                    return False
+                return not self._is_mask2_on()
+            except Exception:
+                return False
+
+        def _active_mask_consumes_double_tap(self, touch):
+            """アクティブマスクがダブルタップを自分の動作で消費するかどうか。
+            (例: PolylineMask の開放確定。これが True なら preview の zoom 切替を抑制する)"""
+            try:
+                mask = self.ids["mask_editor2"].get_active_mask()
+            except Exception:
+                return False
+            if mask is None:
+                return False
+            consumer = getattr(mask, 'consumes_double_tap', None)
+            if not callable(consumer):
+                return False
+            try:
+                return bool(consumer(touch))
+            except Exception:
+                return False
+
         def on_image_touch_down(self, touch):
             if self.ids['preview_widget'].collide_point(*touch.pos):
                 # 画像未確定の間は preview 上のジェスチャを受け付けない
                 if not self._image_interaction_ready():
                     return False
-                # ズーム操作
-                if touch.is_double_tap == True and self.ids["effects"].current_tab.text != "Ge":
+                # ズーム操作: 画像 Geometry モード時のみ抑制 (マスク Geometry モード時は許可)
+                # ただしアクティブマスクがダブルタップを消費 (= PolylineMask の確定) する場合も抑制
+                if (touch.is_double_tap == True
+                        and not self._is_image_geometry_mode()
+                        and not self._active_mask_consumes_double_tap(touch)):
                     self.is_zoomed = not self.is_zoomed
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
@@ -1772,6 +1821,8 @@ if __name__ == '__main__':
             is_composit = bool(has_mask_context and current_mask.is_composit())
             class_name = current_mask.__class__.__name__ if current_mask is not None else ''
             is_freedraw = class_name == 'FreeDrawMask'
+            # brush hardness は FreeDraw と Polyline で共有 (PolylineMask は線幅エッジの soft 制御に流用)
+            has_brush_hardness = class_name in ('FreeDrawMask', 'PolylineMask')
             is_face = class_name == 'FaceMask'
             mask_specific_enabled = has_mask_context and not is_composit
 
@@ -1815,11 +1866,26 @@ if __name__ == '__main__':
                 ),
                 not mask_specific_enabled,
             )
+            # Mask Geometry: Composit を含む has_mask_context のとき有効。
+            # CompositMask は集約後のマスク画像に matrix を適用する。
+            self._set_disabled_for_ids(
+                (
+                    'switch_mask_geometry',
+                    'slider_mask_rotation',
+                    'checkbox_mask_flip_h',
+                    'checkbox_mask_flip_v',
+                    'slider_mask_translation_x',
+                    'slider_mask_translation_y',
+                    'slider_mask_scale_x',
+                    'slider_mask_scale_y',
+                ),
+                not has_mask_context,
+            )
             self._set_disabled_for_ids(
                 (
                     'slider_mask2_freedraw_brush_hardness',
                 ),
-                not (mask_specific_enabled and is_freedraw),
+                not (mask_specific_enabled and has_brush_hardness),
             )
             self._set_disabled_for_ids(
                 (
@@ -1875,9 +1941,38 @@ if __name__ == '__main__':
             if value == "down":
                 self._enable_mask2()
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = False
+                # マスク Geometry モードへ遷移: Ge タブ上のクロップ枠/lens エディタを閉じる
+                try:
+                    if self.ids["effects"].current_tab.text == "Ge":
+                        self.primary_effects[0]['geometry'].close_geometry_editor(self)
+                        self.primary_effects[0]['crop'].sync_crop_editor_mode_from_widget(self, self.primary_param)
+                except Exception:
+                    pass
             else:
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = True
                 self._disable_mask2()
+                # マスク Geometry モードから画像 Geometry モードへ抜けるとき、
+                # Ge タブ上で拡大表示中ならリセットする (画像 Geometry はズーム禁止のため)。
+                try:
+                    if self.is_zoomed and self.ids["effects"].current_tab.text == "Ge":
+                        self.is_zoomed = False
+                        self.click_x, self.click_y = 0, 0
+                        self.drag_center_start = None
+                        disp_info = core.convert_rect_to_info(
+                            params.get_crop_rect(self.primary_param),
+                            config.get_preview_texture_side() / max(self.primary_param['original_img_size']),
+                        )
+                        params.set_disp_info(self.primary_param, disp_info)
+                        effects.reeffect_all(self.primary_effects, 1)
+                        self.start_draw_image_and_crop(self.imgset)
+                except Exception:
+                    pass
+                # 画像 Geometry モードへ復帰: Ge タブ上ならクロップ枠を再展開する
+                try:
+                    if self.ids["effects"].current_tab.text == "Ge":
+                        self.apply_effects_lv(0, "crop")
+                except Exception:
+                    pass
 
         def set_mask2_hue_range(self, color_str):
             # イベント発火させる代入
@@ -2058,13 +2153,26 @@ if __name__ == '__main__':
         #--------------------------------
 
         def on_current_tab(self, current):
-            if current.text == "Ge":
-                self.is_zoomed = False
+            # 描画中の操作 (Polyline の途中など) はタブ切替で確定させる。
+            try:
+                self.ids['mask_editor2'].commit_in_progress()
+            except Exception:
+                pass
 
+            if current.text == "Ge":
+                # 画像 Geometry モード (Mask2 OFF) のときのみ拡大表示をリセットする。
+                # マスク Geometry モード (Mask2 ON) のときは拡大表示を維持する。
+                if not self._is_mask2_on():
+                    self.is_zoomed = False
+                # マスク Geometry モードに入った時は lens/four-points 系エディタも閉じる
+                if self._is_mask2_on():
+                    self.primary_effects[0]['geometry'].close_geometry_editor(self)
             else:
                 self.primary_effects[0]['geometry'].close_geometry_editor(self)
 
             if self.imgset is not None:
+                # apply_effects_lv(0, 'crop') 内の sync_crop_editor_mode_from_widget は
+                # Mask2 ON 時はクロップエディタを閉じるよう CropEffect 側で対応済み。
                 self.apply_effects_lv(0, "geometry")
                 self.apply_effects_lv(0, "crop")
                 self.apply_effects_lv(1, "distortion")

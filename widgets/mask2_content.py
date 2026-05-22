@@ -92,6 +92,7 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
             ('Line', me2.MaskType.GRADIENT),
             ('Full', me2.MaskType.FULL),
             ('Draw', me2.MaskType.FREEDRAW),
+            ('Polyline', me2.MaskType.POLYLINE),
             ('Segment', me2.MaskType.SEGMENT),
             ('Depth', me2.MaskType.DEPTHMAP),
             ('Face', me2.MaskType.FACE),

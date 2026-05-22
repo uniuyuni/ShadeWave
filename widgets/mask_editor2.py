@@ -48,7 +48,7 @@ from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 import macos as device
 
-from cores.mask2 import elliptical_raster, freedraw_raster, gradient_raster
+from cores.mask2 import elliptical_raster, freedraw_raster, gradient_raster, polyline_raster
 from cores.mask2.cutout_guided import create_cutout_mask_guided
 
 
@@ -100,6 +100,7 @@ class MaskType(str, Enum):
     GRADIENT = 'gradient'
     FULL = 'full'
     FREEDRAW = 'free_draw'
+    POLYLINE = 'polyline'
     SEGMENT = 'segment'
     DEPTHMAP = 'depth_map'
     FACE = 'face'
@@ -314,7 +315,7 @@ class BaseMask(KVWidget):
         limg = self._draw_lum_mask(himg)
         simg = self._draw_sat_mask(limg)
         bimg = self._apply_mask_blur(simg)
-        
+
         return bimg
 
     def get_hash_items(self):
@@ -600,7 +601,7 @@ class CompositMask(BaseMask):
                 case _:
                     logger.error(f"Unknown mask operation: {maskop}")
                     assert False
-                    
+
         return composit
 
 
@@ -826,7 +827,7 @@ class CircularGradientMask(BaseMask):
             logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
-        with self.canvas:            
+        with self.canvas:
             self.editor.set_scissor(self.scissor)
             cx, cy = self.editor.tcg_to_window(*self.center)
             self.translate.x, self.translate.y = cx, cy
@@ -835,7 +836,7 @@ class CircularGradientMask(BaseMask):
             self.inner_line.ellipse = (-ix, -iy, ix*2, iy*2)
             ox, oy = self.editor.tcg_to_window_scale(self.outer_radius_x, self.outer_radius_y)
             self.outer_line.ellipse = (-ox, -oy, ox*2, oy*2)
-        
+
         if self.is_draw_mask == True:
             if self.do_draw_composit_mask == True:
                 composit_mask = self.editor.find_composit_mask(self)
@@ -1505,6 +1506,545 @@ class FreeDrawMask(BaseMask):
             # ルミナンスとマスクを作成
             mask = self._apply_extened_params(mask)
 
+            self.image_mask_cache = mask
+            self.image_mask_cache_hash = newhash
+
+        return self.image_mask_cache if self.image_mask_cache is not None else np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+
+# 折れ線マスクのクラス
+class PolylineMask(BaseMask):
+    """頂点をクリックして折れ線を描き、閉じれば塗りつぶせるマスク。
+
+    各 polyline は確定後に頂点 ControlPoint で再編集できる。
+    """
+
+    # 始点と現在地が十分近いと判定する画面上のピクセル距離 (TCG 換算は描画時に動的計算)
+    _CLOSE_HIT_RADIUS_PX = 16.0
+
+    class Polyline:
+        def __init__(self, is_erasing=False, size=10, soft=100,
+                     is_closed=False, is_filled=True):
+            self.is_erasing = bool(is_erasing)
+            self.size = float(size)
+            self.soft = float(soft)
+            self.is_closed = bool(is_closed)
+            self.is_filled = bool(is_filled)
+            self.points = []
+
+        def add_point(self, x, y):
+            self.points.append((float(x), float(y)))
+
+    def __init__(self, editor, **kwargs):
+        super().__init__(editor, **kwargs)
+        self.name = "Polyline"
+        self.initializing = True
+
+        self.polylines = []          # 確定済み polyline のリスト
+        self.current_polyline = None # 描画中の polyline
+        self.brush_size = 300        # 線幅 (TCG)
+        self._stroke_history_started = False
+
+        # コントロールポイント描画状態
+        self._vertex_control_points = []  # [(polyline_idx, point_idx, ControlPoint)]
+
+        with self.canvas:
+            # スコープ A: ラバーバンドと始点ハイライト (ウィンドウ座標、translate なし)
+            KVPushMatrix()
+            self._overlay_scissor = self.editor.push_scissor()
+            self.preview_color = KVColor((1, 1, 0, 0))   # 初期不可視
+            self.preview_line = KVLine(points=[], width=1)
+            self.start_color = KVColor((0, 1, 1, 0))
+            self.start_indicator = KVLine(ellipse=(0, 0, 0, 0), width=2)
+            self.editor.pop_scissor()
+            KVPopMatrix()
+
+            # スコープ B: ブラシカーソル (translate でカーソル位置に移動)
+            KVPushMatrix()
+            self.scissor = self.editor.push_scissor()
+            self.translate = KVTranslate(0, 0)
+            self.rotate = KVRotate(angle=0, origin=(0, 0))
+            self.brush_color = KVColor((0, 1, 1, 0))     # 初期不可視
+            self.brush_cursor = KVLine(ellipse=(0, 0, self.brush_size, self.brush_size), width=2)
+            self.editor.pop_scissor()
+            KVPopMatrix()
+
+        KVWindow.bind(mouse_pos=self.on_mouse_pos)
+
+    # ---- ライフサイクル ----
+    def start(self):
+        self.brush_color.rgba = (1, 1, 1, 1)
+        KVWindow.bind(mouse_pos=self.on_mouse_pos)
+
+    def end(self):
+        # 描画中の polyline は終了扱い (開いた折れ線として確定 or 破棄)
+        self.commit_in_progress()
+        self.brush_color.rgba = (0, 0, 0, 0)
+        self.preview_color.rgba = (1, 1, 0, 0)
+        self.start_color.rgba = (0, 1, 1, 0)
+        KVWindow.unbind(mouse_pos=self.on_mouse_pos)
+
+    def clear(self):
+        self.polylines = []
+        self.current_polyline = None
+        self._clear_vertex_control_points()
+        super().clear()
+
+    # ---- シリアライズ ----
+    def serialize(self):
+        cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
+
+        param = effects.delete_default_param_all(self.effects, self.effects_param)
+        param = params.delete_special_param(param)
+
+        polys = []
+        for p in self.polylines:
+            polys.append({
+                'is_erasing': p.is_erasing,
+                'size': p.size,
+                'soft': p.soft,
+                'is_closed': p.is_closed,
+                'is_filled': p.is_filled,
+                'points': copy.deepcopy(p.points),
+            })
+
+        return {
+            'type': MaskType.POLYLINE,
+            'name': self.name,
+            'center': [cx, cy],
+            'polylines': polys,
+            'effects_param': param,
+        }
+
+    def deserialize(self, dict):
+        self.initializing = False
+        self.name = dict['name']
+        cx, cy = dict['center']
+
+        polys = []
+        for p in dict.get('polylines', []):
+            polyobj = PolylineMask.Polyline(
+                is_erasing=p.get('is_erasing', False),
+                size=p.get('size', 10),
+                soft=p.get('soft', 100),
+                is_closed=p.get('is_closed', False),
+                is_filled=p.get('is_filled', True),
+            )
+            for point in p.get('points', []):
+                polyobj.add_point(*point)
+            polys.append(polyobj)
+        self.polylines = polys
+
+        self.effects_param.update(dict['effects_param'])
+        self.center = params.denorm_param(self.effects_param, (cx, cy))
+
+        self.create_control_points()
+        # 確定 polyline の頂点 ControlPoint も復元
+        self._rebuild_vertex_control_points()
+
+    # ---- マウス入力 ----
+    def on_mouse_pos(self, window, pos):
+        self.update_brush_cursor(pos[0], pos[1])
+        self._update_preview_line(pos)
+
+    def _pan_mode_active(self):
+        root = getattr(self.editor, 'root', None)
+        return bool(getattr(root, 'is_press_space', False))
+
+    def _close_hit_distance_tcg(self):
+        """始点との距離判定用しきい値 (TCG 単位)。"""
+        return self.editor.window_to_tcg_scale(self._CLOSE_HIT_RADIUS_PX, 0)[0]
+
+    def _is_near_first_point(self, tcg_x, tcg_y):
+        if self.current_polyline is None or len(self.current_polyline.points) < 2:
+            return False
+        sx, sy = self.current_polyline.points[0]
+        thr = self._close_hit_distance_tcg()
+        return (tcg_x - sx) ** 2 + (tcg_y - sy) ** 2 <= thr * thr
+
+    def consumes_double_tap(self, touch):
+        """ダブルタップを polyline 確定として消費するかどうか。
+        プレビュー領域内で描画中の場合 True を返し、preview_widget のズーム切替を抑制する。"""
+        if self.current_polyline is None:
+            return False
+        try:
+            return bool(self.editor.collide_point(*touch.pos))
+        except Exception:
+            return False
+
+    def on_touch_down(self, touch):
+        if self._pan_mode_active():
+            return False
+
+        # アクティブマスクが自分でないかつ作成中でもないなら標準 ControlPoint 経路
+        if self.editor.get_active_mask() != self and self.editor.get_created_mask() != self:
+            return super().on_touch_down(touch)
+
+        # preview_widget (= self.editor) の外側 (パラメータパネル等) のクリックは無視。
+        # editor 内なら image 範囲外 (レターボックス部分) でも頂点設定 OK。
+        if not self.editor.collide_point(*touch.pos):
+            return False
+
+        if self.editor.is_center_click_anyone(touch, self):
+            return False
+
+        # スクロールで線幅 (描画中以外のみ)
+        if touch.is_mouse_scrolling:
+            if self.editor.collide_point(*touch.pos):
+                if self.current_polyline is None:
+                    if touch.button == 'scrollup':
+                        self.brush_size = max(2, self.brush_size - 10)
+                    elif touch.button == 'scrolldown':
+                        self.brush_size = min(2000, self.brush_size + 10)
+                    self.update_brush_cursor(touch.pos[0], touch.pos[1])
+                    return super().on_touch_down(touch)
+
+        # 確定 polyline の頂点 ControlPoint クリックを最優先で処理する。
+        # 描画中 (current_polyline is not None) はラバーバンドと衝突するので無効化。
+        if self.current_polyline is None and not self.initializing:
+            for cp in self._iter_vertex_control_points():
+                cx, cy = self.editor.window_to_tcg(*touch.pos)
+                if cp.collide_point(cx, cy):
+                    return super().on_touch_down(touch)
+
+        tcg_x, tcg_y = self.editor.window_to_tcg(*touch.pos)
+
+        # 初期化時 (最初の左クリックでのみマスク中心を確定)。
+        # 右クリックでの初期化は中心だけ残って polyline が始まらないので不可。
+        if self.initializing and touch.button == 'left' and not getattr(touch, 'is_double_tap', False):
+            self.center_x = tcg_x
+            self.center_y = tcg_y
+            self.create_control_points()
+            self.editor.set_active_mask(self)
+
+        # 右クリック: 描画中のみ直近頂点を取消 (idle 右クリックは何もしない)
+        if touch.button == 'right':
+            if self.current_polyline is not None:
+                if self.current_polyline.points:
+                    self.current_polyline.points.pop()
+                if len(self.current_polyline.points) <= 0:
+                    self.current_polyline = None
+                    if self._stroke_history_started:
+                        get_history_ctrl().end_history_layer_ctrl(
+                            self.editor, "Update", self.editor.get_mask_list().index(self))
+                        self._stroke_history_started = False
+                self.update_mask()
+                self.editor.start_draw_image()
+                return True
+            # idle 右クリックは消費せず親に流す
+            return super().on_touch_down(touch)
+
+        # 左クリック (描画/閉じる/ダブルクリック開放確定)
+        if touch.button == 'left':
+            # ダブルタップ: 直近で追加した点を pop して開放確定
+            if getattr(touch, 'is_double_tap', False):
+                if self.current_polyline is not None:
+                    # is_double_tap の前段 down で頂点を 1 つ余計に追加していることが多いので pop
+                    if self.current_polyline.points:
+                        self.current_polyline.points.pop()
+                    self._finish_current_polyline(is_closed=False)
+                    self.update_mask()
+                    self.editor.start_draw_image()
+                    if self.initializing:
+                        self.initializing = False
+                    return True
+                return super().on_touch_down(touch)
+
+            # 描画中で始点付近をクリックしたら閉じて確定
+            if self.current_polyline is not None and self._is_near_first_point(tcg_x, tcg_y):
+                self._finish_current_polyline(is_closed=True)
+                self.update_mask()
+                self.editor.start_draw_image()
+                if self.initializing:
+                    self.initializing = False
+                return True
+
+            # 通常の頂点追加
+            if self.current_polyline is None:
+                self._begin_new_polyline(tcg_x, tcg_y, is_erasing=False)
+            else:
+                self.current_polyline.add_point(tcg_x, tcg_y)
+                self.update_mask()
+                self.editor.start_draw_image()
+            if self.initializing:
+                self.initializing = False
+                return True
+            return super().on_touch_down(touch)
+
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._pan_mode_active():
+            return False
+        # 描画中のラバーバンドは on_mouse_pos で更新するため move は不要
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._pan_mode_active():
+            return False
+        return super().on_touch_up(touch)
+
+    # ---- 描画中 polyline 制御 ----
+    def _begin_new_polyline(self, tcg_x, tcg_y, is_erasing):
+        if not self._stroke_history_started:
+            get_history_ctrl().begin_history_layer_ctrl(
+                self.editor, "Update", self.editor.get_mask_list().index(self), None)
+            self._stroke_history_started = True
+        hardness = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
+        self.current_polyline = PolylineMask.Polyline(
+            is_erasing=is_erasing,
+            size=self.brush_size,
+            soft=hardness,
+            is_closed=False,
+            is_filled=True,
+        )
+        self.current_polyline.add_point(tcg_x, tcg_y)
+        self.editor.set_active_mask(self)
+        self.update_mask()
+        self.editor.start_draw_image()
+
+    def _finish_current_polyline(self, is_closed: bool):
+        if self.current_polyline is None:
+            return
+        # 頂点 2 個未満なら破棄
+        if len(self.current_polyline.points) < 2:
+            self.current_polyline = None
+        else:
+            self.current_polyline.is_closed = bool(is_closed)
+            # 開いた場合は塗りつぶさない
+            if not is_closed:
+                self.current_polyline.is_filled = False
+            self.polylines.append(self.current_polyline)
+            self.current_polyline = None
+            # 確定 polyline の頂点 ControlPoint を生成
+            self._rebuild_vertex_control_points()
+        if self._stroke_history_started:
+            get_history_ctrl().end_history_layer_ctrl(
+                self.editor, "Update", self.editor.get_mask_list().index(self))
+            self._stroke_history_started = False
+
+    def commit_in_progress(self):
+        """描画中の polyline があれば「開いた折れ線」として確定する。
+        タブ切替やマスク非アクティブ化など、描画コンテキストを抜けるときに呼ぶ。"""
+        if self.current_polyline is not None:
+            self._finish_current_polyline(is_closed=False)
+            self.update_mask()
+            self.editor.start_draw_image()
+        # 残留オーバーレイをリセット
+        self.preview_line.points = []
+        self.preview_color.rgba = (1, 1, 0, 0)
+        self.start_indicator.ellipse = (0, 0, 0, 0)
+        self.start_color.rgba = (0, 1, 1, 0)
+
+    def _update_preview_line(self, window_pos):
+        """ラバーバンド (直近頂点 → カーソル) と始点強調を更新。"""
+        if self.current_polyline is None or len(self.current_polyline.points) == 0:
+            self.preview_color.rgba = (1, 1, 0, 0)
+            self.start_color.rgba = (0, 1, 1, 0)
+            return
+        # 直近頂点 → カーソル 線分
+        last_tcg = self.current_polyline.points[-1]
+        last_wx, last_wy = self.editor.tcg_to_window(*last_tcg)
+        self.preview_line.points = [last_wx, last_wy, window_pos[0], window_pos[1]]
+        self.preview_color.rgba = (1, 1, 0, 0.8)
+
+        # 始点強調 (頂点が 2 個以上、つまり閉じ判定可能なときのみ表示)
+        if len(self.current_polyline.points) >= 2:
+            sx, sy = self.editor.tcg_to_window(*self.current_polyline.points[0])
+            r_px = self._CLOSE_HIT_RADIUS_PX
+            self.start_indicator.ellipse = (sx - r_px, sy - r_px, r_px * 2, r_px * 2)
+            tcg_x, tcg_y = self.editor.window_to_tcg(*window_pos)
+            if self._is_near_first_point(tcg_x, tcg_y):
+                self.start_color.rgba = (0, 1, 0, 1)  # 閉じる予告
+            else:
+                self.start_color.rgba = (0, 1, 1, 0.6)
+        else:
+            self.start_color.rgba = (0, 1, 1, 0)
+
+    # ---- ControlPoint ----
+    def create_control_points(self):
+        # 中心 ControlPoint (FreeDrawMask に倣う)
+        cp_center = ControlPoint(self.editor)
+        cp_center.center = (self.center_x, self.center_y)
+        cp_center.ctrl_center = cp_center.center
+        cp_center.is_center = True
+        cp_center.color = [0, 1, 0] if self.active else [1, 0, 0]
+        cp_center.bind(ctrl_center=self.on_center_control_point_move)
+        self.control_points.append(cp_center)
+        self.add_widget(cp_center)
+
+    def _iter_vertex_control_points(self):
+        for _, _, cp in self._vertex_control_points:
+            yield cp
+
+    def _vertex_cp_set(self):
+        return {cp for _, _, cp in self._vertex_control_points}
+
+    def show_all_control_points(self):
+        """BaseMask の実装は非中心 CP を全部赤に塗るが、Polyline では頂点 CP は青を維持する。"""
+        self.opacity = 1.0
+        vertex_cps = self._vertex_cp_set()
+        for cp in self.control_points:
+            cp.opacity = 1
+            if cp.is_center:
+                cp.color = [0, 1, 0]
+            elif cp in vertex_cps:
+                cp.color = [0.2, 0.6, 1.0]  # 青
+            else:
+                cp.color = [1, 0, 0]
+        self.is_draw_mask = True
+        self.update_mask()
+
+    def show_center_control_point_only(self):
+        """非アクティブ時: 中心 CP のみ表示 (頂点 CP は隠す)。"""
+        self.opacity = 0.2
+        vertex_cps = self._vertex_cp_set()
+        for cp in self.control_points:
+            if cp.is_center:
+                cp.opacity = 2
+                cp.color = [1, 0, 0]
+            else:
+                # 頂点 CP もそれ以外も非表示
+                cp.opacity = 0
+                if cp in vertex_cps:
+                    cp.color = [0.2, 0.6, 1.0]  # 復帰時用に色だけ保持
+        self.is_draw_mask = False
+        self.update_mask()
+
+    def _clear_vertex_control_points(self):
+        for _, _, cp in self._vertex_control_points:
+            self.remove_widget(cp)
+            if cp in self.control_points:
+                self.control_points.remove(cp)
+        self._vertex_control_points = []
+
+    def _rebuild_vertex_control_points(self):
+        """確定 polyline の各頂点に ControlPoint を生成する。"""
+        self._clear_vertex_control_points()
+        for pi, poly in enumerate(self.polylines):
+            for vi, (px, py) in enumerate(poly.points):
+                cp = ControlPoint(self.editor)
+                cp.center = (px, py)
+                cp.ctrl_center = cp.center
+                cp.is_center = False
+                cp.color = [0.2, 0.6, 1.0]  # 青系
+                cp.bind(ctrl_center=self._make_vertex_callback(pi, vi))
+                self.control_points.append(cp)
+                self.add_widget(cp)
+                self._vertex_control_points.append((pi, vi, cp))
+        # アクティブ/非アクティブの表示状態を最新化
+        if self.active:
+            self.show_all_control_points()
+        else:
+            self.show_center_control_point_only()
+
+    def _make_vertex_callback(self, pi, vi):
+        def _cb(instance, value):
+            try:
+                self.polylines[pi].points[vi] = (instance.ctrl_center[0], instance.ctrl_center[1])
+            except (IndexError, AttributeError):
+                return
+            # ControlPoint の見た目位置も更新 (ctrl_center だけでは center が動かない)
+            new_center = (instance.ctrl_center[0], instance.ctrl_center[1])
+            if instance.center[0] == new_center[0] and instance.center[1] == new_center[1]:
+                instance.property('center').dispatch(instance)
+            else:
+                instance.center = new_center
+            self.update_mask()
+            self.editor.start_draw_image()
+        return _cb
+
+    def on_center_control_point_move(self, instance, value):
+        # 中心移動: 全 polyline の全頂点を平行移動 (FreeDrawMask 同様の流儀)
+        dx = instance.ctrl_center[0] - self.center_x
+        dy = instance.ctrl_center[1] - self.center_y
+        self.center = (self.center_x + dx, self.center_y + dy)
+        # 確定 polyline の頂点を平行移動
+        for poly in self.polylines:
+            poly.points = [(p[0] + dx, p[1] + dy) for p in poly.points]
+        # 描画中 polyline も追従させる
+        if self.current_polyline is not None:
+            self.current_polyline.points = [(p[0] + dx, p[1] + dy) for p in self.current_polyline.points]
+        # 頂点 ControlPoint の center 値も同期 (super の制御点移動は中心のみ動かす)
+        for pi, vi, cp in self._vertex_control_points:
+            try:
+                px, py = self.polylines[pi].points[vi]
+                if cp.center[0] == px and cp.center[1] == py:
+                    cp.property('center').dispatch(cp)
+                else:
+                    cp.center = (px, py)
+            except (IndexError, AttributeError):
+                pass
+        # 中心 ControlPoint の center も追従
+        super_cp_iter = (cp for cp in self.control_points if cp.is_center)
+        for cp in super_cp_iter:
+            center = (cp.center_x + dx, cp.center_y + dy)
+            if cp.center[0] == center[0] and cp.center[1] == center[1]:
+                cp.property('center').dispatch(cp)
+            else:
+                cp.center = center
+        self.update_mask()
+        self.editor.start_draw_image()
+
+    # ---- カーソル ----
+    def update_brush_cursor(self, x, y):
+        brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
+        self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
+        self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
+
+    # ---- マスク描画 ----
+    def update_mask(self):
+        if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
+            return
+        self.editor.set_scissor(self.scissor)
+        self.rotate.angle = math.degrees(self.editor.get_rotate_rad(0))
+
+        if self.is_draw_mask:
+            if self.do_draw_composit_mask:
+                composit_mask = self.editor.find_composit_mask(self)
+                if composit_mask is not None:
+                    composit_mask.draw_mask_to_fbo(True)
+            else:
+                self.draw_mask_to_fbo()
+
+    def _build_render_polylines(self, image_size):
+        """確定 polyline + 描画中 polyline をテクスチャ座標に変換して返す。"""
+        render = list(self.polylines)
+        if self.current_polyline is not None and len(self.current_polyline.points) >= 1:
+            render.append(self.current_polyline)
+        result = []
+        for src in render:
+            tex_poly = polyline_raster.Polyline(
+                is_erasing=src.is_erasing,
+                size=self.editor.tcg_to_image_scale(src.size, 0)[0],
+                soft=src.soft,
+                is_closed=src.is_closed,
+                # 描画中は仮で fill=False, 確定後のみ fill 適用
+                is_filled=src.is_filled and src.is_closed,
+            )
+            for point in src.points:
+                tex_poly.add_point(*self.editor.tcg_to_texture(*point))
+            result.append(tex_poly)
+        return result
+
+    def get_mask_image(self):
+        image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        copy_polys = self._build_render_polylines(image_size)
+
+        poly_hash = tuple(
+            (p.is_erasing, p.size, p.soft, p.is_closed, p.is_filled, tuple(p.points))
+            for p in (self.polylines + ([self.current_polyline] if self.current_polyline else []))
+        )
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, poly_hash))
+
+        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
+            mask = polyline_raster.draw_polyline_texture(
+                image_size,
+                copy_polys,
+                allow_over_one=False,
+                allow_under_zero=False,
+            )
+            mask = self._apply_extened_params(mask)
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
 
@@ -2446,8 +2986,20 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def get_active_mask(self):
         if self.disabled == True:
             return None
-        
+
         return self.active_mask
+
+    def commit_in_progress(self):
+        """アクティブマスクが描画中の操作 (Polyline 描画など) を持っていれば確定させる。"""
+        mask = self.active_mask
+        if mask is None:
+            return
+        committer = getattr(mask, 'commit_in_progress', None)
+        if callable(committer):
+            try:
+                committer()
+            except Exception:
+                logging.exception("MaskEditor: commit_in_progress 中に例外")
     
     def find_mask(self, mask_id):
         for mask in reversed(self.mask_list):
@@ -2570,7 +3122,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     def _create_start_new_mask(self, type, op_type, index=0):
         # 画像サイズがまだ設定されていない場合、マスクの作成をスキップ
-        
+
         mask = self._create_mask(type, index)
         self.set_active_mask(None)
         self.created_mask = mask
@@ -2635,6 +3187,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 mask = FullMask(editor=self)
             case MaskType.FREEDRAW:
                 mask = FreeDrawMask(editor=self)
+            case MaskType.POLYLINE:
+                mask = PolylineMask(editor=self)
             case MaskType.SEGMENT:
                 mask = SegmentMask(editor=self)
             case MaskType.DEPTHMAP:
@@ -2753,13 +3307,14 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                     self.root.set2widget_all(composit_mask.effects, marge_param)
                 else:
                     logging.error(f"MaskEditor: 親が見つかりませんでした。マスクを反映できません。")
-                    
+
             mask.start()
             #mask.update()
         else:
             self.draw_mask_image(None)
             if self.root is not None:
                 self.root.set2widget_all(None, None)
+
         self.start_draw_image()
 
         # Mask2パネルのON / OFF

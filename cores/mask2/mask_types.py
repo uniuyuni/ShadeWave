@@ -9,6 +9,7 @@ class MaskTypeStr:
     GRADIENT = "gradient"
     FULL = "full"
     FREEDRAW = "free_draw"
+    POLYLINE = "polyline"
     SEGMENT = "segment"
     DEPTHMAP = "depth_map"
     FACE = "face"

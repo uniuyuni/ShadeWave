@@ -202,7 +202,8 @@ class ImageSet:
                     img = img.convert("RGB")
                     img_array = np.array(img)
             else:
-                raise ValueError(f"Unsupported thumbnail format.")
+                img_array = None
+                #raise ValueError(f"Unsupported thumbnail format.")
 
             t1 = time.perf_counter()
             logging.info(f"PERF: Preview image decoded. {t1-t0:.4f}s Size: {img.size}")
@@ -210,29 +211,34 @@ class ImageSet:
 
 
             # float32へ
-            img_array = core.convert_to_float32(img_array)
+            if img_array is not None:
+                img_array = core.convert_to_float32(img_array)
 
-            # ガンマ補正は resize より先に「小さい配列」のうちにかけて演算量を削減する。
-            # INTER_AREA は線形空間で重み付き平均する補間なので、本来 gamma decode 済みの値で
-            # 補間する方が物理的にも正しい。
-            import cores.color as color
-            img_array = color.rgb_gamma_decode(img_array, 'sRGB') # ガンマ補正だけは必須
-            self.color_space = 'sRGB'
-            t2 = time.perf_counter()
-            logging.info(f"PERF: Color conversion took {t2-t1:.4f}s")
-            perf_trace.event("raw_preview.gamma_done")
+                # ガンマ補正は resize より先に「小さい配列」のうちにかけて演算量を削減する。
+                # INTER_AREA は線形空間で重み付き平均する補間なので、本来 gamma decode 済みの値で
+                # 補間する方が物理的にも正しい。
+                import cores.color as color
+                img_array = color.rgb_gamma_decode(img_array, 'sRGB') # ガンマ補正だけは必須
+                self.color_space = 'sRGB'
+                t2 = time.perf_counter()
+                logging.info(f"PERF: Color conversion took {t2-t1:.4f}s")
+                perf_trace.event("raw_preview.gamma_done")
 
-            # ホワイトバランス定義（小さい配列のうちに）
-            img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
+                # ホワイトバランス定義（小さい配列のうちに）
+                img_array = self._apply_whitebalance(img_array, raw, exif_data, param)
 
-            # クロップとexifデータの回転
-            _, _, width, height = self._delete_exif_orientation(exif_data)
+                # クロップとexifデータの回転
+                _, _, width, height = self._delete_exif_orientation(exif_data)
 
-            # RAW画像のサイズに合わせてリサイズ（INTER_AREAは縮小時にノイズを低減）
-            img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)
-            t3 = time.perf_counter()
-            logging.info(f"PERF: Resize took {t3-t2:.4f}s. Target size: {width}x{height}")
-            perf_trace.event("raw_preview.resize_done", width=int(width), height=int(height))
+                # RAW画像のサイズに合わせてリサイズ（INTER_AREAは縮小時にノイズを低減）
+                img_array = cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)
+                t3 = time.perf_counter()
+                logging.info(f"PERF: Resize took {t3-t2:.4f}s. Target size: {width}x{height}")
+                perf_trace.event("raw_preview.resize_done", width=int(width), height=int(height))
+            else:
+                # プレビューがない場合は、サイズだけ合わせた黒画像を作る
+                _, _, width, height = self._delete_exif_orientation(exif_data)
+                img_array = np.zeros((height, width, 3), dtype=np.float32)
 
             # 自動露出調整値を適当に設定する
             param['rgb_or_raw'] = 'rgb'
