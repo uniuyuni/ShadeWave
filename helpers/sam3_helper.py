@@ -20,6 +20,18 @@ __model = None
 _logger = logging.getLogger(__name__)
 
 
+def _device_equal(a: torch.device, b: torch.device) -> bool:
+    """torch.device の同値比較。`mps` と `mps:0` のように index が None vs 0 の
+    違いを吸収する (PyTorch の素の `==` は False を返してしまうため)。"""
+    if a.type != b.type:
+        return False
+    if a.type == 'cpu':
+        return True
+    a_idx = a.index if a.index is not None else 0
+    b_idx = b.index if b.index is not None else 0
+    return a_idx == b_idx
+
+
 def setup_sam3(device="cpu"):
     global __model
     if isinstance(device, str):
@@ -31,13 +43,13 @@ def setup_sam3(device="cpu"):
             checkpoint_path="checkpoints/sam3.pt",
             device=device,
         )
-    elif next(__model.parameters()).device != torch_device:
+    elif not _device_equal(next(__model.parameters()).device, torch_device):
         # config の gpu_device が変わったときにモデルと入力のデバイスを揃える
         __model = __model.to(torch_device)
     # device を省略すると get_default_device() が MPS を選び、モデルが CPU のときに不一致になる
     processor = Sam3Processor(__model, device=torch_device)
     param_dev = next(__model.parameters()).device
-    if param_dev != torch_device or processor.device != torch_device:
+    if not _device_equal(param_dev, torch_device) or not _device_equal(processor.device, torch_device):
         _logger.error(
             "SAM3 device mismatch: requested=%s model=%s processor=%s",
             torch_device,

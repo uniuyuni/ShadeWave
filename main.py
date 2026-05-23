@@ -770,6 +770,15 @@ if __name__ == '__main__':
                 self.sync_distortion_mode_sliders()
             self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, subname))
             #self.apply_rotation_flip_for_wrapper()
+
+            # Mask Geometry: slider 変更後に active Composit の mask Geom matrix を再構築
+            # して tcg_info['matrix'] に反映する。draw より前に行わないと overlay と raster が
+            # 古い matrix のままになる。
+            if lv == 3:
+                _eff_list = effect if isinstance(effect, list) else [effect] if effect is not None else []
+                if subname == 'mask_geometry' or 'mask_geometry' in _eff_list:
+                    self.ids['mask_editor2']._set_active_composit_matrix()
+
             # defer_draw=True のとき呼び出し側は後でまとめて start/sync を発火する想定。
             # pipeline_version の無駄な多段進行と apply_thread の捨て描画を避ける。
             if defer_draw:

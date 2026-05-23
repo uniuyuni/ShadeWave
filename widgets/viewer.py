@@ -400,8 +400,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
         for i in range(0, len(file_path_list), chunk_size):
             chunk = file_path_list[i:i + chunk_size]
             try:
-                exif_data_list = safe_get_metadata(chunk, common_args=['-b', '-s' ])
-                #exif_data_list = safe_get_metadata(chunk, common_args=["-a", "-b", "-s"])
+                #exif_data_list = safe_get_metadata(chunk, common_args=['-b', '-s' ])
+                exif_data_list = safe_get_metadata(chunk, common_args=["-b", "-s", "-x", "IFD1:PreviewTIFF", "-x", "SubIFD1:PreviewTIFF" ])
                 exif_data_list = self._merge_exif_xmp_ratings_for_chunk(chunk, exif_data_list)
 
                 thumb_data_list = self.process_exif_data(chunk, exif_data_list)

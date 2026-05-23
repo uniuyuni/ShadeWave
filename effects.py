@@ -3768,7 +3768,7 @@ class Mask2Effect(Effect):
             'mask2_face_mouth': True,
             'mask2_face_lips': True,
             # マスク Geometry (マスク自身を変形)
-            'switch_mask_geometry': False,
+            'switch_mask_geometry': True,
             'mask_rotation': 0.0,            # degrees
             'mask_flip_mode': 0,             # 0=none, 1=H, 2=V, 3=both
             'mask_translation_x': 0.0,       # 画像短辺基準の比率 [-1, 1]

@@ -39,6 +39,7 @@ from kivy.uix.textinput import TextInput as KVTextInput
 import cores.core as core
 import cores.expand_mask as expand_mask
 import cores.hlsrgb as hlsrgb
+from cores.mask2 import mask_geometry as mask_geometry_mod
 import params
 import effects
 import config
@@ -319,6 +320,14 @@ class BaseMask(KVWidget):
         return bimg
 
     def get_hash_items(self):
+        # tcg_info['matrix'] のバイト列を末尾に含めることで、CompositMask.get_mask_image が
+        # render 中に matrix を mask Geom 込みに swap した瞬間にキャッシュが自動 invalidate される。
+        matrix_bytes = b''
+        try:
+            if self.editor is not None and 'matrix' in self.editor.tcg_info:
+                matrix_bytes = np.asarray(self.editor.tcg_info['matrix'], dtype=np.float64).tobytes()
+        except Exception:
+            matrix_bytes = b''
         return (effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_allow_over_one'),
@@ -342,7 +351,8 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'))
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'),
+                matrix_bytes)
 
     def _apply_mask_space(self, image):
         switch_mask2_options = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options')
@@ -584,25 +594,41 @@ class CompositMask(BaseMask):
             self.draw_mask_to_fbo()
 
     def get_mask_image(self):
-        # 合成マスクの画像作成
-        composit = np.zeros((int(self.editor.texture_size[1]), int(self.editor.texture_size[0])), dtype=np.float32)
-        allow_over_one = False
-        allow_under_zero = False
+        # mask Geometry: この Composit の mask Geom matrix を tcg_info['matrix'] に
+        # 一時的に乗せて、子マスクの座標変換に含めるよう差し替え。finally で必ず復元。
+        editor = self.editor
+        saved_matrix = editor.tcg_info['matrix']
+        base = editor._image_only_matrix
+        if base is not None:
+            if mask_geometry_mod.is_enabled(self.effects_param):
+                M_mask = mask_geometry_mod.build_matrix_tcg(
+                    self.effects_param, editor.tcg_info['original_img_size'])
+                editor.tcg_info['matrix'] = M_mask @ base
+            else:
+                editor.tcg_info['matrix'] = base.copy()
 
-        for mask, maskop in reversed(self.mask_list):
-            mimage = mask.get_mask_image()
-            mask_allow_over_one = False
-            mask_allow_under_zero = False
-            match(maskop):
-                case 'Add':
-                    composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
-                case 'Subtract':
-                    composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
-                case _:
-                    logger.error(f"Unknown mask operation: {maskop}")
-                    assert False
+        try:
+            # 合成マスクの画像作成
+            composit = np.zeros((int(editor.texture_size[1]), int(editor.texture_size[0])), dtype=np.float32)
+            allow_over_one = False
+            allow_under_zero = False
 
-        return composit
+            for mask, maskop in reversed(self.mask_list):
+                mimage = mask.get_mask_image()
+                mask_allow_over_one = False
+                mask_allow_under_zero = False
+                match(maskop):
+                    case 'Add':
+                        composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
+                    case 'Subtract':
+                        composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
+                    case _:
+                        logger.error(f"Unknown mask operation: {maskop}")
+                        assert False
+
+            return composit
+        finally:
+            editor.tcg_info['matrix'] = saved_matrix
 
 
 # 円形グラデーションマスクのクラス
@@ -1158,6 +1184,123 @@ class GradientMask(BaseMask):
         rad = 0 if dx == 0 else math.atan2(dy, dx)
         return (new_dx1, new_dy1, new_dx2, new_dy2), rad
 
+    def _line_segments_from_window(self, p1_win, p2_win, dir):
+        """calculate_line と同じ計算だが window 座標を直接受け取る (= 内部で
+        tcg_to_window を再呼び出ししない)。direction-preserving の座標と一緒に使う。"""
+        p1x, p1y = p1_win
+        p2x, p2y = p2_win
+        r = math.sqrt((p1x-p2x)**2+(p1y-p2y)**2)
+        dx_a = dir * r
+        dy_a = -self.editor.width
+        new_dx1 = dx_a
+        new_dy1 = dy_a
+        dx_b = dir * r
+        dy_b = self.editor.width
+        new_dx2 = dx_b
+        new_dy2 = dy_b
+        ddx = p1x - p2x
+        ddy = p1y - p2y
+        rad = 0 if ddx == 0 else math.atan2(ddy, ddx)
+        return (new_dx1, new_dy1, new_dx2, new_dy2), rad
+
+    def _dir_preserving_post(self):
+        """Mask Geom 非一様 scale でラインが回転する問題を吸収するため、
+        matrix の pure rotation 成分 (R = U @ V^T from SVD of Jacobian-at-center)
+        だけを direction に適用、長さは |J @ dir_unit| でスケール。
+
+        Returns (dir_x_post, dir_y_post, length_scale, length_tcg) または None (degenerate)。
+        - dir_post = pure rotation を適用した unit direction (TCG image-coord, Y-down)
+        - length_scale = TCG-image-pixel 空間での方向沿いスケール
+        - length_tcg = 元の TCG 距離 (端点間)
+        """
+        dx_tcg = self.end_point[0] - self.start_point[0]
+        dy_tcg = self.end_point[1] - self.start_point[1]
+        length_tcg = math.hypot(dx_tcg, dy_tcg)
+        if length_tcg < 1e-9:
+            return None
+
+        tcg_info = self.editor.tcg_info
+        cx, cy = self.center
+        try:
+            cx_o, cy_o, rot2 = params.apply_orientation(cx, cy, tcg_info)
+            rad = -(tcg_info['rotation'] + rot2)
+            cos_r, sin_r = math.cos(rad), math.sin(rad)
+            cx_pre = cx_o * cos_r - cy_o * sin_r
+            cy_pre = cx_o * sin_r + cy_o * cos_r
+
+            M = np.asarray(tcg_info['matrix'], dtype=np.float64)
+            a, b, e_ = M[0]
+            c_m, d, f_ = M[1]
+            g, h, i_ = M[2]
+            denom = g * cx_pre + h * cy_pre + i_
+            if abs(denom) < 1e-12:
+                return None
+            num_x = a * cx_pre + b * cy_pre + e_
+            num_y = c_m * cx_pre + d * cy_pre + f_
+            d2 = denom * denom
+            J_mat = np.array([
+                [(a * denom - num_x * g) / d2, (b * denom - num_x * h) / d2],
+                [(c_m * denom - num_y * g) / d2, (d * denom - num_y * h) / d2],
+            ])
+            R_rad = np.array([[cos_r, -sin_r], [sin_r, cos_r]])
+            flip = tcg_info['flip_mode']
+            F = np.array([
+                [-1.0 if (flip & 1) else 1.0, 0.0],
+                [0.0, -1.0 if (flip & 2) else 1.0],
+            ])
+            full_J = J_mat @ R_rad @ F
+
+            U, S, Vt = np.linalg.svd(full_J)
+            R_pure = U @ Vt  # 2x2 pure rotation in TCG-image-pixel space (Y-down)
+
+            dir_unit = np.array([dx_tcg / length_tcg, dy_tcg / length_tcg])
+            dir_post = R_pure @ dir_unit
+            j_dir = full_J @ dir_unit
+            length_scale = float(np.linalg.norm(j_dir))
+        except Exception:
+            return None
+
+        return (float(dir_post[0]), float(dir_post[1]), length_scale, length_tcg)
+
+    def _dir_preserving_endpoints_tex(self):
+        """direction-preserving な (center_tex, start_tex, end_tex) を返す。"""
+        editor = self.editor
+        center_tex = editor.tcg_to_texture(*self.center)
+        result = self._dir_preserving_post()
+        if result is None:
+            return (center_tex,
+                    editor.tcg_to_texture(*self.start_point),
+                    editor.tcg_to_texture(*self.end_point))
+        dir_x, dir_y, length_scale, length_tcg = result
+        disp_scale = params.get_disp_info(editor.tcg_info)[4]
+        half_len_tex = length_tcg * length_scale * disp_scale / 2.0
+        cx_tex, cy_tex = center_tex
+        # texture 座標系は TCG-image-pixel と同じ Y-down なので direction はそのまま
+        start_tex = (cx_tex - half_len_tex * dir_x, cy_tex - half_len_tex * dir_y)
+        end_tex = (cx_tex + half_len_tex * dir_x, cy_tex + half_len_tex * dir_y)
+        return (center_tex, start_tex, end_tex)
+
+    def _dir_preserving_endpoints_win(self):
+        """direction-preserving な (center_win, start_win, end_win) を返す (overlay 用)。"""
+        editor = self.editor
+        center_win = editor.tcg_to_window(*self.center)
+        result = self._dir_preserving_post()
+        if result is None:
+            return (center_win,
+                    editor.tcg_to_window(*self.start_point),
+                    editor.tcg_to_window(*self.end_point))
+        dir_x, dir_y, length_scale, length_tcg = result
+        disp_scale = params.get_disp_info(editor.tcg_info)[4]
+        dpi = device.dpi_scale()
+        half_len_win = length_tcg * length_scale * disp_scale * dpi / 2.0
+        cx_win, cy_win = center_win
+        # window 座標は Y-up なので direction の Y 成分を反転
+        dx_win = half_len_win * dir_x
+        dy_win = -half_len_win * dir_y
+        start_win = (cx_win - dx_win, cy_win - dy_win)
+        end_win = (cx_win + dx_win, cy_win + dy_win)
+        return (center_win, start_win, end_win)
+
     def update_mask(self):
         if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
             logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
@@ -1165,20 +1308,18 @@ class GradientMask(BaseMask):
 
         with self.canvas:
             self.editor.set_scissor(self.scissor)
+            center_win, start_win, end_win = self._dir_preserving_endpoints_win()
             if self.initializing:
-                tx, ty = self.editor.tcg_to_window(*self.start_point)
-                #self.line_color.rgba = self.color
-                self.translate.x, self.translate.y = tx, ty
-                self.start_line.points, _ = self.calculate_line(self.start_point, self.start_point, 0)
-                self.center_line.points, _ = self.calculate_line(self.center, self.start_point, +1)
-                self.end_line.points, rad = self.calculate_line(self.end_point, self.start_point, +1)
+                self.translate.x, self.translate.y = start_win
+                self.start_line.points, _ = self._line_segments_from_window(start_win, start_win, 0)
+                self.center_line.points, _ = self._line_segments_from_window(center_win, start_win, +1)
+                self.end_line.points, rad = self._line_segments_from_window(end_win, start_win, +1)
             else:
-                tx, ty = self.editor.tcg_to_window(*self.center)
-                self.translate.x, self.translate.y = tx, ty
-                self.start_line.points, rad = self.calculate_line(self.start_point, self.center, -1)
-                self.center_line.points, _ = self.calculate_line(self.center, self.center, 0)
-                self.end_line.points, _ = self.calculate_line(self.end_point, self.center, +1)
-            
+                self.translate.x, self.translate.y = center_win
+                self.start_line.points, rad = self._line_segments_from_window(start_win, center_win, -1)
+                self.center_line.points, _ = self._line_segments_from_window(center_win, center_win, 0)
+                self.end_line.points, _ = self._line_segments_from_window(end_win, center_win, +1)
+
             self.rotate.angle = math.degrees(rad)
 
         if self.is_draw_mask == True:
@@ -1188,13 +1329,11 @@ class GradientMask(BaseMask):
                     composit_mask.draw_mask_to_fbo(True)
             else:
                 self.draw_mask_to_fbo()
-    
+
     def get_mask_image(self):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
-        center = self.editor.tcg_to_texture(*self.center)
-        start_point = self.editor.tcg_to_texture(*self.start_point)
-        end_point = self.editor.tcg_to_texture(*self.end_point)
+        center, start_point, end_point = self._dir_preserving_endpoints_tex()
         if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
             if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
                 start_point, end_point = end_point, start_point
@@ -2299,23 +2438,61 @@ class SegmentMask(BaseMask):
             cx, cy = self.center
             crx, cry = self.corner
 
-            # 4隅の座標を計算（TCG座標系）
-            p1 = (cx, cy)
-            p2 = (crx, cy)
-            p3 = (crx, cry)
-            p4 = (cx, cry)
-            
-            # ウィンドウ座標系に変換
-            wp1 = self.editor.tcg_to_window(*p1)
-            wp2 = self.editor.tcg_to_window(*p2)
-            wp3 = self.editor.tcg_to_window(*p3)
-            wp4 = self.editor.tcg_to_window(*p4)
-            
+            # mask Geom 対応の bbox 計算:
+            #   中心位置 = full matrix (= mask Geom rotation/translation/scale 全部反映)
+            #   形状 (4 隅 offset) = image_only matrix + mask Geom scale だけ
+            #   → mask Geom rotation は形状に効かない → 画像に対して axis-aligned 維持
+            composit = self.editor.find_composit_mask(self)
+            mg_enabled = (composit is not None
+                          and mask_geometry_mod.is_enabled(composit.effects_param)
+                          and self.editor._image_only_matrix is not None)
+
+            if not mg_enabled:
+                # 旧挙動 (mask Geom OFF)
+                wp1 = self.editor.tcg_to_window(cx, cy)
+                wp2 = self.editor.tcg_to_window(crx, cy)
+                wp3 = self.editor.tcg_to_window(crx, cry)
+                wp4 = self.editor.tcg_to_window(cx, cry)
+            else:
+                center_tcg = ((cx + crx) / 2.0, (cy + cry) / 2.0)
+                half_x = abs(crx - cx) / 2.0
+                half_y = abs(cry - cy) / 2.0
+
+                # 中心 = full matrix
+                center_full = self.editor.tcg_to_window(*center_tcg)
+
+                # mask Geom scale (符号は形状に効かないので絶対値)
+                sx = abs(float(effects.Mask2Effect.get_param(composit.effects_param, 'mask_scale_x')) or 1e-3)
+                sy = abs(float(effects.Mask2Effect.get_param(composit.effects_param, 'mask_scale_y')) or 1e-3)
+                hx = half_x * sx
+                hy = half_y * sy
+
+                # 形状 = image_only matrix で 4 隅を window 化、中心からの offset を取得
+                saved = self.editor.tcg_info['matrix']
+                self.editor.tcg_info['matrix'] = self.editor._image_only_matrix
+                try:
+                    center_img = self.editor.tcg_to_window(*center_tcg)
+                    wp1_img = self.editor.tcg_to_window(center_tcg[0] - hx, center_tcg[1] - hy)
+                    wp2_img = self.editor.tcg_to_window(center_tcg[0] + hx, center_tcg[1] - hy)
+                    wp3_img = self.editor.tcg_to_window(center_tcg[0] + hx, center_tcg[1] + hy)
+                    wp4_img = self.editor.tcg_to_window(center_tcg[0] - hx, center_tcg[1] + hy)
+                finally:
+                    self.editor.tcg_info['matrix'] = saved
+
+                # 最終 corner = full matrix の中心 + image_only matrix での offset
+                def _offset_add(base, wp_img):
+                    return (base[0] + (wp_img[0] - center_img[0]),
+                            base[1] + (wp_img[1] - center_img[1]))
+                wp1 = _offset_add(center_full, wp1_img)
+                wp2 = _offset_add(center_full, wp2_img)
+                wp3 = _offset_add(center_full, wp3_img)
+                wp4 = _offset_add(center_full, wp4_img)
+
             # BaseMaskの仕組みでTranslateされているが、回転に対応するためTranslateを無効化（0,0）して絶対座標で描く
             self.translate.x, self.translate.y = 0, 0
-            
+
             self.rect_line.points = [*wp1, *wp2, *wp3, *wp4]
-        
+
     def update_draw_mask(self):
         if self.is_draw_mask == True:
             if self.do_draw_composit_mask == True:
@@ -2944,6 +3121,25 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.original_image_rgb = None
         self.original_image_hls = None
 
+        # mask Geometry: image Geom のみの matrix を退避し、active Composit の
+        # mask Geom matrix を左乗算したものを tcg_info['matrix'] に書き込む。
+        self._image_only_matrix = None
+
+        # mask Geometry 軸表示用 (X=赤, Y=緑)。Composit active + switch_mask_geometry ON 時に表示。
+        # 軸の原点は post-translation 点 (= image_center + translation)。flip 軸は軸線そのもの。
+        # rotation/scale pivot は image center に固定なので、別途小さなマーカーで示す。
+        with self.canvas.after:
+            self._axes_scissor = self.push_scissor()
+            # 軸 (translation 後の原点を通る)
+            self._axes_color_x = KVColor(1, 0, 0, 0.85)
+            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=2)
+            self._axes_color_y = KVColor(0, 1, 0, 0.85)
+            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=2)
+            # rotation/scale pivot マーカー (image center の小さな円)
+            self._pivot_color = KVColor(1, 1, 0, 0.85)
+            self._pivot_marker = KVEllipse(pos=(0, 0), size=(0, 0))
+            self.pop_scissor()
+
         logging.info("MaskEditor: 初期化完了")
 
     def on_structure_change(self, *args):
@@ -3002,6 +3198,11 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         self.__set_image_info()
         #self.update()
+
+        # mask Geometry: 画像 Geom のみの matrix を退避し、active Composit の
+        # mask Geom matrix を合成して tcg_info['matrix'] に反映する。
+        self._image_only_matrix = np.array(self.tcg_info['matrix'], dtype=np.float64).copy()
+        self._set_active_composit_matrix()
 
     def refresh_active_mask_overlay(self):
         mask = self.get_active_mask()
@@ -3187,7 +3388,11 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     def draw_mask_image(self, glayimg):
         if self.rectangle is not None:
-            self.mask_container.canvas.before.remove(self.rectangle)
+            try:
+                self.mask_container.canvas.before.remove(self.rectangle)
+            except ValueError:
+                # canvas からは既に消えているが参照だけ残っていた (state 不整合)
+                pass
             self.rectangle = None
 
         if glayimg is not None:
@@ -3218,12 +3423,16 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         # ここで履歴の更新を始める
         get_history_ctrl().begin_history_layer_ctrl(self, "Delete", self.get_mask_list().index(self.created_mask), op_type)
-        
+
+        # mask Geometry: 新規作成時のクリック位置が mask Geom 逆変換越しに正しい
+        # TCG 値になるよう、created_mask の所属 Composit の mask Geom matrix を反映。
+        self._set_active_composit_matrix()
+
         # CompositMaskなど初期化が不要な場合は即座に終了処理を行う
         if mask.initializing == False:
             self._create_end_new_mask()
             self.created_mask = None
-        
+
         return self.created_mask
 
     def _create_end_new_mask(self):
@@ -3362,14 +3571,134 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             if composit_mask.is_composit():
                 if composit_mask.find_mask_op(mask) is not None:
                     return composit_mask
-        
+
         # リスト内の直前の親にする
         for i in range(index-1, -1, -1):
             composit_mask = self.mask_list[i]
             if composit_mask.is_composit():
                 return composit_mask
-            
+
         return None
+
+    def _active_composit_or_none(self):
+        """現在 active な Composit を返す。created_mask を優先、なければ active_mask を見る。
+        どちらかが Composit ならそれ自身、子マスクなら find_composit_mask で親を辿る。
+        新規作成中の mask は Composit の子リストにまだ登録されていないため、
+        mask_list 内のインデクスを find_composit_mask に渡して直前 Composit fallback を利かせる。"""
+        target = self.created_mask if self.created_mask is not None else self.active_mask
+        if target is None:
+            return None
+        if target.is_composit():
+            return target
+        try:
+            idx = self.mask_list.index(target)
+        except ValueError:
+            idx = 0
+        return self.find_composit_mask(target, idx)
+
+    def _set_active_composit_matrix(self):
+        """image-only matrix に active Composit の mask Geom matrix を左乗算して
+        tcg_info['matrix'] を更新する。active mask の overlay と軸 overlay も再描画。
+        _image_only_matrix が未初期化なら no-op (set_primary_param 前を保護)。
+
+        matrix 更新は thread-safe (dict mutation) なので同期実行。graphics
+        instruction の変更はメインスレッドに schedule する (パイプラインから
+        非メインスレッドで呼ばれる経路があるため)。"""
+        if self._image_only_matrix is None:
+            return
+        base = self._image_only_matrix.copy()
+        composit = self._active_composit_or_none()
+        if composit is not None and mask_geometry_mod.is_enabled(composit.effects_param):
+            M_mask = mask_geometry_mod.build_matrix_tcg(
+                composit.effects_param, self.tcg_info['original_img_size'])
+            base = M_mask @ base
+        self.tcg_info['matrix'] = base
+        # graphics 更新はメインスレッドに委譲
+        KVClock.schedule_once(lambda dt: self._refresh_overlays_main_thread(), 0)
+
+    def _refresh_overlays_main_thread(self, *args):
+        """メインスレッドで graphics instruction を更新するヘルパ。"""
+        mask = self.active_mask
+        if mask is not None and getattr(mask, 'is_draw_mask', False):
+            try:
+                mask.update_mask()
+            except Exception:
+                logging.exception("_refresh_overlays_main_thread: update_mask 失敗")
+            # CP の center は TCG 値で変わらないため bind(center=...) が発火せず、
+            # tcg_to_window が再計算されない (= CP 位置が前 matrix のまま残る)。
+            # 全 CP の center プロパティを強制 dispatch して update_graphics を呼ぶ。
+            try:
+                for cp in getattr(mask, 'control_points', []):
+                    cp.property('center').dispatch(cp)
+            except Exception:
+                logging.exception("_refresh_overlays_main_thread: CP redispatch 失敗")
+        # mask Geom 軸の表示更新
+        self._draw_mask_geom_axes()
+
+    def _draw_mask_geom_axes(self):
+        """Composit active かつ switch_mask_geometry ON のとき、mask Geom 座標系を overlay 表示。
+        - 軸 (X=赤, Y=緑) の原点 = post-translation 点 (image_center + (tx, ty))
+        - 軸の向き = rotation + flip を反映
+        - Scale 効果は除外 (= 軸の "向き" だけを伝える)
+        - rotation/scale/flip の pivot (image center) は黄色の小さな円で別途表示
+        - flip 軸線そのものが mirror axis (flip H なら Y軸線、flip V なら X軸線が mirror)
+        """
+        if self._image_only_matrix is None:
+            return
+        composit = self._active_composit_or_none()
+        if composit is None or not mask_geometry_mod.is_enabled(composit.effects_param):
+            self._axis_x_line.points = (0, 0, 0, 0)
+            self._axis_y_line.points = (0, 0, 0, 0)
+            self._pivot_marker.size = (0, 0)
+            return
+
+        try:
+            img_w, img_h = self.tcg_info['original_img_size']
+            short = max(1.0, float(min(img_w, img_h)))
+            half = short / 2.0
+            rot_deg = float(effects.Mask2Effect.get_param(composit.effects_param, 'mask_rotation'))
+            flip = int(effects.Mask2Effect.get_param(composit.effects_param, 'mask_flip_mode'))
+            tx_norm = float(effects.Mask2Effect.get_param(composit.effects_param, 'mask_translation_x'))
+            ty_norm = float(effects.Mask2Effect.get_param(composit.effects_param, 'mask_translation_y'))
+            sign_x = -1.0 if (flip & 1) else 1.0
+            sign_y = -1.0 if (flip & 2) else 1.0
+            rad = math.radians(rot_deg)
+            c, s = math.cos(rad), math.sin(rad)
+
+            # 軸の原点 = post-translation 点 (TCG image-coord, Y-down)
+            ox_tcg, oy_tcg = tx_norm * short, ty_norm * short
+            # 軸の終点 = 原点 + R(-rad) @ (sign * half, 0) など (Y-down 空間)
+            x_end_tcg = (ox_tcg + sign_x * half * c, oy_tcg + sign_x * half * (-s))
+            y_end_tcg = (ox_tcg + sign_y * half * s, oy_tcg + sign_y * half * c)
+
+            # 軸自身が mask geom matrix を表現しているので、変換時は image-only matrix を使う
+            # (= mask geom matrix を二重適用しない)。tcg_info['matrix'] を一時 swap。
+            saved = self.tcg_info['matrix']
+            self.tcg_info['matrix'] = self._image_only_matrix
+            try:
+                origin_win = self.tcg_to_window(ox_tcg, oy_tcg)
+                x_end_win = self.tcg_to_window(*x_end_tcg)
+                y_end_win = self.tcg_to_window(*y_end_tcg)
+                pivot_win = self.tcg_to_window(0.0, 0.0)
+            finally:
+                self.tcg_info['matrix'] = saved
+
+            self._axis_x_line.points = (origin_win[0], origin_win[1], x_end_win[0], x_end_win[1])
+            self._axis_y_line.points = (origin_win[0], origin_win[1], y_end_win[0], y_end_win[1])
+            # rotation/scale/flip pivot を image center に小円表示 (半径 6px)
+            r = 6.0
+            self._pivot_marker.pos = (pivot_win[0] - r, pivot_win[1] - r)
+            self._pivot_marker.size = (r * 2, r * 2)
+            # scissor はウィジェットの現在サイズに合わせて更新
+            self.set_scissor(self._axes_scissor)
+        except Exception:
+            logging.exception("_draw_mask_geom_axes 失敗")
+            try:
+                self._axis_x_line.points = (0, 0, 0, 0)
+                self._axis_y_line.points = (0, 0, 0, 0)
+                self._pivot_marker.size = (0, 0)
+            except Exception:
+                pass
 
     def set_active_mask(self, mask):
         if self.active_mask is mask:
@@ -3407,7 +3736,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         # Mask2パネルのON / OFF
         if self.root is not None:
             self.root.update_mask2_options_enabled()
- 
+
+        # mask Geometry: active Composit の matrix を tcg_info に反映 (overlay も再描画)
+        self._set_active_composit_matrix()
+
     def get_rotate_rad(self, rotate_rad):
         # 画像の回転角度を取得する
         rad, flip = self.tcg_info['rotation2'], self.tcg_info['flip_mode']
