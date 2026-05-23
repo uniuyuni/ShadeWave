@@ -194,7 +194,10 @@ class ImageSet:
                         logging.warning(f"Failed to load raw for preview geometry: {e}")
 
             # exifのプレビューを展開
-            preview_base64 = exif_data.get('PreviewImage', None)
+            for key in ('PreviewImage', 'JpgFromRaw', 'PreviewTIFF'):
+                preview_base64 = exif_data.get(key, None)
+                if preview_base64 is not None:
+                    break
             if preview_base64 is not None:
                 decode = base64.b64decode(preview_base64[7:])
                 with PILImage.open(io.BytesIO(decode)) as img:

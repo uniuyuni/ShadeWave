@@ -821,20 +821,102 @@ class CircularGradientMask(BaseMask):
             cp_outer.center_x, cp_outer.center_y = self.calculate_point(self.outer_radius_x, self.outer_radius_y, angle)
             index += 1
 
+    def _matrix_transformed_ellipse(self, rx_tcg, ry_tcg):
+        """Jacobian-at-ellipse-center: 楕円中心位置での center_rotate Jacobian を
+        軸ベクトルに線形適用し、SVD で (rx, ry, rotate_rad) を再パラメータ化。
+
+        center_rotate = apply_orientation + R(-(rotation+rotation2)) + apply_matrix。
+        apply_matrix の Jacobian を中心 (cx_pre, cy_pre) で評価し、軸方向には同じ線形
+        変形を掛ける (位置依存性は中心のみに反映、軸方向では一定)。
+        これにより、強 projective (Four Points 等) でも ellipse 形状が弧上で不均一に
+        歪まず、中心位置で評価された perspective が ellipse 全体に均一に効く。
+
+        Returns: (new_rx_tcg, new_ry_tcg, new_rotate_rad_for_rasterizer)
+        matrix = identity 時、affine 時は既存 / sample-and-fit と同一の結果。
+        """
+        tcg_info = self.editor.tcg_info
+        theta = self.rotate_rad
+        cx, cy = self.center
+        c, s = math.cos(theta), math.sin(theta)
+
+        try:
+            # apply_orientation + R(-(rotation+rotation2)) で中心を pre-matrix coord に運ぶ
+            cx_o, cy_o, rot2 = params.apply_orientation(cx, cy, tcg_info)
+            rad = -(tcg_info['rotation'] + rot2)
+            cos_r, sin_r = math.cos(rad), math.sin(rad)
+            cx_pre = cx_o * cos_r - cy_o * sin_r
+            cy_pre = cx_o * sin_r + cy_o * cos_r
+
+            # apply_matrix の解析的 Jacobian at (cx_pre, cy_pre)
+            # apply_matrix(x, y) = ((ax+by+e)/w, (cx+dy+f)/w), w = gx+hy+i
+            M = np.asarray(tcg_info['matrix'], dtype=np.float64)
+            a, b, e = M[0]
+            c_m, d, f = M[1]
+            g, h, i = M[2]
+            denom = g * cx_pre + h * cy_pre + i
+            if abs(denom) < 1e-12:
+                return rx_tcg, ry_tcg, self.editor.get_rotate_rad(self.rotate_rad)
+            num_x = a * cx_pre + b * cy_pre + e
+            num_y = c_m * cx_pre + d * cy_pre + f
+            d2 = denom * denom
+            J_mat = np.array([
+                [(a * denom - num_x * g) / d2, (b * denom - num_x * h) / d2],
+                [(c_m * denom - num_y * g) / d2, (d * denom - num_y * h) / d2],
+            ])
+
+            # 全 Jacobian = J_mat @ R(rad) @ F (= linearized center_rotate at TCG center)
+            R_rad = np.array([[cos_r, -sin_r], [sin_r, cos_r]])
+            flip = tcg_info['flip_mode']
+            F = np.array([
+                [-1.0 if (flip & 1) else 1.0, 0.0],
+                [0.0, -1.0 if (flip & 2) else 1.0],
+            ])
+            full_jacobian = J_mat @ R_rad @ F
+        except Exception:
+            return rx_tcg, ry_tcg, self.editor.get_rotate_rad(self.rotate_rad)
+
+        # 楕円軸ベクトル (TCG image-coord, Y-down)
+        # x 軸方向 (rx 倍): (cos θ, -sin θ) · rx
+        # y 軸方向 (ry 倍): (sin θ, cos θ) · ry
+        ax_image = np.array([rx_tcg * c, -rx_tcg * s])
+        ay_image = np.array([ry_tcg * s, ry_tcg * c])
+
+        ax_post = full_jacobian @ ax_image
+        ay_post = full_jacobian @ ay_image
+
+        Mat = np.column_stack([ax_post, ay_post])
+        try:
+            U, S, _ = np.linalg.svd(Mat)
+        except np.linalg.LinAlgError:
+            return rx_tcg, ry_tcg, self.editor.get_rotate_rad(self.rotate_rad)
+
+        new_rx = float(S[0]) if len(S) > 0 else rx_tcg
+        new_ry = float(S[1]) if len(S) > 1 else ry_tcg
+        # U は image-coord (Y-down) standard rotation。Kivy/画面 CCW positive 規約に negate
+        new_angle_image = math.atan2(float(U[1, 0]), float(U[0, 0]))
+        new_rot = -new_angle_image
+        return new_rx, new_ry, new_rot
+
     def update_mask(self):
         if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
             # image_sizeが正しく設定されていない場合、マスクの更新をスキップ
             logging.warning(f"{self.__class__.__name__}: image_sizeが未設定。マスクの更新をスキップします。")
             return
 
+        # matrix 追従の SVD 再パラメータ化 (inner と outer は同じ rotation を共有させる)
+        new_inner_rx, new_inner_ry, new_rotate_rad = self._matrix_transformed_ellipse(
+            self.inner_radius_x, self.inner_radius_y)
+        new_outer_rx, new_outer_ry, _ = self._matrix_transformed_ellipse(
+            self.outer_radius_x, self.outer_radius_y)
+
         with self.canvas:
             self.editor.set_scissor(self.scissor)
             cx, cy = self.editor.tcg_to_window(*self.center)
             self.translate.x, self.translate.y = cx, cy
-            self.rotate.angle = math.degrees(self.editor.get_rotate_rad(self.rotate_rad))
-            ix, iy = self.editor.tcg_to_window_scale(self.inner_radius_x, self.inner_radius_y)
+            self.rotate.angle = math.degrees(new_rotate_rad)
+            ix, iy = self.editor.tcg_to_window_scale(new_inner_rx, new_inner_ry)
             self.inner_line.ellipse = (-ix, -iy, ix*2, iy*2)
-            ox, oy = self.editor.tcg_to_window_scale(self.outer_radius_x, self.outer_radius_y)
+            ox, oy = self.editor.tcg_to_window_scale(new_outer_rx, new_outer_ry)
             self.outer_line.ellipse = (-ox, -oy, ox*2, oy*2)
 
         if self.is_draw_mask == True:
@@ -849,9 +931,14 @@ class CircularGradientMask(BaseMask):
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         center = self.editor.tcg_to_texture(*self.center)
-        inner_axes = self.editor.tcg_to_image_scale(self.inner_radius_x, self.inner_radius_y)
-        outer_axes = self.editor.tcg_to_image_scale(self.outer_radius_x, self.outer_radius_y)
-        rotate_rad = self.editor.get_rotate_rad(self.rotate_rad)
+        # matrix 追従の SVD 再パラメータ化 (inner と outer の rotation を共有)
+        new_inner_rx, new_inner_ry, new_rotate_rad = self._matrix_transformed_ellipse(
+            self.inner_radius_x, self.inner_radius_y)
+        new_outer_rx, new_outer_ry, _ = self._matrix_transformed_ellipse(
+            self.outer_radius_x, self.outer_radius_y)
+        inner_axes = self.editor.tcg_to_image_scale(new_inner_rx, new_inner_ry)
+        outer_axes = self.editor.tcg_to_image_scale(new_outer_rx, new_outer_ry)
+        rotate_rad = new_rotate_rad
         if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
             invert = not effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
         else:
