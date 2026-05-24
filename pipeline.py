@@ -279,7 +279,7 @@ class AsyncPipelineManager:
         self.cache.clear()
 
 
-def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None):
+def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
         _t0 = time.perf_counter()
@@ -311,7 +311,11 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig.mode = EffectMode.PREVIEW
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
     efconfig.current_tab = current_tab
-    efconfig.crop_editing = current_tab == "Ge"
+    # Mask2 ON 中の Ge タブは「マスク Geometry モード」であって画像 crop の編集ではないので
+    # crop_editing から除外する。これを True のままにすると CropEffect.make_diff が
+    # disp_info を full image に書き換え、Mask2 OFF (= 他タブ移動) しても apply_zero_wrap
+    # の wrap マスクが full image のままになり余白が黒く塗りつぶされない。
+    efconfig.crop_editing = (current_tab == "Ge") and not mask2_active
     
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag

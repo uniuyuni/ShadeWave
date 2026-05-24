@@ -3753,6 +3753,7 @@ class Mask2Effect(Effect):
             'mask2_open_space': 0,
             'mask2_close_space': 0,
             'mask2_freedraw_brush_hardness': 100,
+            'mask2_polyline_fill': True,
             'switch_mask2_draw_effects': True,
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,
@@ -3849,6 +3850,7 @@ class Mask2Effect(Effect):
                     'mask2_open_space',
                     'mask2_close_space',
                     'mask2_freedraw_brush_hardness',
+                    'mask2_polyline_fill',
                 )
             }
         if subname == 'mask_geometry':
@@ -3906,6 +3908,7 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_open_space"].set_slider_value(self._get_param(param, 'mask2_open_space'))
         widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
         widget.ids["slider_mask2_freedraw_brush_hardness"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_hardness'))
+        widget.ids["checkbox_mask2_polyline_fill"].active = self._get_param(param, 'mask2_polyline_fill')
         widget.ids["switch_mask2_draw_effects"].active = self._get_param(param, 'switch_mask2_draw_effects')
         widget.ids["slider_mask2_color_dodge"].set_slider_value(self._get_param(param, 'mask2_color_dodge'))
         widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
@@ -3947,6 +3950,7 @@ class Mask2Effect(Effect):
         param['mask2_open_space'] = widget.ids["slider_mask2_open_space"].value
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
         param['mask2_freedraw_brush_hardness'] = widget.ids["slider_mask2_freedraw_brush_hardness"].value
+        param['mask2_polyline_fill'] = widget.ids["checkbox_mask2_polyline_fill"].active
         param['switch_mask2_draw_effects'] = widget.ids["switch_mask2_draw_effects"].active
         param['mask2_color_dodge'] = widget.ids["slider_mask2_color_dodge"].value
         param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value

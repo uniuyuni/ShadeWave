@@ -1556,6 +1556,8 @@
                                             id: HuevsHue
                                             start_y: 0.5
                                             end_y: 0.5
+                                            background_renderer: "hlc_hue"
+                                            background_opacity: 0.4
                                             on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsHue')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsHue')
@@ -1570,6 +1572,8 @@
                                             id: HuevsLum
                                             start_y: 0.5
                                             end_y: 0.5
+                                            background_renderer: "hlc_hue"
+                                            background_opacity: 0.4
                                             on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsLum')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsLum')
@@ -1584,6 +1588,8 @@
                                             id: HuevsSat
                                             start_y: 0.5
                                             end_y: 0.5
+                                            background_renderer: "hlc_hue"
+                                            background_opacity: 0.4
                                             on_curve: root.apply_effects_lv(2, 'vs_and_saturation')
                                             on_before_edit: root.begin_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsSat')
                                             on_after_edit: root.end_history_effect_ctrl(2, 'vs_and_saturation', 'HuevsSat')
@@ -2777,25 +2783,37 @@
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
 
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Flip H"
-                                        ref_width: 64
-                                    ParamCheckBox:
-                                        id: checkbox_mask_flip_h
-                                        active: False
-                                        on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                        on_active: root.apply_effects_lv(3, 'mask_geometry')
-                                        on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
-                                    ParamLabel:
-                                        text: "Flip V"
-                                        ref_width: 64
-                                    ParamCheckBox:
-                                        id: checkbox_mask_flip_v
-                                        active: False
-                                        on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                        on_active: root.apply_effects_lv(3, 'mask_geometry')
-                                        on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                AnchorLayout:
+                                    anchor_x: 'right'
+                                    anchor_y: 'center'
+                                    size_hint_y: None
+                                    ref_height: 24
+
+                                    MDGridLayout:
+                                        size_hint: None, None
+                                        ref_width: 256
+                                        ref_height: 20
+                                        cols: 4
+                                        ref_spacing: 2
+
+                                        ParamLabel:
+                                            text: "Flip H"
+                                            ref_width: 64
+                                        ParamCheckBox:
+                                            id: checkbox_mask_flip_h
+                                            active: False
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                            on_active: root.apply_effects_lv(3, 'mask_geometry')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                        ParamLabel:
+                                            text: "Flip V"
+                                            ref_width: 64
+                                        ParamCheckBox:
+                                            id: checkbox_mask_flip_v
+                                            active: False
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                            on_active: root.apply_effects_lv(3, 'mask_geometry')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
 
                                 ParamSlider:
                                     id: slider_mask_translation_x
@@ -3319,6 +3337,29 @@
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                AnchorLayout:
+                                    anchor_x: 'right'
+                                    anchor_y: 'center'
+                                    size_hint_y: None
+                                    ref_height: 24
+
+                                    MDGridLayout:
+                                        size_hint: None, None
+                                        ref_width: 256
+                                        ref_height: 20
+                                        cols: 2
+                                        ref_spacing: 2
+
+                                        ParamLabel:
+                                            text: "Polyline Fill"
+                                            ref_width: 128
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_polyline_fill
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 VSeparator:
 

@@ -632,7 +632,7 @@ if __name__ == '__main__':
                     self.update_preview_texture_size()
                     self.refresh_preview_overlays()
 
-                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos)
+                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=self._is_mask2_on())
                     logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                     perf_trace.event("draw_image_core.pipeline_done")
                     if img is None:
@@ -646,7 +646,9 @@ if __name__ == '__main__':
                                             apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
 
                     # ヒストグラム表示
-                    crop_editing = self.ids["effects"].current_tab.text == "Ge"
+                    # Mask2 ON 中の Ge タブ (= マスク Geometry モード) は画像 crop 編集ではないので
+                    # crop_editing から除外する (pipeline 側と整合)
+                    crop_editing = (self.ids["effects"].current_tab.text == "Ge") and not self._is_mask2_on()
                     img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
                     hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
                     self.draw_histogram_view(hist_data)
@@ -768,16 +770,19 @@ if __name__ == '__main__':
                     current_effects[lv][e].set2param(current_param, self)
             if lv == 0:
                 self.sync_distortion_mode_sliders()
-            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, subname))
-            #self.apply_rotation_flip_for_wrapper()
 
-            # Mask Geometry: slider 変更後に active Composit の mask Geom matrix を再構築
-            # して tcg_info['matrix'] に反映する。draw より前に行わないと overlay と raster が
-            # 古い matrix のままになる。
+            # Mask Geometry: slider 変更後 active Composit の mask Geom matrix を再構築。
+            # set_draw_mask (= mask.update_mask 同期呼出) より前に行うことで、
+            # update_mask 内の direction-preserving 等の matrix 依存計算が新 matrix
+            # を使うようになる (古い matrix で 1 frame 描画 → schedule 経由で新 matrix
+            # で再描画、という見た目のジャンプを回避)。
             if lv == 3:
                 _eff_list = effect if isinstance(effect, list) else [effect] if effect is not None else []
                 if subname == 'mask_geometry' or 'mask_geometry' in _eff_list:
                     self.ids['mask_editor2']._set_active_composit_matrix()
+
+            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, subname))
+            #self.apply_rotation_flip_for_wrapper()
 
             # defer_draw=True のとき呼び出し側は後でまとめて start/sync を発火する想定。
             # pipeline_version の無駄な多段進行と apply_thread の捨て描画を避ける。
@@ -1832,6 +1837,7 @@ if __name__ == '__main__':
             is_freedraw = class_name == 'FreeDrawMask'
             # brush hardness は FreeDraw と Polyline で共有 (PolylineMask は線幅エッジの soft 制御に流用)
             has_brush_hardness = class_name in ('FreeDrawMask', 'PolylineMask')
+            is_polyline = class_name == 'PolylineMask'
             is_face = class_name == 'FaceMask'
             mask_specific_enabled = has_mask_context and not is_composit
 
@@ -1895,6 +1901,12 @@ if __name__ == '__main__':
                     'slider_mask2_freedraw_brush_hardness',
                 ),
                 not (mask_specific_enabled and has_brush_hardness),
+            )
+            self._set_disabled_for_ids(
+                (
+                    'checkbox_mask2_polyline_fill',
+                ),
+                not (mask_specific_enabled and is_polyline),
             )
             self._set_disabled_for_ids(
                 (

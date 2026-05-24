@@ -352,6 +352,7 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'),
                 matrix_bytes)
 
     def _apply_mask_space(self, image):
@@ -672,13 +673,37 @@ class CircularGradientMask(BaseMask):
 
     def on_touch_move(self, touch):
         if self.initializing:
-            cx, cy = self.editor.window_to_tcg(*touch.pos)
-            dx = cx - self.center_x
-            dy = cy - self.center_y
-            self.outer_radius_x = ((dx**2 + dy**2) ** 0.5)
-            self.outer_radius_y = ((dx**2 + dy**2) ** 0.5)
-            self.inner_radius_x = self.outer_radius_x * 0.5  # 内側の半径を仮設定
-            self.inner_radius_y = self.outer_radius_y * 0.5  # 内側の半径を仮設定
+            # mask Geom の非一様 scale が ON のとき、TCG 距離 (window_to_tcg 後の
+            # euclidean) を半径にすると render 時に matrix 由来の各軸 scale が
+            # 乗って画面上で楕円になってしまう。配置時は画面上で「正円」になるよう、
+            # window 空間で半径を取り、各軸 effective scale で逆スケールして TCG rx/ry
+            # に格納する (= render 時に matrix が打ち消して画面上で正円)。
+            center_win = self.editor.tcg_to_window(self.center_x, self.center_y)
+            dx_win = touch.x - center_win[0]
+            dy_win = touch.y - center_win[1]
+            radius_win = (dx_win ** 2 + dy_win ** 2) ** 0.5
+            # window 半径 → 「matrix scale を含まない」TCG 基準半径
+            base_r_tcg = self.editor.window_to_tcg_scale(radius_win, 0)[0]
+            # tcg_info['matrix'] の linear 部の列ノルム = 各軸の effective scale
+            # (rotation も含まれるが、軸単位の総合 scale としてはこれで十分)
+            try:
+                M = self.editor.tcg_info['matrix']
+                # numpy 境界で float() 化 (params.apply_matrix と同じ流儀)。
+                # M[i,j] は np.float64 で、そのまま Kivy NumericProperty に流すと
+                # "invalid format" で弾かれるため、ここで Python float に確定させる。
+                sx_eff = float(((M[0, 0]) ** 2 + (M[1, 0]) ** 2) ** 0.5)
+                sy_eff = float(((M[0, 1]) ** 2 + (M[1, 1]) ** 2) ** 0.5)
+                if sx_eff < 1e-6:
+                    sx_eff = 1.0
+                if sy_eff < 1e-6:
+                    sy_eff = 1.0
+            except Exception:
+                sx_eff = 1.0
+                sy_eff = 1.0
+            self.outer_radius_x = base_r_tcg / sx_eff
+            self.outer_radius_y = base_r_tcg / sy_eff
+            self.inner_radius_x = self.outer_radius_x * 0.5
+            self.inner_radius_y = self.outer_radius_y * 0.5
             self.update_mask()
             return True
         else:
@@ -1322,6 +1347,14 @@ class GradientMask(BaseMask):
 
             self.rotate.angle = math.degrees(rad)
 
+        # ControlPoint の表示位置を direction-preserving に同期。
+        # 既存の bind(center=update_graphics) は raw tcg_to_window を使うため、
+        # mask Geom 非一様 scale 等のとき line raster と CP の位置がズレる。
+        # ここで translate を直接上書きして line と一致させる。
+        # touching=True (= ユーザが drag 中の CP) は finger position を維持するため上書きしない。
+        if not self.initializing:
+            self._sync_cps_to_dir_preserving(center_win, start_win, end_win)
+
         if self.is_draw_mask == True:
             if self.do_draw_composit_mask == True:
                 composit_mask = self.editor.find_composit_mask(self)
@@ -1329,6 +1362,23 @@ class GradientMask(BaseMask):
                     composit_mask.draw_mask_to_fbo(True)
             else:
                 self.draw_mask_to_fbo()
+
+    def _sync_cps_to_dir_preserving(self, center_win, start_win, end_win):
+        """CP の visual translate を direction-preserving 計算結果で上書き。
+        touching 中の CP は user finger を追従させるためスキップ。"""
+        cps = self.control_points
+        if len(cps) < 3:
+            return
+        positions = (center_win, start_win, end_win)
+        for cp, pos in zip(cps[:3], positions):
+            if getattr(cp, 'touching', False):
+                continue
+            try:
+                cp.translate.x = pos[0]
+                cp.translate.y = pos[1]
+                self.editor.set_scissor(cp.scissor)
+            except Exception:
+                pass
 
     def get_mask_image(self):
         # パラメータ設定
@@ -1513,6 +1563,8 @@ class FreeDrawMask(BaseMask):
             self.rotate = KVRotate(angle=0, origin=(0, 0))
             self.brush_color = KVColor((0, 1, 1, 1))
             self.brush_cursor = KVLine(ellipse=(0, 0, self.brush_size, self.brush_size), width=2)
+            # 内側ハードゾーン (hardness の視覚化用 2 重目の円)
+            self.brush_cursor_inner = KVLine(ellipse=(0, 0, 0, 0), width=2)
             self.editor.pop_scissor()
             KVPopMatrix()
 
@@ -1688,11 +1740,20 @@ class FreeDrawMask(BaseMask):
         brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
+        # 内側ハードゾーンの直径 = 外径 × hardness/100 (freedraw_raster の create_natural_brush
+        # と同じ意味で、hardness=100 で同径、=0 で消失)
+        try:
+            hardness = float(effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'))
+        except Exception:
+            hardness = 100.0
+        inner_size = max(0.0, brush_size * (hardness / 100.0))
+        inner_off = (brush_size - inner_size) / 2.0
+        self.brush_cursor_inner.ellipse = (inner_off, inner_off, inner_size, inner_size)
 
     def update_mask(self):
         if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
             return
-        
+
         self.editor.set_scissor(self.scissor)
         self.rotate.angle = math.degrees(self.editor.get_rotate_rad(0))
 
@@ -1728,6 +1789,11 @@ class FreeDrawMask(BaseMask):
                 allow_over_one=allow_over_one,
                 allow_under_zero=allow_under_zero,
             )
+
+            # Invert (Gradient/Circular と同じ流儀: raster 後・extended_params 前)
+            if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+                if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
+                    mask = 1.0 - mask
 
             # ルミナンスとマスクを作成
             mask = self._apply_extened_params(mask)
@@ -1792,6 +1858,8 @@ class PolylineMask(BaseMask):
             self.rotate = KVRotate(angle=0, origin=(0, 0))
             self.brush_color = KVColor((0, 1, 1, 0))     # 初期不可視
             self.brush_cursor = KVLine(ellipse=(0, 0, self.brush_size, self.brush_size), width=2)
+            # 内側ハードゾーン (hardness の視覚化用 2 重目の円)
+            self.brush_cursor_inner = KVLine(ellipse=(0, 0, 0, 0), width=2)
             self.editor.pop_scissor()
             KVPopMatrix()
 
@@ -1962,12 +2030,10 @@ class PolylineMask(BaseMask):
 
         # 左クリック (描画/閉じる/ダブルクリック開放確定)
         if touch.button == 'left':
-            # ダブルタップ: 直近で追加した点を pop して開放確定
+            # ダブルタップ: 直近の頂点はそのまま採用し開放確定 (旧仕様は前段 down の頂点を
+            # pop していたが、ユーザーが置いた頂点をキャンセルしないでほしいとの要望)。
             if getattr(touch, 'is_double_tap', False):
                 if self.current_polyline is not None:
-                    # is_double_tap の前段 down で頂点を 1 つ余計に追加していることが多いので pop
-                    if self.current_polyline.points:
-                        self.current_polyline.points.pop()
                     self._finish_current_polyline(is_closed=False)
                     self.update_mask()
                     self.editor.start_draw_image()
@@ -2037,9 +2103,8 @@ class PolylineMask(BaseMask):
             self.current_polyline = None
         else:
             self.current_polyline.is_closed = bool(is_closed)
-            # 開いた場合は塗りつぶさない
-            if not is_closed:
-                self.current_polyline.is_filled = False
+            # 塗りつぶしの可否は param (mask2_polyline_fill) で動的判定するので
+            # is_filled の値はここでは触らない (旧仕様の不可逆的な False 化は廃止)。
             self.polylines.append(self.current_polyline)
             self.current_polyline = None
             # 確定 polyline の頂点 ControlPoint を生成
@@ -2217,6 +2282,14 @@ class PolylineMask(BaseMask):
         brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
+        # 内側ハードゾーンの直径 = 外径 × hardness/100 (FreeDrawMask と同じ意味)
+        try:
+            hardness = float(effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'))
+        except Exception:
+            hardness = 100.0
+        inner_size = max(0.0, brush_size * (hardness / 100.0))
+        inner_off = (brush_size - inner_size) / 2.0
+        self.brush_cursor_inner.ellipse = (inner_off, inner_off, inner_size, inner_size)
 
     # ---- マスク描画 ----
     def update_mask(self):
@@ -2234,7 +2307,13 @@ class PolylineMask(BaseMask):
                 self.draw_mask_to_fbo()
 
     def _build_render_polylines(self, image_size):
-        """確定 polyline + 描画中 polyline をテクスチャ座標に変換して返す。"""
+        """確定 polyline + 描画中 polyline をテクスチャ座標に変換して返す。
+
+        塗りつぶし (is_filled) は param mask2_polyline_fill で動的に決定する
+        (チェックボックス ON/OFF で全 polyline 即時切り替え)。
+        ただし開いた折れ線 (is_closed=False) は塗りつぶし不可。
+        """
+        fill_enabled = bool(effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'))
         render = list(self.polylines)
         if self.current_polyline is not None and len(self.current_polyline.points) >= 1:
             render.append(self.current_polyline)
@@ -2245,8 +2324,7 @@ class PolylineMask(BaseMask):
                 size=self.editor.tcg_to_image_scale(src.size, 0)[0],
                 soft=src.soft,
                 is_closed=src.is_closed,
-                # 描画中は仮で fill=False, 確定後のみ fill 適用
-                is_filled=src.is_filled and src.is_closed,
+                is_filled=fill_enabled and src.is_closed,
             )
             for point in src.points:
                 tex_poly.add_point(*self.editor.tcg_to_texture(*point))
@@ -2257,11 +2335,13 @@ class PolylineMask(BaseMask):
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
         copy_polys = self._build_render_polylines(image_size)
 
+        fill_enabled = bool(effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'))
         poly_hash = tuple(
-            (p.is_erasing, p.size, p.soft, p.is_closed, p.is_filled, tuple(p.points))
+            (p.is_erasing, p.size, p.soft, p.is_closed, tuple(p.points))
             for p in (self.polylines + ([self.current_polyline] if self.current_polyline else []))
         )
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, poly_hash))
+        # fill_enabled もキャッシュキーに含めて、チェックボックス ON/OFF で再計算させる
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, poly_hash, fill_enabled))
 
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             mask = polyline_raster.draw_polyline_texture(
@@ -2270,6 +2350,12 @@ class PolylineMask(BaseMask):
                 allow_over_one=False,
                 allow_under_zero=False,
             )
+
+            # Invert (Gradient/Circular と同じ流儀: raster 後・extended_params 前)
+            if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+                if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
+                    mask = 1.0 - mask
+
             mask = self._apply_extened_params(mask)
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -3617,13 +3703,32 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         KVClock.schedule_once(lambda dt: self._refresh_overlays_main_thread(), 0)
 
     def _refresh_overlays_main_thread(self, *args):
-        """メインスレッドで graphics instruction を更新するヘルパ。"""
-        mask = self.active_mask
-        if mask is not None and getattr(mask, 'is_draw_mask', False):
-            try:
-                mask.update_mask()
-            except Exception:
-                logging.exception("_refresh_overlays_main_thread: update_mask 失敗")
+        """メインスレッドで graphics instruction を更新するヘルパ。
+
+        順序が重要: CP の dispatch (= raw tcg_to_window 経由で update_graphics) を
+        update_mask より先に行うこと。逆順にすると Gradient 等の update_mask 内で
+        direction-preserving に位置調整した CP translate を dispatch が raw に
+        上書きしてしまい、slider drag 中に CP が dir-preserving と raw を交互に
+        往復してブルブル震えて見える。
+
+        対象は active composit 配下の全 draw mask。Composit 選択時 (active_mask が
+        Composit) は子マスクは全て inactive (中心 CP のみ赤で表示) だが、それらも
+        mask Geom 変化に追従させる必要があるため。個別 mask 選択時も兄弟マスクの
+        中心 CP を同期させる。
+        """
+        composit = self._active_composit_or_none()
+        targets = []
+        if composit is not None:
+            # composit 自身は draw mask ではないので子のみ。
+            for child, _ in getattr(composit, 'mask_list', []):
+                targets.append(child)
+        else:
+            # composit 解決できない fallback: 旧挙動 (active_mask だけ)
+            mask = self.active_mask
+            if mask is not None:
+                targets.append(mask)
+
+        for mask in targets:
             # CP の center は TCG 値で変わらないため bind(center=...) が発火せず、
             # tcg_to_window が再計算されない (= CP 位置が前 matrix のまま残る)。
             # 全 CP の center プロパティを強制 dispatch して update_graphics を呼ぶ。
@@ -3632,6 +3737,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                     cp.property('center').dispatch(cp)
             except Exception:
                 logging.exception("_refresh_overlays_main_thread: CP redispatch 失敗")
+            try:
+                mask.update_mask()
+            except Exception:
+                logging.exception("_refresh_overlays_main_thread: update_mask 失敗")
         # mask Geom 軸の表示更新
         self._draw_mask_geom_axes()
 
