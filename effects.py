@@ -2243,6 +2243,7 @@ class ColorTemperatureEffect(Effect):
         widget.ids['switch_white_balance'].enabled = self._get_param(param, 'switch_white_balance')
         widget.ids["slider_color_temperature"].set_slider_value(self._get_param(param, 'color_temperature'))
         widget.ids["slider_color_tint"].set_slider_value(self._get_param(param, 'color_tint'))
+        self._set_bar_context(widget, param)
         widget.ids["slider_color_temperature"].set_slider_reset(self._get_param(param, 'color_temperature_reset'))
         widget.ids["slider_color_tint"].set_slider_reset(self._get_param(param, 'color_tint_reset'))
  
@@ -2250,6 +2251,23 @@ class ColorTemperatureEffect(Effect):
         param['switch_white_balance'] = widget.ids['switch_white_balance'].enabled
         param['color_temperature'] = widget.ids["slider_color_temperature"].value
         param['color_tint'] = widget.ids["slider_color_tint"].value
+
+    def _set_bar_context(self, widget, param):
+        reset_temp = self._get_param(param, 'color_temperature_reset')
+        reset_tint = self._get_param(param, 'color_tint_reset')
+        y = self._get_param(param, 'color_Y')
+        widget.ids["slider_color_temperature"].set_bar_context({
+            "reset_temp": reset_temp,
+            "reset_tint": reset_tint,
+            "fixed_tint": reset_tint,
+            "Y": y,
+        })
+        widget.ids["slider_color_tint"].set_bar_context({
+            "reset_temp": reset_temp,
+            "reset_tint": reset_tint,
+            "fixed_temp": reset_temp,
+            "Y": y,
+        })
 
     @staticmethod
     def apply_color_temperature(rgb, param):
@@ -3113,6 +3131,23 @@ class VSandSaturationEffect(Effect):
         self.diff = pipeline.pipeline_vs_and_saturation(hls, self.effects, param, efconfig)
 
         return self.diff
+
+HUE_CURVE_FEATHER_RADIUS = 32
+
+
+def _hue_curve_feather_kernel_size(efconfig):
+    resolution_scale = getattr(efconfig, "resolution_scale", 1.0)
+    kernel_size = max(3, int((HUE_CURVE_FEATHER_RADIUS * 2 + 1) * resolution_scale))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    return kernel_size
+
+
+def _blur_hue_curve_map(adjust_map, efconfig):
+    kernel_size = _hue_curve_feather_kernel_size(efconfig)
+    if kernel_size <= 1:
+        return adjust_map
+    return core.gaussian_blur_cv(adjust_map, (kernel_size, kernel_size), 0)
     
 class HuevsHueEffect(Effect):
 
@@ -3135,13 +3170,15 @@ class HuevsHueEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash(np.sum(hh))
+            param_hash = hash((np.sum(hh), _hue_curve_feather_kernel_size(efconfig)))
             if self.hash != param_hash:
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(hh)
                 lut = ((lut - 0.5) * 2.0) * 360
-                self.diff = core.apply_lut(hls_hh[0] / 360, lut, 1.0) + hls_hh[1]
+                hue_offset = core.apply_lut(hls_hh[0] / 360, lut, 1.0)
+                hue_offset = _blur_hue_curve_map(hue_offset, efconfig)
+                self.diff = hue_offset + hls_hh[1]
 
         return self.diff
 
@@ -3166,13 +3203,15 @@ class HuevsLumEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash(np.sum(hl))
+            param_hash = hash((np.sum(hl), _hue_curve_feather_kernel_size(efconfig)))
             if self.hash != param_hash:
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(hl)
-                lut = 2.0 ** ((lut - 0.5) * 4.0)
-                self.diff = core.apply_lut(hls_hl[0] / 360, lut, 1.0) * hls_hl[1]
+                lut = (lut - 0.5) * 4.0
+                lum_delta = core.apply_lut(hls_hl[0] / 360, lut, 1.0)
+                lum_delta = _blur_hue_curve_map(lum_delta, efconfig)
+                self.diff = (2.0 ** lum_delta) * hls_hl[1]
 
         return self.diff
 
@@ -3197,13 +3236,15 @@ class HuevsSatEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash(np.sum(hs))
+            param_hash = hash((np.sum(hs), _hue_curve_feather_kernel_size(efconfig)))
             if self.hash != param_hash:
                 self.hash = param_hash
 
                 lut = core.calc_point_list_to_lut(hs)
-                lut = (lut - 0.5) * 2.0 + 1.0
-                self.diff = core.apply_lut(hls_hs[0] / 360.0, lut, 1.0) * hls_hs[1]
+                lut = (lut - 0.5) * 2.0
+                sat_delta = core.apply_lut(hls_hs[0] / 360.0, lut, 1.0)
+                sat_delta = _blur_hue_curve_map(sat_delta, efconfig)
+                self.diff = (1.0 + sat_delta) * hls_hs[1]
 
         return self.diff
 

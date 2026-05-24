@@ -498,6 +498,10 @@
                                     max: 12000
                                     value: 5000
                                     step: 10
+                                    bar_renderer: "color_temperature"
+                                    bar_saturation: 2.4
+                                    bar_show_active_overlay: False
+                                    bar_show_anchor_marker: True
                                     on_slider: root.apply_effects_lv(2, 'color_temperature')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'color_temperature')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'color_temperature')
@@ -509,6 +513,10 @@
                                     max: 100
                                     value: 0
                                     step: 1
+                                    bar_renderer: "color_tint"
+                                    bar_saturation: 2.4
+                                    bar_show_active_overlay: False
+                                    bar_show_anchor_marker: True
                                     on_slider: root.apply_effects_lv(2, 'color_temperature')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'color_temperature')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'color_temperature')

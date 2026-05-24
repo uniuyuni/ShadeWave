@@ -1,6 +1,6 @@
 
 from kivy.uix.widget import Widget
-from kivy.properties import ListProperty, NumericProperty, ColorProperty, BooleanProperty
+from kivy.properties import ListProperty, NumericProperty, ColorProperty, BooleanProperty, ObjectProperty, StringProperty
 from kivy.clock import Clock
 from kivy.graphics import Color, Ellipse, RoundedRectangle, Line, Rectangle
 
@@ -20,6 +20,11 @@ class MultiSlider(Widget):
     
     track_color_active = ColorProperty([0.85, 0.85, 0.85, 1])
     track_color_inactive = ColorProperty([0.2, 0.2, 0.2, 1])
+    track_texture = ObjectProperty(None, allownone=True)
+    track_source = StringProperty("")
+    track_opacity = NumericProperty(1.0)
+    track_show_active_overlay = BooleanProperty(True)
+    track_show_anchor_marker = BooleanProperty(False)
     thumb_color = ColorProperty([1, 1, 1, 1])
     thumb_colors = ListProperty([])
     disabled_color = ColorProperty([0.6, 0.6, 0.6, 1])
@@ -42,7 +47,10 @@ class MultiSlider(Widget):
         update_trigger = lambda *dt: Clock.schedule_once(self._refresh_view, 0)
         
         self.bind(pos=update_trigger, size=update_trigger, 
-                  thumb_colors=update_trigger, disabled=update_trigger, debug_mode=update_trigger)
+                  thumb_colors=update_trigger, disabled=update_trigger, debug_mode=update_trigger,
+                  track_texture=update_trigger, track_source=update_trigger,
+                  track_opacity=update_trigger, track_show_active_overlay=update_trigger,
+                  track_show_anchor_marker=update_trigger)
         
         update_trigger()
 
@@ -186,34 +194,56 @@ class MultiSlider(Widget):
                 Color(0, 1, 0, 0.8)
                 Line(points=[self.x, self.center_y, self.right, self.center_y], width=1)
 
-            # Inactive Track
-            Color(rgba=inactive_color)
-            RoundedRectangle(pos=(track_x, track_y), size=(usable_width, track_h), radius=[radius_val])
+            has_track_image = self.track_texture is not None or bool(self.track_source)
+            if has_track_image:
+                Color(1, 1, 1, self.track_opacity)
+                if self.track_texture is not None:
+                    RoundedRectangle(texture=self.track_texture, pos=(track_x, track_y), size=(usable_width, track_h), radius=[radius_val])
+                else:
+                    RoundedRectangle(source=self.track_source, pos=(track_x, track_y), size=(usable_width, track_h), radius=[radius_val])
+                if self.disabled:
+                    Color(0, 0, 0, 0.35)
+                    RoundedRectangle(pos=(track_x, track_y), size=(usable_width, track_h), radius=[radius_val])
+            else:
+                # Inactive Track
+                Color(rgba=inactive_color)
+                RoundedRectangle(pos=(track_x, track_y), size=(usable_width, track_h), radius=[radius_val])
 
             # Active Track
-            Color(rgba=active_color)
-            if len(self.values) == 1:
-                val = self.values[0]
-                curr_x = self._get_x_from_value(val)
-                if self.draw_from_anchor:
-                    anchor_x = self._get_x_from_value(self.anchor_value)
-                    start_x = min(anchor_x, curr_x)
-                    w = abs(curr_x - anchor_x)
-                else:
-                    start_x = track_x
-                    w = curr_x - track_x
-                RoundedRectangle(pos=(start_x, track_y), size=(w, track_h), radius=[radius_val])
+            if self.track_show_active_overlay:
+                Color(rgba=active_color)
+                if len(self.values) == 1:
+                    val = self.values[0]
+                    curr_x = self._get_x_from_value(val)
+                    if self.draw_from_anchor:
+                        anchor_x = self._get_x_from_value(self.anchor_value)
+                        start_x = min(anchor_x, curr_x)
+                        w = abs(curr_x - anchor_x)
+                    else:
+                        start_x = track_x
+                        w = curr_x - track_x
+                    RoundedRectangle(pos=(start_x, track_y), size=(w, track_h), radius=[radius_val])
 
-            elif len(self.values) == 2:
-                x1 = self._get_x_from_value(self.values[0])
-                x2 = self._get_x_from_value(self.values[1])
-                v1, v2 = self.values[0], self.values[1]
-                if self.allow_overlap and v1 > v2:
-                    RoundedRectangle(pos=(track_x, track_y), size=(x2 - track_x, track_h), radius=[radius_val])
-                    max_x = track_x + usable_width
-                    RoundedRectangle(pos=(x1, track_y), size=(max_x - x1, track_h), radius=[radius_val])
-                else:
-                    RoundedRectangle(pos=(min(x1, x2), track_y), size=(abs(x2 - x1), track_h), radius=[radius_val])
+                elif len(self.values) == 2:
+                    x1 = self._get_x_from_value(self.values[0])
+                    x2 = self._get_x_from_value(self.values[1])
+                    v1, v2 = self.values[0], self.values[1]
+                    if self.allow_overlap and v1 > v2:
+                        RoundedRectangle(pos=(track_x, track_y), size=(x2 - track_x, track_h), radius=[radius_val])
+                        max_x = track_x + usable_width
+                        RoundedRectangle(pos=(x1, track_y), size=(max_x - x1, track_h), radius=[radius_val])
+                    else:
+                        RoundedRectangle(pos=(min(x1, x2), track_y), size=(abs(x2 - x1), track_h), radius=[radius_val])
+
+            if self.track_show_anchor_marker and self.draw_from_anchor:
+                anchor_x = self._get_x_from_value(self.anchor_value)
+                marker_h = max(track_h + kvutils.dpi_scale_height(6), kvutils.dpi_scale_height(10))
+                marker_top = track_y + (track_h + marker_h) / 2
+                marker_bottom = track_y + (track_h - marker_h) / 2
+                Color(0, 0, 0, 0.75)
+                Line(points=[anchor_x, marker_bottom, anchor_x, marker_top], width=2)
+                Color(1, 1, 1, 0.9)
+                Line(points=[anchor_x, marker_bottom, anchor_x, marker_top], width=1)
 
         with self.canvas.after:
             # サムサイズ:

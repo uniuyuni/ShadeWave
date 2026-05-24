@@ -3,13 +3,155 @@ from kivymd.app import MDApp
 from kivymd.uix.button import MDRectangleFlatButton
 from kivymd.uix.behaviors.toggle_behavior import MDToggleButton
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
-from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty
+from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, ObjectProperty as KVObjectProperty
+from kivy.graphics.texture import Texture as KVTexture
 from kivy.metrics import dp
+import logging
 import math
+import numpy as np
 
 import widgets.float_input
 import widgets.multi_slider
 import widgets.tiny_button
+
+
+_BAR_TEXTURE_CACHE = {}
+
+
+def _linear_to_srgb(rgb):
+    rgb = np.clip(rgb, 0.0, 1.0)
+    return np.where(
+        rgb <= 0.0031308,
+        rgb * 12.92,
+        1.055 * np.power(rgb, 1.0 / 2.4) - 0.055,
+    )
+
+
+def _context_value(context, key, default):
+    if context is None:
+        return default
+    return context.get(key, default)
+
+
+def _cache_float(value):
+    return round(float(value), 6)
+
+
+def _boost_saturation(rgb, saturation):
+    if saturation == 1.0:
+        return rgb
+
+    luma = (
+        rgb[..., 0:1] * 0.2126
+        + rgb[..., 1:2] * 0.7152
+        + rgb[..., 2:3] * 0.0722
+    )
+    return np.clip(luma + (rgb - luma) * saturation, 0.0, 1.0)
+
+
+def _effect_rgb_to_display(rgb, saturation=1.0):
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=1.0, neginf=0.0)
+    rgb = np.clip(rgb, 0.0, None)
+    rgb_max = np.max(rgb, axis=1, keepdims=True)
+    rgb = rgb / np.maximum(rgb_max, 1e-8)
+    rgb = _linear_to_srgb(rgb)
+    return _boost_saturation(rgb, saturation)
+
+
+def _make_bar_texture_from_rgb(rgb_line, width, height, cache_key, saturation=1.0):
+    texture = _BAR_TEXTURE_CACHE.get(cache_key)
+    if texture is not None:
+        return texture
+
+    img = np.round(_effect_rgb_to_display(rgb_line, saturation) * 255.0).astype(np.uint8)
+    img = img[np.newaxis, :, :]
+    if height > 1:
+        img = np.repeat(img, height, axis=0)
+
+    texture = KVTexture.create(size=(width, height), colorfmt='rgb', bufferfmt='ubyte')
+    texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
+    texture.mag_filter = 'linear'
+    texture.min_filter = 'linear'
+    _BAR_TEXTURE_CACHE[cache_key] = texture
+    return texture
+
+
+def _convert_temp_tint_line(temps, tints, y):
+    import cores.core as core
+
+    return np.array(
+        [
+            core.convert_TempTint2RGB(float(temp), float(tint), float(y))
+            for temp, tint in zip(temps, tints)
+        ],
+        dtype=np.float32,
+    )
+
+
+def _make_color_temperature_bar_texture(slider, width=512, height=1):
+    context = slider.bar_context or {}
+    reset_temp = _context_value(context, "reset_temp", getattr(slider, "reset_value", 5000.0))
+    reset_tint = _context_value(context, "reset_tint", 0.0)
+    fixed_tint = _context_value(context, "fixed_tint", reset_tint)
+    y = _context_value(context, "Y", 1.0)
+    cache_key = (
+        "color_temperature",
+        width,
+        height,
+        _cache_float(slider.min),
+        _cache_float(slider.max),
+        _cache_float(reset_temp),
+        _cache_float(reset_tint),
+        _cache_float(fixed_tint),
+        _cache_float(y),
+        _cache_float(slider.bar_saturation),
+    )
+    cached = _BAR_TEXTURE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    temps = np.linspace(float(slider.min), float(slider.max), width, dtype=np.float32)
+    tints = np.full(width, float(fixed_tint), dtype=np.float32)
+    reset_rgb = _convert_temp_tint_line([reset_temp], [reset_tint], y)[0]
+    sample_rgb = _convert_temp_tint_line(temps, tints, y)
+    rgb_line = reset_rgb[np.newaxis, :] / np.maximum(sample_rgb, 1e-6)
+    return _make_bar_texture_from_rgb(rgb_line, width, height, cache_key, slider.bar_saturation)
+
+
+def _make_color_tint_bar_texture(slider, width=512, height=1):
+    context = slider.bar_context or {}
+    reset_temp = _context_value(context, "reset_temp", 5000.0)
+    reset_tint = _context_value(context, "reset_tint", getattr(slider, "reset_value", 0.0))
+    fixed_temp = _context_value(context, "fixed_temp", reset_temp)
+    y = _context_value(context, "Y", 1.0)
+    cache_key = (
+        "color_tint",
+        width,
+        height,
+        _cache_float(slider.min),
+        _cache_float(slider.max),
+        _cache_float(reset_temp),
+        _cache_float(reset_tint),
+        _cache_float(fixed_temp),
+        _cache_float(y),
+        _cache_float(slider.bar_saturation),
+    )
+    cached = _BAR_TEXTURE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    temps = np.full(width, float(fixed_temp), dtype=np.float32)
+    tints = np.linspace(float(slider.min), float(slider.max), width, dtype=np.float32)
+    reset_rgb = _convert_temp_tint_line([reset_temp], [reset_tint], y)[0]
+    sample_rgb = _convert_temp_tint_line(temps, tints, y)
+    rgb_line = reset_rgb[np.newaxis, :] / np.maximum(sample_rgb, 1e-6)
+    return _make_bar_texture_from_rgb(rgb_line, width, height, cache_key, slider.bar_saturation)
+
+
+_BAR_RENDERERS = {
+    "color_temperature": _make_color_temperature_bar_texture,
+    "color_tint": _make_color_tint_bar_texture,
+}
 
 
 class ParamFloatInput(widgets.float_input.FloatInput):
@@ -96,6 +238,14 @@ class ParamSlider(KVBoxLayout):
     label_width = KVNumericProperty(100)
     before_edit = KVNumericProperty(0)
     after_edit = KVNumericProperty(0)
+    bar_renderer = KVStringProperty("")
+    bar_source = KVStringProperty("")
+    bar_texture = KVObjectProperty(None, allownone=True)
+    bar_opacity = KVNumericProperty(1.0)
+    bar_saturation = KVNumericProperty(1.0)
+    bar_show_active_overlay = KVBooleanProperty(True)
+    bar_show_anchor_marker = KVBooleanProperty(False)
+    bar_context = KVObjectProperty(None, allownone=True)
 
     #def __init__(self, **kwargs):
     #    super(ParamSlider, self).__init__(**kwargs)
@@ -112,6 +262,19 @@ class ParamSlider(KVBoxLayout):
         self.ids['slider'].value = self.value
         self.ids['slider'].step = self.step
         self.ids['input'].set_value(self.value)
+        self._sync_bar_to_slider()
+        self.bind(
+            min=self._sync_bar_to_slider,
+            max=self._sync_bar_to_slider,
+            bar_renderer=self._sync_bar_to_slider,
+            bar_source=self._sync_bar_to_slider,
+            bar_texture=self._sync_bar_to_slider,
+            bar_opacity=self._sync_bar_to_slider,
+            bar_saturation=self._sync_bar_to_slider,
+            bar_show_active_overlay=self._sync_bar_to_slider,
+            bar_show_anchor_marker=self._sync_bar_to_slider,
+            bar_context=self._sync_bar_to_slider,
+        )
         self.disabled = False
     
     def on_label_text(self):
@@ -209,6 +372,39 @@ class ParamSlider(KVBoxLayout):
     def _notify_after_edit(self):
         self.after_edit += 1
 
+    def _make_bar_texture(self):
+        if not self.bar_renderer:
+            return None
+
+        renderer = _BAR_RENDERERS.get(self.bar_renderer)
+        if renderer is None:
+            logging.warning(f"Unknown slider bar renderer: {self.bar_renderer}")
+            return None
+
+        return renderer(self)
+
+    def _sync_bar_to_slider(self, *args):
+        if not hasattr(self, "ids") or "slider" not in self.ids:
+            return
+
+        slider = self.ids["slider"]
+        slider.track_opacity = self.bar_opacity
+        slider.track_show_active_overlay = self.bar_show_active_overlay
+        slider.track_show_anchor_marker = self.bar_show_anchor_marker
+
+        if self.bar_texture is not None:
+            slider.track_texture = self.bar_texture
+            slider.track_source = ""
+        elif self.bar_source:
+            slider.track_texture = None
+            slider.track_source = self.bar_source
+        else:
+            slider.track_texture = self._make_bar_texture()
+            slider.track_source = ""
+
+    def set_bar_context(self, context):
+        self.bar_context = dict(context or {})
+
     def set_slider_value(self, value):
         self.disabled = True
         self.ids['slider'].value = value
@@ -226,11 +422,13 @@ class ParamSlider(KVBoxLayout):
         self.ids['slider'].value = min(max(self.ids['slider'].value, min_value), max_value)
         self.value = self.ids['slider'].value
         self.ids['input'].set_value(self.ids['slider'].value)
+        self._sync_bar_to_slider()
         self.disabled = False
 
     def set_slider_reset(self, value):
         self.reset_value = value
         self.ids['slider'].anchor_value = value
+        self._sync_bar_to_slider()
     
 class Param_SliderApp(MDApp):
     def __init__(self, **kwargs):
