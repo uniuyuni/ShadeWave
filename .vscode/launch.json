@@ -9,6 +9,7 @@
     // sam3 は `pip install -e SAM3`（setup.sh または pixi run install-sam3）で解決。PYTHONPATH に SAM3 を足さない。
     "version": "0.2.0",
     "configurations": [
+
         {
             "name": "Platypus: main.py",
             "type": "debugpy",
@@ -37,7 +38,8 @@
                 "PYTORCH_ENABLE_MPS_FALLBACK": "1",
                 "PYTORCH_MPS_FAST_MATH": "1",
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
-                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib"
+                "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
+                "PLATYPUS_DEBUG_MASK_GEOMETRY": "1",
             }
         },
         {

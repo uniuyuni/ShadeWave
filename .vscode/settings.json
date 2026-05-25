@@ -40,5 +40,5 @@
     },
     "git.ignoreLimitWarning": true,
     "cmake.sourceDirectory": "/Users/uniuyuni/PythonProjects/platypus/detectron2/tools/deploy",
-    "chat.disableAIFeatures": true,
+    "chat.disableAIFeatures": false,
 }
