@@ -187,6 +187,8 @@ class EffectConfig():
         self.image_fidelity = None  # primary_param['image_fidelity'] を pipeline が渡す場合あり
         self.current_tab = None
         self.crop_editing = False
+        self.full_preview = False
+        self.pipeline_layer_label = "primary"
 
 # 補正基底クラス
 class Effect():
@@ -196,6 +198,7 @@ class Effect():
         self.hash = None
         self.execution_mode = ExecutionMode.SYNC
         self.keep_async_result = True
+        self._last_cache_event = None
     
     def try_async_execution(self, img, param, efconfig, param_hash):
         """
@@ -221,6 +224,7 @@ class Effect():
                 self.hash = None # Upstream is unstable, so we are unstable
                 if efconfig.layer_status is not None:
                         efconfig.layer_status = PipelineStatus.PREVIEW
+                self._last_cache_event = "async_upstream_preview"
                 return True, self.diff
             
             # 2. Check cache with combined hash
@@ -232,6 +236,7 @@ class Effect():
                 self.hash = combined_hash
                 if not self.keep_async_result:
                     efconfig.processor.discard_result(self.__class__.__name__, combined_hash)
+                self._last_cache_event = "async_hit"
                 return True, self.diff
 
             # Upstream complete, check if we are already running
@@ -239,6 +244,7 @@ class Effect():
                 if efconfig.layer_status is not None:
                     efconfig.layer_status = PipelineStatus.PREVIEW
                 self.hash = None # Running
+                self._last_cache_event = "async_running"
                 return True, None # Return None as preview while running
                     
             # Submit new task
@@ -247,6 +253,7 @@ class Effect():
                     efconfig.layer_status = PipelineStatus.PREVIEW
             
             self.hash = None # Submitted
+            self._last_cache_event = "async_submitted"
             return True, None # Submitted
             
         return False, None
@@ -289,7 +296,9 @@ class Effect():
         return {}
 
     def _get_param(self, param, key):
-        return param.get(key, self.get_param_dict(param)[key])
+        if key in param:
+            return param[key]
+        return self.get_param_dict(param)[key]
 
     def delete_default_param(self, param):
         for p in self.get_param_dict(param).items():
@@ -1112,15 +1121,10 @@ class GeometryEffect(Effect):
                 'flip_mode': 0,
             }
 
-        param2 = param.copy()
-        params.set_crop_rect(param2, core.get_initial_crop_rect(*param['original_img_size']))
-        params.set_disp_info(param2, core.convert_rect_to_info(params.get_crop_rect(param2), config.get_preview_texture_side()/max(param['original_img_size'])))
-        return {
+        default_param = {
             'rotation': 0,
             'rotation2': 0,
             'flip_mode': 0,
-            'crop_rect': param2['crop_rect'],
-            'disp_info': param2['disp_info'],
             'switch_distortion_correction': True,
             'lens_distortion_strength': 0,
             'lens_distortion_scale': 0,
@@ -1133,6 +1137,16 @@ class GeometryEffect(Effect):
             'control_points': {},
             'matrix': np.eye(3),
         }
+
+        original_img_size = param.get('original_img_size')
+        if original_img_size is not None:
+            param2 = param.copy()
+            params.set_crop_rect(param2, core.get_initial_crop_rect(*original_img_size))
+            params.set_disp_info(param2, core.convert_rect_to_info(params.get_crop_rect(param2), config.get_preview_texture_side()/max(original_img_size)))
+            default_param['crop_rect'] = param2['crop_rect']
+            default_param['disp_info'] = param2['disp_info']
+
+        return default_param
 
     def set2widget(self, widget, param):
         widget.ids["slider_rotation"].set_slider_value(self._get_param(param, 'rotation'))
@@ -1282,6 +1296,7 @@ class GeometryEffect(Effect):
         ang2 = self._get_param(param, 'rotation2')
         flp = self._get_param(param, 'flip_mode')
         crop_editing = getattr(efconfig, 'crop_editing', False)
+        full_preview = getattr(efconfig, 'full_preview', crop_editing)
         switch_distortion_correction = self._get_param(param, 'switch_distortion_correction')
         lens_distortion_strength = self._get_param(param, 'lens_distortion_strength')
         lens_distortion_scale = self._get_param(param, 'lens_distortion_scale')
@@ -1299,7 +1314,7 @@ class GeometryEffect(Effect):
         cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
         mesh_hash = tuple(mesh_size)
         
-        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_editing, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
+        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_editing, full_preview, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         if self.hash != param_hash:
             self.hash = param_hash
             
@@ -1318,7 +1333,7 @@ class GeometryEffect(Effect):
             # 回転
             img = core.rotation(img, ang + ang2, flp,
                     inter_mode='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    border_mode="constant" if crop_editing else "reflect")
+                    border_mode="constant" if full_preview else "reflect")
 
             tcg_info = params.param_to_tcg_info(param)
             # 基準サイズ（回転後を想定して max(w, h) の正方形）
@@ -1516,16 +1531,21 @@ class CropEffect(Effect):
         return eval(ar if ar != "None" else "0")
 
     def get_param_dict(self, param):
-        param2 = param.copy()
-        params.set_crop_rect(param2, core.get_initial_crop_rect(*param['original_img_size']))
-        #params.set_disp_info(param2, core.get_initial_disp_info(*param['original_img_size'], config.get_config('preview_size')/max(param['original_img_size'])))
-        return {
+        default_param = {
             'rotation': 0,
             'rotation2': 0,
-            'crop_rect': param2['crop_rect'],
             'aspect_ratio': "None",
             'auto_crop': False,
         }
+
+        original_img_size = param.get('original_img_size')
+        if original_img_size is not None:
+            param2 = param.copy()
+            params.set_crop_rect(param2, core.get_initial_crop_rect(*original_img_size))
+            #params.set_disp_info(param2, core.get_initial_disp_info(*original_img_size, config.get_config('preview_size')/max(original_img_size)))
+            default_param['crop_rect'] = param2['crop_rect']
+
+        return default_param
 
     def set2widget(self, widget, param):
         widget.ids["spinner_acpect_ratio"].set_text(param.get('aspect_ratio', "None"))
@@ -1929,8 +1949,8 @@ class LightNoiseReductionEffect(Effect):
     def get_param_dict(self, param):
         return {
             'switch_light_noise_reduction': True,
-            'light_noise_reduction': 20,
-            'light_color_noise_reduction': 20,
+            'light_noise_reduction': 0,
+            'light_color_noise_reduction': 0,
         }
 
     def set2widget(self, widget, param):
@@ -2524,7 +2544,7 @@ class ExposureEffect(Effect):
 
                 rgb = core.type_convert(rgb, np.ndarray)
                 self.diff = core.adjust_exposure(rgb, ev)
-                self.diff = core.boost_detail_from_tone_change(rgb, self.diff, detail_strength=1.2, max_comp_stops=2.0)
+                #self.diff = core.boost_detail_from_tone_change(rgb, self.diff, detail_strength=1.2, max_comp_stops=2.0)
 
         return self.diff
     
@@ -2857,12 +2877,44 @@ class CurvesEffect(Effect):
         effecs['grading2'] = GradingEffect("2")
         self.effects = effecs
 
+    @staticmethod
+    def _point_hash(point_list):
+        if point_list is None:
+            return None
+        arr = np.asarray(point_list, dtype=np.float32)
+        return hash((arr.shape, arr.tobytes()))
+
+    def _param_hash(self, param):
+        tonecurve = self.effects['tonecurve']
+        tonecurve_red = self.effects['tonecurve_red']
+        tonecurve_green = self.effects['tonecurve_green']
+        tonecurve_blue = self.effects['tonecurve_blue']
+        grading1 = self.effects['grading1']
+        grading2 = self.effects['grading2']
+        return hash((
+            self._get_param(param, 'switch_tone_curves'),
+            self._point_hash(tonecurve._get_param(param, 'tonecurve')),
+            self._point_hash(tonecurve_red._get_param(param, 'tonecurve_red')),
+            self._point_hash(tonecurve_green._get_param(param, 'tonecurve_green')),
+            self._point_hash(tonecurve_blue._get_param(param, 'tonecurve_blue')),
+            self._get_param(param, 'switch_color_gradings'),
+            self._point_hash(grading1._get_param(param, 'grading1')),
+            grading1._get_param(param, 'grading1_hue'),
+            grading1._get_param(param, 'grading1_lum'),
+            grading1._get_param(param, 'grading1_sat'),
+            self._point_hash(grading2._get_param(param, 'grading2')),
+            grading2._get_param(param, 'grading2_hue'),
+            grading2._get_param(param, 'grading2_lum'),
+            grading2._get_param(param, 'grading2_sat'),
+        ))
+
     def delete_default_param(self, param):
         super().delete_default_param(param)
         for n in self.effects.values():
             n.delete_default_param(param)
 
     def reeffect(self):
+        super().reeffect()
         for n in self.effects.values():
             n.reeffect()
 
@@ -2879,7 +2931,13 @@ class CurvesEffect(Effect):
             n.set2param(param, widget)
 
     def make_diff(self, rgb, param, efconfig):
+        needed, combined_hash = self.check_sync_necessity(self._param_hash(param), efconfig)
+        if not needed:
+            return self.diff
+        for n in self.effects.values():
+            n.reeffect()
         self.diff = pipeline.pipeline_curve(rgb, self.effects, param, efconfig)
+        self.hash = combined_hash
 
         return self.diff
     
@@ -3106,12 +3164,44 @@ class VSandSaturationEffect(Effect):
         effecs['saturation'] = SaturationEffect()
         self.effects = effecs
 
+    @staticmethod
+    def _point_hash(point_list):
+        if point_list is None:
+            return None
+        arr = np.asarray(point_list, dtype=np.float32)
+        return hash((arr.shape, arr.tobytes()))
+
+    def _param_hash(self, param, efconfig):
+        hue_hue = self.effects['HuevsHue']
+        hue_lum = self.effects['HuevsLum']
+        lum_lum = self.effects['LumvsLum']
+        sat_lum = self.effects['SatvsLum']
+        hue_sat = self.effects['HuevsSat']
+        lum_sat = self.effects['LumvsSat']
+        sat_sat = self.effects['SatvsSat']
+        saturation = self.effects['saturation']
+        return hash((
+            self._get_param(param, 'switch_color_curves'),
+            self._point_hash(hue_hue._get_param(param, 'HuevsHue')),
+            self._point_hash(hue_lum._get_param(param, 'HuevsLum')),
+            self._point_hash(lum_lum._get_param(param, 'LumvsLum')),
+            self._point_hash(sat_lum._get_param(param, 'SatvsLum')),
+            self._point_hash(hue_sat._get_param(param, 'HuevsSat')),
+            self._point_hash(lum_sat._get_param(param, 'LumvsSat')),
+            self._point_hash(sat_sat._get_param(param, 'SatvsSat')),
+            _hue_curve_feather_kernel_size(efconfig),
+            self._get_param(param, 'switch_saturation'),
+            saturation._get_param(param, 'saturation'),
+            saturation._get_param(param, 'vibrance'),
+        ))
+
     def delete_default_param(self, param):
         super().delete_default_param(param)
         for n in self.effects.values():
             n.delete_default_param(param)
 
     def reeffect(self):
+        super().reeffect()
         for n in self.effects.values():
             n.reeffect()
 
@@ -3128,7 +3218,13 @@ class VSandSaturationEffect(Effect):
             n.set2param(param, widget)
 
     def make_diff(self, hls, param, efconfig):
+        needed, combined_hash = self.check_sync_necessity(self._param_hash(param, efconfig), efconfig)
+        if not needed:
+            return self.diff
+        for n in self.effects.values():
+            n.reeffect()
         self.diff = pipeline.pipeline_vs_and_saturation(hls, self.effects, param, efconfig)
+        self.hash = combined_hash
 
         return self.diff
 
@@ -4288,11 +4384,23 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
 
     return effects
 
-def set2widget_all(widget, effects, param):
+
+def set_composit_mask_noop_defaults(param):
+    """Composit mask layers start with no image adjustment unless explicitly edited."""
+    param.setdefault('ai_noise_reduction', False)
+    param.setdefault('light_noise_reduction', 0)
+    param.setdefault('light_color_noise_reduction', 0)
+    param.setdefault('remove_muddy_yellow', 0.0)
+    param.setdefault('shadow_threshold', 0.0)
+    param.setdefault('separation_strength', 0.0)
+
+
+def set2widget_all(widget, effects, param, reset_effects=True):
     for dict in effects:
         for l in dict.values():
             l.set2widget(widget, param)
-            l.reeffect()
+            if reset_effects:
+                l.reeffect()
 
 def set2param_all(effects, param, widget):
     for dict in effects:

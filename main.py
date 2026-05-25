@@ -232,6 +232,7 @@ if __name__ == '__main__':
             self.click_x = 0
             self.click_y = 0        
             self.crop_image = None
+            self.crop_image_view_key = None
             self.is_zoomed = False
             self.drag_center_start = None
             self.is_press_space = False
@@ -256,6 +257,9 @@ if __name__ == '__main__':
             self.pipeline_version = 0
             
             self.apply_draw_image_center = None
+            self.apply_draw_fast_display = False
+            self.apply_draw_skip_histogram = False
+            self._fast_display_transform_cache = {}
             self.draw_event = threading.Event()
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
             self.apply_thread.start()
@@ -571,17 +575,42 @@ if __name__ == '__main__':
         
         def start_draw_image_and_crop(self, imgset, center_pos=None):
             if self.imgset is imgset:
-                self.crop_image = None
-                self.start_draw_image(center_pos)
+                self.start_draw_image(center_pos, invalidate_crop=True)
 
         def sync_draw_image_and_crop(self, imgset):
             if self.imgset is imgset:
-                self.crop_image = None
-                self.pipeline_version += 1
-                self.draw_image_core()
+                self.sync_draw_image(invalidate_crop=True)
+
+        def _debug_mask_geom_image_stats(self, image):
+            try:
+                return {
+                    "shape": tuple(int(v) for v in image.shape),
+                    "hash": hash(np.ascontiguousarray(image).tobytes()),
+                    "min": float(np.nanmin(image)),
+                    "max": float(np.nanmax(image)),
+                    "sum": float(np.nansum(image)),
+                    "nonzero": int(np.count_nonzero(image)),
+                }
+            except Exception:
+                return {"shape": getattr(image, "shape", None)}
 
         @kvmainthread
-        def blit_image(self, img, dt=0):
+        def blit_image(self, img, frame_version=None, allow_stale=False, dt=0):
+            if frame_version is not None and frame_version < self.pipeline_version and not allow_stale:
+                if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                    logging.warning(
+                        "[MASK_GEOM] blit_image skipped stale frame_version=%s current_version=%s",
+                        frame_version,
+                        self.pipeline_version,
+                    )
+                return
+            if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                logging.warning(
+                    "[MASK_GEOM] blit_image frame_version=%s current_version=%s img_draw=%s",
+                    frame_version,
+                    self.pipeline_version,
+                    self._debug_mask_geom_image_stats(img),
+                )
             logging.debug("[PERF] blit_image: Start. Time: %s", time.time())
             perf_trace.event("blit_image.enter", shape=list(img.shape))
             # Texture Resizing logic
@@ -603,8 +632,14 @@ if __name__ == '__main__':
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='float')
 
             # Update Preview Widget Size
-            self.ids["preview"].texture = None 
+            self.ids["preview"].texture = None
             self.ids["preview"].texture = self.texture
+            try:
+                self.ids["preview"].canvas.ask_update()
+                self.ids["transform_wrapper"].canvas.ask_update()
+                self.ids["preview_widget"].canvas.ask_update()
+            except Exception:
+                logging.exception("preview canvas ask_update failed")
 
             self.resize()
             self.refresh_mask2_overlay()
@@ -622,7 +657,54 @@ if __name__ == '__main__':
             #logging.debug(f"draw_histogram_view")
             self.ids["histogram"].draw_histogram_from_data(hist_data)
 
-        def draw_image_core(self, center_pos=None):
+        def _display_output_encoding(self, colourspace):
+            cs_lower = str(colourspace).lower()
+            if 'srgb' in cs_lower or 'rec.709' in cs_lower or 'rec709' in cs_lower:
+                return 'srgb'
+            if 'display p3' in cs_lower or 'p3-d65' in cs_lower:
+                return 'srgb'
+            if 'adobe' in cs_lower:
+                return 'gamma-2.2'
+            if 'prophoto' in cs_lower or 'romm' in cs_lower:
+                return 'gamma-1.8'
+            return 'linear'
+
+        def _get_fast_display_basis(self, src_space, dst_space, cat):
+            key = (src_space, dst_space, cat)
+            basis = self._fast_display_transform_cache.get(key)
+            if basis is None:
+                basis = colour_functions.RGB_to_RGB(
+                    np.eye(3, dtype=np.float32),
+                    src_space,
+                    dst_space,
+                    cat,
+                    apply_cctf_decoding=False,
+                    apply_cctf_encoding=False,
+                    apply_gamut_mapping=False,
+                ).astype(np.float32)
+                self._fast_display_transform_cache[key] = basis
+            return basis
+
+        def _fast_display_color_transform(self, img, src_space, dst_space, cat):
+            basis = self._get_fast_display_basis(src_space, dst_space, cat)
+            src = np.asarray(img, dtype=np.float32)
+            out = (src.reshape(-1, 3) @ basis).reshape(src.shape)
+            np.maximum(out, 0.0, out=out)
+
+            encoding = self._display_output_encoding(dst_space)
+            if encoding == 'srgb':
+                encoded = np.empty_like(out, dtype=np.float32)
+                low = out <= 0.0031308
+                encoded[low] = out[low] * 12.92
+                encoded[~low] = 1.055 * np.power(out[~low], 1.0 / 2.4) - 0.055
+                return encoded
+            if encoding == 'gamma-2.2':
+                return np.power(out, 1.0 / 2.2).astype(np.float32, copy=False)
+            if encoding == 'gamma-1.8':
+                return np.power(out, 1.0 / 1.8).astype(np.float32, copy=False)
+            return out
+
+        def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False):
             with threads.primary_param_lock:
                 if (self.imgset is not None) and (self.imgset.img is not None):
                     if not params.has_original_img_size(self.primary_param):
@@ -632,34 +714,102 @@ if __name__ == '__main__':
                     self.update_preview_texture_size()
                     self.refresh_preview_overlays()
 
-                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, self.pipeline_version, current_tab=self.ids["effects"].current_tab.text, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=self._is_mask2_on())
+                    frame_version = self.pipeline_version
+                    current_tab = self.ids["effects"].current_tab.text
+                    mask2_on = self._is_mask2_on()
+                    crop_image_view_key = "full" if current_tab == "Ge" else "crop"
+                    if self.crop_image_view_key != crop_image_view_key:
+                        self.crop_image = None
+                        self.crop_image_view_key = crop_image_view_key
+                    if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                        logging.warning(
+                            "[MASK_GEOM] draw_image_core start frame_version=%s current_tab=%s center_pos=%s fast_display=%s skip_histogram=%s",
+                            frame_version,
+                            current_tab,
+                            center_pos,
+                            fast_display,
+                            skip_histogram,
+                        )
+                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
                     logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                     perf_trace.event("draw_image_core.pipeline_done")
                     if img is None:
                         return
+                    if frame_version < self.pipeline_version and not fast_display:
+                        if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                            logging.warning(
+                                "[MASK_GEOM] draw_image_core skipped stale frame_version=%s current_version=%s",
+                                frame_version,
+                                self.pipeline_version,
+                            )
+                        return
+                    elif frame_version < self.pipeline_version:
+                        if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                            logging.warning(
+                                "[MASK_GEOM] draw_image_core allowing stale fast frame frame_version=%s current_version=%s",
+                                frame_version,
+                                self.pipeline_version,
+                            )
 
+                    debug_mask_geom = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled()
+                    post_t0 = time.perf_counter() if debug_mask_geom else None
                     img = np.array(img)
                     utils.print_nan_inf(img, "output")
 
                     src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
-                    img = colour_functions.RGB_to_RGB(img, src_space, config.get_config('display_color_gamut'), config.get_config('cat'),
-                                            apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+                    dst_space = config.get_config('display_color_gamut')
+                    cat = config.get_config('cat')
+                    color_t0 = time.perf_counter() if debug_mask_geom else None
+                    if fast_display:
+                        img = self._fast_display_color_transform(img, src_space, dst_space, cat)
+                    else:
+                        img = colour_functions.RGB_to_RGB(img, src_space, dst_space, cat,
+                                                apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+                    color_ms = (time.perf_counter() - color_t0) * 1000.0 if debug_mask_geom else 0.0
 
-                    # ヒストグラム表示
-                    # Mask2 ON 中の Ge タブ (= マスク Geometry モード) は画像 crop 編集ではないので
-                    # crop_editing から除外する (pipeline 側と整合)
-                    crop_editing = (self.ids["effects"].current_tab.text == "Ge") and not self._is_mask2_on()
-                    img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
-                    hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
-                    self.draw_histogram_view(hist_data)
+                    # Ge タブでは Mask2 モードでも full-preview なので zero-wrap しない。
+                    # CropEditor の起動可否は CropEffect 側で Mask2 ON/OFF を見て制御する。
+                    crop_editing = current_tab == "Ge"
 
                     # プレビュー表示
+                    preview_t0 = time.perf_counter() if debug_mask_geom else None
                     img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                     img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param, crop_editing=crop_editing)
                     img_draw = np.clip(img_draw, 0, 1)
+                    preview_ms = (time.perf_counter() - preview_t0) * 1000.0 if debug_mask_geom else 0.0
+                    if debug_mask_geom:
+                        logging.warning(
+                            "[MASK_GEOM] draw_image_core ready_to_blit frame_version=%s current_version=%s img=%s img_draw=%s",
+                            frame_version,
+                            self.pipeline_version,
+                            self._debug_mask_geom_image_stats(img),
+                            self._debug_mask_geom_image_stats(img_draw),
+                        )
 
                     #描画をスケジューリング
-                    self.blit_image(img_draw)
+                    self.blit_image(img_draw, frame_version, allow_stale=fast_display)
+
+                    # ヒストグラムは表示画像を投げてから計算する。Mask2 操作中の体感遅延を
+                    # 減らすため、プレビュー反映をヒストグラム更新で待たせない。
+                    hist_ms = 0.0
+                    if not skip_histogram:
+                        hist_t0 = time.perf_counter() if debug_mask_geom else None
+                        img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
+                        hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
+                        hist_ms = (time.perf_counter() - hist_t0) * 1000.0 if debug_mask_geom else 0.0
+                        if frame_version == self.pipeline_version:
+                            self.draw_histogram_view(hist_data)
+                    if debug_mask_geom:
+                        logging.warning(
+                            "[MASK_GEOM] draw_image_core post timings frame_version=%s fast_display=%s skip_histogram=%s color_ms=%.1f preview_ms=%.1f hist_ms=%.1f total_ms=%.1f",
+                            frame_version,
+                            fast_display,
+                            skip_histogram,
+                            color_ms,
+                            preview_ms,
+                            hist_ms,
+                            (time.perf_counter() - post_t0) * 1000.0,
+                        )
                     """
                     try:
                         if self.enabledelay is not None:
@@ -680,16 +830,34 @@ if __name__ == '__main__':
                 current_version = self.pipeline_version
                 if last_processed_version < current_version:
                     center_pos = self.apply_draw_image_center
-                    self.draw_image_core(center_pos)
+                    fast_display = self.apply_draw_fast_display
+                    skip_histogram = self.apply_draw_skip_histogram
+                    self.draw_image_core(center_pos, fast_display=fast_display, skip_histogram=skip_histogram)
                     last_processed_version = current_version
             
-        def start_draw_image(self, center_pos=None):
+        def start_draw_image(self, center_pos=None, invalidate_crop=False, fast_display=False, skip_histogram=False):
+            if invalidate_crop:
+                self.crop_image = None
             self.pipeline_version += 1
             self.apply_draw_image_center = center_pos
+            self.apply_draw_fast_display = fast_display
+            self.apply_draw_skip_histogram = skip_histogram
             self.processor.set_pipeline_version(self.pipeline_version)
+            if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                logging.warning(
+                    "[MASK_GEOM] start_draw_image version=%s center_pos=%s invalidate_crop=%s fast_display=%s skip_histogram=%s active=%s",
+                    self.pipeline_version,
+                    center_pos,
+                    invalidate_crop,
+                    fast_display,
+                    skip_histogram,
+                    getattr(self.ids['mask_editor2'].get_active_mask(), 'mask_id', None),
+                )
             self.draw_event.set()
 
-        def sync_draw_image(self):
+        def sync_draw_image(self, invalidate_crop=False):
+            if invalidate_crop:
+                self.crop_image = None
             self.pipeline_version += 1
             self.draw_image_core()
                 
@@ -697,7 +865,11 @@ if __name__ == '__main__':
             self.apply_effects_lv(4, 'vignette')
 
         def lens_modifier_callback(self):
-            self.primary_effects[0]['lens_modifier'].set2widget(self, self.primary_param)
+            self.run_set2widget_all = True
+            try:
+                self.primary_effects[0]['lens_modifier'].set2widget(self, self.primary_param)
+            finally:
+                self.run_set2widget_all = False
 
         def distortion_callback(self, proc, widget):
             match proc:
@@ -758,7 +930,28 @@ if __name__ == '__main__':
             return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
         def apply_effects_lv(self, lv, effect, sync=False, subname=None, defer_draw=False):
+            if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and (
+                lv == 3 or subname == 'mask_geometry' or effect == 'mask_geometry'
+            ):
+                logging.warning(
+                    "[MASK_GEOM] apply_effects_lv enter lv=%s effect=%s subname=%s sync=%s defer_draw=%s run_set2widget_all=%s",
+                    lv,
+                    effect,
+                    subname,
+                    sync,
+                    defer_draw,
+                    self.run_set2widget_all,
+                )
             if self.run_set2widget_all == True:
+                if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and (
+                    lv == 3 or subname == 'mask_geometry' or effect == 'mask_geometry'
+                ):
+                    logging.warning(
+                        "[MASK_GEOM] apply_effects_lv skipped run_set2widget_all lv=%s effect=%s subname=%s",
+                        lv,
+                        effect,
+                        subname,
+                    )
                 return
 
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
@@ -771,6 +964,7 @@ if __name__ == '__main__':
             if lv == 0:
                 self.sync_distortion_mode_sliders()
 
+            mask_geometry_update = False
             # Mask Geometry: slider 変更後 active Composit の mask Geom matrix を再構築。
             # set_draw_mask (= mask.update_mask 同期呼出) より前に行うことで、
             # update_mask 内の direction-preserving 等の matrix 依存計算が新 matrix
@@ -778,10 +972,33 @@ if __name__ == '__main__':
             # で再描画、という見た目のジャンプを回避)。
             if lv == 3:
                 _eff_list = effect if isinstance(effect, list) else [effect] if effect is not None else []
-                if subname == 'mask_geometry' or 'mask_geometry' in _eff_list:
-                    self.ids['mask_editor2']._set_active_composit_matrix()
+                mask_geometry_update = subname == 'mask_geometry' or 'mask_geometry' in _eff_list
+                if mask_geometry_update:
+                    if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                        _keys = (
+                            "switch_mask_geometry",
+                            "mask_rotation",
+                            "mask_translation_x",
+                            "mask_translation_y",
+                            "mask_scale_x",
+                            "mask_scale_y",
+                            "mask_flip_mode",
+                        )
+                        logging.warning(
+                            "[MASK_GEOM] apply_effects_lv lv=%s effect=%s subname=%s target_mask=%s params=%s",
+                            lv,
+                            effect,
+                            subname,
+                            mask_id,
+                            {key: current_param.get(key) for key in _keys if key in current_param},
+                        )
+                    self.ids['mask_editor2']._set_active_composit_matrix(redraw_mask=True)
+                    self.ids['mask_editor2'].skip_next_mask_overlay_refresh(clear=False)
 
-            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, subname))
+            self.ids['mask_editor2'].set_draw_mask(
+                self._should_draw_mask_overlay(lv, subname),
+                refresh=not mask_geometry_update,
+            )
             #self.apply_rotation_flip_for_wrapper()
 
             # defer_draw=True のとき呼び出し側は後でまとめて start/sync を発火する想定。
@@ -789,7 +1006,10 @@ if __name__ == '__main__':
             if defer_draw:
                 return
             if sync == False:
-                self.start_draw_image()
+                self.start_draw_image(
+                    fast_display=mask_geometry_update,
+                    skip_histogram=mask_geometry_update,
+                )
             else:
                 self.sync_draw_image()
 
@@ -916,6 +1136,8 @@ if __name__ == '__main__':
             self.set2widget_all(self.primary_effects, self.primary_param)
 
         def begin_history_effect_ctrl(self, lv, effect, subname=None):
+            if self.run_set2widget_all == True:
+                return False
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
             effect_list = effect if isinstance(effect, list) else [effect]
             self.current_op = history.Operation(lv, effect_list, subname, mask_id)
@@ -924,6 +1146,9 @@ if __name__ == '__main__':
         
         def end_history_effect_ctrl(self, lv, effect, subname=None):            
             effect_list = effect if isinstance(effect, list) else [effect]
+            redraw_full_after_edit = lv == 3 and (
+                subname == 'mask_geometry' or 'mask_geometry' in effect_list
+            )
             
             if self.current_op is None:
                 logging.warning(f"MainWidget.end_history_effect_ctrl None. {effect_list}")
@@ -943,6 +1168,8 @@ if __name__ == '__main__':
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
             self.current_op = None
+            if redraw_full_after_edit:
+                self.start_draw_image()
 
         def apply_crop_button_action(self, action):
             if not self.begin_history_effect_ctrl(0, 'crop'):
@@ -1065,14 +1292,16 @@ if __name__ == '__main__':
         def reset_param(self, param):
             param.clear()
 
-        def set2widget_all(self, _effects, param):
+        def set2widget_all(self, _effects, param, reset_effects=True):
             if _effects is None:
                 _effects = self.primary_effects
                 param = self.primary_param
 
             self.run_set2widget_all = True
-            effects.set2widget_all(self, _effects, param)
-            self.run_set2widget_all = False
+            try:
+                effects.set2widget_all(self, _effects, param, reset_effects=reset_effects)
+            finally:
+                self.run_set2widget_all = False
 
         def _viewer_snapshot_rating(self, file_path: str) -> int:
             if not file_path:
@@ -1943,6 +2172,7 @@ if __name__ == '__main__':
             self.update_preview_texture_size()
             self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
             self.ids['mask_editor2'].set_primary_param(self.primary_param, params.get_disp_info(self.primary_param))
+            self.ids['mask_editor2'].restore_last_active_mask()
             self.ids['mask_editor2'].update()
             self.update_mask2_options_enabled()
 

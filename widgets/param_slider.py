@@ -9,6 +9,7 @@ from kivy.metrics import dp
 import logging
 import math
 import numpy as np
+import os
 
 import widgets.float_input
 import widgets.multi_slider
@@ -16,6 +17,8 @@ import widgets.tiny_button
 
 
 _BAR_TEXTURE_CACHE = {}
+_DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
+_MASK_GEOM_SLIDER_TEXTS = {"Rotation", "Translate X", "Translate Y", "Scale X", "Scale Y"}
 
 
 def _linear_to_srgb(rgb):
@@ -247,8 +250,9 @@ class ParamSlider(KVBoxLayout):
     bar_show_anchor_marker = KVBooleanProperty(False)
     bar_context = KVObjectProperty(None, allownone=True)
 
-    #def __init__(self, **kwargs):
-    #    super(ParamSlider, self).__init__(**kwargs)
+    def __init__(self, **kwargs):
+        super(ParamSlider, self).__init__(**kwargs)
+        self._editing = False
     
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)
@@ -299,6 +303,16 @@ class ParamSlider(KVBoxLayout):
             ):
                 self.slider = float("inf")
             self.slider = v
+
+    def on_slider(self, *args):
+        if _DEBUG_MASK_GEOMETRY and self.text in _MASK_GEOM_SLIDER_TEXTS:
+            logging.warning(
+                "[MASK_GEOM] ParamSlider.on_slider text=%s slider=%s value=%s disabled=%s",
+                self.text,
+                self.slider,
+                self.value,
+                self.disabled,
+            )
 
     def on_input_text_validate(self):
         try:
@@ -367,9 +381,17 @@ class ParamSlider(KVBoxLayout):
         return False
 
     def _notify_before_edit(self):
+        self._editing = True
+        if _DEBUG_MASK_GEOMETRY and self.text in _MASK_GEOM_SLIDER_TEXTS:
+            logging.warning("[MASK_GEOM] ParamSlider.before_edit text=%s value=%s", self.text, self.value)
         self.before_edit += 1
 
     def _notify_after_edit(self):
+        if not self._editing:
+            return
+        self._editing = False
+        if _DEBUG_MASK_GEOMETRY and self.text in _MASK_GEOM_SLIDER_TEXTS:
+            logging.warning("[MASK_GEOM] ParamSlider.after_edit text=%s value=%s", self.text, self.value)
         self.after_edit += 1
 
     def _make_bar_texture(self):

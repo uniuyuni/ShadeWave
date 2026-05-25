@@ -18,6 +18,10 @@ def lock_editor(func):
             return func(*args, **kwargs)
     return wrapper
 
+# MaskEditor2 の tcg_info['matrix'] は描画スレッドと UI/overlay 更新で共有される。
+# セグメントマスク用の一時 matrix swap が再入するため RLock にする。
+mask_editor_matrix_lock = threading.RLock()
+
 # メインスレッドの primary_param / imgset と描画スレッドの競合を防ぐ（on_select→empty_image など同一スレッド再入のため RLock）
 primary_param_lock = threading.RLock()
 

@@ -21,6 +21,74 @@ _PIPELINE_TIMING_EVERY = max(1, int(os.getenv("PLATYPUS_PIPELINE_TIMING_EVERY", 
 _PIPELINE_TIMING_LOCK = threading.Lock()
 _PIPELINE_TIMING_FRAME_SEQ = 0
 _PIPELINE_TIMING_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M%S")
+_DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _mask_geom_debug(message, *args):
+    if _DEBUG_MASK_GEOMETRY:
+        logging.warning("[MASK_GEOM] " + message, *args)
+
+
+def _mask_geom_id(mask):
+    if mask is None:
+        return None
+    mask_id = getattr(mask, "mask_id", "")
+    short_id = str(mask_id)[:8] if mask_id else "no-id"
+    return f"{mask.__class__.__name__}:{short_id}@{id(mask):x}"
+
+
+def _mask_geom_image_stats(image):
+    if image is None:
+        return None
+    try:
+        return {
+            "shape": tuple(int(v) for v in image.shape),
+            "hash": hash(np.ascontiguousarray(image).tobytes()),
+            "min": float(np.nanmin(image)),
+            "max": float(np.nanmax(image)),
+            "sum": float(np.nansum(image)),
+            "nonzero": int(np.count_nonzero(image)),
+        }
+    except Exception:
+        return {"shape": getattr(image, "shape", None)}
+
+
+def _mask_geom_weight_stats(weight):
+    if weight is None:
+        return None
+    try:
+        weight = np.asarray(weight, dtype=np.float32)
+        if weight.ndim == 3:
+            weight = np.mean(np.abs(weight), axis=2)
+        total = float(np.nansum(weight))
+        stats = {
+            "shape": tuple(int(v) for v in weight.shape),
+            "sum": total,
+            "max": float(np.nanmax(weight)),
+            "nonzero": int(np.count_nonzero(weight)),
+        }
+        if total > 0.0:
+            yy, xx = np.indices(weight.shape, dtype=np.float32)
+            stats["cx"] = float(np.nansum(xx * weight) / total)
+            stats["cy"] = float(np.nansum(yy * weight) / total)
+        return stats
+    except Exception:
+        return {"shape": getattr(weight, "shape", None)}
+
+
+def _mask_geom_param_summary(param):
+    if not param:
+        return {}
+    keys = (
+        "switch_mask_geometry",
+        "mask_rotation",
+        "mask_translation_x",
+        "mask_translation_y",
+        "mask_scale_x",
+        "mask_scale_y",
+        "mask_flip_mode",
+    )
+    return {key: param.get(key) for key in keys if key in param}
 
 def _effective_mask2_draw_effect_param(composit_mask):
     """Draw Effects は Composit レイヤーの設定だけを使う。"""
@@ -64,6 +132,8 @@ def _new_pipeline_timing(is_drag):
         "effect_total_ms": 0.0,
         "loop_orchestration_ms": 0.0,
         "overhead_components_ms": {},
+        "cache_events": {},
+        "reeffect_reasons": {},
         "sections_ms": {},
         "effects": {},  # effect_name -> counters
     }
@@ -75,7 +145,20 @@ def _timing_add_section_ms(timing, section, elapsed_ms):
     timing["sections_ms"][section] = timing["sections_ms"].get(section, 0.0) + float(elapsed_ms)
 
 
-def _timing_record_effect(timing, effect_name, make_ms, apply_ms, iteration_ms, overhead_components=None):
+def _timing_count(bucket, key, value):
+    bucket[key] = bucket.get(key, 0) + int(value)
+
+
+def _timing_record_effect(
+    timing,
+    effect_name,
+    make_ms,
+    apply_ms,
+    iteration_ms,
+    overhead_components=None,
+    cache_event=None,
+    reeffect_reason=None,
+):
     if timing is None:
         return
     make_ms = float(make_ms)
@@ -97,6 +180,8 @@ def _timing_record_effect(timing, effect_name, make_ms, apply_ms, iteration_ms, 
             "effect_ms": 0.0,
             "loop_overhead_ms": 0.0,
             "overhead_components_ms": {},
+            "cache_events": {},
+            "reeffect_reasons": {},
         },
     )
     bucket["calls"] += 1
@@ -104,6 +189,12 @@ def _timing_record_effect(timing, effect_name, make_ms, apply_ms, iteration_ms, 
     bucket["apply_ms"] += apply_ms
     bucket["effect_ms"] += effect_ms
     bucket["loop_overhead_ms"] += loop_overhead_ms
+    if cache_event:
+        _timing_count(timing["cache_events"], cache_event, 1)
+        _timing_count(bucket["cache_events"], cache_event, 1)
+    if reeffect_reason:
+        _timing_count(timing["reeffect_reasons"], reeffect_reason, 1)
+        _timing_count(bucket["reeffect_reasons"], reeffect_reason, 1)
     known = 0.0
     for comp, value in overhead_components.items():
         value = float(value)
@@ -113,6 +204,38 @@ def _timing_record_effect(timing, effect_name, make_ms, apply_ms, iteration_ms, 
     unknown = max(0.0, loop_overhead_ms - known)
     timing["overhead_components_ms"]["unknown_ms"] = timing["overhead_components_ms"].get("unknown_ms", 0.0) + unknown
     bucket["overhead_components_ms"]["unknown_ms"] = bucket["overhead_components_ms"].get("unknown_ms", 0.0) + unknown
+
+
+def _timing_effect_name(efconfig, level, effect_name):
+    layer = getattr(efconfig, "pipeline_layer_label", "primary")
+    if layer:
+        return f"{layer}.lv{level}.{effect_name}"
+    return f"lv{level}.{effect_name}"
+
+
+def _timing_mask_layer_label(mask, index):
+    mask_id = str(getattr(mask, "mask_id", ""))[:8]
+    return f"mask{index}:{mask_id}" if mask_id else f"mask{index}"
+
+
+def _reset_effect_cache_event(effect):
+    if hasattr(effect, "_last_cache_event"):
+        effect._last_cache_event = None
+
+
+def _classify_cache_event(effect, pre_hash, pre_diff, diff, reeffected):
+    event = getattr(effect, "_last_cache_event", None)
+    if event:
+        return event
+    post_hash = getattr(effect, "hash", None)
+    post_diff = getattr(effect, "diff", None)
+    if diff is None and post_diff is None:
+        return "no_output_after_reset" if reeffected else "no_output"
+    if reeffected:
+        return "recomputed_after_reset"
+    if pre_hash == post_hash and pre_diff is post_diff:
+        return "hit"
+    return "miss"
 
 
 def _finalize_pipeline_timing(timing):
@@ -135,6 +258,8 @@ def _finalize_pipeline_timing(timing):
         "loop_orchestration_ms": round(loop_orchestration_ms, 4),
         "non_effect_non_loop_ms": round(non_effect_non_loop_ms, 4),
         "overhead_components_ms": {k: round(v, 4) for k, v in timing["overhead_components_ms"].items()},
+        "cache_events": dict(timing["cache_events"]),
+        "reeffect_reasons": dict(timing["reeffect_reasons"]),
         "sections_ms": {k: round(v, 4) for k, v in timing["sections_ms"].items()},
         "effects": {},
     }
@@ -311,10 +436,11 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig.mode = EffectMode.PREVIEW
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
     efconfig.current_tab = current_tab
+    mask2_geometry_full_preview = current_tab == "Ge" and mask2_active
+    efconfig.full_preview = current_tab == "Ge"
     # Mask2 ON 中の Ge タブは「マスク Geometry モード」であって画像 crop の編集ではないので
-    # crop_editing から除外する。これを True のままにすると CropEffect.make_diff が
-    # disp_info を full image に書き換え、Mask2 OFF (= 他タブ移動) しても apply_zero_wrap
-    # の wrap マスクが full image のままになり余白が黒く塗りつぶされない。
+    # CropEffect には crop_editing=False を渡し、CropEditor を開く/disp_info を永続更新する
+    # 経路には入れない。表示だけはこの関数内の local disp_info で full-preview にする。
     efconfig.crop_editing = (current_tab == "Ge") and not mask2_active
     
     # Initialize basic input hash
@@ -322,6 +448,7 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.upstream_hash = hash(id(img))
     efconfig.pipeline_timing = timing
+    efconfig.pipeline_layer_label = "primary"
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_setup", (time.perf_counter() - _t0) * 1000.0)
@@ -331,20 +458,37 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
         _t0 = time.perf_counter()
     img0, lv1reset, pre_rotation_img, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig, processor=processor)
     disp_info = params.get_disp_info(primary_param) # Cropによって値が更新されてるかも
+    if mask2_geometry_full_preview:
+        msize = max(primary_param['original_img_size'][0], primary_param['original_img_size'][1])
+        disp_info = (0, 0, msize, msize, config.get_preview_texture_side() / msize)
     if timing is not None:
         _timing_add_section_ms(timing, "pipeline_lv0", (time.perf_counter() - _t0) * 1000.0)
 
     if timing is not None:
         _t0 = time.perf_counter()
     if crop_image is None or lv1reset == True:
+        _mask_geom_debug(
+            "process_pipeline crop refresh crop_image_none=%s lv1reset=%s center_pos=%s texture=%sx%s",
+            crop_image is None,
+            lv1reset,
+            center_pos,
+            texture_width,
+            texture_height,
+        )
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos)
         mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, pre_rotation_img)
-        params.set_disp_info(primary_param, disp_info2)
+        if not mask2_geometry_full_preview:
+            params.set_disp_info(primary_param, disp_info2)
         # 新規クロップ生成時は下流を必ず更新
         lv1reset = True
         
     else:
+        _mask_geom_debug(
+            "process_pipeline crop reuse crop_shape=%s disp_info=%s",
+            getattr(crop_image, "shape", None),
+            disp_info,
+        )
         imgc = crop_image
         disp_info2 = disp_info
     #mask_editor2.update()
@@ -390,6 +534,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info[4])
     efconfig.current_tab = None
     efconfig.crop_editing = False
+    efconfig.full_preview = False
     efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
 
@@ -414,6 +559,8 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
     # Initial status is COMPLETE because we start fresh or with completed image
     upstream_status = PipelineStatus.COMPLETE
 
+    previous_layer_label = getattr(efconfig, "pipeline_layer_label", "primary")
+    efconfig.pipeline_layer_label = "primary"
     img1, lv2reset, upstream_status = pipeline_lv1(imgc, primary_effects, primary_param, efconfig, lv1reset, upstream_status, processor)
     img2, lv3reset, upstream_status = pipeline_lv2(img1, primary_effects, primary_param, efconfig, lv2reset, upstream_status, processor)
     img3, lv1reset, upstream_status = pipeline_lv3(img2, primary_effects, primary_param, efconfig, lv3reset, upstream_status, processor)
@@ -435,21 +582,73 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
             # But the mask *itself* generation might be heavy.
             # For now, let's pass current upstream_status.
             
+            efconfig.pipeline_layer_label = _timing_mask_layer_label(mask, i)
             img2, lv2reset, _ = pipeline_lv1(img3, mask.effects, mask.effects_param, efconfig, lv1reset, upstream_status, processor)
             img2, lv1reset, _ = pipeline_lv2(img2, mask.effects, mask.effects_param, efconfig, lv2reset, upstream_status, processor)
 
             img2 = core.type_convert(img2, np.ndarray)
             img3 = core.type_convert(img3, np.ndarray)
 
+            if _DEBUG_MASK_GEOMETRY:
+                _mask_geom_debug(
+                    "pipeline2 before_mask_image layer=%s composit=%s params=%s img3=%s img2=%s",
+                    _timing_mask_layer_label(mask, i),
+                    _mask_geom_id(mask),
+                    _mask_geom_param_summary(getattr(mask, 'effects_param', None)),
+                    _mask_geom_image_stats(img3),
+                    _mask_geom_image_stats(img2),
+                )
             mask_image = mask.get_mask_image()
             if crop is not None:
                 mask_image = mask_image[crop[1]:crop[3], crop[0]:crop[2]]
             mask2_param = _effective_mask2_draw_effect_param(mask)
+            if _DEBUG_MASK_GEOMETRY:
+                _mask_geom_debug(
+                    "pipeline2 apply_mask_draw_effects layer=%s composit=%s mask=%s mask_weight=%s draw_params=%s resolution_scale=%s",
+                    _timing_mask_layer_label(mask, i),
+                    _mask_geom_id(mask),
+                    _mask_geom_image_stats(mask_image),
+                    _mask_geom_weight_stats(mask_image),
+                    _mask_geom_param_summary(mask2_param),
+                    getattr(efconfig, "resolution_scale", 1.0),
+                )
+            img3_before_mask_apply = img3 if not _DEBUG_MASK_GEOMETRY else img3.copy()
             img3 = core.apply_mask_draw_effects(
                 img3, mask_image, img2, mask2_param,
                 resolution_scale=getattr(efconfig, "resolution_scale", 1.0),
             )
+            # Mask composition mutates the image between lv3 and pipeline_last.
+            # Treat it as an upstream change so final-stage cached effects do
+            # not reuse a result made from the previous mask position.
+            lv1reset = True
+            child_state = tuple(
+                (
+                    getattr(child, "mask_id", None),
+                    maskop,
+                    getattr(child, "image_mask_cache_hash", None),
+                    getattr(child, "segment_mask_cache_hash", None),
+                    getattr(child, "depth_map_mask_cache_hash", None),
+                    getattr(child, "faces_mask_cache_hash", None),
+                )
+                for child, maskop in getattr(mask, "mask_list", [])
+            )
+            efconfig.upstream_hash = hash((
+                efconfig.upstream_hash,
+                "mask_composite",
+                getattr(mask, "mask_id", None),
+                child_state,
+                hash(repr(sorted(mask2_param.items()))),
+            ))
+            if _DEBUG_MASK_GEOMETRY:
+                _mask_geom_debug(
+                    "pipeline2 after_apply layer=%s composit=%s img3=%s delta_weight=%s",
+                    _timing_mask_layer_label(mask, i),
+                    _mask_geom_id(mask),
+                    _mask_geom_image_stats(img3),
+                    _mask_geom_weight_stats(img3 - img3_before_mask_apply),
+                )
 
+    efconfig.pipeline_layer_label = previous_layer_label
     return img3, lv1reset
 
 def pipeline_lv0(img, effects, param, efconfig, processor=None):
@@ -467,6 +666,8 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
     for i, n in enumerate(lv0):
         _iter_t0 = time.perf_counter() if getattr(efconfig, "pipeline_timing", None) is not None else None
         overhead_components = {}
+        reeffected = False
+        reeffect_reason = None
         # Update upstream status for the effect
         if _iter_t0 is not None:
             _t = time.perf_counter()
@@ -482,6 +683,8 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
                 overhead_components["reeffect_ms"] = overhead_components.get("reeffect_ms", 0.0) + (time.perf_counter() - _t) * 1000.0
             else:
                 lv0[n].reeffect()
+            reeffected = True
+            reeffect_reason = "previous_lv0_effect_changed"
             
         if n == 'geometry':
             if _iter_t0 is not None:
@@ -497,10 +700,13 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
             overhead_components["pre_diff_read_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
             pre_diff = lv0[n].diff
+        pre_hash = getattr(lv0[n], "hash", None)
         
         _make_t0 = time.perf_counter() if _iter_t0 is not None else None
+        _reset_effect_cache_event(lv0[n])
         diff = lv0[n].make_diff(rgb, param, efconfig)
         make_ms = (time.perf_counter() - _make_t0) * 1000.0 if _make_t0 is not None else 0.0
+        cache_event = _classify_cache_event(lv0[n], pre_hash, pre_diff, diff, reeffected)
         apply_ms = 0.0
         if diff is not None:
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
@@ -536,11 +742,13 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
         if _iter_t0 is not None:
             _timing_record_effect(
                 efconfig.pipeline_timing,
-                f"lv0.{n}",
+                _timing_effect_name(efconfig, 0, n),
                 make_ms,
                 apply_ms,
                 (time.perf_counter() - _iter_t0) * 1000.0,
                 overhead_components,
+                cache_event,
+                reeffect_reason,
             )
             
     if pre_rotation_img is None:
@@ -561,6 +769,8 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
     for i, n in enumerate(lv1):
         _iter_t0 = time.perf_counter() if getattr(efconfig, "pipeline_timing", None) is not None else None
         overhead_components = {}
+        reeffected = False
+        reeffect_reason = None
         if lv2reset == True:
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -568,6 +778,8 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
                 overhead_components["reeffect_ms"] = (time.perf_counter() - _t) * 1000.0
             else:
                 lv1[n].reeffect()
+            reeffected = True
+            reeffect_reason = "upstream_or_previous_lv1_effect_changed"
             
         if _iter_t0 is not None:
             _t = time.perf_counter()
@@ -575,9 +787,12 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
             overhead_components["pre_diff_read_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
             pre_diff = lv1[n].diff
+        pre_hash = getattr(lv1[n], "hash", None)
         _make_t0 = time.perf_counter() if _iter_t0 is not None else None
+        _reset_effect_cache_event(lv1[n])
         diff = lv1[n].make_diff(rgb, param, efconfig)
         make_ms = (time.perf_counter() - _make_t0) * 1000.0 if _make_t0 is not None else 0.0
+        cache_event = _classify_cache_event(lv1[n], pre_hash, pre_diff, diff, reeffected)
         apply_ms = 0.0
         if diff is not None:
             rgb = diff
@@ -608,11 +823,13 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
         if _iter_t0 is not None:
             _timing_record_effect(
                 efconfig.pipeline_timing,
-                f"lv1.{n}",
+                _timing_effect_name(efconfig, 1, n),
                 make_ms,
                 apply_ms,
                 (time.perf_counter() - _iter_t0) * 1000.0,
                 overhead_components,
+                cache_event,
+                reeffect_reason,
             )
             
     return rgb, lv2reset, efconfig.layer_status
@@ -628,6 +845,8 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
     for i, n in enumerate(lv2):
         _iter_t0 = time.perf_counter() if getattr(efconfig, "pipeline_timing", None) is not None else None
         overhead_components = {}
+        reeffected = False
+        reeffect_reason = None
         if lv3reset == True:
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -635,6 +854,8 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
                 overhead_components["reeffect_ms"] = (time.perf_counter() - _t) * 1000.0
             else:
                 lv2[n].reeffect()
+            reeffected = True
+            reeffect_reason = "upstream_or_previous_lv2_effect_changed"
 
         if _iter_t0 is not None:
             _t = time.perf_counter()
@@ -642,9 +863,12 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
             overhead_components["pre_diff_read_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
             pre_diff = lv2[n].diff
+        pre_hash = getattr(lv2[n], "hash", None)
         _make_t0 = time.perf_counter() if _iter_t0 is not None else None
+        _reset_effect_cache_event(lv2[n])
         diff = lv2[n].make_diff(rgb, param, efconfig)
         make_ms = (time.perf_counter() - _make_t0) * 1000.0 if _make_t0 is not None else 0.0
+        cache_event = _classify_cache_event(lv2[n], pre_hash, pre_diff, diff, reeffected)
         apply_ms = 0.0
         if diff is not None:
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
@@ -677,11 +901,13 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
         if _iter_t0 is not None:
             _timing_record_effect(
                 efconfig.pipeline_timing,
-                f"lv2.{n}",
+                _timing_effect_name(efconfig, 2, n),
                 make_ms,
                 apply_ms,
                 (time.perf_counter() - _iter_t0) * 1000.0,
                 overhead_components,
+                cache_event,
+                reeffect_reason,
             )
 
     return rgb, lv3reset, efconfig.layer_status
@@ -697,6 +923,8 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
     for i, n in enumerate(lv3):            
         _iter_t0 = time.perf_counter() if getattr(efconfig, "pipeline_timing", None) is not None else None
         overhead_components = {}
+        reeffected = False
+        reeffect_reason = None
         if lv4reset == True:
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -704,6 +932,8 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
                 overhead_components["reeffect_ms"] = (time.perf_counter() - _t) * 1000.0
             else:
                 lv3[n].reeffect()
+            reeffected = True
+            reeffect_reason = "upstream_or_previous_lv3_effect_changed"
 
         if _iter_t0 is not None:
             _t = time.perf_counter()
@@ -711,9 +941,12 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
             overhead_components["pre_diff_read_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
             pre_diff = lv3[n].diff
+        pre_hash = getattr(lv3[n], "hash", None)
         _make_t0 = time.perf_counter() if _iter_t0 is not None else None
+        _reset_effect_cache_event(lv3[n])
         diff = lv3[n].make_diff(rgb, param, efconfig)
         make_ms = (time.perf_counter() - _make_t0) * 1000.0 if _make_t0 is not None else 0.0
+        cache_event = _classify_cache_event(lv3[n], pre_hash, pre_diff, diff, reeffected)
         apply_ms = 0.0
         if diff is not None:
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
@@ -746,11 +979,13 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
         if _iter_t0 is not None:
             _timing_record_effect(
                 efconfig.pipeline_timing,
-                f"lv3.{n}",
+                _timing_effect_name(efconfig, 3, n),
                 make_ms,
                 apply_ms,
                 (time.perf_counter() - _iter_t0) * 1000.0,
                 overhead_components,
+                cache_event,
+                reeffect_reason,
             )
 
     return rgb, lv4reset, efconfig.layer_status
@@ -768,6 +1003,8 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
     for i, n in enumerate(lv4):            
         _iter_t0 = time.perf_counter() if getattr(efconfig, "pipeline_timing", None) is not None else None
         overhead_components = {}
+        reeffected = False
+        reeffect_reason = None
         if lv5reset == True:
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -775,6 +1012,8 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
                 overhead_components["reeffect_ms"] = (time.perf_counter() - _t) * 1000.0
             else:
                 lv4[n].reeffect()
+            reeffected = True
+            reeffect_reason = "upstream_or_previous_lv4_effect_changed"
 
         if _iter_t0 is not None:
             _t = time.perf_counter()
@@ -782,9 +1021,12 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
             overhead_components["pre_diff_read_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
             pre_diff = lv4[n].diff
+        pre_hash = getattr(lv4[n], "hash", None)
         _make_t0 = time.perf_counter() if _iter_t0 is not None else None
+        _reset_effect_cache_event(lv4[n])
         diff = lv4[n].make_diff(rgb, param, efconfig)
         make_ms = (time.perf_counter() - _make_t0) * 1000.0 if _make_t0 is not None else 0.0
+        cache_event = _classify_cache_event(lv4[n], pre_hash, pre_diff, diff, reeffected)
         apply_ms = 0.0
         if diff is not None:
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
@@ -802,33 +1044,50 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
         if _iter_t0 is not None:
             _timing_record_effect(
                 efconfig.pipeline_timing,
-                f"lv4.{n}",
+                _timing_effect_name(efconfig, 4, n),
                 make_ms,
                 apply_ms,
                 (time.perf_counter() - _iter_t0) * 1000.0,
                 overhead_components,
+                cache_event,
+                reeffect_reason,
             )
 
     return rgb
 
 def pipeline_curve(rgb, effects, param, efconfig):
-    rgb2 = rgb.copy()
+    rgb2 = None
+
+    def ensure_output():
+        nonlocal rgb2
+        if rgb2 is None:
+            rgb2 = rgb.copy()
+        return rgb2
 
     # トーンカーブ
     diff = effects['tonecurve'].make_diff(rgb, param, efconfig)
-    if diff is not None: rgb2 = effects['tonecurve'].apply_diff(rgb2)
+    if diff is not None:
+        rgb2 = effects['tonecurve'].apply_diff(ensure_output())
     diff = effects['tonecurve_red'].make_diff(rgb, param, efconfig)
-    if diff is not None: rgb2[..., 0:1] = effects['tonecurve_red'].apply_diff(rgb2[..., 0:1])
+    if diff is not None:
+        rgb2 = ensure_output()
+        rgb2[..., 0:1] = effects['tonecurve_red'].apply_diff(rgb2[..., 0:1])
     diff = effects['tonecurve_green'].make_diff(rgb, param, efconfig)
-    if diff is not None: rgb2[..., 1:2] = effects['tonecurve_green'].apply_diff(rgb2[..., 1:2])
+    if diff is not None:
+        rgb2 = ensure_output()
+        rgb2[..., 1:2] = effects['tonecurve_green'].apply_diff(rgb2[..., 1:2])
     diff = effects['tonecurve_blue'].make_diff(rgb, param, efconfig)
-    if diff is not None: rgb2[..., 2:3] = effects['tonecurve_blue'].apply_diff(rgb2[..., 2:3])
+    if diff is not None:
+        rgb2 = ensure_output()
+        rgb2[..., 2:3] = effects['tonecurve_blue'].apply_diff(rgb2[..., 2:3])
     
     # グレーディング
     diff = effects['grading1'].make_diff(rgb, param, efconfig)
-    if diff is not None: rgb2 = effects['grading1'].apply_diff(rgb2)
+    if diff is not None:
+        rgb2 = effects['grading1'].apply_diff(ensure_output())
     diff = effects['grading2'].make_diff(rgb, param, efconfig)
-    if diff is not None: rgb2 = effects['grading2'].apply_diff(rgb2)
+    if diff is not None:
+        rgb2 = effects['grading2'].apply_diff(ensure_output())
 
     return rgb2
 
@@ -837,11 +1096,13 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
     hls_h = hls2_h = hls[..., 0]
     hls_l = hls2_l = hls[..., 1]
     hls_s = hls2_s = hls[..., 2]
+    changed = False
 
     # Hのみ
     diff = effects['HuevsHue'].make_diff([hls_h, hls2_h], param, efconfig)
     if diff is not None:
         hls2_h = effects['HuevsHue'].apply_diff(hls2_h)
+        changed = True
 
     #　Lのみ
     lum_list = [('HuevsLum', hls_h), ('LumvsLum', hls_l), ('SatvsLum', hls_s)]
@@ -855,6 +1116,7 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
         diff = effects[n].make_diff([src, hls2_l], param, efconfig)
         if diff is not None:
             hls2_l = effects[n].apply_diff(hls2_l)
+            changed = True
 
         if pre_diff is not diff:
             lum_reset = True
@@ -870,10 +1132,14 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
         diff = effects[n].make_diff([src, hls2_s] if n != 'saturation' else hls2_s, param, efconfig)
         if diff is not None:
             hls2_s = effects[n].apply_diff(hls2_s)
+            changed = True
 
         if pre_diff is not diff:
             sat_reset = True
     
+    if not changed:
+        return None
+
     # チャンネル数が4以上の場合（Gainマップ等）、残りのチャンネルを結合
     channels = [hls2_h, hls2_l, hls2_s]
     if hls.shape[-1] > 3:
