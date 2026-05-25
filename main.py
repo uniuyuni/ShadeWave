@@ -202,6 +202,24 @@ if __name__ == '__main__':
             return True
         return False
 
+    class GeModePanel(MDBoxLayout):
+        visible = KVBooleanProperty(True)
+
+        def on_touch_down(self, touch):
+            if not self.visible:
+                return False
+            return super().on_touch_down(touch)
+
+        def on_touch_move(self, touch):
+            if not self.visible:
+                return False
+            return super().on_touch_move(touch)
+
+        def on_touch_up(self, touch):
+            if not self.visible:
+                return False
+            return super().on_touch_up(touch)
+
     class MainWidget(MDBoxLayout):
         # === 読み込み状態フラグの役割分担 ===
         # loading:              on_select 直後 〜 最初のピクセル表示可能 (FIRST_PAINTABLE/RGB_DONE)

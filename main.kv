@@ -2538,338 +2538,351 @@
                                 ref_padding: 4
 
 
-                                HeadLabel:
-                                    id: switch_rotation
-                                    text: ' Rotation'
-                                    button_enabled: False
-
-                                ParamSlider:
-                                    id: slider_rotation
-                                    text: "Angle"
-                                    min: -45.0
-                                    max: 45.0
-                                    value: 0
-                                    step: 0.1
-                                    for_float: True
-                                    on_slider: root.apply_effects_lv(0, 'geometry')
-                                    on_slider: root.apply_effects_lv(0, 'crop')
-                                    on_before_edit:
-                                        root.begin_history_effect_ctrl(0, 'geometry')
-                                        root.begin_rotation_crop_preview()
-                                    on_after_edit:
-                                        root.end_rotation_crop_preview()
-                                        root.end_history_effect_ctrl(0, 'geometry')
-
-                                VSpacer:
-                                
-                                ParamBoxLayout:
-
-                                    HSpacer:
-                                        ref_width: 100
-                                    Button:
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "L"
-                                        on_press:
-                                            root.begin_history_effect_ctrl(0, 'geometry')
-                                            root.set_effect_param(0, 'geometry', 90)
-                                            root.apply_effects_lv(0, 'crop')
-                                            root.end_history_effect_ctrl(0, 'geometry')
-                                    Button:
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "R"
-                                        on_press:
-                                            root.begin_history_effect_ctrl(0, 'geometry')
-                                            root.set_effect_param(0, 'geometry', -90)
-                                            root.apply_effects_lv(0, 'crop')
-                                            root.end_history_effect_ctrl(0, 'geometry')
-                                    Button:
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "H"
-                                        on_press:
-                                            root.begin_history_effect_ctrl(0, 'geometry')
-                                            root.set_effect_param(0, 'geometry', 'hflip')
-                                            root.apply_effects_lv(0, 'crop')
-                                            root.end_history_effect_ctrl(0, 'geometry')
-                                    Button:
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "V"
-                                        on_press:
-                                            root.begin_history_effect_ctrl(0, 'geometry')
-                                            root.set_effect_param(0, 'geometry', 'vflip')
-                                            root.apply_effects_lv(0, 'crop')
-                                            root.end_history_effect_ctrl(0, 'geometry')
-
-                                VSeparator:
-
-                                HeadLabel:
-                                    text: " Crop"
-                                    button_enabled: False
-
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Crop"
-                                    HSpacer:
-                                        size_hint_x: 0.5
-                                    ParamChip:
-                                        type: 'assist'
-                                        id: button_crop_reset
-                                        size_hint_x: None
-                                        ref_width: 60
-                                        on_release: root.apply_crop_button_action('reset')
-                                        ParamChipText:
-                                            text: "Reset"
-
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Auto Crop"
-                                    HSpacer:
-                                        size_hint_x: 0.5
-                                    ParamChip:
-                                        type: 'assist'
-                                        id: button_crop_auto
-                                        size_hint_x: None
-                                        ref_width: 60
-                                        on_release: root.apply_crop_button_action('auto')
-                                        ParamChipText:
-                                            text: "Crop"
-
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Aspect Ratio"
-                                    HSpacer:
-                                        size_hint_x: 0.15
-                                    ParamSpinner:
-                                        id: spinner_acpect_ratio
-                                        values: ["None", "1 / 1", "5 / 4", "3 / 2", "4 / 3", "16 / 9", "1.414 / 1", "148 / 100"]
-                                        on_value:
-                                            root.begin_history_effect_ctrl(0, 'crop')
-                                            root.apply_effects_lv(0, 'crop')
-                                            root.end_history_effect_ctrl(0, 'crop')
-
-                                VSeparator:
-
-                                HeadLabel:
-                                    id: switch_distortion_correction
-                                    text: " Distortion Correction"
-                                    on_press: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_active: root.apply_effects_lv(0, 'geometry')
-                                    on_release: root.end_history_effect_ctrl(0, 'geometry')
-
-                                ParamBoxLayout:
-
-                                    HSpacer:
-                                        ref_width: 100
-                                    ToggleButton:
-                                        id: btn_lens
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "Lens"
-                                        group: 'distortion'
-                                        state: 'normal'
-                                        on_press: root.apply_effects_lv(0, "geometry")
-                                    ToggleButton:
-                                        id: btn_trapezoid
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "Trapezoid"
-                                        group: 'distortion'
-                                        state: 'normal'
-                                        on_press: root.apply_effects_lv(0, "geometry")
-                                    ToggleButton:
-                                        id: btn_lines
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "Lines"
-                                        group: 'distortion'
-                                        state: 'normal'
-                                        on_press: root.apply_effects_lv(0, "geometry")
-
-                                ParamBoxLayout:
-                                    HSpacer:
-                                        ref_width: 100
-                                    ToggleButton:
-                                        id: btn_mesh
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "Mesh"
-                                        group: 'distortion'
-                                        state: 'normal'
-                                        on_press: root.apply_effects_lv(0, "geometry")
-                                    ToggleButton:
-                                        id: btn_four_points
-                                        pos_hint: {'center_x': .5, 'center_y': .5}
-                                        ref_height: 20
-                                        text: "Four Points"
-                                        group: 'distortion'
-                                        state: 'normal'
-                                        on_press: root.apply_effects_lv(0, "geometry")
-
-                                # Lens / Trapezoid の有効化は main.MainWidget.sync_distortion_mode_sliders
-                                ParamSlider:
-                                    id: slider_lens_distortion_strength
-                                    disabled: True
-                                    text: "Lens Distortion"
-                                    min: -100
-                                    max: 100
-                                    value: 0
-                                    step: 1
-                                    on_slider: root.apply_effects_lv(0, 'geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
-
-                                ParamSlider:
-                                    id: slider_lens_distortion_scale
-                                    disabled: True
-                                    text: "Lens Scale"
-                                    min: -100
-                                    max: 100
-                                    value: 0
-                                    step: 1
-                                    on_slider: root.apply_effects_lv(0, 'geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
-
-                                ParamSlider:
-                                    id: slider_correct_trapezoid_h
-                                    disabled: True
-                                    text: "Horizontal"
-                                    min: -100
-                                    max: 100
-                                    value: 0
-                                    step: 0.5
-                                    on_slider: root.apply_effects_lv(0, 'geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
-
-
-                                ParamSlider:
-                                    id: slider_correct_trapezoid_v
-                                    disabled: True
-                                    text: "Vertical"
-                                    min: -100
-                                    max: 100
-                                    value: 0
-                                    step: 0.5
-                                    on_slider: root.apply_effects_lv(0, 'geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
-
-                                ParamSlider:
-                                    id: slider_focal_length
-                                    disabled: True
-                                    text: "Focal Length"
-                                    min: 0
-                                    max: 100
-                                    value: 20
-                                    step: 1
-                                    on_slider: root.apply_effects_lv(0, 'geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
-
-                                VSeparator:
-
-                                HeadLabel:
-                                    id: switch_mask_geometry
-                                    text: ' Mask Geometry'
-                                    on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                    on_active: root.apply_effects_lv(3, 'mask_geometry')
-                                    on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
-
-                                ParamSlider:
-                                    id: slider_mask_rotation
-                                    text: "Rotation"
-                                    min: -180
-                                    max: 180
-                                    value: 0
-                                    step: 0.5
-                                    for_float: True
-                                    on_slider: root.apply_effects_lv(3, 'mask_geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
-
-                                AnchorLayout:
-                                    anchor_x: 'right'
-                                    anchor_y: 'center'
+                                GeModePanel:
+                                    id: ge_image_geometry_panel
+                                    visible: mask2.state != 'down'
+                                    orientation: "vertical"
                                     size_hint_y: None
-                                    ref_height: 24
+                                    height: self.minimum_height if self.visible else 0
+                                    opacity: 1 if self.visible else 0
+                                    HeadLabel:
+                                        id: switch_rotation
+                                        text: ' Rotation'
+                                        button_enabled: False
 
-                                    MDGridLayout:
-                                        size_hint: None, None
-                                        ref_width: 256
-                                        ref_height: 20
-                                        cols: 4
-                                        ref_spacing: 2
+                                    ParamSlider:
+                                        id: slider_rotation
+                                        text: "Angle"
+                                        min: -45.0
+                                        max: 45.0
+                                        value: 0
+                                        step: 0.1
+                                        for_float: True
+                                        on_slider: root.apply_effects_lv(0, 'geometry')
+                                        on_slider: root.apply_effects_lv(0, 'crop')
+                                        on_before_edit:
+                                            root.begin_history_effect_ctrl(0, 'geometry')
+                                            root.begin_rotation_crop_preview()
+                                        on_after_edit:
+                                            root.end_rotation_crop_preview()
+                                            root.end_history_effect_ctrl(0, 'geometry')
 
+                                    VSpacer:
+
+                                    ParamBoxLayout:
+
+                                        HSpacer:
+                                            ref_width: 100
+                                        Button:
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "L"
+                                            on_press:
+                                                root.begin_history_effect_ctrl(0, 'geometry')
+                                                root.set_effect_param(0, 'geometry', 90)
+                                                root.apply_effects_lv(0, 'crop')
+                                                root.end_history_effect_ctrl(0, 'geometry')
+                                        Button:
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "R"
+                                            on_press:
+                                                root.begin_history_effect_ctrl(0, 'geometry')
+                                                root.set_effect_param(0, 'geometry', -90)
+                                                root.apply_effects_lv(0, 'crop')
+                                                root.end_history_effect_ctrl(0, 'geometry')
+                                        Button:
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "H"
+                                            on_press:
+                                                root.begin_history_effect_ctrl(0, 'geometry')
+                                                root.set_effect_param(0, 'geometry', 'hflip')
+                                                root.apply_effects_lv(0, 'crop')
+                                                root.end_history_effect_ctrl(0, 'geometry')
+                                        Button:
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "V"
+                                            on_press:
+                                                root.begin_history_effect_ctrl(0, 'geometry')
+                                                root.set_effect_param(0, 'geometry', 'vflip')
+                                                root.apply_effects_lv(0, 'crop')
+                                                root.end_history_effect_ctrl(0, 'geometry')
+
+                                    VSeparator:
+
+                                    HeadLabel:
+                                        text: " Crop"
+                                        button_enabled: False
+
+                                    ParamBoxLayout:
                                         ParamLabel:
-                                            text: "Flip H"
-                                            ref_width: 64
-                                        ParamCheckBox:
-                                            id: checkbox_mask_flip_h
-                                            active: False
-                                            on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                            on_active: root.apply_effects_lv(3, 'mask_geometry')
-                                            on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                            text: "Crop"
+                                        HSpacer:
+                                            size_hint_x: 0.5
+                                        ParamChip:
+                                            type: 'assist'
+                                            id: button_crop_reset
+                                            size_hint_x: None
+                                            ref_width: 60
+                                            on_release: root.apply_crop_button_action('reset')
+                                            ParamChipText:
+                                                text: "Reset"
+
+                                    ParamBoxLayout:
                                         ParamLabel:
-                                            text: "Flip V"
-                                            ref_width: 64
-                                        ParamCheckBox:
-                                            id: checkbox_mask_flip_v
-                                            active: False
-                                            on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                            on_active: root.apply_effects_lv(3, 'mask_geometry')
-                                            on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                            text: "Auto Crop"
+                                        HSpacer:
+                                            size_hint_x: 0.5
+                                        ParamChip:
+                                            type: 'assist'
+                                            id: button_crop_auto
+                                            size_hint_x: None
+                                            ref_width: 60
+                                            on_release: root.apply_crop_button_action('auto')
+                                            ParamChipText:
+                                                text: "Crop"
 
-                                ParamSlider:
-                                    id: slider_mask_translation_x
-                                    text: "Translate X"
-                                    min: -100
-                                    max: 100
-                                    value: 0
-                                    step: 0.5
-                                    for_float: True
-                                    on_slider: root.apply_effects_lv(3, 'mask_geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                    ParamBoxLayout:
+                                        ParamLabel:
+                                            text: "Aspect Ratio"
+                                        HSpacer:
+                                            size_hint_x: 0.15
+                                        ParamSpinner:
+                                            id: spinner_acpect_ratio
+                                            values: ["None", "1 / 1", "5 / 4", "3 / 2", "4 / 3", "16 / 9", "1.414 / 1", "148 / 100"]
+                                            on_value:
+                                                root.begin_history_effect_ctrl(0, 'crop')
+                                                root.apply_effects_lv(0, 'crop')
+                                                root.end_history_effect_ctrl(0, 'crop')
 
-                                ParamSlider:
-                                    id: slider_mask_translation_y
-                                    text: "Translate Y"
-                                    min: -100
-                                    max: 100
-                                    value: 0
-                                    step: 0.5
-                                    for_float: True
-                                    on_slider: root.apply_effects_lv(3, 'mask_geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                    VSeparator:
 
-                                ParamSlider:
-                                    id: slider_mask_scale_x
-                                    text: "Scale X"
-                                    min: 10
-                                    max: 400
-                                    value: 100
-                                    step: 1
-                                    for_float: True
-                                    on_slider: root.apply_effects_lv(3, 'mask_geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                    HeadLabel:
+                                        id: switch_distortion_correction
+                                        text: " Distortion Correction"
+                                        on_press: root.begin_history_effect_ctrl(0, 'geometry')
+                                        on_active: root.apply_effects_lv(0, 'geometry')
+                                        on_release: root.end_history_effect_ctrl(0, 'geometry')
 
-                                ParamSlider:
-                                    id: slider_mask_scale_y
-                                    text: "Scale Y"
-                                    min: 10
-                                    max: 400
-                                    value: 100
-                                    step: 1
-                                    for_float: True
-                                    on_slider: root.apply_effects_lv(3, 'mask_geometry')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                    ParamBoxLayout:
+
+                                        HSpacer:
+                                            ref_width: 100
+                                        ToggleButton:
+                                            id: btn_lens
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "Lens"
+                                            group: 'distortion'
+                                            state: 'normal'
+                                            on_press: root.apply_effects_lv(0, "geometry")
+                                        ToggleButton:
+                                            id: btn_trapezoid
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "Trapezoid"
+                                            group: 'distortion'
+                                            state: 'normal'
+                                            on_press: root.apply_effects_lv(0, "geometry")
+                                        ToggleButton:
+                                            id: btn_lines
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "Lines"
+                                            group: 'distortion'
+                                            state: 'normal'
+                                            on_press: root.apply_effects_lv(0, "geometry")
+
+                                    ParamBoxLayout:
+                                        HSpacer:
+                                            ref_width: 100
+                                        ToggleButton:
+                                            id: btn_mesh
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "Mesh"
+                                            group: 'distortion'
+                                            state: 'normal'
+                                            on_press: root.apply_effects_lv(0, "geometry")
+                                        ToggleButton:
+                                            id: btn_four_points
+                                            pos_hint: {'center_x': .5, 'center_y': .5}
+                                            ref_height: 20
+                                            text: "Four Points"
+                                            group: 'distortion'
+                                            state: 'normal'
+                                            on_press: root.apply_effects_lv(0, "geometry")
+
+                                    # Lens / Trapezoid の有効化は main.MainWidget.sync_distortion_mode_sliders
+                                    ParamSlider:
+                                        id: slider_lens_distortion_strength
+                                        disabled: True
+                                        text: "Lens Distortion"
+                                        min: -100
+                                        max: 100
+                                        value: 0
+                                        step: 1
+                                        on_slider: root.apply_effects_lv(0, 'geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+
+                                    ParamSlider:
+                                        id: slider_lens_distortion_scale
+                                        disabled: True
+                                        text: "Lens Scale"
+                                        min: -100
+                                        max: 100
+                                        value: 0
+                                        step: 1
+                                        on_slider: root.apply_effects_lv(0, 'geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+
+                                    ParamSlider:
+                                        id: slider_correct_trapezoid_h
+                                        disabled: True
+                                        text: "Horizontal"
+                                        min: -100
+                                        max: 100
+                                        value: 0
+                                        step: 0.5
+                                        on_slider: root.apply_effects_lv(0, 'geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+
+
+                                    ParamSlider:
+                                        id: slider_correct_trapezoid_v
+                                        disabled: True
+                                        text: "Vertical"
+                                        min: -100
+                                        max: 100
+                                        value: 0
+                                        step: 0.5
+                                        on_slider: root.apply_effects_lv(0, 'geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+
+                                    ParamSlider:
+                                        id: slider_focal_length
+                                        disabled: True
+                                        text: "Focal Length"
+                                        min: 0
+                                        max: 100
+                                        value: 20
+                                        step: 1
+                                        on_slider: root.apply_effects_lv(0, 'geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(0, 'geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(0, 'geometry')
+
+
+                                GeModePanel:
+                                    id: ge_mask_geometry_panel
+                                    visible: mask2.state == 'down'
+                                    orientation: "vertical"
+                                    size_hint_y: None
+                                    height: self.minimum_height if self.visible else 0
+                                    opacity: 1 if self.visible else 0
+                                    HeadLabel:
+                                        id: switch_mask_geometry
+                                        text: ' Mask Geometry'
+                                        on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                        on_active: root.apply_effects_lv(3, 'mask_geometry')
+                                        on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+
+                                    ParamSlider:
+                                        id: slider_mask_rotation
+                                        text: "Rotation"
+                                        min: -180
+                                        max: 180
+                                        value: 0
+                                        step: 0.5
+                                        for_float: True
+                                        on_slider: root.apply_effects_lv(3, 'mask_geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+
+                                    AnchorLayout:
+                                        anchor_x: 'right'
+                                        anchor_y: 'center'
+                                        size_hint_y: None
+                                        ref_height: 24
+
+                                        MDGridLayout:
+                                            size_hint: None, None
+                                            ref_width: 256
+                                            ref_height: 20
+                                            cols: 4
+                                            ref_spacing: 2
+
+                                            ParamLabel:
+                                                text: "Flip H"
+                                                ref_width: 64
+                                            ParamCheckBox:
+                                                id: checkbox_mask_flip_h
+                                                active: False
+                                                on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                                on_active: root.apply_effects_lv(3, 'mask_geometry')
+                                                on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+                                            ParamLabel:
+                                                text: "Flip V"
+                                                ref_width: 64
+                                            ParamCheckBox:
+                                                id: checkbox_mask_flip_v
+                                                active: False
+                                                on_press: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                                on_active: root.apply_effects_lv(3, 'mask_geometry')
+                                                on_release: root.end_history_effect_ctrl(3, 'mask_geometry')
+
+                                    ParamSlider:
+                                        id: slider_mask_translation_x
+                                        text: "Translate X"
+                                        min: -100
+                                        max: 100
+                                        value: 0
+                                        step: 0.5
+                                        for_float: True
+                                        on_slider: root.apply_effects_lv(3, 'mask_geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+
+                                    ParamSlider:
+                                        id: slider_mask_translation_y
+                                        text: "Translate Y"
+                                        min: -100
+                                        max: 100
+                                        value: 0
+                                        step: 0.5
+                                        for_float: True
+                                        on_slider: root.apply_effects_lv(3, 'mask_geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+
+                                    ParamSlider:
+                                        id: slider_mask_scale_x
+                                        text: "Scale X"
+                                        min: 10
+                                        max: 400
+                                        value: 100
+                                        step: 1
+                                        for_float: True
+                                        on_slider: root.apply_effects_lv(3, 'mask_geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
+
+                                    ParamSlider:
+                                        id: slider_mask_scale_y
+                                        text: "Scale Y"
+                                        min: 10
+                                        max: 400
+                                        value: 100
+                                        step: 1
+                                        for_float: True
+                                        on_slider: root.apply_effects_lv(3, 'mask_geometry')
+                                        on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
+                                        on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
 
 
                     IconTabbedPanelItem:
