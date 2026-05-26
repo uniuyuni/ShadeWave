@@ -177,6 +177,8 @@ class EffectConfig():
     def __init__(self, **kwargs):
         self.disp_info = None
         self.is_zoom = False
+        self.is_zoomed = False
+        self.zoom_ratio = 1.0
         self.mode = EffectMode.PREVIEW
         self.resolution_scale = 1.0
         self.processor = None

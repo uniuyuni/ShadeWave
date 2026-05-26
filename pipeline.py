@@ -404,7 +404,7 @@ class AsyncPipelineManager:
         self.cache.clear()
 
 
-def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
+def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
         _t0 = time.perf_counter()
@@ -433,6 +433,7 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
     efconfig = effects.EffectConfig()
     efconfig.disp_info = disp_info
     efconfig.is_zoomed = is_zoomed
+    efconfig.zoom_ratio = zoom_ratio
     efconfig.mode = EffectMode.PREVIEW
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
     efconfig.current_tab = current_tab
@@ -475,7 +476,7 @@ def process_pipeline(img, crop_image, is_zoomed, texture_width, texture_height, 
             texture_width,
             texture_height,
         )
-        imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos)
+        imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos, zoom_ratio=zoom_ratio)
         mask_editor2.set_primary_param(primary_param, disp_info2)
         mask_editor2.set_ref_image(imgc, pre_rotation_img)
         if not mask2_geometry_full_preview:

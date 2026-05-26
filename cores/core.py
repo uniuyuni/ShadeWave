@@ -875,7 +875,7 @@ def crop_image_with_disp_info(image, disp_info):
 
     return result
 
-def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click_x, click_y, is_zoomed, center_pos=None):
+def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click_x, click_y, is_zoomed, center_pos=None, zoom_ratio=1.0):
 
     # 画像のサイズを取得
     image_height, image_width = image.shape[:2]
@@ -902,6 +902,7 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         disp_info = (dx, dy, dw, dh, scale)
 
     else:
+        zoom_ratio = min(4.0, max(0.5, float(zoom_ratio)))
         # クリック位置を元の画像の座標系に変換
         click_x = click_x - offset_x
         click_y = click_y - offset_y
@@ -909,8 +910,8 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         click_image_y = click_y / scale
 
         # 切り抜き範囲を計算
-        crop_width = int(texture_width)
-        crop_height = int(texture_height)
+        crop_width = max(1, int(round(texture_width / zoom_ratio)))
+        crop_height = max(1, int(round(texture_height / zoom_ratio)))
 
         if center_pos is not None:
              # 中心座標指定
@@ -918,17 +919,24 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
             crop_y = center_pos[1] - crop_height // 2
 
         else:
-            # 既にズーム済み（scale == 1.0）なら位置を維持
-            if abs(scale - 1.0) < 0.01:
-                crop_x = disp_info[0]
-                crop_y = disp_info[1]
+            # 既に同じ倍率でズーム済みなら位置を維持
+            if abs(scale - zoom_ratio) < 0.01:
+                crop_x = disp_info[0] + disp_info[2] / 2 - crop_width // 2
+                crop_y = disp_info[1] + disp_info[3] / 2 - crop_height // 2
             else:
                 # クリック位置を中心にする
                 crop_x = disp_info[0] + click_image_x - crop_width // 2
                 crop_y = disp_info[1] + click_image_y - crop_height // 2
 
         # クロップ
-        result, disp_info = crop_image_info(image, (crop_x, crop_y, crop_width, crop_height, 1.0), crop_rect)
+        result, disp_info = crop_image_info(image, (crop_x, crop_y, crop_width, crop_height, zoom_ratio), crop_rect)
+        target_width = max(1, int(texture_width))
+        target_height = max(1, int(texture_height))
+        if result.shape[1] != target_width or result.shape[0] != target_height:
+            interpolation = cv2.INTER_NEAREST if zoom_ratio >= 1.0 else cv2.INTER_AREA
+            result = cv2.resize(result, (target_width, target_height), interpolation=interpolation)
+        actual_scale = target_width / max(1, disp_info[2])
+        disp_info = (disp_info[0], disp_info[1], disp_info[2], disp_info[3], actual_scale)
     
     return result, disp_info
 

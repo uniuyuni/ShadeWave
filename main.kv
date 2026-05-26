@@ -369,15 +369,31 @@
                     ref_height: 30
 
                     Button:
-                        size_hint_x: 0.1
+                        size_hint: 0.1, None
+                        ref_padding: 3
+                        ref_height: 24
                         text: "Select"
                         disabled: root.loading == True
                         on_press: root.on_select_press()
+                    ParamSlider:
+                        id: slider_zoom_ratio
+                        size_hint_x: 0.32
+                        text: "Zoom " + str(int(round(root.zoom_ratio * 100))) + "%"
+                        min: 50
+                        max: 400
+                        value: 100
+                        step: 10
+                        label_width: 70
+                        disabled: root.image_loaded == False or root.is_zoomed == False
+                        on_slider: root.on_zoom_ratio_slider(self.slider)
+                        on_after_edit: root.on_zoom_ratio_after_edit()
                     HSpacer:
-                        size_hint_x: 0.5
+                        size_hint_x: 0.23
                     ToggleButton:
                         id: mask2
-                        size_hint_x: 0.1
+                        size_hint: 0.1, None
+                        ref_padding: 3
+                        ref_height: 24
                         text: "Mask2"
                         # image_loaded==False の間は loading==True の局面を内包するので loading 判定は不要。
                         # mask2_wait_full_load は RAW プレビュー〜フル復号間のみ True になる Mask2 専用 gate。
@@ -409,11 +425,13 @@
                             text_size: self.size
                             color: 1, 1, 1, 1
                         Button:
+                            size_hint: 0.8, None
+                            ref_padding: 3
+                            ref_height: 24
                             text: 'Cancel' if root.export_in_progress else 'Export'
                             # image_loaded==False は loading==True を内包するので 1 条件で十分。
                             # Export 進行中は Cancel として常に有効。
                             disabled: root.image_loaded == False and not root.export_in_progress
-                            size_hint_x: 0.8
                             on_press: root.on_export_bar_press()
 
             BoxLayout:

@@ -241,6 +241,8 @@ if __name__ == '__main__':
         export_done = KVNumericProperty(0)
         export_total = KVNumericProperty(0)
         image_loaded = KVBooleanProperty(False)
+        is_zoomed = KVBooleanProperty(False)
+        zoom_ratio = KVNumericProperty(1.0)
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -252,6 +254,7 @@ if __name__ == '__main__':
             self.crop_image = None
             self.crop_image_view_key = None
             self.is_zoomed = False
+            self.zoom_ratio = 1.0
             self.drag_center_start = None
             self.is_press_space = False
 
@@ -278,6 +281,7 @@ if __name__ == '__main__':
             self.apply_draw_fast_display = False
             self.apply_draw_skip_histogram = False
             self._fast_display_transform_cache = {}
+            KVClock.schedule_once(lambda dt: self._sync_zoom_ratio_slider(), 0)
             self.draw_event = threading.Event()
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
             self.apply_thread.start()
@@ -645,6 +649,13 @@ if __name__ == '__main__':
                 self.texture = KVTexture.create(size=(img.shape[1], img.shape[0]), colorfmt='rgb', bufferfmt=target_fmt)
                 self.texture.flip_vertical()
 
+            if self.is_zoomed and self.zoom_ratio >= 1.0:
+                self.texture.mag_filter = 'nearest'
+                self.texture.min_filter = 'nearest'
+            else:
+                self.texture.mag_filter = 'linear'
+                self.texture.min_filter = 'linear'
+
             if is_dither:
                 img = core.jjn_dither_uint8(img)
                 self.texture.blit_buffer(img.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
@@ -753,7 +764,7 @@ if __name__ == '__main__':
                             fast_display,
                             skip_histogram,
                         )
-                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
+                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
                     logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                     perf_trace.event("draw_image_core.pipeline_done")
                     if img is None:
@@ -1791,6 +1802,63 @@ if __name__ == '__main__':
                 and self.imgset is not None
                 and getattr(self.imgset, 'img', None) is not None
             )
+
+        def _clamp_zoom_ratio(self, value):
+            return min(4.0, max(0.5, float(value)))
+
+        def _sync_zoom_ratio_slider(self, *args):
+            try:
+                slider = self.ids['slider_zoom_ratio']
+            except Exception:
+                return
+            disabled = (not self.image_loaded) or (not self.is_zoomed)
+            percent = int(round(self.zoom_ratio * 100))
+            if hasattr(slider, 'ids') and 'slider' in slider.ids:
+                current = slider.ids['slider'].value
+                if not math.isclose(current, percent, rel_tol=0.0, abs_tol=1e-4):
+                    slider.disabled = True
+                    slider.ids['slider'].value = percent
+                    slider.value = percent
+                    slider.ids['input'].set_value(percent)
+            slider.disabled = disabled
+
+        def on_image_loaded(self, *args):
+            self._sync_zoom_ratio_slider()
+
+        def on_is_zoomed(self, *args):
+            self._sync_zoom_ratio_slider()
+
+        def on_zoom_ratio(self, *args):
+            self._sync_zoom_ratio_slider()
+
+        def _current_zoom_center_pos(self):
+            disp_info = params.get_disp_info(self.primary_param)
+            if disp_info is None:
+                return None
+            dx, dy, dw, dh, _ = disp_info
+            return (dx + dw / 2, dy + dh / 2)
+
+        def on_zoom_ratio_slider(self, percent):
+            ratio = self._clamp_zoom_ratio(percent / 100.0)
+            if math.isclose(self.zoom_ratio, ratio, rel_tol=0.0, abs_tol=1e-4):
+                return
+            center_pos = self._current_zoom_center_pos() if self.is_zoomed else None
+            self.zoom_ratio = ratio
+            if self.is_zoomed and self._image_interaction_ready():
+                effects.reeffect_all(self.primary_effects, 1)
+                self.start_draw_image_and_crop(
+                    self.imgset,
+                    center_pos=center_pos,
+                    fast_display=True,
+                    skip_histogram=True,
+                )
+
+        def on_zoom_ratio_after_edit(self):
+            if self.is_zoomed and self._image_interaction_ready():
+                self.start_draw_image_and_crop(
+                    self.imgset,
+                    center_pos=self._current_zoom_center_pos(),
+                )
 
         def _is_mask2_on(self):
             """Mask2 トグルが ON 状態か。マスク編集モードの判定軸。
