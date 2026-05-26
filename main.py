@@ -55,6 +55,7 @@ if __name__ == '__main__':
         BooleanProperty as KVBooleanProperty,
         ListProperty as KVListProperty,
         NumericProperty as KVNumericProperty,
+        StringProperty as KVStringProperty,
     )
     from kivy.clock import Clock as KVClock, mainthread as kvmainthread
     from kivy.graphics.transformation import Matrix as KVMatrix
@@ -243,11 +244,16 @@ if __name__ == '__main__':
         image_loaded = KVBooleanProperty(False)
         is_zoomed = KVBooleanProperty(False)
         zoom_ratio = KVNumericProperty(1.0)
+        preview_pixel_visible = KVBooleanProperty(False)
+        preview_pixel_text = KVStringProperty("")
+        preview_pixel_color = KVListProperty([0, 0, 0, 1])
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
 
             self.texture = None
+            self.preview_sample_image = None
+            self._preview_pixel_last_xy = None
             self.imgset = None
             self.click_x = 0
             self.click_y = 0        
@@ -308,6 +314,7 @@ if __name__ == '__main__':
 
             KVWindow.bind(on_key_down=self.on_key_down)
             KVWindow.bind(on_key_up=self.on_key_up)
+            KVWindow.bind(mouse_pos=self.on_preview_mouse_pos)
             KVClock.schedule_once(lambda _dt: self.update_mask2_options_enabled(), 0)
 
         def on_start(self, *args, **kwargs):
@@ -644,6 +651,8 @@ if __name__ == '__main__':
             is_dither = config.get_config('display_output_dither')
             is_downscale = config.get_config('display_output_downscale')
             target_fmt = 'ubyte' if (is_dither or is_downscale) else 'float'
+            self.preview_sample_image = np.clip(img, 0, 1)
+            self._preview_pixel_last_xy = None
 
             if self.texture is None or self.texture.size != (img.shape[1], img.shape[0]):
                 self.texture = KVTexture.create(size=(img.shape[1], img.shape[0]), colorfmt='rgb', bufferfmt=target_fmt)
@@ -677,6 +686,7 @@ if __name__ == '__main__':
 
             self.resize()
             self.refresh_mask2_overlay()
+            self.update_preview_pixel_info(KVWindow.mouse_pos)
 
             #Singnalを送る
             import signals
@@ -685,6 +695,43 @@ if __name__ == '__main__':
             # 1 トレース = 1 画像表示。ここで JSONL に書き出す。
             perf_trace.event("blit_image.done")
             perf_trace.flush(reason="blit_done")
+
+        def on_preview_mouse_pos(self, window, pos):
+            self.update_preview_pixel_info(pos)
+
+        def update_preview_pixel_info(self, pos):
+            sample = self.preview_sample_image
+            preview = self.ids.get("preview")
+            if sample is None or preview is None or getattr(preview, "texture", None) is None:
+                self.preview_pixel_visible = False
+                self._preview_pixel_last_xy = None
+                return
+
+            try:
+                tex_x, tex_y = utils.to_texture(pos, preview)
+            except Exception:
+                self.preview_pixel_visible = False
+                self._preview_pixel_last_xy = None
+                return
+
+            h, w = sample.shape[:2]
+            x = int(tex_x)
+            y = int(tex_y)
+            if x < 0 or y < 0 or x >= w or y >= h:
+                self.preview_pixel_visible = False
+                self._preview_pixel_last_xy = None
+                return
+
+            if self.preview_pixel_visible and self._preview_pixel_last_xy == (x, y):
+                return
+            self._preview_pixel_last_xy = (x, y)
+
+            r, g, b = [float(v) for v in sample[y, x, :3]]
+            luminance = 0.299 * r + 0.587 * g + 0.114 * b
+            r8, g8, b8, l8 = [int(round(np.clip(v, 0, 1) * 255)) for v in (r, g, b, luminance)]
+            self.preview_pixel_color = [r, g, b, 1]
+            self.preview_pixel_text = f"R {r8:3d}  G {g8:3d}  B {b8:3d}  L {l8:3d}"
+            self.preview_pixel_visible = True
 
         @kvmainthread
         def draw_histogram_view(self, hist_data):
