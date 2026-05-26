@@ -591,9 +591,14 @@ if __name__ == '__main__':
                 self.reset_param(self.primary_param)
                 self.ids['mask_editor2'].clear_mask()
         
-        def start_draw_image_and_crop(self, imgset, center_pos=None):
+        def start_draw_image_and_crop(self, imgset, center_pos=None, fast_display=False, skip_histogram=False):
             if self.imgset is imgset:
-                self.start_draw_image(center_pos, invalidate_crop=True)
+                self.start_draw_image(
+                    center_pos,
+                    invalidate_crop=True,
+                    fast_display=fast_display,
+                    skip_histogram=skip_histogram,
+                )
 
         def sync_draw_image_and_crop(self, imgset):
             if self.imgset is imgset:
@@ -1879,7 +1884,12 @@ if __name__ == '__main__':
                         new_cy = self.drag_center_start[1] + offset_y 
 
                         effects.reeffect_all(self.primary_effects, 1)
-                        self.start_draw_image_and_crop(self.imgset, center_pos=(new_cx, new_cy))
+                        self.start_draw_image_and_crop(
+                            self.imgset,
+                            center_pos=(new_cx, new_cy),
+                            fast_display=True,
+                            skip_histogram=True,
+                        )
 
             return False
                     
