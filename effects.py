@@ -2426,6 +2426,15 @@ class HLSEffect(Effect):
     def _set_hue_slider_range(cls, widget, color_name, full_range):
         min_hue, max_hue, step = cls._hue_slider_range(color_name, full_range)
         slider = widget.ids[f"slider_hls_{color_name}_hue"]
+        setting = core.HLS_COLOR_SETTING[color_name]
+        slider.bar_renderer = "hls_hue_shift"
+        slider.bar_show_active_overlay = False
+        slider.bar_show_anchor_marker = True
+        slider.set_bar_context({
+            "center": setting["center"],
+            "l_range": setting["l_range"],
+            "s_range": setting["s_range"],
+        })
         slider.set_slider_range(min_hue, max_hue, step)
 
     def get_param_dict(self, param, subname=None):

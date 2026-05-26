@@ -151,9 +151,56 @@ def _make_color_tint_bar_texture(slider, width=512, height=1):
     return _make_bar_texture_from_rgb(rgb_line, width, height, cache_key, slider.bar_saturation)
 
 
+def _context_range_midpoint(context, key, default):
+    values = _context_value(context, key, default)
+    try:
+        if values is None or len(values) < 2:
+            values = default
+    except TypeError:
+        values = default
+    return (float(values[0]) + float(values[1])) * 0.5
+
+
+def _make_hls_hue_shift_bar_texture(slider, width=512, height=1):
+    context = slider.bar_context or {}
+    center = float(_context_value(context, "center", 0.0))
+    sample_l = _context_range_midpoint(context, "l_range", (0.1, 0.9))
+    sample_c = _context_range_midpoint(context, "s_range", (0.25, 0.75))
+    gain = float(_context_value(context, "gain", 1.0))
+    cache_key = (
+        "hls_hue_shift",
+        width,
+        height,
+        _cache_float(slider.min),
+        _cache_float(slider.max),
+        _cache_float(center),
+        _cache_float(sample_l),
+        _cache_float(sample_c),
+        _cache_float(gain),
+        _cache_float(slider.bar_saturation),
+    )
+    cached = _BAR_TEXTURE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    hue_delta = np.linspace(float(slider.min), float(slider.max), width, dtype=np.float32)
+    hue_rad = np.deg2rad((center + hue_delta) % 360.0)
+    chroma = sample_c * 1.5
+    cb = chroma * np.cos(hue_rad)
+    cr = chroma * np.sin(hue_rad)
+
+    kr, kg, kb = 0.2126, 0.7152, 0.0722
+    r = (sample_l + cr) * gain
+    g = (sample_l - (kr / kg) * cr - (kb / kg) * cb) * gain
+    b = (sample_l + cb) * gain
+    rgb_line = np.stack((r, g, b), axis=1).astype(np.float32)
+    return _make_bar_texture_from_rgb(rgb_line, width, height, cache_key, slider.bar_saturation)
+
+
 _BAR_RENDERERS = {
     "color_temperature": _make_color_temperature_bar_texture,
     "color_tint": _make_color_tint_bar_texture,
+    "hls_hue_shift": _make_hls_hue_shift_bar_texture,
 }
 
 
