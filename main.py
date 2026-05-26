@@ -2089,10 +2089,31 @@ if __name__ == '__main__':
             mask_specific_enabled = has_mask_context and not is_composit
 
             mask2_panel.disabled = not has_mask_context
+            self._set_disabled_for_ids(
+                (
+                    'switch_lens_modifier',
+                    'checkbox_color_modification',
+                    'checkbox_subpixel_distortion',
+                    'checkbox_geometry_distortion',
+                ),
+                mask2_button.state == 'down',
+            )
+            self._set_disabled_for_ids(
+                (
+                    'switch_fringe_removal',
+                    ''
+                    'slider_rca_purple_amount',
+                    'slider_rca_green_amount',
+                    'slider_rca_fringe_width',
+                    'slider_rca_edge_threshold',
+                ),
+                mask2_button.state == 'down',
+            )
 
             self._set_disabled_for_ids(
                 (
                     'switch_mask2_draw_effects',
+                    'switch_rca',
                     'slider_mask2_color_dodge',
                     'slider_mask2_color_burn',
                     'slider_mask2_mix_black',
