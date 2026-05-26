@@ -244,9 +244,16 @@ if __name__ == '__main__':
         image_loaded = KVBooleanProperty(False)
         is_zoomed = KVBooleanProperty(False)
         zoom_ratio = KVNumericProperty(1.0)
+        preview_focus_mode = KVBooleanProperty(False)
         preview_pixel_visible = KVBooleanProperty(False)
         preview_pixel_text = KVStringProperty("")
         preview_pixel_color = KVListProperty([0, 0, 0, 1])
+
+        LEFT_INFO_FRAC_NORMAL = 0.2
+        PREVIEW_COL_FRAC_NORMAL = 0.55
+        PREVIEW_COL_FRAC_FOCUS = 0.75
+        VIEWER_REF_HEIGHT_NORMAL = 160.0
+        PREVIEW_BAR_REF_HEIGHT = 30.0
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -282,6 +289,13 @@ if __name__ == '__main__':
             self.processor = pipeline.AsyncPipelineManager(self.async_worker)
             KVClock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
+            self._draw_image_core_active = False
+            self._last_processed_pipeline_version = self.pipeline_version
+            self._pending_preview_focus_mode = None
+            self._preview_focus_retry_event = None
+            self._preview_focus_refresh_event = None
+            self._preview_focus_late_refresh_event = None
+            self._preview_focus_layout_pending = False
             
             self.apply_draw_image_center = None
             self.apply_draw_fast_display = False
@@ -364,18 +378,147 @@ if __name__ == '__main__':
             を make し、0.55 列・上段+bar+viewer(ref) の論理高で揃える。ceil(m/0.55) を
             バッキングのまま使うと min・cap が画面いっぱいに張り付きがち（Retina）。
             """
-            m = int(kvutils.preview_min_edge_for_window(config.get_preview_min_size()))
+            col_frac = self._preview_column_fraction()
+            viewer_ref = self._viewer_ref_height_for_layout()
+            m = int(kvutils.preview_min_edge_for_window(
+                config.get_preview_min_size(),
+                preview_col_frac=col_frac,
+                viewer_ref=viewer_ref,
+            ))
             if m < 1:
                 return 0, 0, m
             dps = float(device.dpi_scale())
             if dps < 0.01:
                 dps = 1.0
             m_log = m / dps
-            col_frac = 0.55
             min_w = int(math.ceil(m_log / col_frac))
-            # main.kv: プレビュー下 bar ref 30, 下段 viewer ref 160（論理 ref）
-            min_h = int(math.ceil(m_log + 30.0 + 160.0))
+            # main.kv: プレビュー下 bar ref 30, 下段 viewer ref 160（focus 時は 0）
+            min_h = int(math.ceil(m_log + self.PREVIEW_BAR_REF_HEIGHT + viewer_ref))
             return min_w, min_h, m
+
+        def _preview_column_fraction(self):
+            return self.PREVIEW_COL_FRAC_FOCUS if self.preview_focus_mode else self.PREVIEW_COL_FRAC_NORMAL
+
+        def _viewer_ref_height_for_layout(self):
+            return 0.0 if self.preview_focus_mode else self.VIEWER_REF_HEIGHT_NORMAL
+
+        def apply_preview_focus_layout(self):
+            left = self.ids.get("left_info_pane")
+            if left is not None:
+                left.size_hint_x = 0 if self.preview_focus_mode else self.LEFT_INFO_FRAC_NORMAL
+                left.opacity = 0 if self.preview_focus_mode else 1
+                if self.preview_focus_mode:
+                    left.width = 0
+
+            preview_column = self.ids.get("preview_column")
+            if preview_column is not None:
+                preview_column.size_hint_x = self._preview_column_fraction()
+
+            viewer = self.ids.get("viewer")
+            if viewer is not None:
+                ref_height = self._viewer_ref_height_for_layout()
+                viewer.ref_height = ref_height
+                viewer.height = kvutils.dpi_scale_height(ref_height)
+                viewer.opacity = 0 if self.preview_focus_mode else 1
+                viewer.disabled = self.preview_focus_mode
+
+        def set_preview_focus_mode(self, enabled):
+            enabled = bool(enabled)
+            if self._is_preview_pipeline_busy():
+                self._pending_preview_focus_mode = enabled
+                self._schedule_pending_preview_focus_mode()
+                return
+            if self.preview_focus_mode == enabled:
+                self._pending_preview_focus_mode = None
+                return
+            self._pending_preview_focus_mode = None
+            self.preview_focus_mode = enabled
+
+        def toggle_preview_focus_mode(self):
+            current = self._pending_preview_focus_mode
+            if current is None:
+                current = self.preview_focus_mode
+            self.set_preview_focus_mode(not current)
+
+        def _is_preview_pipeline_busy(self):
+            return self._has_preview_draw_in_flight() or self._preview_focus_layout_pending
+
+        def _has_preview_draw_in_flight(self):
+            return (
+                self._draw_image_core_active
+                or self._last_processed_pipeline_version < self.pipeline_version
+            )
+
+        def _schedule_pending_preview_focus_mode(self):
+            if self._preview_focus_retry_event is None:
+                self._preview_focus_retry_event = KVClock.schedule_once(
+                    self._apply_pending_preview_focus_mode, 0.05)
+
+        def _apply_pending_preview_focus_mode(self, dt=0):
+            self._preview_focus_retry_event = None
+            pending = self._pending_preview_focus_mode
+            if pending is None:
+                return
+            if self._is_preview_pipeline_busy():
+                self._schedule_pending_preview_focus_mode()
+                return
+            self.set_preview_focus_mode(pending)
+
+        def on_preview_focus_mode(self, *args):
+            self.apply_preview_focus_layout()
+            self._preview_focus_layout_pending = True
+            for event_attr in ("_preview_focus_refresh_event", "_preview_focus_late_refresh_event"):
+                event = getattr(self, event_attr, None)
+                if event is not None:
+                    event.cancel()
+                    setattr(self, event_attr, None)
+            self._preview_focus_refresh_event = KVClock.schedule_once(self._refresh_preview_focus_layout, 0)
+            self._preview_focus_late_refresh_event = KVClock.schedule_once(self._refresh_preview_focus_layout_late, 0.05)
+
+        def _refresh_preview_focus_layout(self, dt=0):
+            self._preview_focus_refresh_event = None
+            if self._has_preview_draw_in_flight():
+                self._preview_focus_refresh_event = KVClock.schedule_once(
+                    self._refresh_preview_focus_layout, 0.05)
+                return
+            self.apply_preview_focus_layout()
+            self._force_preview_layout_update()
+            self.resize()
+            self._preview_focus_layout_pending = False
+            if self._pending_preview_focus_mode is not None:
+                self._schedule_pending_preview_focus_mode()
+
+        def _refresh_preview_focus_layout_late(self, dt=0):
+            self._preview_focus_late_refresh_event = None
+            self._refresh_preview_focus_layout(dt)
+
+        def _force_preview_layout_update(self):
+            targets = (
+                self.ids.get("left_info_pane"),
+                self.ids.get("preview_column"),
+                self.ids.get("viewer"),
+                self.ids.get("preview_widget"),
+            )
+            chain = []
+            seen = set()
+            for target in targets:
+                widget = target
+                local_chain = []
+                while widget is not None:
+                    local_chain.append(widget)
+                    if widget is self:
+                        break
+                    widget = getattr(widget, "parent", None)
+                for widget in reversed(local_chain):
+                    key = id(widget)
+                    if key not in seen:
+                        seen.add(key)
+                        chain.append(widget)
+
+            for widget in chain:
+                do_layout = getattr(widget, "do_layout", None)
+                if callable(do_layout):
+                    do_layout()
 
         def _clamp_window_to_preview_minimum(self):
             """SDL の minimum_* が効かない環境向け: 手動で窓を既定最小以上に戻す。"""
@@ -483,6 +626,7 @@ if __name__ == '__main__':
             self._set_film_presets()
             self._set_lens_presets()
 
+            self.apply_preview_focus_layout()
             KVClock.schedule_once(lambda dt: self.sync_distortion_mode_sliders(), 0)
             KVClock.schedule_once(lambda dt: self.sync_preview_widget_min_size(), 0)
 
@@ -786,119 +930,125 @@ if __name__ == '__main__':
             return out
 
         def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False):
-            with threads.primary_param_lock:
-                if (self.imgset is not None) and (self.imgset.img is not None):
-                    if not params.has_original_img_size(self.primary_param):
-                        logging.warning("draw_image_core: original_img_size 未定義のため描画しません")
-                        return
+            self._draw_image_core_active = True
+            try:
+                with threads.primary_param_lock:
+                    if (self.imgset is not None) and (self.imgset.img is not None):
+                        if not params.has_original_img_size(self.primary_param):
+                            logging.warning("draw_image_core: original_img_size 未定義のため描画しません")
+                            return
 
-                    self.update_preview_texture_size()
-                    self.refresh_preview_overlays()
+                        self.update_preview_texture_size()
+                        self.refresh_preview_overlays()
 
-                    frame_version = self.pipeline_version
-                    current_tab = self.ids["effects"].current_tab.text
-                    mask2_on = self._is_mask2_on()
-                    crop_image_view_key = "full" if current_tab == "Ge" else "crop"
-                    if self.crop_image_view_key != crop_image_view_key:
-                        self.crop_image = None
-                        self.crop_image_view_key = crop_image_view_key
-                    if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
-                        logging.warning(
-                            "[MASK_GEOM] draw_image_core start frame_version=%s current_tab=%s center_pos=%s fast_display=%s skip_histogram=%s",
-                            frame_version,
-                            current_tab,
-                            center_pos,
-                            fast_display,
-                            skip_histogram,
-                        )
-                    img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
-                    logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
-                    perf_trace.event("draw_image_core.pipeline_done")
-                    if img is None:
-                        return
-                    if frame_version < self.pipeline_version and not fast_display:
+                        frame_version = self.pipeline_version
+                        current_tab = self.ids["effects"].current_tab.text
+                        mask2_on = self._is_mask2_on()
+                        crop_image_view_key = "full" if current_tab == "Ge" else "crop"
+                        if self.crop_image_view_key != crop_image_view_key:
+                            self.crop_image = None
+                            self.crop_image_view_key = crop_image_view_key
                         if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                             logging.warning(
-                                "[MASK_GEOM] draw_image_core skipped stale frame_version=%s current_version=%s",
+                                "[MASK_GEOM] draw_image_core start frame_version=%s current_tab=%s center_pos=%s fast_display=%s skip_histogram=%s",
                                 frame_version,
-                                self.pipeline_version,
+                                current_tab,
+                                center_pos,
+                                fast_display,
+                                skip_histogram,
                             )
-                        return
-                    elif frame_version < self.pipeline_version:
-                        if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
+                        logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
+                        perf_trace.event("draw_image_core.pipeline_done")
+                        if img is None:
+                            return
+                        if frame_version < self.pipeline_version and not fast_display:
+                            if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                                logging.warning(
+                                    "[MASK_GEOM] draw_image_core skipped stale frame_version=%s current_version=%s",
+                                    frame_version,
+                                    self.pipeline_version,
+                                )
+                            return
+                        elif frame_version < self.pipeline_version:
+                            if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
+                                logging.warning(
+                                    "[MASK_GEOM] draw_image_core allowing stale fast frame frame_version=%s current_version=%s",
+                                    frame_version,
+                                    self.pipeline_version,
+                                )
+
+                        debug_mask_geom = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled()
+                        post_t0 = time.perf_counter() if debug_mask_geom else None
+                        img = np.array(img)
+                        utils.print_nan_inf(img, "output")
+
+                        src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
+                        dst_space = config.get_config('display_color_gamut')
+                        cat = config.get_config('cat')
+                        color_t0 = time.perf_counter() if debug_mask_geom else None
+                        if fast_display:
+                            img = self._fast_display_color_transform(img, src_space, dst_space, cat)
+                        else:
+                            img = colour_functions.RGB_to_RGB(img, src_space, dst_space, cat,
+                                                    apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+                        color_ms = (time.perf_counter() - color_t0) * 1000.0 if debug_mask_geom else 0.0
+
+                        # Ge タブでは Mask2 モードでも full-preview なので zero-wrap しない。
+                        # CropEditor の起動可否は CropEffect 側で Mask2 ON/OFF を見て制御する。
+                        crop_editing = current_tab == "Ge"
+
+                        # プレビュー表示
+                        preview_t0 = time.perf_counter() if debug_mask_geom else None
+                        img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
+                        img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param, crop_editing=crop_editing)
+                        img_draw = np.clip(img_draw, 0, 1)
+                        preview_ms = (time.perf_counter() - preview_t0) * 1000.0 if debug_mask_geom else 0.0
+                        if debug_mask_geom:
                             logging.warning(
-                                "[MASK_GEOM] draw_image_core allowing stale fast frame frame_version=%s current_version=%s",
+                                "[MASK_GEOM] draw_image_core ready_to_blit frame_version=%s current_version=%s img=%s img_draw=%s",
                                 frame_version,
                                 self.pipeline_version,
+                                self._debug_mask_geom_image_stats(img),
+                                self._debug_mask_geom_image_stats(img_draw),
                             )
 
-                    debug_mask_geom = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled()
-                    post_t0 = time.perf_counter() if debug_mask_geom else None
-                    img = np.array(img)
-                    utils.print_nan_inf(img, "output")
+                        #描画をスケジューリング
+                        self.blit_image(img_draw, frame_version, allow_stale=fast_display)
 
-                    src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
-                    dst_space = config.get_config('display_color_gamut')
-                    cat = config.get_config('cat')
-                    color_t0 = time.perf_counter() if debug_mask_geom else None
-                    if fast_display:
-                        img = self._fast_display_color_transform(img, src_space, dst_space, cat)
-                    else:
-                        img = colour_functions.RGB_to_RGB(img, src_space, dst_space, cat,
-                                                apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
-                    color_ms = (time.perf_counter() - color_t0) * 1000.0 if debug_mask_geom else 0.0
-
-                    # Ge タブでは Mask2 モードでも full-preview なので zero-wrap しない。
-                    # CropEditor の起動可否は CropEffect 側で Mask2 ON/OFF を見て制御する。
-                    crop_editing = current_tab == "Ge"
-
-                    # プレビュー表示
-                    preview_t0 = time.perf_counter() if debug_mask_geom else None
-                    img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
-                    img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param, crop_editing=crop_editing)
-                    img_draw = np.clip(img_draw, 0, 1)
-                    preview_ms = (time.perf_counter() - preview_t0) * 1000.0 if debug_mask_geom else 0.0
-                    if debug_mask_geom:
-                        logging.warning(
-                            "[MASK_GEOM] draw_image_core ready_to_blit frame_version=%s current_version=%s img=%s img_draw=%s",
-                            frame_version,
-                            self.pipeline_version,
-                            self._debug_mask_geom_image_stats(img),
-                            self._debug_mask_geom_image_stats(img_draw),
-                        )
-
-                    #描画をスケジューリング
-                    self.blit_image(img_draw, frame_version, allow_stale=fast_display)
-
-                    # ヒストグラムは表示画像を投げてから計算する。Mask2 操作中の体感遅延を
-                    # 減らすため、プレビュー反映をヒストグラム更新で待たせない。
-                    hist_ms = 0.0
-                    if not skip_histogram:
-                        hist_t0 = time.perf_counter() if debug_mask_geom else None
-                        img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
-                        hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
-                        hist_ms = (time.perf_counter() - hist_t0) * 1000.0 if debug_mask_geom else 0.0
-                        if frame_version == self.pipeline_version:
-                            self.draw_histogram_view(hist_data)
-                    if debug_mask_geom:
-                        logging.warning(
-                            "[MASK_GEOM] draw_image_core post timings frame_version=%s fast_display=%s skip_histogram=%s color_ms=%.1f preview_ms=%.1f hist_ms=%.1f total_ms=%.1f",
-                            frame_version,
-                            fast_display,
-                            skip_histogram,
-                            color_ms,
-                            preview_ms,
-                            hist_ms,
-                            (time.perf_counter() - post_t0) * 1000.0,
-                        )
-                    """
-                    try:
-                        if self.enabledelay is not None:
-                            self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
-                    except:
-                        pass  # 未スケジュール時は無視
-                    self.enabledelay = KVClock.schedule_once(partial(self.blit_image, img_draw), -1)
-                    """
+                        # ヒストグラムは表示画像を投げてから計算する。Mask2 操作中の体感遅延を
+                        # 減らすため、プレビュー反映をヒストグラム更新で待たせない。
+                        hist_ms = 0.0
+                        if not skip_histogram:
+                            hist_t0 = time.perf_counter() if debug_mask_geom else None
+                            img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
+                            hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
+                            hist_ms = (time.perf_counter() - hist_t0) * 1000.0 if debug_mask_geom else 0.0
+                            if frame_version == self.pipeline_version:
+                                self.draw_histogram_view(hist_data)
+                        if debug_mask_geom:
+                            logging.warning(
+                                "[MASK_GEOM] draw_image_core post timings frame_version=%s fast_display=%s skip_histogram=%s color_ms=%.1f preview_ms=%.1f hist_ms=%.1f total_ms=%.1f",
+                                frame_version,
+                                fast_display,
+                                skip_histogram,
+                                color_ms,
+                                preview_ms,
+                                hist_ms,
+                                (time.perf_counter() - post_t0) * 1000.0,
+                            )
+                        """
+                        try:
+                            if self.enabledelay is not None:
+                                self.enabledelay.cancel()  # 既にスケジュール済みならキャンセル
+                        except:
+                            pass  # 未スケジュール時は無視
+                        self.enabledelay = KVClock.schedule_once(partial(self.blit_image, img_draw), -1)
+                        """
+            finally:
+                self._draw_image_core_active = False
+                if self._pending_preview_focus_mode is not None:
+                    self._schedule_pending_preview_focus_mode()
 
         def draw_image(self):
             last_processed_version = -1
@@ -915,6 +1065,7 @@ if __name__ == '__main__':
                     skip_histogram = self.apply_draw_skip_histogram
                     self.draw_image_core(center_pos, fast_display=fast_display, skip_histogram=skip_histogram)
                     last_processed_version = current_version
+                    self._last_processed_pipeline_version = current_version
             
         def start_draw_image(self, center_pos=None, invalidate_crop=False, fast_display=False, skip_histogram=False):
             if invalidate_crop:
@@ -941,6 +1092,7 @@ if __name__ == '__main__':
                 self.crop_image = None
             self.pipeline_version += 1
             self.draw_image_core()
+            self._last_processed_pipeline_version = self.pipeline_version
                 
         def crop_editing(self):
             self.apply_effects_lv(4, 'vignette')
@@ -2016,6 +2168,7 @@ if __name__ == '__main__':
             return False
 
         def on_select_press(self):
+            self.set_preview_focus_mode(False)
             self.save_current_sidecar()
             device.FileChooser(title="Select Folder", mode="dir", filters=[("Jpeg Files", "*.jpg")], on_selection=self.handle_for_dir_selection).run()
 
@@ -2354,6 +2507,7 @@ if __name__ == '__main__':
                 self._disable_mask2()
                 return
             if value == "down":
+                self.set_preview_focus_mode(False)
                 self._enable_mask2()
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = False
                 # マスク Geometry モードへ遷移: Ge タブ上のクロップ枠/lens エディタを閉じる
@@ -2806,6 +2960,7 @@ if __name__ == '__main__':
                 t.join()
 
         def resize(self):
+            self.apply_preview_focus_layout()
             self.sync_preview_widget_min_size()
             self._clamp_window_to_preview_minimum()
             preview_changed = self.update_preview_texture_size()
@@ -2839,6 +2994,10 @@ if __name__ == '__main__':
 
             if (key == 118 and ('ctrl' in modifier or 'meta' in modifier)):  # Vキー
                 self.paste_effect_settings()
+                return True
+
+            if (key == 102 and ('ctrl' in modifier or 'meta' in modifier)):  # Fキー
+                self.toggle_preview_focus_mode()
                 return True
                                 
             if (key == 122 and ('shift' not in modifier) and ('ctrl' in modifier or 'meta' in modifier)):  # Zキー

@@ -136,7 +136,11 @@ def get_window_screen_size():
     return 1920, 1080
 
 
-def preview_min_edge_for_window(preview_size_ref, area_frac=0.92):
+def preview_min_edge_for_window(
+        preview_size_ref,
+        area_frac=0.92,
+        preview_col_frac=_PREVIEW_COL_FRAC,
+        viewer_ref=_VIEWER_REF):
     """
     m0=ref*dpi_scale に対し、画面 1 台のポイント (sw, sh) を *dpi して m0, bar, view のバッキング
     域で比較し、最小幅窓に収まる最大 m = min(m0, m_wmax, m_hmax)。get_window_screen_size() は
@@ -152,9 +156,9 @@ def preview_min_edge_for_window(preview_size_ref, area_frac=0.92):
     sw = float(sw_pt) * dps
     sh = float(sh_pt) * dps
     bar = int(dpi_scale_height(_PREVIEW_BAR_REF))
-    view = int(dpi_scale_height(_VIEWER_REF))
-    # 最小幅 w: m/0.55 <= sw*area  （sw = 表示ポイント*scale）
-    m_w = int(_PREVIEW_COL_FRAC * sw * area_frac)
+    view = int(dpi_scale_height(viewer_ref))
+    # 最小幅 w: m/preview_col_frac <= sw*area  （sw = 表示ポイント*scale）
+    m_w = int(float(preview_col_frac) * sw * area_frac)
     # 最低高さ: m + view + bar <= sh*area
     m_h = int(max(0.0, sh * area_frac - float(view) - float(bar)))
     m_max = min(m_w, m_h)

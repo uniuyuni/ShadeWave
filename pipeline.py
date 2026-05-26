@@ -454,6 +454,9 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_setup", (time.perf_counter() - _t0) * 1000.0)
 
+    if mask_editor2 is not None:
+        mask_editor2.set_texture_size(texture_width, texture_height)
+
     # 背景レイヤー
     if timing is not None:
         _t0 = time.perf_counter()

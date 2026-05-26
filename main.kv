@@ -125,7 +125,9 @@
             orientation: 'horizontal'
 
             ScrollView:
-                size_hint_x: 0.2
+                id: left_info_pane
+                size_hint_x: 0 if root.preview_focus_mode else 0.2
+                opacity: 0 if root.preview_focus_mode else 1
                 do_scroll_x: False
                 bar_width: 10
                 scroll_type: ['bars', 'content']
@@ -327,8 +329,9 @@
                         # Content will be added via python
                             
             BoxLayout:
+                id: preview_column
                 orientation: 'vertical'
-                size_hint_x: 0.55
+                size_hint_x: 0.75 if root.preview_focus_mode else 0.55
 
                 FloatLayout:
                     id: preview_widget

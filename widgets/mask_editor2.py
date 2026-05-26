@@ -766,6 +766,31 @@ class CompositMask(BaseMask):
                         mimage = mask.get_mask_image()
                     else:
                         mimage = editor._call_with_image_only_matrix(mask.get_mask_image)
+                    if getattr(mimage, "shape", None) != composit.shape:
+                        logging.warning(
+                            "CompositMask.get_mask_image: child mask size mismatch composit=%s child=%s expected=%s got=%s; retrying",
+                            _mask_geom_id(self),
+                            _mask_geom_id(mask),
+                            composit.shape,
+                            getattr(mimage, "shape", None),
+                        )
+                        try:
+                            mask.invalidate_render_cache()
+                            if mask.follows_mask_geometry():
+                                mimage = mask.get_mask_image()
+                            else:
+                                mimage = editor._call_with_image_only_matrix(mask.get_mask_image)
+                        except Exception:
+                            logging.exception("CompositMask.get_mask_image: child mask retry failed")
+                    if getattr(mimage, "shape", None) != composit.shape:
+                        logging.warning(
+                            "CompositMask.get_mask_image: child mask size still mismatched composit=%s child=%s expected=%s got=%s; using empty mask for this frame",
+                            _mask_geom_id(self),
+                            _mask_geom_id(mask),
+                            composit.shape,
+                            getattr(mimage, "shape", None),
+                        )
+                        mimage = np.zeros_like(composit)
                     mask_allow_over_one = False
                     mask_allow_under_zero = False
                     match(maskop):
@@ -3463,20 +3488,21 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         return self.original_image_hls
 
     def set_texture_size(self, tx, ty):
-        self.texture_size = (tx, ty)
+        with self._matrix_lock:
+            self.texture_size = (tx, ty)
 
     def set_primary_param(self, primary_param, disp_info):
 
         # TCG情報を設定
-        self.tcg_info = params.param_to_tcg_info(primary_param)
-        params.set_disp_info(self.tcg_info, disp_info) # これだけ引数の値を設定
-
-        self.__set_image_info()
-        #self.update()
-
-        # mask Geometry: 画像 Geom のみの matrix を退避し、active Composit の
-        # mask Geom matrix を合成して tcg_info['matrix'] に反映する。
         with self._matrix_lock:
+            self.tcg_info = params.param_to_tcg_info(primary_param)
+            params.set_disp_info(self.tcg_info, disp_info) # これだけ引数の値を設定
+
+            self.__set_image_info()
+            #self.update()
+
+            # mask Geometry: 画像 Geom のみの matrix を退避し、active Composit の
+            # mask Geom matrix を合成して tcg_info['matrix'] に反映する。
             self._image_only_matrix = np.array(self.tcg_info['matrix'], dtype=np.float64).copy()
         self._set_active_composit_matrix()
 
