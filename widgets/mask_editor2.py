@@ -50,7 +50,7 @@ from processing_dialog import wait_prosessing
 from history import LayerCtrl, get_history_ctrl
 import macos as device
 
-from cores.mask2 import elliptical_raster, freedraw_raster, gradient_raster, polyline_raster
+from cores.mask2 import mask_rasters
 from cores.mask2.cutout_guided import create_cutout_mask_guided
 
 
@@ -1216,7 +1216,7 @@ class CircularGradientMask(BaseMask):
         return result
 
     def draw_elliptical_gradient(self, image_size, center, inner_axes, outer_axes, angle_rad, invert=False, smoothness=1):
-        return elliptical_raster.draw_elliptical_gradient(
+        return mask_rasters.draw_elliptical_gradient(
             image_size, center, inner_axes, outer_axes, angle_rad, invert, smoothness
         )
 
@@ -1645,7 +1645,7 @@ class GradientMask(BaseMask):
         return result
     
     def draw_gradient(self, image_size, center, start_point, end_point, smoothness=1):
-        return gradient_raster.draw_linear_gradient(
+        return mask_rasters.draw_linear_gradient(
             image_size, center, start_point, end_point, smoothness
         )
 
@@ -2026,7 +2026,7 @@ class FreeDrawMask(BaseMask):
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             allow_over_one = False
             allow_under_zero = False
-            mask = freedraw_raster.draw_line_texture(
+            mask = mask_rasters.draw_line_texture(
                 image_size,
                 copy_lines,
                 allow_over_one=allow_over_one,
@@ -2587,7 +2587,7 @@ class PolylineMask(BaseMask):
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size, poly_hash, fill_enabled))
 
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-            mask = polyline_raster.draw_polyline_texture(
+            mask = mask_rasters.draw_polyline_texture(
                 image_size,
                 copy_polys,
                 allow_over_one=False,
