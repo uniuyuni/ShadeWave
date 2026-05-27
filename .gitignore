@@ -1,15 +1,13 @@
 .DS_Store
 .jpg
 .png
-pixitest/
-test/
-test_photos/
+.profiles/
 checkpoints/
 icc/
 dcp/
-luts/
-metal/
+
 libraw_enhanced/
+metal/
 third_party/libraw-install/
 SAM3/
 SCUNet/
@@ -17,8 +15,10 @@ demosaicnet_torch/
 Real-ESRGAN/
 splitimage/**build/**
 splitimage/*.egg*/**
+
 **/__pycache__/**
 **/venv3.11.9/**
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml

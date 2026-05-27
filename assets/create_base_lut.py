@@ -1,10 +1,10 @@
 import numpy as np
 import os
 
-def generate_prophoto_mature_lut(size=33, output_path="ProPhotoLinear_Mature.cube"):
+def generate_prophoto_atmospheric_lut(size=33, output_path="ProPhotoLinear_Atmospheric.cube"):
     """
     Linear ProPhoto RGB -> Linear ProPhoto RGB
-    微色相シフト / 明度依存彩度 / 滑らかなハイライトロールオフ / 編集起点最適化
+    知覚ベースのトーンコントラスト / 明確な中間調彩度 / 自然な色相クロス / 編集起点安全設計
     """
     def smoothstep(e0, e1, x):
         t = np.clip((x - e0) / (e1 - e0), 0.0, 1.0)
@@ -16,60 +16,66 @@ def generate_prophoto_mature_lut(size=33, output_path="ProPhotoLinear_Mature.cub
     R, G, B = np.meshgrid(vals, vals, vals, indexing='ij')
     r, g, b = R.copy(), G.copy(), B.copy()
 
-    # 初期明度
+    # 初期知覚輝度
     L = 0.2126*r + 0.7152*g + 0.0722*b
 
     # --------------------------------------------------------
-    # 1. A1: トーン形状（ほぼリニア＋ハイライトソフトロールオフ）
+    # 1. 知覚コントラストベース（Linear空間用 滑らかなS字）
+    # L*(1-L)*(L-0.5) は 0, 0.5, 1 で 0 になり、中間調のみ滑らかに持ち上げ/圧縮
     # --------------------------------------------------------
-    tone_scale = 1.0 - 0.055 * (L ** 2.8)  # 0.65付近から滑らかに圧縮
-    r *= tone_scale; g *= tone_scale; b *= tone_scale
+    contrast_k = 0.28  # 知覚コントラスト強度。0.0=フラット, 0.40=強め
+    L_tone = L + contrast_k * L * (1.0 - L) * (L - 0.5)
+    # チャネル均等スケールでトーンを適用（色相ズレ防止）
+    scale = np.where(L > 1e-5, L_tone / L, 1.0)
+    r *= scale; g *= scale; b *= scale
     L = 0.2126*r + 0.7152*g + 0.0722*b  # 更新
 
     # --------------------------------------------------------
-    # 2. 微色相シフト（ライカ/ハッセル風の“色の立体感”）
-    # 行和=1.0で明度保存を設計。強度は hue_strength で一括調整可能。
-    # --------------------------------------------------------
-    hue_strength = 1.0  # 0.0=無色相, 1.5=強め
-    M = np.array([
-        [0.985,  0.015*hue_strength,  0.000],
-        [0.000,  0.978,              0.022*hue_strength],
-        [0.012*hue_strength, 0.000,  0.988]
-    ])
-    
-    rgb = np.stack([r, g, b], axis=-1)
-    rgb = np.dot(rgb, M.T)
-    r, g, b = rgb[...,0], rgb[...,1], rgb[...,2]
-
-    # 知覚明度補正（シフトによる露出ズレを吸収）
-    L_new = 0.2126*r + 0.7152*g + 0.0722*b
-    lum_scale = np.where(L_new > 1e-5, L / L_new, 1.0)
-    r *= lum_scale; g *= lum_scale; b *= lum_scale
-    L = 0.2126*r + 0.7152*g + 0.0722*b  # 再計算
-
-    # --------------------------------------------------------
-    # 3. B3: 明度依存彩度（中間調密度↑ / 両端自然減衰）
+    # 2. 知覚彩度形状（Linear換算 +12~15% 中間調ピーク）
+    # Gamma空間の「+5%」相当をLinearで実現するため、係数を1.8~2.2倍にスケーリング
     # --------------------------------------------------------
     S = 1.0
-    S += 0.09 * np.exp(-((L - 0.44)**2) / 0.062)   # 中間調ピーク
-    S -= 0.06 * (1.0 - np.clip(L / 0.14, 0, 1))    # シャドウ抑制
-    S -= 0.035 * np.clip((L - 0.82) / 0.18, 0, 1)  # ハイライト抑制
-    S = np.clip(S, 0.86, 1.11)
+    S += 0.14 * np.exp(-((L - 0.28)**2) / 0.028)   # 中間調密度（知覚ピーク~1.14x）
+    S -= 0.09 * (1.0 - smoothstep(0.0, 0.08, L))    # シャドウ抑制（~0.91x）
+    S -= 0.06 * smoothstep(0.78, 1.0, L)             # ハイライト抑制（~0.94x）
+    S = np.clip(S, 0.82, 1.16)                       # 安全範囲
 
     r = L + S * (r - L)
     g = L + S * (g - L)
     b = L + S * (b - L)
 
     # --------------------------------------------------------
-    # 4. C1基調 + 微C3 スプリットトーン
+    # 3. 自然色相クロス（フィルム染料層の分光特性を模倣）
+    # R→暖赤／G→シアン緑／B→深青 への微シフト。行和=1.0で設計後、知覚明度補正
     # --------------------------------------------------------
-    sh_mask = 1.0 - np.clip(L / 0.22, 0, 1)
-    hi_mask = np.clip((L - 0.84) / 0.16, 0, 1)
+    hue_k = 1.0  # 0.0=無シフト, 1.5=明確な雰囲気
+    M = np.array([
+        [0.940,  0.060*hue_k,  0.000],
+        [0.025*hue_k, 0.950,  0.025*hue_k],
+        [0.000,  0.035*hue_k,  0.965]
+    ])
+    rgb = np.stack([r, g, b], axis=-1)
+    rgb = np.dot(rgb, M.T)
+    r, g, b = rgb[...,0], rgb[...,1], rgb[...,2]
+
+    # 知覚明度補正（色相クロスによる露出ズレを吸収）
+    L_new = 0.2126*r + 0.7152*g + 0.0722*b
+    lum_fix = np.where(L_new > 1e-5, L / L_new, 1.0)
+    r *= lum_fix; g *= lum_fix; b *= lum_fix
+    L = 0.2126*r + 0.7152*g + 0.0722*b
+
+    # --------------------------------------------------------
+    # 4. 明確だが滑らかなスプリットトーン
+    # シャドウ: クールグレー / ハイライト: 自然光の暖かみ
+    # Linear空間で知覚可能なレベル（ΔE≈3.0~4.0）に設定。後段WBで完全相殺可能。
+    # --------------------------------------------------------
+    sh_mask = 1.0 - smoothstep(0.06, 0.18, L)
+    hi_mask = smoothstep(0.80, 0.92, L)
     
-    r -= 0.011 * sh_mask
-    b += 0.011 * sh_mask
-    r += 0.008 * hi_mask
-    g += 0.004 * hi_mask
+    r -= 0.018 * sh_mask
+    b += 0.020 * sh_mask
+    r += 0.014 * hi_mask
+    g += 0.007 * hi_mask
 
     # --------------------------------------------------------
     # 5. D1: 安全クランプ & 出力
@@ -79,7 +85,7 @@ def generate_prophoto_mature_lut(size=33, output_path="ProPhotoLinear_Mature.cub
     b = np.clip(b, 0.0, 1.0)
 
     with open(output_path, "w") as f:
-        f.write(f"TITLE \"ProPhoto Linear Mature: HueRot+MidSat+Split\"\n")
+        f.write(f"TITLE \"ProPhoto Linear Atmospheric: Contrast+MidSat+Hue+Split\"\n")
         f.write(f"LUT_3D_SIZE {size}\n")
         for bz in range(size):
             for gy in range(size):
@@ -89,4 +95,4 @@ def generate_prophoto_mature_lut(size=33, output_path="ProPhotoLinear_Mature.cub
     print(f"✅ 生成完了: {output_path} ({size}^3 nodes)")
 
 # 実行
-generate_prophoto_mature_lut(size=33)
+generate_prophoto_atmospheric_lut(size=33)
