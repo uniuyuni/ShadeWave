@@ -246,7 +246,6 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # ルートの KV / JSON（実行時は main.py 側で sys._MEIPASS に chdir）
     for rel in (
         "main.kv",
-        "file_formats.json",
         "film_presets.json",
         "export_presets.json",
         "config.json",

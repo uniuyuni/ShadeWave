@@ -19,6 +19,7 @@ from cores.mask2.mask_rasters import Polyline as RasterPolyline, draw_polyline_t
 from cores.mask2.exceptions import HeadlessMaskNotSupported
 from cores.mask2 import extended_params, inference_runtime
 from cores.mask2.mask_types import MaskTypeStr
+from cores.mask2 import mask_geometry as mask_geometry_mod
 
 def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     min_value = None if allow_under_zero else 0
@@ -63,25 +64,46 @@ class HeadlessCompositMask:
         return self.mask_list
 
     def get_mask_image(self):
-        composit = np.zeros(
-            (int(self.ctx.texture_size[1]), int(self.ctx.texture_size[0])),
-            dtype=np.float32,
-        )
-        allow_over_one = False
-        allow_under_zero = False
-        for mask, maskop in reversed(self.mask_list):
-            mimage = mask.get_mask_image()
-            mask_allow_over_one = False
-            mask_allow_under_zero = False
-            match maskop:
-                case "Add":
-                    composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
-                case "Subtract":
-                    composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
-                case _:
-                    logging.error("Unknown mask operation: %s", maskop)
-                    raise ValueError(maskop)
-        return composit
+        # mask Geometry: この Composit の mask Geom matrix を tcg_info['matrix'] に
+        # 一時的に乗せて、子マスクの座標変換に含めるよう差し替え。finally で必ず復元。
+        # widgets/mask_editor2.py CompositMask.get_mask_image (line 729-813) と同じ流儀。
+        ctx = self.ctx
+        saved_matrix = ctx.tcg_info["matrix"] if (ctx.tcg_info is not None) else None
+        base = getattr(ctx, "_image_only_matrix", None)
+        if base is not None and ctx.tcg_info is not None:
+            if mask_geometry_mod.is_enabled(self.effects_param):
+                M_mask = mask_geometry_mod.build_matrix_tcg(
+                    self.effects_param, ctx.tcg_info["original_img_size"]
+                )
+                ctx.tcg_info["matrix"] = M_mask @ base
+            else:
+                ctx.tcg_info["matrix"] = base.copy()
+        try:
+            composit = np.zeros(
+                (int(ctx.texture_size[1]), int(ctx.texture_size[0])),
+                dtype=np.float32,
+            )
+            for mask, maskop in reversed(self.mask_list):
+                # follows_mask_geometry()==False のマスク (Segment/Depth/Face/Text 等
+                # 推論系) は image-only matrix で実行する
+                if getattr(mask, "follows_mask_geometry", lambda: True)():
+                    mimage = mask.get_mask_image()
+                else:
+                    mimage = ctx._call_with_image_only_matrix(mask.get_mask_image)
+                mask_allow_over_one = False
+                mask_allow_under_zero = False
+                match maskop:
+                    case "Add":
+                        composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
+                    case "Subtract":
+                        composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
+                    case _:
+                        logging.error("Unknown mask operation: %s", maskop)
+                        raise ValueError(maskop)
+            return composit
+        finally:
+            if saved_matrix is not None and ctx.tcg_info is not None:
+                ctx.tcg_info["matrix"] = saved_matrix
 
 
 class HeadlessFullMask:
@@ -504,6 +526,11 @@ class HeadlessSegmentMask:
     def is_composit(self):
         return False
 
+    def follows_mask_geometry(self):
+        # Segment は SAM 推論を original_image 空間で実行するため、
+        # mask Geometry の matrix swap には追従しない (image-only matrix で動作)。
+        return False
+
     def deserialize(self, d):
         self.initializing = False
         cx, cy = d["center"]
@@ -616,6 +643,11 @@ class HeadlessDepthMapMask:
     def is_composit(self):
         return False
 
+    def follows_mask_geometry(self):
+        # DepthMap は深度推論を original_image 空間で実行し、結果を core.rotation/crop
+        # で配置する。mask Geometry の matrix swap には追従しない。
+        return False
+
     def deserialize(self, d):
         self.initializing = False
         cx, cy = d["center"]
@@ -711,6 +743,11 @@ class HeadlessFaceMask:
         self.do_draw_composit_mask = True
 
     def is_composit(self):
+        return False
+
+    def follows_mask_geometry(self):
+        # Face は顔検出を original_image 空間で実行し、結果を core.rotation/crop
+        # で配置する。mask Geometry の matrix swap には追従しない。
         return False
 
     def deserialize(self, d):
@@ -824,6 +861,11 @@ class HeadlessTargetTextMask:
         self.do_draw_composit_mask = True
 
     def is_composit(self):
+        return False
+
+    def follows_mask_geometry(self):
+        # TargetText は SAM3 テキスト推論を original_image 空間で実行する。
+        # mask Geometry の matrix swap には追従しない。
         return False
 
     def deserialize(self, d):

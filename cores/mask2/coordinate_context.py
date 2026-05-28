@@ -23,6 +23,11 @@ class Mask2CoordinateContext:
         self.crop_image_hls = None
         self.original_image_rgb = None
         self.original_image_hls = None
+        # mask Geometry: 画像 Geom のみの matrix を退避しておく。
+        # HeadlessCompositMask が tcg_info['matrix'] を一時的に M_mask @ base
+        # に置き換えて children を描画するときの base になる。
+        # widgets/mask_editor2.py MaskEditor2._image_only_matrix と同じ役割。
+        self._image_only_matrix = None
 
     def set_ref_image(self, crop_image, original_image=None):
         if self.crop_image_rgb is not crop_image:
@@ -61,6 +66,24 @@ class Mask2CoordinateContext:
     def set_primary_param(self, primary_param, disp_info):
         self.tcg_info = params.param_to_tcg_info(primary_param)
         params.set_disp_info(self.tcg_info, disp_info)
+        # 画像 Geom のみの matrix を退避 (HeadlessCompositMask の get_mask_image が
+        # 各 composit ごとに M_mask @ base で書き換える起点として使う)。
+        self._image_only_matrix = np.array(self.tcg_info["matrix"], dtype=np.float64).copy()
+
+    def _call_with_image_only_matrix(self, func, *args, **kwargs):
+        """func を「mask geom 抜きの image-only matrix」で一時実行する。
+        SegmentMask / DepthMapMask / FaceMask / TargetTextMask など、
+        follows_mask_geometry()==False なマスクの推論経路で使う。
+        widgets/mask_editor2.py MaskEditor2._call_with_image_only_matrix と同じ流儀
+        (headless では _matrix_lock 不要)。"""
+        if self._image_only_matrix is None or self.tcg_info is None or "matrix" not in self.tcg_info:
+            return func(*args, **kwargs)
+        saved_matrix = self.tcg_info["matrix"]
+        self.tcg_info["matrix"] = self._image_only_matrix
+        try:
+            return func(*args, **kwargs)
+        finally:
+            self.tcg_info["matrix"] = saved_matrix
 
     def get_hash_items(self):
         return (
