@@ -3081,8 +3081,8 @@ class SegmentMask(BaseMask):
             self.scissor = self.editor.push_scissor()
             # center位置への移動
             self.translate = KVTranslate(0, 0)
-            KVColor(*self.color)
-            self.rect_line = KVLine(points=[], close=True, width=2)
+            KVColor(1, 0, 0, 1)
+            self.rect_line = KVLine(points=[], close=True, width=max(1.0, 1.5 * device.dpi_scale()))
             self.editor.pop_scissor()
             KVPopMatrix()
 
@@ -3873,9 +3873,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             self._axes_scissor = self.push_scissor()
             # 軸線 (本体 + 矢印を 1 つの polyline で描画。先端から左右の羽が伸びる)
             self._axes_color_x = KVColor(0.7, 0.7, 0.7, 0.9)
-            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=2)
+            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=max(1.0, 1.5 * device.dpi_scale()))
             self._axes_color_y = KVColor(0.7, 0.7, 0.7, 0.9)
-            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=2)
+            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=max(1.0, 1.5 * device.dpi_scale()))
             # 互換用の instruction。中心点表示は使わないので常に size=(0, 0) のまま。
             self._pivot_color = KVColor(1, 1, 0, 0.85)
             self._pivot_marker = KVEllipse(pos=(0, 0), size=(0, 0))

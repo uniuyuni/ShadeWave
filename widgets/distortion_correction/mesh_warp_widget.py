@@ -20,6 +20,12 @@ import cv2
 
 from cores.distortion_correction.warp_correction import get_mesh_coordinates
 import params
+from .ui_metrics import (
+    apply_geom_button_metrics,
+    apply_geom_layout_metrics,
+    geom_scaled,
+    install_geom_ref_scaling,
+)
 
 
 _MESH_DEBUG = os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on")
@@ -76,11 +82,17 @@ class MeshWarpWidget(KVFloatLayout):
             orientation='horizontal',
             pos_hint={'center_x': 0.5, 'y': 0.02},
             adaptive_size=True,
-            spacing=10,
-            padding=10
+            spacing=geom_scaled(5),
+            padding=geom_scaled(5)
+        )
+        apply_geom_layout_metrics(
+            button_layout,
+            spacing_ref=5,
+            padding_ref=5,
         )
 
         self.reset_btn = MDRaisedButton(text="Reset")
+        apply_geom_button_metrics(self.reset_btn)
         self.reset_btn.bind(on_press=self.reset_mesh)
         button_layout.add_widget(self.reset_btn)
 
@@ -129,6 +141,7 @@ class MeshWarpWidget(KVFloatLayout):
         button_layout.add_widget(btn_col_plus)
         
         self.apply_btn = MDRaisedButton(text="Apply")
+        apply_geom_button_metrics(self.apply_btn)
         self.apply_btn.bind(on_press=lambda x: self._apply())
         button_layout.add_widget(self.apply_btn)
 
@@ -149,6 +162,7 @@ class MeshWarpWidget(KVFloatLayout):
         self.bind(control_offsets_tcg=self._redraw_mesh)
         self.bind(size=self._redraw_mesh)
         self.bind(pos=self._redraw_mesh)
+        install_geom_ref_scaling(self)
 
     def _update_labels(self, instance, value):
         self.label_rows.text = str(value[0])

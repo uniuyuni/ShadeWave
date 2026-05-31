@@ -48,11 +48,16 @@ class FourPointResetFlowTest(unittest.TestCase):
         self.assertIn("(-0.5, -0.5)", ast.get_source_segment(source, default_node))
         self.assertIn("(0.5, 0.5)", ast.get_source_segment(source, default_node))
 
-    def test_default_corner_markers_are_clamped_without_becoming_params(self):
+    def test_default_corner_markers_are_edge_clamped_without_becoming_params(self):
         sync_node = _load_class_function(
             FOUR_POINT_WIDGET_PATH,
             "FourPointCorrectionWidget",
             "_sync_tcg_to_kivy",
+        )
+        clamp_node = _load_class_function(
+            FOUR_POINT_WIDGET_PATH,
+            "FourPointCorrectionWidget",
+            "_clamp_handle_center_to_widget",
         )
         get_node = _load_class_function(
             FOUR_POINT_WIDGET_PATH,
@@ -68,6 +73,10 @@ class FourPointResetFlowTest(unittest.TestCase):
 
         self.assertIn("if self._using_default_corners:", ast.get_source_segment(source, sync_node))
         self.assertIn("_clamp_handle_center_to_widget", ast.get_source_segment(source, sync_node))
+        self.assertNotIn("handle.width / 2", ast.get_source_segment(source, clamp_node))
+        self.assertNotIn("handle.height / 2", ast.get_source_segment(source, clamp_node))
+        self.assertIn("min_x = wx", ast.get_source_segment(source, clamp_node))
+        self.assertIn("max_x = wx + self.width", ast.get_source_segment(source, clamp_node))
         self.assertIn('return {"four_points": []}', ast.get_source_segment(source, get_node))
         self.assertIn("preserve_default_corners=preserve_default_corners", ast.get_source_segment(source, drag_node))
 
