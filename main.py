@@ -280,6 +280,9 @@ if __name__ == '__main__':
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.inpaint_edit = None
             self.patchmatch_inpaint_edit = None
+            # mask Mesh edit エディタ (MeshWarpWidget) のインスタンスと、編集対象 Composit。
+            self.mask_mesh_editor = None
+            self._mask_mesh_target_composit = None
             self.cache_system = cache_system
             self.ids['viewer'].set_cache_system(self.cache_system)
             self._rgb_xmp_rating_had = {}
@@ -706,6 +709,8 @@ if __name__ == '__main__':
             if geometry_effect is not None:
                 geometry_effect.update_geometry_editor_texture_size()
 
+            self._sync_mask_mesh_editor_view(mask_editor=mask_editor, texture_size=texture_size)
+
             crop_effect = self.primary_effects[0].get('crop')
             if crop_effect is not None and params.has_original_img_size(self.primary_param):
                 crop_effect.update_crop_editor_preview_size(self.primary_param)
@@ -772,9 +777,24 @@ if __name__ == '__main__':
             except Exception:
                 return {"shape": getattr(image, "shape", None)}
 
+        def _same_disp_info(self, left, right, eps=1e-6):
+            if left is None or right is None:
+                return left == right
+            if len(left) != len(right):
+                return False
+            return all(abs(float(a) - float(b)) <= eps for a, b in zip(left, right))
+
         @kvmainthread
-        def blit_image(self, img, frame_version=None, allow_stale=False, dt=0):
-            if frame_version is not None and frame_version < self.pipeline_version and not allow_stale:
+        def blit_image(self, img, frame_version=None, allow_stale=False, dt=0, disp_snapshot=None):
+            stale_frame = frame_version is not None and frame_version < self.pipeline_version
+            current_disp = params.get_disp_info(self.primary_param)
+            if stale_frame and allow_stale and self._is_mask2_on() and not self._same_disp_info(current_disp, disp_snapshot):
+                self._mask_zoom_sync_log(
+                    "skip_stale_fast_viewport_mismatch frame=%s current=%s snapshot_disp=%s current_disp=%s",
+                    frame_version, self.pipeline_version, disp_snapshot, current_disp,
+                )
+                return
+            if stale_frame and not allow_stale:
                 if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                     logging.warning(
                         "[MASK_GEOM] blit_image skipped stale frame_version=%s current_version=%s",
@@ -821,6 +841,12 @@ if __name__ == '__main__':
             # Update Preview Widget Size
             self.ids["preview"].texture = None
             self.ids["preview"].texture = self.texture
+            self._mask_zoom_sync_log(
+                "blit frame=%s current=%s allow_stale=%s img_shape=%s texture_size=%s disp=%s snapshot_disp=%s zoomed=%s zoom_ratio=%.3f",
+                frame_version, self.pipeline_version, allow_stale, getattr(img, "shape", None),
+                tuple(self.texture.size), params.get_disp_info(self.primary_param), disp_snapshot,
+                self.is_zoomed, self.zoom_ratio,
+            )
             try:
                 self.ids["preview"].canvas.ask_update()
                 self.ids["transform_wrapper"].canvas.ask_update()
@@ -962,7 +988,13 @@ if __name__ == '__main__':
                         perf_trace.event("draw_image_core.pipeline_done")
                         if img is None:
                             return
-                        if frame_version < self.pipeline_version and not fast_display:
+                        stale_frame = frame_version < self.pipeline_version
+                        if stale_frame and not fast_display:
+                            self._mask_zoom_sync_log(
+                                "skip_stale frame=%s current=%s fast=%s disp=%s",
+                                frame_version, self.pipeline_version, fast_display,
+                                params.get_disp_info(self.primary_param),
+                            )
                             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                                 logging.warning(
                                     "[MASK_GEOM] draw_image_core skipped stale frame_version=%s current_version=%s",
@@ -970,7 +1002,7 @@ if __name__ == '__main__':
                                     self.pipeline_version,
                                 )
                             return
-                        elif frame_version < self.pipeline_version:
+                        elif stale_frame:
                             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                                 logging.warning(
                                     "[MASK_GEOM] draw_image_core allowing stale fast frame frame_version=%s current_version=%s",
@@ -1014,7 +1046,19 @@ if __name__ == '__main__':
                             )
 
                         #描画をスケジューリング
-                        self.blit_image(img_draw, frame_version, allow_stale=fast_display)
+                        disp_snapshot = params.get_disp_info(self.primary_param)
+                        self._mask_zoom_sync_log(
+                            "ready_to_blit frame=%s current=%s fast=%s allow_stale=%s disp=%s img_draw_shape=%s",
+                            frame_version, self.pipeline_version, fast_display,
+                            fast_display,
+                            disp_snapshot, getattr(img_draw, "shape", None),
+                        )
+                        self.blit_image(
+                            img_draw,
+                            frame_version,
+                            allow_stale=fast_display,
+                            disp_snapshot=disp_snapshot,
+                        )
 
                         # ヒストグラムは表示画像を投げてから計算する。Mask2 操作中の体感遅延を
                         # 減らすため、プレビュー反映をヒストグラム更新で待たせない。
@@ -2002,6 +2046,33 @@ if __name__ == '__main__':
                 and getattr(self.imgset, 'img', None) is not None
             )
 
+        def _debug_mask_zoom_sync_enabled(self):
+            return os.getenv("PLATYPUS_DEBUG_MASK_ZOOM_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+        def _mask_zoom_sync_log(self, message, *args):
+            if self._debug_mask_zoom_sync_enabled():
+                logging.warning("[MASK_ZOOM_SYNC] " + message, *args)
+
+        def _preview_texture_pos_or_none(self, touch):
+            """preview Image 上の texture 座標を返す。レターボックス/外側なら None。
+
+            preview_widget は黒帯を含むため、そこで double-tap すると click_x/y が
+            texture 外になり、zoom crop が端へ clamp される。マスク overlay とは別の
+            「ズーム中心が意図せず飛ぶ」原因になるので、zoom-in 時は実画像領域だけ許可する。
+            """
+            preview = self.ids.get('preview')
+            if preview is None:
+                return None
+            tex_x, tex_y = utils.to_texture(touch.pos, preview)
+            tw, th = getattr(preview, 'texture_size', (0, 0))
+            if tex_x < 0 or tex_y < 0 or tex_x >= tw or tex_y >= th:
+                self._mask_zoom_sync_log(
+                    "ignore texture-outside touch pos=%s tex=(%.2f,%.2f) texture_size=%s preview_pos=%s preview_size=%s",
+                    touch.pos, tex_x, tex_y, (tw, th), tuple(preview.pos), tuple(preview.size),
+                )
+                return None
+            return tex_x, tex_y
+
         def _clamp_zoom_ratio(self, value):
             return min(4.0, max(0.5, float(value)))
 
@@ -2031,7 +2102,18 @@ if __name__ == '__main__':
             self._sync_zoom_ratio_slider()
 
         def _current_zoom_center_pos(self):
-            disp_info = params.get_disp_info(self.primary_param)
+            disp_info = None
+            # Mask2 Geometry 中は pipeline が実表示用 disp_info を primary_param に
+            # 書き戻さない経路があるため、表示と同期済みの MaskEditor2 を優先する。
+            try:
+                mask_editor = self.ids.get('mask_editor2')
+                tcg_info = getattr(mask_editor, 'tcg_info', None)
+                if self._is_mask2_on() and isinstance(tcg_info, dict):
+                    disp_info = params.get_disp_info(tcg_info)
+            except Exception:
+                disp_info = None
+            if disp_info is None:
+                disp_info = params.get_disp_info(self.primary_param)
             if disp_info is None:
                 return None
             dx, dy, dw, dh, _ = disp_info
@@ -2106,7 +2188,16 @@ if __name__ == '__main__':
                 if (touch.is_double_tap == True
                         and not self._is_image_geometry_mode()
                         and not self._active_mask_consumes_double_tap(touch)):
-                    self.is_zoomed = not self.is_zoomed
+                    next_zoomed = not self.is_zoomed
+                    tex_pos = self._preview_texture_pos_or_none(touch) if next_zoomed else None
+                    if next_zoomed and tex_pos is None:
+                        return False
+                    self._mask_zoom_sync_log(
+                        "double_tap next_zoomed=%s touch=%s tex=%s current_disp=%s zoom_ratio=%.3f",
+                        next_zoomed, touch.pos, tex_pos,
+                        params.get_disp_info(self.primary_param), self.zoom_ratio,
+                    )
+                    self.is_zoomed = next_zoomed
                     if self.is_zoomed == False:
                         self.click_x, self.click_y = 0, 0
                         self.drag_center_start = None
@@ -2115,7 +2206,7 @@ if __name__ == '__main__':
 
                     else:
                         # ウィンドウ座標からローカルイメージ座標に変換
-                        self.click_x, self.click_y = utils.to_texture(touch.pos, self.ids['preview'])
+                        self.click_x, self.click_y = tex_pos
 
                     effects.reeffect_all(self.primary_effects, 1)
                     self.start_draw_image_and_crop(self.imgset)
@@ -2123,10 +2214,12 @@ if __name__ == '__main__':
                 # ドラッグ操作
                 elif self.is_zoomed == True:
                     # ドラッグ開始時の中心位置を計算して保存
-                    disp_info = params.get_disp_info(self.primary_param)
-                    if disp_info is not None:
-                        dx, dy, dw, dh, scale = disp_info
-                        self.drag_center_start = (dx + dw/2, dy + dh/2)
+                    self.drag_center_start = self._current_zoom_center_pos()
+                    if self.drag_center_start is not None:
+                        self._mask_zoom_sync_log(
+                            "drag_start disp=%s center=%s touch=%s",
+                            params.get_disp_info(self.primary_param), self.drag_center_start, touch.pos,
+                        )
 
             return False
 
@@ -2150,6 +2243,12 @@ if __name__ == '__main__':
                         new_cx = self.drag_center_start[0] + offset_x
                         new_cy = self.drag_center_start[1] + offset_y 
 
+                        self._mask_zoom_sync_log(
+                            "drag_move diff=(%.2f,%.2f) scale=%.4f start=%s new_center=(%.2f,%.2f) current_disp=%s",
+                            diff_screen_x, diff_screen_y, scale,
+                            self.drag_center_start, new_cx, new_cy,
+                            params.get_disp_info(self.primary_param),
+                        )
                         effects.reeffect_all(self.primary_effects, 1)
                         self.start_draw_image_and_crop(
                             self.imgset,
@@ -2442,6 +2541,12 @@ if __name__ == '__main__':
                 ),
                 not has_mask_context,
             )
+            # Mesh Edit: Composit が選択されていて、かつマスク作成中ではないとき有効。
+            # 作成中マスクが存在する間に Mesh モードに入るのを禁止する。
+            self._set_disabled_for_ids(
+                ('btn_mask_mesh_edit',),
+                (not has_mask_context) or self._has_initializing_mask(),
+            )
             self._set_disabled_for_ids(
                 (
                     'slider_mask2_freedraw_brush_hardness',
@@ -2504,6 +2609,8 @@ if __name__ == '__main__':
             if self.mask2_wait_full_load:
                 self.ids['mask2'].state = 'normal'
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = True
+                # Mesh Edit モード中なら強制終了
+                self._force_close_mask_mesh_editor()
                 self._disable_mask2()
                 return
             if value == "down":
@@ -2519,6 +2626,8 @@ if __name__ == '__main__':
                     pass
             else:
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = True
+                # Mask2 OFF: Mesh Edit モード中なら強制終了 (Mesh Edit は Mask2 ON 前提)
+                self._force_close_mask_mesh_editor()
                 self._disable_mask2()
                 # マスク Geometry モードから画像 Geometry モードへ抜けるとき、
                 # Ge タブ上で拡大表示中ならリセットする (画像 Geometry はズーム禁止のため)。
@@ -2627,6 +2736,229 @@ if __name__ == '__main__':
                 self._disable_patchmatch_inpaint_edit()
 
         #--------------------------------
+        # Mask Mesh edit (Composit 単位の TPS 変形)。MeshWarpWidget をプレビュー上に
+        # マウントし、active Composit の effects_param['mask_mesh_*'] と双方向同期する。
+
+        def _get_active_mask_geom_composit(self):
+            """Mask Geom 編集の対象 Composit を返す。未選択なら None。"""
+            me = self.ids.get('mask_editor2')
+            if me is None:
+                return None
+            active = me.get_active_mask()
+            if active is None:
+                return None
+            if active.is_composit():
+                return active
+            return me.find_composit_mask(active)
+
+        def _has_initializing_mask(self):
+            """マスク作成中 (initializing=True) のマスクが存在するかを判定。
+            Mesh トグルの disable 制御に使う。"""
+            me = self.ids.get('mask_editor2')
+            if me is None:
+                return False
+            try:
+                for m in getattr(me, 'mask_list', []):
+                    if getattr(m, 'initializing', False):
+                        return True
+                    if m.is_composit():
+                        for child, _op in getattr(m, 'mask_list', []):
+                            if getattr(child, 'initializing', False):
+                                return True
+            except Exception:
+                return False
+            return False
+
+        def is_mask_mesh_editor_active(self):
+            """Mesh 編集モード中かどうかの判定。MaskEditor2 の on_touch_* ガードから参照される。"""
+            return self.mask_mesh_editor is not None
+
+        def update_mask_mesh_button_enabled(self):
+            """マスク作成中は Mesh トグルを disable に。状態変化時に呼ぶ。"""
+            btn = self.ids.get('btn_mask_mesh_edit')
+            if btn is None:
+                return
+            btn.disabled = self._has_initializing_mask()
+
+        def _set_mask2_content_panel_disabled(self, disabled):
+            """Mesh モード中はサイドの mask2_content_panel (マスクリスト+追加/削除ボタン)
+            を無効化して、選択・追加・削除を全ブロックする。"""
+            try:
+                panel = kvutils.find_widget(self, 'mask2_content_panel')
+            except Exception:
+                panel = None
+            if panel is not None:
+                panel.disabled = bool(disabled)
+
+        def _sync_mask_mesh_editor_view(self, mask_editor=None, texture_size=None):
+            """Mask Mesh editor の view を MaskEditor2 の表示座標系に揃える。
+
+            control_points は MeshWarpWidget 側の編集状態として保持するが、zoom / scroll /
+            crop / matrix は MaskEditor2 を正にする。primary_param は Mask2 Geometry
+            full-preview 中に最新 disp_info を持たない経路があるため、fallback にだけ使う。
+            """
+            if self.mask_mesh_editor is None:
+                return
+            if mask_editor is None:
+                mask_editor = self.ids.get('mask_editor2')
+            try:
+                if mask_editor is not None and getattr(mask_editor, 'tcg_info', None) is not None:
+                    if hasattr(self.mask_mesh_editor, 'set_view_context'):
+                        self.mask_mesh_editor.set_view_context(mask_editor)
+                    elif hasattr(self.mask_mesh_editor, 'set_tcg_info'):
+                        self.mask_mesh_editor.set_tcg_info(mask_editor.tcg_info)
+                    return
+
+                if texture_size is not None and hasattr(self.mask_mesh_editor, 'set_texture_size'):
+                    self.mask_mesh_editor.set_texture_size(texture_size)
+                if hasattr(self.mask_mesh_editor, 'set_view_param'):
+                    self.mask_mesh_editor.set_view_param(self.primary_param)
+            except Exception:
+                logging.exception("mask mesh editor viewport sync failed")
+
+        def _enable_mask_mesh_editor(self):
+            if self.mask_mesh_editor is not None:
+                return
+            # マスク作成途中、または対象 Composit が無いなら Mesh モードに入らない。
+            # 1 箇所で UI 状態 (toggle button) を戻して早期 return する。
+            composit = None
+            if not self._has_initializing_mask():
+                composit = self._get_active_mask_geom_composit()
+            if composit is None:
+                btn = self.ids.get('btn_mask_mesh_edit')
+                if btn is not None:
+                    btn.state = 'normal'
+                return
+            from widgets.distortion_correction import MeshWarpWidget
+            texture_size = config.get_preview_texture_size()
+            # Draw 系マスクの CP を消して画面を整理するため、active を Composit に切替
+            me = self.ids['mask_editor2']
+            try:
+                if me.get_active_mask() is not composit:
+                    me.set_active_mask(composit)
+            except Exception:
+                pass
+            # 画像 mesh editor (effects.py GeometryEffect._open_geometry_editor) と
+            # 完全に同じ順序: pos_hint 設定 → add_widget → 最後に set_correction_params。
+            # set_correction_params は内部で _redraw_mesh を呼ぶため、parent 未 attach の
+            # 段階 (= widget.size=default(100,100)) で実行すると初回描画が画面外になる。
+            # Mask Mesh editor は拡大/スクロール中の preview crop 上で操作するため、
+            # attach 後に MaskEditor2.tcg_info (実表示と同期済み) を入れて viewport を合わせる。
+            mw = MeshWarpWidget(texture_size, self.primary_param, force_square_disp_info=False)
+            mw.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+            self.mask_mesh_editor = mw
+            self._mask_mesh_target_composit = composit
+            self.ids['preview_widget'].add_widget(mw)
+            self._sync_mask_mesh_editor_view(mask_editor=me, texture_size=texture_size)
+            # 初期 CP の決定: mask_mesh_link_to_image=True なら画像 mesh の CP を表示、
+            # False なら Composit 自前の CP を表示。
+            linked = composit.effects_param.get('mask_mesh_link_to_image', True)
+            if linked:
+                init_size = self.primary_param.get('mesh_size', [4, 4])
+                init_cps = self.primary_param.get('control_points', {})
+            else:
+                init_size = composit.effects_param.get('mask_mesh_size', [4, 4])
+                init_cps = composit.effects_param.get('mask_mesh_control_points', {})
+            mw.set_correction_params({
+                'mesh_size': init_size,
+                'control_points': init_cps,
+            })
+            mw.set_callback(self._on_mask_mesh_editor_callback)
+            # サイドパネル経由のマスク選択/追加/削除をブロック
+            self._set_mask2_content_panel_disabled(True)
+            # Mesh Edit モード中は全マスクの CP を非表示にする
+            try:
+                me.refresh_mask_visibility(mesh_edit_active=True)
+            except Exception:
+                logging.exception("_enable_mask_mesh_editor: refresh_mask_visibility failed")
+
+        def _disable_mask_mesh_editor(self):
+            if self.mask_mesh_editor is None:
+                return
+            self.ids['preview_widget'].remove_widget(self.mask_mesh_editor)
+            self.mask_mesh_editor = None
+            self._mask_mesh_target_composit = None
+            # サイドパネルのロック解除
+            self._set_mask2_content_panel_disabled(False)
+            # Mesh Edit モード解除: 通常の visibility に戻す (active mask ベース)
+            try:
+                me = self.ids.get('mask_editor2')
+                if me is not None:
+                    me.refresh_mask_visibility(mesh_edit_active=False)
+            except Exception:
+                logging.exception("_disable_mask_mesh_editor: refresh_mask_visibility failed")
+
+        def _force_close_mask_mesh_editor(self):
+            """Mask2 OFF など、Mesh Edit が成立しなくなる遷移で外部から強制終了する。
+            まず toggle button の state を 'normal' に戻し (Kivy の on_state bind が
+            _disable_mask_mesh_editor を間接的に走らせる)、そのフックが効かない
+            ケースのために最後に直接 _disable_mask_mesh_editor を呼ぶ。"""
+            btn = self.ids.get('btn_mask_mesh_edit')
+            if btn is not None and btn.state == 'down':
+                btn.state = 'normal'
+            if self.mask_mesh_editor is not None:
+                self._disable_mask_mesh_editor()
+
+        def _on_mask_mesh_editor_callback(self, event, mesh_widget):
+            """MeshWarpWidget の lifecycle callback。
+            'apply' が両方の trigger (通常 Apply / Reset / Shift+Reset) なので、
+            CP の中身と modifier から状態を判別する:
+              - CP 非空: 通常 Apply → local モード (linked=False, 自前 CP を保存)
+              - CP 空 + Shift 押下: Shift+Reset → local モード + 空 CP (画像も無視)
+              - CP 空 + Shift なし: 通常 Reset → linked モードに戻す
+            """
+            if event != 'apply':
+                return
+            composit = self._mask_mesh_target_composit
+            if composit is None:
+                return
+            out = mesh_widget.get_correction_params()
+            mesh_size = list(out.get('mesh_size', [4, 4]))
+            cps = dict(out.get('control_points', {}))
+            composit.effects_param['mask_mesh_size'] = mesh_size
+
+            if cps:
+                # 通常 Apply: 自前 CP を保存して linked 解除
+                composit.effects_param['mask_mesh_control_points'] = cps
+                composit.effects_param['mask_mesh_link_to_image'] = False
+            else:
+                # CP 空 = Reset。Shift キー押下なら local-empty、それ以外は linked へ戻す
+                from kivy.core.window import Window as _KVWindow
+                is_shift_reset = 'shift' in (_KVWindow.modifiers or set())
+                composit.effects_param['mask_mesh_control_points'] = {}
+                composit.effects_param['mask_mesh_link_to_image'] = not is_shift_reset
+                # 通常 Reset (linked モードに戻す) 時は、MeshWarpWidget の UI 表示も
+                # 画像 mesh の CP に再同期する (= 効果と UI を一致させる)
+                if not is_shift_reset:
+                    primary_cps = self.primary_param.get('control_points', {}) or {}
+                    primary_size = self.primary_param.get('mesh_size', [4, 4])
+                    if primary_cps:
+                        # 再 set すると bind 経由で _redraw_mesh が走るので UI も更新される
+                        mesh_widget.set_correction_params({
+                            'mesh_size': primary_size,
+                            'control_points': primary_cps,
+                        })
+            # 1) Composit の overlay FBO を更新 (= プレビュー上の赤マスク表示)
+            try:
+                composit.update_mask()
+            except Exception:
+                logging.exception("mask mesh editor: composit.update_mask() failed")
+            # 2) 実エフェクト (露光調整等) を反映させるには pipeline 側を再評価する必要がある。
+            #    pipeline.process_pipeline 内で mask.get_mask_image() が呼ばれて
+            #    mask_mesh_* 込みの weight が apply_mask_draw_effects に渡る。
+            #    Apply ボタン押下のたびに pipeline_version を 1 進めて再評価をキック。
+            try:
+                self.start_draw_image()
+            except Exception:
+                logging.exception("mask mesh editor: start_draw_image failed")
+
+        def on_mask_mesh_edit_press(self, value):
+            if value == "down":
+                self._enable_mask_mesh_editor()
+            else:
+                self._disable_mask_mesh_editor()
+
+        #--------------------------------
 
         def handle_for_dir_selection(self, selection):
             if selection is not None:
@@ -2727,6 +3059,13 @@ if __name__ == '__main__':
                 self.ids['mask_editor2'].commit_in_progress()
             except Exception:
                 pass
+
+            # Mask Mesh edit モード中にタブを切り替えたら必ず解除する。
+            # (Mesh Edit は特定タブ上の編集 UI 前提なので、他タブへ移ったら成立しない)
+            try:
+                self._force_close_mask_mesh_editor()
+            except Exception:
+                logging.exception("on_current_tab: _force_close_mask_mesh_editor failed")
 
             if current.text == "Ge":
                 # 画像 Geometry モード (Mask2 OFF) のときのみ拡大表示をリセットする。

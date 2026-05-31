@@ -19,6 +19,7 @@ class Mask2CoordinateContext:
         self.pos = (0, 0)
         self.texture_size = (0, 0)
         self.tcg_info = None
+        self.primary_param = None
         self.crop_image_rgb = None
         self.crop_image_hls = None
         self.original_image_rgb = None
@@ -69,6 +70,9 @@ class Mask2CoordinateContext:
         # 画像 Geom のみの matrix を退避 (HeadlessCompositMask の get_mask_image が
         # 各 composit ごとに M_mask @ base で書き換える起点として使う)。
         self._image_only_matrix = np.array(self.tcg_info["matrix"], dtype=np.float64).copy()
+        # mask_mesh_link_to_image=True の Composit が「画像 mesh の CP」を参照するため、
+        # primary_param 自体への参照を保持しておく (control_points / mesh_size を読むため)。
+        self.primary_param = primary_param
 
     def _call_with_image_only_matrix(self, func, *args, **kwargs):
         """func を「mask geom 抜きの image-only matrix」で一時実行する。

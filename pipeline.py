@@ -22,11 +22,17 @@ _PIPELINE_TIMING_LOCK = threading.Lock()
 _PIPELINE_TIMING_FRAME_SEQ = 0
 _PIPELINE_TIMING_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M%S")
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
+_DEBUG_MASK_ZOOM_SYNC = os.getenv("PLATYPUS_DEBUG_MASK_ZOOM_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _mask_geom_debug(message, *args):
     if _DEBUG_MASK_GEOMETRY:
         logging.warning("[MASK_GEOM] " + message, *args)
+
+
+def _mask_zoom_sync_debug(message, *args):
+    if _DEBUG_MASK_ZOOM_SYNC:
+        logging.warning("[MASK_ZOOM_SYNC] " + message, *args)
 
 
 def _mask_geom_id(mask):
@@ -471,6 +477,11 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     if timing is not None:
         _t0 = time.perf_counter()
     if crop_image is None or lv1reset == True:
+        _mask_zoom_sync_debug(
+            "pipeline crop_refresh frame=%s crop_none=%s lv1reset=%s is_zoomed=%s zoom_ratio=%.3f click=(%.2f,%.2f) center_pos=%s in_disp=%s texture=%sx%s",
+            pipeline_version, crop_image is None, lv1reset, is_zoomed, zoom_ratio,
+            click_x, click_y, center_pos, disp_info, texture_width, texture_height,
+        )
         _mask_geom_debug(
             "process_pipeline crop refresh crop_image_none=%s lv1reset=%s center_pos=%s texture=%sx%s",
             crop_image is None,
@@ -480,14 +491,23 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
             texture_height,
         )
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos, zoom_ratio=zoom_ratio)
-        mask_editor2.set_primary_param(primary_param, disp_info2)
+        mask_editor2.set_primary_param(primary_param, disp_info2, redraw_mask=False)
         mask_editor2.set_ref_image(imgc, pre_rotation_img)
+        _mask_zoom_sync_debug(
+            "pipeline crop_result frame=%s out_disp=%s imgc_shape=%s primary_disp_before_set=%s",
+            pipeline_version, disp_info2, getattr(imgc, "shape", None),
+            params.get_disp_info(primary_param),
+        )
         if not mask2_geometry_full_preview:
             params.set_disp_info(primary_param, disp_info2)
         # 新規クロップ生成時は下流を必ず更新
         lv1reset = True
         
     else:
+        _mask_zoom_sync_debug(
+            "pipeline crop_reuse frame=%s is_zoomed=%s zoom_ratio=%.3f disp=%s crop_shape=%s",
+            pipeline_version, is_zoomed, zoom_ratio, disp_info, getattr(crop_image, "shape", None),
+        )
         _mask_geom_debug(
             "process_pipeline crop reuse crop_shape=%s disp_info=%s",
             getattr(crop_image, "shape", None),

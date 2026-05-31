@@ -30,7 +30,14 @@ def init_config(widget):
         'base_resolution_scale': [4096, 4096],
         'display_output_dither': False,
         'display_output_downscale': True,
-        'debug_nan_inf_check': False
+        'debug_nan_inf_check': False,
+        # mesh warp (画像 mesh / マスク mesh) の変形手法。
+        # 'mls' (default, Moving Least Squares affine: 補間性+局所性、内側シフトなし) |
+        # 'thin_plate' (TPS, scipy 仕様で affine 遠方項) |
+        # 'multiquadric' | 'inverse' | 'linear' | 'cubic' | 'quintic'
+        # config.json に書き換え + アプリ再起動で切替。両者 (画像 / マスク mesh) に
+        # 同時適用される (= 連動コピー前提の数値一致を維持)。
+        'mesh_rbf_function': 'mls',
     })
     _preview_texture_size = (_config['preview_size'], _config['preview_size'])
 

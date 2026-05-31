@@ -20,6 +20,8 @@ from cores.mask2.exceptions import HeadlessMaskNotSupported
 from cores.mask2 import extended_params, inference_runtime
 from cores.mask2.mask_types import MaskTypeStr
 from cores.mask2 import mask_geometry as mask_geometry_mod
+from cores.mask2.mask_mesh import apply_mask_mesh_warp as _apply_mask_mesh_warp_shared
+
 
 def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     min_value = None if allow_under_zero else 0
@@ -27,6 +29,23 @@ def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     if min_value is None and max_value is None:
         return image
     return np.clip(image, min_value, max_value)
+
+
+def _apply_mask_mesh_warp(composit, ctx, effects_param):
+    """共通ヘルパ cores.mask2.mask_mesh.apply_mask_mesh_warp への薄いラッパ。
+    mask_mesh_link_to_image=True の Composit は画像 mesh の CP を都度参照する。"""
+    orig = ctx.tcg_info.get('original_img_size') if isinstance(ctx.tcg_info, dict) else None
+    # t2t=texture px (disp_info込み), t2f=フル画像px (F=MLS構築空間)。マスク warp の
+    # 共役 (射影込みでズーム位置がズレないため) に両方必要。
+    t2t = getattr(ctx, 'tcg_to_texture', None)
+    t2f = getattr(ctx, 'tcg_to_full_image', None)
+    linked = effects.Mask2Effect.get_param(effects_param, 'mask_mesh_link_to_image')
+    if linked and getattr(ctx, 'primary_param', None) is not None:
+        merged = dict(effects_param)
+        merged['mask_mesh_control_points'] = ctx.primary_param.get('control_points', {})
+        merged['mask_mesh_size'] = ctx.primary_param.get('mesh_size', [4, 4])
+        return _apply_mask_mesh_warp_shared(composit, merged, orig, t2t, t2f)
+    return _apply_mask_mesh_warp_shared(composit, effects_param, orig, t2t, t2f)
 
 
 class HeadlessCompositMask:
@@ -50,6 +69,11 @@ class HeadlessCompositMask:
     def deserialize(self, d):
         self.name = d["name"]
         self.effects_param.update(d["effects_param"])
+        # 古いファイル互換: mask_mesh_link_to_image が未設定なら、自前 CP の有無で
+        # 判定 (空 → linked, あり → local 保持)。
+        if 'mask_mesh_link_to_image' not in d.get('effects_param', {}):
+            self.effects_param['mask_mesh_link_to_image'] = \
+                not bool(d.get('effects_param', {}).get('mask_mesh_control_points'))
         self.mask_list.clear()
         for i, mask_info in enumerate(d["mask_list"]):
             subd = mask_info[0]
@@ -100,6 +124,8 @@ class HeadlessCompositMask:
                     case _:
                         logging.error("Unknown mask operation: %s", maskop)
                         raise ValueError(maskop)
+            # mask Mesh warp: 合成済 composit に非線形 TPS 変形を適用 (空なら no-op)
+            composit = _apply_mask_mesh_warp(composit, ctx, self.effects_param)
             return composit
         finally:
             if saved_matrix is not None and ctx.tcg_info is not None:

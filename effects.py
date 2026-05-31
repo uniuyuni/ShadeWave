@@ -3926,6 +3926,9 @@ class Mask2Effect(Effect):
             'mask_scale_y': 1.0,
             'mask_mesh_size': [4, 4],        # Step 4 用 (placeholder)
             'mask_mesh_control_points': {},  # Step 4 用 (placeholder)
+            # True: 画像 mesh の CP を都度参照 (画像 mesh が変わったらマスクも追従)
+            # False: 自前 mask_mesh_control_points を使う (独立 = 画像 mesh と切り離し)
+            'mask_mesh_link_to_image': True,
         }
         if subname == 'mask2_draw_effects':
             return {
@@ -4014,6 +4017,7 @@ class Mask2Effect(Effect):
                     'mask_scale_y',
                     'mask_mesh_size',
                     'mask_mesh_control_points',
+                    'mask_mesh_link_to_image',
                 )
             }
         if subname == 'mask2_face':
@@ -4181,6 +4185,7 @@ class MaskGeometryEffect(Effect):
                 'mask_scale_y',
                 'mask_mesh_size',
                 'mask_mesh_control_points',
+                'mask_mesh_link_to_image',
             )
         }
 

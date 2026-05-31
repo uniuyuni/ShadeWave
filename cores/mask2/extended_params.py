@@ -10,6 +10,8 @@ import cores.expand_mask as expand_mask
 import effects
 import params
 
+from cores.mask2.mask_mesh import mesh_cps_hash_key as _mesh_cps_hash_key
+
 
 def get_mask_hash_tuple(effects_param):
     return (
@@ -37,6 +39,11 @@ def get_mask_hash_tuple(effects_param):
         effects.Mask2Effect.get_param(effects_param, "mask2_open_space"),
         effects.Mask2Effect.get_param(effects_param, "mask2_close_space"),
         effects.Mask2Effect.get_param(effects_param, "mask2_freedraw_brush_hardness"),
+        effects.Mask2Effect.get_param(effects_param, "mask2_polyline_fill"),
+        # mask Mesh warp 関連 (Composit のみ実効、子マスクは placeholder default)
+        tuple(effects.Mask2Effect.get_param(effects_param, "mask_mesh_size") or ()),
+        _mesh_cps_hash_key(effects.Mask2Effect.get_param(effects_param, "mask_mesh_control_points")),
+        bool(effects.Mask2Effect.get_param(effects_param, "mask_mesh_link_to_image")),
     )
 
 

@@ -2936,6 +2936,22 @@
                                         on_before_edit: root.begin_history_effect_ctrl(3, 'mask_geometry')
                                         on_after_edit: root.end_history_effect_ctrl(3, 'mask_geometry')
 
+                                    # Mesh edit: 押下で MeshWarpWidget をプレビュー上にマウント。
+                                    # active Composit の effects_param['mask_mesh_*'] と双方向同期。
+                                    AnchorLayout:
+                                        anchor_x: 'right'
+                                        anchor_y: 'center'
+                                        size_hint_y: None
+                                        ref_height: 28
+                                        ToggleButton:
+                                            id: btn_mask_mesh_edit
+                                            size_hint: None, None
+                                            ref_width: 128
+                                            ref_height: 24
+                                            text: "Mesh Edit"
+                                            state: 'normal'
+                                            on_state: root.on_mask_mesh_edit_press(self.state)
+
 
                     IconTabbedPanelItem:
                         text: 'Lo'

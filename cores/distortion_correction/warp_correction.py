@@ -12,134 +12,326 @@ from scipy.interpolate import Rbf
 import params
 
 
-def warp_mesh(
+# scipy.interpolate.Rbf で epsilon を意味のあるパラメータとして取る basis 関数。
+# それ以外 (thin_plate, linear, cubic, quintic) は epsilon を無視する。
+_RBF_EPSILON_BASIS = ('multiquadric', 'inverse')
+
+
+def _mls_affine_map(src_px, dst_px, coarse_x_mesh, coarse_y_mesh, alpha=2.0):
+    """Moving Least Squares (affine) で map_x / map_y を計算する。
+    Schaefer et al. 2006 "Image Deformation Using Moving Least Squares" の affine 版。
+
+    各 query 点 v について、制御点を距離で重み付けした **局所 affine 変換** を解く:
+      w_i      = 1 / |dst_i - v|^(2*alpha)          (近い CP ほど強い)
+      p* , q*  = w 加重平均 (それぞれ dst, src の重心)
+      M        = argmin Σ w_i |(dst_i - p*) M - (src_i - q*)|^2   (2x2 affine)
+      map(v)   = (v - p*) M + q*
+
+    Gaussian IDW (Nadaraya-Watson) と違い、これは **補間** である:
+      - CP 上 (v = dst_i) では w_i → ∞ で厳密に src_i を返す → CP付近が正しく歪む
+      - グローバル affine 項を持たない (各点が独立に局所 affine) → TPS のような
+        「全体内側シフト」が構造的に発生しない。CP 群から離れた領域は最寄り CP 群の
+        局所 affine = ほぼ identity に収束 → 端が動かない
+
+    Args:
+        src_px / dst_px: shape (N, 2) image-px の src(元位置)/dst(変形後)座標
+        coarse_x_mesh / coarse_y_mesh: shape (grid_h, grid_w)
+        alpha: 重みの鋭さ (大きいほど局所的)。Schaefer の標準は 1〜2。
+    Returns:
+        (map_x_coarse, map_y_coarse): shape (grid_h, grid_w), dtype float64
+    """
+    P = np.asarray(dst_px, dtype=np.float64)   # 変形後 = query 空間
+    Q = np.asarray(src_px, dtype=np.float64)   # 元位置 = sample 元 (map の値)
+    grid_h, grid_w = coarse_x_mesh.shape
+    G = np.stack([coarse_x_mesh.ravel(), coarse_y_mesh.ravel()], axis=1)  # (M, 2)
+
+    # (M, N) 重み。CP に一致する点は d2≈0 → 巨大 weight → 厳密通過 (補間性)。
+    diff = G[:, None, :] - P[None, :, :]           # (M, N, 2)
+    d2 = np.maximum((diff * diff).sum(axis=2), 1e-8)  # (M, N)
+    w = 1.0 / np.power(d2, alpha)                  # (M, N)
+    wsum = w.sum(axis=1)                           # (M,)
+
+    pstar = (w[:, :, None] * P[None]).sum(axis=1) / wsum[:, None]  # (M, 2)
+    qstar = (w[:, :, None] * Q[None]).sum(axis=1) / wsum[:, None]  # (M, 2)
+
+    Phat = P[None] - pstar[:, None, :]             # (M, N, 2)
+    Qhat = Q[None] - qstar[:, None, :]             # (M, N, 2)
+
+    # A = Σ w Phat^T Phat, B = Σ w Phat^T Qhat   (各 grid 点ごと 2x2)
+    A = np.einsum('mn,mni,mnj->mij', w, Phat, Phat)  # (M, 2, 2)
+    B = np.einsum('mn,mni,mnj->mij', w, Phat, Qhat)  # (M, 2, 2)
+
+    # ridge 正則化 (1 CP が支配して A が特異化するケースを安定化)。
+    # その場合 (v - p*) ≈ 0 なので map ≈ q* となり ridge の影響は無視できる。
+    diagA = A[:, 0, 0] + A[:, 1, 1]                 # (M,)
+    ridge = (1e-8 * np.maximum(diagA, 1e-12))[:, None, None] * np.eye(2)[None]
+    M_mat = np.linalg.solve(A + ridge, B)           # (M, 2, 2)
+
+    mapped = np.einsum('mi,mij->mj', (G - pstar), M_mat) + qstar  # (M, 2)
+    map_x = mapped[:, 0].reshape(grid_h, grid_w)
+    map_y = mapped[:, 1].reshape(grid_h, grid_w)
+    return map_x, map_y
+
+
+def build_rbf_kwargs(orig_img_size, mesh_size):
+    """config.json の mesh_rbf_function に従って scipy.interpolate.Rbf の引数を作る。
+    画像 mesh / マスク mesh 両方から呼ばれて同じ kwargs を返すので、両者は常に
+    同一の RBF / 同一の epsilon で trained → 連動コピー前提の数値一致を維持する。
+
+    scipy.interpolate.Rbf の epsilon は **multiplier** で、各 basis 関数で以下のように
+    使われる (epsilon が大きいほど influence 範囲が狭まる):
+      - gaussian: exp(-(epsilon*r)^2) → 影響半径 ≒ 1/epsilon (1/e で decay)
+      - multiquadric: sqrt(1 + (epsilon*r)^2)
+      - inverse: 1 / sqrt(1 + (epsilon*r)^2)
+
+    「影響半径 ≒ CP 間隔」に設定 → 隣接 CP まで influence が届く、2 CP 先で ≒ 0。
+    epsilon = 1 / CP間隔 = 1 / (max(orig)/max(mesh_size)) = max(mesh_size) / max(orig)。
+    """
+    try:
+        import config
+        fn = config.get_config('mesh_rbf_function')
+    except Exception:
+        fn = None
+    if not fn:
+        fn = 'thin_plate'
+    kwargs = {'function': fn, 'smooth': 0}
+    if fn in _RBF_EPSILON_BASIS:
+        try:
+            ms_max = max(int(mesh_size[0]), int(mesh_size[1]))
+            orig_max = float(max(orig_img_size)) if orig_img_size else 1.0
+            if ms_max > 0 and orig_max > 0:
+                # 影響半径 = CP 間隔 (= orig_max / ms_max) になる epsilon
+                cp_spacing = orig_max / ms_max
+                kwargs['epsilon'] = 1.0 / cp_spacing
+        except Exception:
+            pass
+
+    # PLATYPUS_DEBUG_MESH_WARP=1 で何の RBF が実際に使われているか確認できるよう log。
+    import os as _os, logging as _logging
+    if _os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on"):
+        _logging.warning(
+            "[RBF_KW] function=%s smooth=%s epsilon=%s orig=%s mesh_size=%s",
+            kwargs.get('function'), kwargs.get('smooth'), kwargs.get('epsilon'),
+            orig_img_size, mesh_size,
+        )
+    return kwargs
+
+
+def warp_mesh_with_mapper(
     image: np.ndarray,
     mesh_size: Tuple[int, int],
     control_points: Dict[Tuple[int, int], Tuple[float, float]],
-    tcg_info: Dict = None,
-    interpolation: str = 'bicubic'
+    tcg_to_pixel_fn,
+    interpolation: str = 'bicubic',
+    border_value=(0, 0, 0),
+    extra_pin_points_tcg: Optional[List[Tuple[float, float]]] = None,
+    orig_img_size: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
     """
-    メッシュワープ補正（TPS + Coarse Grid Approximation）
-    
+    メッシュワープ補正（TPS + Coarse Grid Approximation）。
+    coord-mapper 注入式で、image 側 (tcg_to_ref_image) と mask 側 (ctx.tcg_to_texture)
+    のどちらでも利用できる。
+
     Args:
-        image: numpy.ndarray、dtype=float32、shape=(H, W, 3)
+        image: numpy.ndarray、dtype=float32、shape=(H, W, 3) または (H, W)
         mesh_size: tuple、(rows, cols)
         control_points: dict
             キー: (row_index, col_index)
             値: (offset_x, offset_y)（TCG座標系のオフセット）
-        tcg_info: 座標変換情報 (from params.param_to_tcg_info)
+        tcg_to_pixel_fn: callable (tcg_x, tcg_y) -> (px, py)
+            TCG 正規化座標を image 上のピクセル座標へ変換する関数
         interpolation: str、'bilinear' | 'bicubic'
-    
+        border_value: cv2.remap の borderValue。マスクなど単一チャンネルは 0 を渡す。
+        extra_pin_points_tcg: 追加の固定点 (src == dst で offset=0 とする) のリスト。
+            TCG 正規化座標で指定する。CP grid (TCG ±0.5) よりも外側に置くと
+            画像端での TPS 外挿が抑止され、warp が局所的になる。
+
     Returns:
         補正後画像
     """
     # 入力検証
     _validate_image(image)
-    
+
     rows, cols = mesh_size
     if not (3 <= rows <= 10 and 3 <= cols <= 10):
         # メッシュサイズは柔軟に対応するため警告に留めるか、一旦そのまま
         pass
-    
+
     height, width = image.shape[:2]
     image_shape = (height, width)
-    
+
     # 1. 制御点の収集 (TCG座標系)
     # Source: 元のグリッド (Regular Grid)
     # Dest: 変形後のグリッド (Deformed Grid) = Source + Offset
     # 我々は Dest(x,y) -> Source(x,y) のマッピングを求めたい
-    
+
     base_coords = get_mesh_coordinates(image_shape, mesh_size) # (rows+1, cols+1, 2)
-    
+
     src_points = [] # Regular
     dst_points = [] # Deformed
-    
+
     for r in range(rows + 1):
         for c in range(cols + 1):
             bx, by = base_coords[r, c]
             off_x, off_y = control_points.get((r, c), (0.0, 0.0))
-            
+
             src_points.append((bx, by))
             dst_points.append((bx + off_x, by + off_y))
-            
+
+    # 追加 pin: src == dst で TPS に渡す。CP grid 外側の領域を「ここは動かさない」
+    # と TPS に教えることで、外挿による全体ドリフトを抑止する。
+    if extra_pin_points_tcg:
+        for px, py in extra_pin_points_tcg:
+            src_points.append((px, py))
+            dst_points.append((px, py))
+
     # 変形がない場合は早期リターン
     if all(src == dst for src, dst in zip(src_points, dst_points)):
         return image
-        
+
     # 2. 座標変換 (TCG -> Image Pixel)
-    # params.tcg_to_ref_image を使用して座標変換
-    src_px_list = []
-    for px, py in src_points:
-        src_px_list.append(params.tcg_to_ref_image(px, py, image, tcg_info))
-    
-    dst_px_list = []
-    for px, py in dst_points:
-        dst_px_list.append(params.tcg_to_ref_image(px, py, image, tcg_info))
-        
+    src_px_list = [tcg_to_pixel_fn(px, py) for px, py in src_points]
+    dst_px_list = [tcg_to_pixel_fn(px, py) for px, py in dst_points]
+
     src_px = np.array(src_px_list)
     dst_px = np.array(dst_px_list)
-    
-    # 3. TPS (Rbf) の学習
-    # 入力: Dest (Deformed), 出力: Source (Original)
-    # smooth=0 (点を通る)
-    try:
-        rbf_x = Rbf(dst_px[:, 0], dst_px[:, 1], src_px[:, 0], function='thin_plate', smooth=0)
-        rbf_y = Rbf(dst_px[:, 0], dst_px[:, 1], src_px[:, 1], function='thin_plate', smooth=0)
-    except Exception as e:
-        print(f"TPS Fitting Error: {e}")
-        return image
 
-    # 4. 高速化のためのCoarse Grid生成
-    # フル解像度でRbf計算は重すぎるため、縮小グリッドで計算して拡大する
-    grid_step = 32 # 32ピクセルごとのグリッド
+    # 3. RBF / IDW で map_x, map_y を計算 (config.json で切替)。
+    # 4. Coarse Grid サンプリング
+    grid_step = 32
     grid_h = (height + grid_step - 1) // grid_step
     grid_w = (width + grid_step - 1) // grid_step
-    
-    # Coarse Grid座標
-    coarse_y, coarse_x = np.meshgrid(
-        np.linspace(0, height - 1, grid_w), # 注意: meshgridの引数順序と出力shapeの関係
-        np.linspace(0, width - 1, grid_h),
-        indexing='xy' # xy indexing: x (W) * y (H)
-    )
-    # meshgrid(x, y, indexing='xy') returns:
-    # X: (H, W), Y: (H, W) -> No, shape depends on input size. 
-    # linspace size matters.
-    # To get (grid_h, grid_w) shape:
-    # np.meshgrid(np.linspace(0, W-1, grid_w), np.linspace(0, H-1, grid_h))
-    
     coarse_x_coords = np.linspace(0, width - 1, grid_w)
     coarse_y_coords = np.linspace(0, height - 1, grid_h)
     coarse_x_mesh, coarse_y_mesh = np.meshgrid(coarse_x_coords, coarse_y_coords)
-    
-    flat_cx = coarse_x_mesh.ravel()
-    flat_cy = coarse_y_mesh.ravel()
-    
-    # 5. Rbf評価 (Coarse)
-    map_x_coarse = rbf_x(flat_cx, flat_cy).reshape(grid_h, grid_w)
-    map_y_coarse = rbf_y(flat_cx, flat_cy).reshape(grid_h, grid_w)
-    
+
+    rbf_kw = build_rbf_kwargs(orig_img_size, mesh_size)
+    fn = rbf_kw.get('function', 'thin_plate')
+
+    if fn == 'mls':
+        # Moving Least Squares (affine)。補間性 + 局所性を両立し、TPS の affine 遠方項
+        # による「全体内側シフト」を解消する (default)。
+        map_x_coarse, map_y_coarse = _mls_affine_map(
+            src_px, dst_px, coarse_x_mesh, coarse_y_mesh,
+        )
+    else:
+        # scipy.interpolate.Rbf (TPS / multiquadric / inverse / linear / cubic / quintic)
+        try:
+            rbf_x = Rbf(dst_px[:, 0], dst_px[:, 1], src_px[:, 0], **rbf_kw)
+            rbf_y = Rbf(dst_px[:, 0], dst_px[:, 1], src_px[:, 1], **rbf_kw)
+        except Exception as e:
+            print(f"RBF Fitting Error: {e}")
+            return image
+        flat_cx = coarse_x_mesh.ravel()
+        flat_cy = coarse_y_mesh.ravel()
+        map_x_coarse = rbf_x(flat_cx, flat_cy).reshape(grid_h, grid_w)
+        map_y_coarse = rbf_y(flat_cx, flat_cy).reshape(grid_h, grid_w)
+
     # 6. マップのアップスケーリング
     # float32でリサイズ
     map_x = cv2.resize(map_x_coarse.astype(np.float32), (width, height), interpolation=cv2.INTER_CUBIC)
     map_y = cv2.resize(map_y_coarse.astype(np.float32), (width, height), interpolation=cv2.INTER_CUBIC)
-    
+
+    # [MESH_DEBUG] map の統計 (warp 量を測る、マスク mesh の同等 log と比較するため)
+    import os as _os, logging as _logging
+    if _os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on"):
+        cy, cx = height // 2, width // 2
+        shift_x = float(map_x[cy, cx]) - cx
+        shift_y = float(map_y[cy, cx]) - cy
+        _logging.warning(
+            "[IMG_WARP] image.shape=%s n_cps=%d "
+            "map_x range=[%.2f, %.2f] map_y range=[%.2f, %.2f] "
+            "center_shift=(%.2f, %.2f)",
+            image.shape, len(control_points),
+            float(map_x.min()), float(map_x.max()),
+            float(map_y.min()), float(map_y.max()),
+            shift_x, shift_y,
+        )
+
     # 7. リマッピング
     if interpolation == 'bilinear':
         interp_flag = cv2.INTER_LINEAR
     else:  # 'bicubic'
         interp_flag = cv2.INTER_CUBIC
-        
+
     corrected = cv2.remap(
         image,
         map_x,
         map_y,
         interp_flag,
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 0, 0)
+        borderValue=border_value,
     )
-    
+
     return corrected
+
+
+def warp_mesh(
+    image: np.ndarray,
+    mesh_size: Tuple[int, int],
+    control_points: Dict[Tuple[int, int], Tuple[float, float]],
+    tcg_info: Dict = None,
+    interpolation: str = 'bicubic',
+    border_value=(0, 0, 0),
+) -> np.ndarray:
+    """
+    メッシュワープ補正（画像 + マスク 共用 API）。warp_mesh_with_mapper のラッパで、
+    tcg_to_ref_image を mapper として使用する。マスク (H, W) もそのまま渡せる。
+
+    Args:
+        image: numpy.ndarray、dtype=float32、shape=(H, W, 3) または (H, W)
+        mesh_size: tuple、(rows, cols)
+        control_points: dict
+            キー: (row_index, col_index)
+            値: (offset_x, offset_y)（TCG座標系のオフセット）
+        tcg_info: 座標変換情報 (from params.param_to_tcg_info)
+        interpolation: str、'bilinear' | 'bicubic'
+        border_value: cv2.remap の borderValue (画像は (0,0,0)、マスクは 0)
+
+    Returns:
+        補正後画像
+    """
+    def _mapper(px, py):
+        return params.tcg_to_ref_image(px, py, image, tcg_info)
+
+    orig = tcg_info['original_img_size'] if (tcg_info is not None and 'original_img_size' in tcg_info) else None
+    return warp_mesh_with_mapper(
+        image,
+        mesh_size,
+        control_points,
+        tcg_to_pixel_fn=_mapper,
+        interpolation=interpolation,
+        border_value=border_value,
+        extra_pin_points_tcg=outer_ring_pins_tcg(),
+        orig_img_size=orig,
+    )
+
+
+# デフォルト margin=0.15 用の事前計算済 pin 座標 (hot path で list allocation を避けるため)。
+_OUTER_RING_PINS_DEFAULT = (
+    (-0.65, -0.65), (0.0, -0.65), (0.65, -0.65),
+    (-0.65,  0.0),                 (0.65,  0.0),
+    (-0.65,  0.65), (0.0,  0.65), (0.65,  0.65),
+)
+
+
+def outer_ring_pins_tcg(margin: float = 0.15):
+    """CP grid (TCG ±0.5) の外側に offset=0 で固定する pin の TCG 座標 8 点を返す。
+    TPS の affine 成分による「動かしていない CP も外周方向に引っ張られる」現象を
+    抑制するためのバウンダリ制約。画像 mesh / マスク mesh 共用。
+
+    Args:
+        margin: CP grid 外側へどれだけ離すか (TCG 単位)。大きいほど抑制力が強いが、
+            画像領域から離れすぎると TPS 行列が ill-conditioned になる。0.15 は経験値。
+    """
+    if margin == 0.15:
+        return _OUTER_RING_PINS_DEFAULT
+    r = 0.5 + margin
+    return (
+        (-r, -r), (0.0, -r), (+r, -r),
+        (-r,  0.0),           (+r,  0.0),
+        (-r, +r), (0.0, +r), (+r, +r),
+    )
 
 def correct_with_lines(
     image: np.ndarray,
@@ -474,11 +666,15 @@ def _validate_image(image: np.ndarray):
     """画像の検証"""
     if not isinstance(image, np.ndarray):
         raise TypeError(f"image must be numpy.ndarray, got {type(image)}")
-    
+
     if image.dtype != np.float32:
         raise TypeError(f"image must be float32, got {image.dtype}")
-    
-    if image.ndim != 3 or image.shape[2] != 3:
-        raise TypeError(f"image must have shape (H, W, 3), got {image.shape}")
+
+    # (H, W, 3) または (H, W) (マスク用) のいずれかを許容
+    if not (
+        (image.ndim == 3 and image.shape[2] == 3)
+        or image.ndim == 2
+    ):
+        raise TypeError(f"image must have shape (H, W, 3) or (H, W), got {image.shape}")
 
 

@@ -39,7 +39,9 @@
                 "PYTORCH_MPS_FAST_MATH": "1",
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
                 "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/third_party/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
-                "PLATYPUS_DEBUG_MASK_GEOMETRY": "1",
+                "PLATYPUS_DEBUG_MASK_GEOMETRY": "0",
+                "PLATYPUS_DEBUG_MESH_WARP": "1",
+                "PLATYPUS_DEBUG_MASK_ZOOM_SYNC": "1"
             }
         },
         {

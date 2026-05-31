@@ -13,6 +13,9 @@ import define
 import effects
 import utils.utils as utils
 import macos as device
+
+
+_MESH_DEBUG = os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on")
 from enums import ImageFidelity
 from utils import rating_utils
 from utils.rating_io import PMCK_RAW_RATING_KEY, merge_raw_pmck_rating
@@ -781,6 +784,26 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     """
     disp_info = get_disp_info(tcg_info)
     imax = max(tcg_info['original_img_size'][0] / 2, tcg_info['original_img_size'][1] / 2)
+
+    # 環境変数 PLATYPUS_DEBUG_MESH_WARP=1 のときだけ debug log。
+    # 通常は _MESH_DEBUG=False で早期 skip し、hot path (秒間数百回) の overhead を避ける。
+    _is_mesh_dbg = (
+        _MESH_DEBUG
+        and normalize and abs(cx) < 1e-9 and abs(cy) < 1e-9
+        and type(widget).__name__ == 'MeshWarpWidget'
+    )
+    if _is_mesh_dbg:
+        try:
+            logging.warning(
+                "[T2W_IN] widget_id=%s widget.size=%s widget.pos=%s texture_size=%s "
+                "disp_info=%s orig=%s dpi=%s",
+                id(widget),
+                tuple(widget.size), tuple(widget.pos), tuple(texture_size),
+                disp_info, tcg_info['original_img_size'], device.dpi_scale(),
+            )
+        except Exception:
+            pass
+
     if normalize:
         cx, cy = denorm_param(tcg_info, (cx, cy))
     cx, cy = center_rotate(cx, cy, tcg_info)
@@ -795,6 +818,17 @@ def tcg_to_window(cx, cy, widget, texture_size, tcg_info, normalize=True):
     cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
     wx, wy = widget.to_window(*widget.pos)
     cx, cy = cx + wx, cy + wy
+
+    if _is_mesh_dbg:
+        try:
+            logging.warning(
+                "[T2W_OUT] widget_id=%s margin=(%s,%s) widget.to_window(pos)=(%s,%s) "
+                "final_cx_cy=(%s, %s)",
+                id(widget), margin_x, margin_y, wx, wy, cx, cy,
+            )
+        except Exception:
+            pass
+
     return (cx, cy)
 
 def window_to_tcg_scale(x, tcg_info):
