@@ -49,6 +49,7 @@ class MeshWarpWidget(KVFloatLayout):
         self.texture_size = texture_size
         self.tcg_info = params.param_to_tcg_info(param)
         self._view_context = None
+        self._view_context_image_only_matrix = False
 
         if force_square_disp_info:
             import config as _config
@@ -221,20 +222,23 @@ class MeshWarpWidget(KVFloatLayout):
         if not isinstance(tcg_info, dict):
             return
         self._view_context = None
+        self._view_context_image_only_matrix = False
         self.tcg_info = self._copy_tcg_info(tcg_info)
         self._redraw_mesh()
 
     def set_view_param(self, param):
         self.set_tcg_info(params.param_to_tcg_info(param))
 
-    def set_view_context(self, context):
+    def set_view_context(self, context, image_only_matrix=False):
         """外部の表示座標 context をこの widget の view source にする。
 
         MeshWarpWidget 自身は control_offsets_tcg だけを編集状態として持ち、
-        zoom / scroll / crop / matrix は context 側を正とする。Mask Mesh editor では
-        MaskEditor2 を渡すことで、マスク描画とメッシュ編集 UI が同じ座標系を見る。
+        zoom / scroll / crop は context 側を正とする。Mask Mesh editor では
+        MaskEditor2 を渡しつつ image_only_matrix=True にすることで、Mask Geom ではなく
+        画像 Geom の座標系にメッシュグリッドを固定する。
         """
         self._view_context = context
+        self._view_context_image_only_matrix = bool(image_only_matrix)
         self.sync_view_from_context()
 
     def sync_view_from_context(self):
@@ -256,10 +260,18 @@ class MeshWarpWidget(KVFloatLayout):
                 tcg_info = getattr(context, 'tcg_info', None)
                 texture_size = tuple(texture_size) if texture_size is not None else None
                 tcg_info = self._copy_tcg_info(tcg_info) if isinstance(tcg_info, dict) else None
+                if self._view_context_image_only_matrix and tcg_info is not None:
+                    image_only = getattr(context, '_image_only_matrix', None)
+                    if image_only is not None:
+                        tcg_info['matrix'] = np.array(image_only, dtype=np.float64, copy=True)
 
         if lock is None:
             texture_size = tuple(texture_size) if texture_size is not None else None
             tcg_info = self._copy_tcg_info(tcg_info) if isinstance(tcg_info, dict) else None
+            if self._view_context_image_only_matrix and tcg_info is not None:
+                image_only = getattr(context, '_image_only_matrix', None)
+                if image_only is not None:
+                    tcg_info['matrix'] = np.array(image_only, dtype=np.float64, copy=True)
 
         changed = False
         if texture_size is not None and texture_size != tuple(self.texture_size):

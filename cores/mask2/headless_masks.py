@@ -575,6 +575,7 @@ class HeadlessSegmentMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         center = self.ctx.tcg_to_original_image(*self.center)
         corner = self.ctx.tcg_to_original_image(*self.corner)
         if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_settings") is True:
@@ -583,7 +584,7 @@ class HeadlessSegmentMask:
             invert = False
         segment_mask = None
 
-        newhash = hash((image_size, center, corner))
+        newhash = hash((original_image_size, center, corner, invert))
         if self.image_mask_cache_hash != newhash and not self.initializing:
             self.image_mask_cache_hash = newhash
             cx, cy = center
@@ -598,7 +599,7 @@ class HeadlessSegmentMask:
             )
             self.image_mask_cache = segment_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -690,9 +691,10 @@ class HeadlessDepthMapMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         depth_map_mask = None
 
-        newhash = hash((image_size,))
+        newhash = hash((original_image_size,))
         if (
             self.image_mask_cache is None or self.image_mask_cache_hash != newhash
         ) and not self.initializing:
@@ -701,7 +703,7 @@ class HeadlessDepthMapMask:
             depth_map_mask = inference_runtime.predict_depth_map(img)
             self.image_mask_cache = depth_map_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -792,6 +794,7 @@ class HeadlessFaceMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         exclude_names = []
         if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_face") is True:
             if effects.Mask2Effect.get_param(self.effects_param, "mask2_face_face") is False:
@@ -808,7 +811,7 @@ class HeadlessFaceMask:
                 exclude_names.extend(["ulip", "llip"])
         faces_mask = None
 
-        newhash = hash((image_size, tuple(exclude_names)))
+        newhash = hash((original_image_size, tuple(exclude_names)))
         if (
             self.image_mask_cache is None or self.image_mask_cache_hash != newhash
         ) and not self.initializing:
@@ -817,7 +820,7 @@ class HeadlessFaceMask:
             faces_mask = inference_runtime.predict_face_mask(img, exclude_names)
             self.image_mask_cache = faces_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -911,6 +914,7 @@ class HeadlessTargetTextMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_settings") is True:
             invert = effects.Mask2Effect.get_param(self.effects_param, "mask2_invert")
         else:
@@ -918,14 +922,14 @@ class HeadlessTargetTextMask:
         text = self.target_text
         segment_mask = None
 
-        newhash = hash((image_size, text))
+        newhash = hash((original_image_size, text, invert))
         if self.image_mask_cache_hash != newhash and not self.initializing:
             self.image_mask_cache_hash = newhash
             img = self.ctx.get_original_image_rgb()
             segment_mask = inference_runtime.predict_sam3_text(img, text, invert)
             self.image_mask_cache = segment_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (

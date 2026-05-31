@@ -1632,25 +1632,63 @@ class CropEffect(Effect):
         else:
             self._close_crop_editor(param, widget)
 
+    def _full_preview_disp_info(self, param):
+        original_img_size = param.get('original_img_size')
+        if original_img_size is None:
+            return None
+        msize = max(original_img_size[0], original_img_size[1])
+        scale = config.get_preview_texture_side() / msize
+        return (0, 0, msize, msize, scale)
+
+    def _is_full_preview_disp_info(self, param, disp_info):
+        full_disp_info = self._full_preview_disp_info(param)
+        if full_disp_info is None or disp_info is None:
+            return False
+        return (
+            int(disp_info[0]) == int(full_disp_info[0]) and
+            int(disp_info[1]) == int(full_disp_info[1]) and
+            int(disp_info[2]) == int(full_disp_info[2]) and
+            int(disp_info[3]) == int(full_disp_info[3]) and
+            abs(float(disp_info[4]) - float(full_disp_info[4])) < 1e-6
+        )
+
+    def _crop_rect_disp_info(self, param):
+        crop_rect = params.get_crop_rect(param)
+        original_img_size = param.get('original_img_size')
+        if crop_rect is None or original_img_size is None:
+            return None
+        return core.convert_rect_to_info(
+            crop_rect,
+            config.get_preview_texture_side() / max(original_img_size),
+        )
+
     def make_diff(self, img, param, efconfig):
         crop_editing = getattr(efconfig, 'crop_editing', False)
         disp_info = params.get_disp_info(param)
 
         self.backup_img = img
 
-        if crop_editing or disp_info is None:
+        if crop_editing:
             self.diff = None
             self.hash = None
             param['img_size'] = (param['original_img_size'][0], param['original_img_size'][1])
-            msize = max(param['original_img_size'][0], param['original_img_size'][1])
-            scale = config.get_preview_texture_side()/msize
-            params.set_disp_info(param, (0, 0, msize, msize, scale))
+            params.set_disp_info(param, self._full_preview_disp_info(param))
         else:
-            param_hash = hash((crop_editing))
+            if disp_info is None or self._is_full_preview_disp_info(param, disp_info):
+                crop_disp_info = self._crop_rect_disp_info(param)
+                if crop_disp_info is not None:
+                    params.set_disp_info(param, crop_disp_info)
+                    disp_info = params.get_disp_info(param)
+                elif disp_info is None:
+                    params.set_disp_info(param, self._full_preview_disp_info(param))
+                    disp_info = params.get_disp_info(param)
+
+            param_hash = hash((crop_editing, disp_info))
             if self.hash != param_hash:
                 self.diff = disp_info
                 self.hash = param_hash
-                param['img_size'] = (disp_info[2], disp_info[3])
+                if disp_info is not None:
+                    param['img_size'] = (disp_info[2], disp_info[3])
         return self.diff
 
     def apply_diff(self, img):

@@ -2151,13 +2151,11 @@ if __name__ == '__main__':
                 return False
 
         def _is_image_geometry_mode(self):
-            """Geometry タブを開いていて、かつ Mask2 が OFF の状態。
-            画像本体の Geometry を編集している状態として、ズームは禁止する。
-            Mask2 ON 中 (= マスク Geometry モード) はズームを許可する。"""
+            """Geometry タブを開いている状態。
+            Ge タブ中は画像/マスクどちらの Geometry 編集でもズーム操作を禁止する。
+            Mesh CP の double tap / Shift+Reset と preview double-tap zoom が競合するため。"""
             try:
-                if self.ids["effects"].current_tab.text != "Ge":
-                    return False
-                return not self._is_mask2_on()
+                return self.ids["effects"].current_tab.text == "Ge"
             except Exception:
                 return False
 
@@ -2187,6 +2185,7 @@ if __name__ == '__main__':
                 # ただしアクティブマスクがダブルタップを消費 (= PolylineMask の確定) する場合も抑制
                 if (touch.is_double_tap == True
                         and not self._is_image_geometry_mode()
+                        and not self.is_mask_mesh_editor_active()
                         and not self._active_mask_consumes_double_tap(touch)):
                     next_zoomed = not self.is_zoomed
                     tex_pos = self._preview_texture_pos_or_none(touch) if next_zoomed else None
@@ -2804,7 +2803,7 @@ if __name__ == '__main__':
             try:
                 if mask_editor is not None and getattr(mask_editor, 'tcg_info', None) is not None:
                     if hasattr(self.mask_mesh_editor, 'set_view_context'):
-                        self.mask_mesh_editor.set_view_context(mask_editor)
+                        self.mask_mesh_editor.set_view_context(mask_editor, image_only_matrix=True)
                     elif hasattr(self.mask_mesh_editor, 'set_tcg_info'):
                         self.mask_mesh_editor.set_tcg_info(mask_editor.tcg_info)
                     return
@@ -2850,6 +2849,10 @@ if __name__ == '__main__':
             self._mask_mesh_target_composit = composit
             self.ids['preview_widget'].add_widget(mw)
             self._sync_mask_mesh_editor_view(mask_editor=me, texture_size=texture_size)
+            try:
+                me.clear_mask_geom_axes()
+            except Exception:
+                logging.exception("_enable_mask_mesh_editor: clear_mask_geom_axes failed")
             # 初期 CP の決定: mask_mesh_link_to_image=True なら画像 mesh の CP を表示、
             # False なら Composit 自前の CP を表示。
             linked = composit.effects_param.get('mask_mesh_link_to_image', True)
@@ -2938,19 +2941,24 @@ if __name__ == '__main__':
                             'mesh_size': primary_size,
                             'control_points': primary_cps,
                         })
-            # 1) Composit の overlay FBO を更新 (= プレビュー上の赤マスク表示)
+            # overlay / pipeline / cache invalidate は MaskEditor2 側の単一入口に寄せる。
+            # Mask Mesh は source viewport を一時拡張するため、直接 update_mask() すると
+            # AI 系 child mask の表示キャッシュ順に依存して空フレームが出やすい。
             try:
-                composit.update_mask()
+                me = self.ids.get('mask_editor2')
+                if me is not None and hasattr(me, 'request_mask_render_update'):
+                    me.request_mask_render_update(
+                        composit,
+                        reason="mask_mesh_apply",
+                        refresh_visibility=False,
+                        redraw_overlay=True,
+                        redraw_pipeline=True,
+                    )
+                else:
+                    composit.update_mask()
+                    self.start_draw_image()
             except Exception:
-                logging.exception("mask mesh editor: composit.update_mask() failed")
-            # 2) 実エフェクト (露光調整等) を反映させるには pipeline 側を再評価する必要がある。
-            #    pipeline.process_pipeline 内で mask.get_mask_image() が呼ばれて
-            #    mask_mesh_* 込みの weight が apply_mask_draw_effects に渡る。
-            #    Apply ボタン押下のたびに pipeline_version を 1 進めて再評価をキック。
-            try:
-                self.start_draw_image()
-            except Exception:
-                logging.exception("mask mesh editor: start_draw_image failed")
+                logging.exception("mask mesh editor: render update failed")
 
         def on_mask_mesh_edit_press(self, value):
             if value == "down":
@@ -3068,10 +3076,12 @@ if __name__ == '__main__':
                 logging.exception("on_current_tab: _force_close_mask_mesh_editor failed")
 
             if current.text == "Ge":
-                # 画像 Geometry モード (Mask2 OFF) のときのみ拡大表示をリセットする。
-                # マスク Geometry モード (Mask2 ON) のときは拡大表示を維持する。
-                if not self._is_mask2_on():
+                # Ge タブ中は画像/マスクどちらの Geometry 編集でもズーム禁止。
+                if self.is_zoomed:
                     self.is_zoomed = False
+                    self.crop_image = None
+                    self.click_x, self.click_y = 0, 0
+                    self.drag_center_start = None
                 # マスク Geometry モードに入った時は lens/four-points 系エディタも閉じる
                 if self._is_mask2_on():
                     self.primary_effects[0]['geometry'].close_geometry_editor(self)

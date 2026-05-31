@@ -491,8 +491,6 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
             texture_height,
         )
         imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos, zoom_ratio=zoom_ratio)
-        mask_editor2.set_primary_param(primary_param, disp_info2, redraw_mask=False)
-        mask_editor2.set_ref_image(imgc, pre_rotation_img)
         _mask_zoom_sync_debug(
             "pipeline crop_result frame=%s out_disp=%s imgc_shape=%s primary_disp_before_set=%s",
             pipeline_version, disp_info2, getattr(imgc, "shape", None),
@@ -515,6 +513,8 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         )
         imgc = crop_image
         disp_info2 = disp_info
+    mask_editor2.set_primary_param(primary_param, disp_info2, redraw_mask=False)
+    mask_editor2.set_ref_image(imgc, pre_rotation_img)
     #mask_editor2.update()
     if timing is not None:
         _timing_add_section_ms(timing, "crop_and_mask_ref", (time.perf_counter() - _t0) * 1000.0)
