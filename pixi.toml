@@ -19,6 +19,7 @@ install-sam3 = { cmd = "python -m pip install -e SAM3" }
 # 初回: LibRaw ビルド → editable インストール（毎回フルビルドしたい場合はこちら）
 setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && python -m pip install -e libraw_enhanced --no-build-isolation'" }
 test-hls-color-adjust = { cmd = "python tests/test_hls_color_adjust.py" }
+check-exr-export-env = { cmd = "python scripts/check_exr_export_env.py" }
 
 [dependencies]
 autoconf = ">=2.71,<3"

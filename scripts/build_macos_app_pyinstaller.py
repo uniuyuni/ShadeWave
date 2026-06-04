@@ -355,6 +355,10 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     args.extend(["--collect-all", "pyvips"])
     args.extend(["--hidden-import", "_libvips"])
 
+    # OpenEXR: .EXR export uses the official Python bindings directly.
+    args.extend(["--collect-all", "OpenEXR"])
+    args.extend(["--hidden-import", "OpenEXR"])
+
     for d in uniq_datas:
         args.extend(["--add-data", d])
 

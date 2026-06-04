@@ -2045,6 +2045,13 @@ ICC_PROFILE_TO_COLOR_SPACE = {
     'sRGB IEC61966-2.1': 'sRGB',
     'Adobe RGB (1998)': 'Adobe RGB (1998)',
     'ProPhoto RGB': 'ProPhoto RGB',
+    'ACES2065-1': 'ACES2065-1',
+    'ACEScg': 'ACEScg',
+    'Display P3': 'Display P3',
+    'ITU-R BT.2020': 'Rec.2020',
+    'Rec.2020': 'Rec.2020',
+    'ITU-R BT.709 Reference Display': 'Rec.709',
+    'ITU-R BT.709': 'Rec.709',
 }
 
 def get_icc_profile_name(pil_image):

@@ -51,7 +51,7 @@
 
                 Spinner:
                     text: root.format_value
-                    values: ['.JPG', '.TIFF', '.JXL', '.PNG']
+                    values: ['.JPG', '.TIFF', '.EXR', '.JXL', '.PNG']
                     size_hint_x: None
                     ref_width: 80
                     on_text: root.format_value = self.text
@@ -63,8 +63,8 @@
                     max: 100
                     value: 0
                     step: 1
-                    opacity: 1 if root.format_value != '.TIFF' else 0
-                    disabled: root.format_value == '.TIFF'
+                    opacity: 1 if root.format_value not in ['.TIFF', '.EXR'] else 0
+                    disabled: root.format_value in ['.TIFF', '.EXR']
                     value: root.quality_value
                     on_slider: root.quality_value = int(self.value)
 
@@ -177,7 +177,7 @@
                     text: "ICC Profile"
                 Spinner:
                     text: root.icc_profile
-                    values: ['sRGB IEC61966-2.1', 'Adobe RGB (1998)', 'ProPhoto RGB']
+                    values: root.icc_profile_values
                     size_hint_x: None
                     ref_width: 180
                     on_text: root.icc_profile = self.text

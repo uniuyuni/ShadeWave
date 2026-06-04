@@ -26,6 +26,7 @@ msgpack
 numba
 numpy
 opencv-contrib-python
+OpenEXR
 pandas
 Pillow
 pillow-heif

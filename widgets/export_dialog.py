@@ -2,7 +2,7 @@
 from kivymd.app import MDApp
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.core.window import Window as KVWindow
-from kivy.properties import StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, DictProperty as KVDictProperty
+from kivy.properties import StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, DictProperty as KVDictProperty, ListProperty as KVListProperty
 from kivy.uix.popup import Popup as KVPopup
 from kivy.uix.modalview import ModalView as KVModalView
 from kivy.uix.textinput import TextInput as KVTextInput
@@ -19,6 +19,14 @@ import macos as device
 import widgets.param_slider
 import widgets.float_input
 import widgets.modern_checkbox
+
+
+def _available_icc_profiles():
+    try:
+        import export
+        return export.get_available_icc_profiles()
+    except Exception:
+        return ['sRGB IEC61966-2.1']
 
 class PresetNameDialog(KVPopup):
     def __init__(self, save_callback, **kwargs):
@@ -118,6 +126,7 @@ class ExportDialog(KVModalView):
 
     # Color Space
     icc_profile = KVStringProperty('sRGB IEC61966-2.1')
+    icc_profile_values = KVListProperty(['sRGB IEC61966-2.1'])
 
     # Presets
     presets = KVDictProperty()
@@ -126,6 +135,7 @@ class ExportDialog(KVModalView):
         super(ExportDialog, self).__init__(**kwargs)
 
         self.callback = callback
+        self.icc_profile_values = _available_icc_profiles()
     
     def on_kv_post(self, *args, **kwargs):
         self.bind(on_dismiss=self.handle_dismiss)
@@ -148,6 +158,7 @@ class ExportDialog(KVModalView):
             try:
                 with open(file_path, 'r') as f:
                     self.presets = json.load(f)
+                    self._normalize_default_preset()
                     self.ids['preset_spinner'].values = list(self.presets.keys())
             except FileNotFoundError as e:
                 pass
@@ -158,7 +169,7 @@ class ExportDialog(KVModalView):
             'quality': 90,
             'size_mode': 'Original',
             'size_value': '',
-            'sharpen': 50,
+            'sharpen': 0,
             'metadata': True,
             'gps': True,
             'dithering': True,
@@ -167,7 +178,13 @@ class ExportDialog(KVModalView):
         }
         if self.presets.get('Default', None) is None:
             self.presets['Default'] = default_settings
+        self._normalize_default_preset()
         self.current_preset = 'Default'
+
+    def _normalize_default_preset(self):
+        default_preset = self.presets.get('Default')
+        if isinstance(default_preset, dict):
+            default_preset['sharpen'] = 0
 
     def on_format_value(self, instance, value):
         pass
@@ -262,6 +279,8 @@ class ExportDialog(KVModalView):
             self.dithering = settings.get('dithering', self.dithering)
             self.output_path = settings.get('output_path', self.output_path)
             self.icc_profile = settings.get('icc_profile', self.icc_profile)
+            if self.icc_profile not in self.icc_profile_values:
+                self.icc_profile = 'sRGB IEC61966-2.1'
             self.current_preset = preset_name
 
 
