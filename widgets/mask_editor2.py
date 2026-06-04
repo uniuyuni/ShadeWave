@@ -51,7 +51,7 @@ from history import LayerCtrl, get_history_ctrl
 import macos as device
 
 from cores.mask2 import mask_rasters
-from cores.mask2.cutout_guided import create_cutout_mask_guided
+from cores.mask2 import edge_refine
 
 
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -653,6 +653,17 @@ class BaseMask(KVWidget):
             # イメージを描画してもらう
             self.editor.draw_mask_image(mask_image)
 
+    def _redraw_mask_content(self, reason="mask_content"):
+        """Mask pixels changed without going through ControlPoint properties."""
+        if self.editor is None:
+            return
+        try:
+            self.editor._invalidate_mask_render_family(self)
+        except Exception:
+            logging.exception("_redraw_mask_content: cache invalidation failed reason=%s", reason)
+        self.update_mask()
+        self.editor.start_draw_image()
+
     def _fit_image_mask_to_texture(self, image):
         """original/full-image 空間の mask を現在 texture に配置する。
 
@@ -735,15 +746,27 @@ class BaseMask(KVWidget):
         out[dst_y0:dst_y1, dst_x0:dst_x1] = content[src_y0:src_y1, src_x0:src_x1]
         return out
 
-    def _apply_extened_params(self, image):
+    def _apply_extened_params(self, image, edge_refine_draw_strokes=None):
         simg = self._apply_mask_space(image)
+        simg, edge_support = self._apply_edge_refine(simg, edge_refine_draw_strokes=edge_refine_draw_strokes)
         dimg = self._apply_depth_mask(simg)
         himg = self._draw_hue_mask(dimg)
         limg = self._draw_lum_mask(himg)
         simg = self._draw_sat_mask(limg)
         bimg = self._apply_mask_blur(simg)
+        if edge_support is not None:
+            bimg = np.where(edge_support > 0.001, bimg, 0.0)
 
         return bimg
+
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _edge_refine_seed_from_guide(self):
+        return False
+
+    def _get_edge_refine_seed_mask(self, mask_shape, current_mask=None):
+        return None
 
     def get_hash_items(self):
         # tcg_info['matrix'] のバイト列を末尾に含めることで、CompositMask.get_mask_image が
@@ -785,6 +808,9 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
                 # mask Mesh warp 関連 (Composit のみ実際に効くが、子マスクでも
                 # placeholder default ({} と [4,4]) で hash が安定するので一律含める)
                 tuple(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_size') or ()),
@@ -804,6 +830,78 @@ class BaseMask(KVWidget):
             image = expand_mask.adjust_holes_only(image, close_space * params.get_disp_info(self.editor.tcg_info)[4], False)
         
         return image
+
+    def _apply_edge_refine(self, image, edge_refine_draw_strokes=None):
+        if not self._edge_refine_enabled_for_mask():
+            return image, None
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') != True:
+            return image, None
+        mode = effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode')
+        if not edge_refine.is_enabled(mode):
+            return image, None
+        guide = self._get_edge_refine_guide_image(image.shape[:2])
+        guide_point = self._get_edge_refine_guide_point()
+        seed_mask = self._get_edge_refine_seed_mask(image.shape[:2], image)
+        refined, support = edge_refine.refine_mask_edge_aware(
+            guide,
+            image,
+            guide_point=guide_point,
+            mode=mode,
+            radius=self._edge_refine_radius_to_texture(
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius')),
+            strength=effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
+            fill_grown_region=self._edge_refine_fill_grown_region(),
+            seed_from_guide=self._edge_refine_seed_from_guide(),
+            seed_mask=seed_mask,
+            debug_label=self.__class__.__name__,
+            support_softness=self._edge_refine_support_softness(),
+            selection_strategy=self._edge_refine_selection_strategy(),
+            draw_strokes=edge_refine_draw_strokes,
+            return_support=True,
+        )
+        return refined, support
+
+    def _edge_refine_enabled_for_mask(self):
+        return True
+
+    def _edge_refine_support_softness(self):
+        return 0.0
+
+    def _edge_refine_selection_strategy(self):
+        return edge_refine.STRATEGY_REFINE
+
+    def _edge_refine_radius_to_texture(self, radius):
+        try:
+            disp_scale = float(params.get_disp_info(self.editor.tcg_info)[4])
+        except Exception:
+            disp_scale = 1.0
+        return max(1.0, float(radius) * disp_scale)
+
+    def _get_edge_refine_guide_image(self, mask_shape):
+        crop = getattr(self.editor, 'crop_image_rgb', None)
+        if crop is not None and getattr(crop, 'shape', (None, None))[:2] == tuple(mask_shape):
+            return crop
+
+        original = self.editor.get_original_image_rgb()
+        if original is not None:
+            guide = self._fit_image_mask_to_texture(original)
+            if getattr(guide, 'shape', (None, None))[:2] != tuple(mask_shape):
+                guide = cv2.resize(guide, (int(mask_shape[1]), int(mask_shape[0])), interpolation=cv2.INTER_LINEAR)
+            return guide
+
+        hls = getattr(self.editor, 'crop_image_hls', None)
+        if hls is not None:
+            return hls[..., 1]
+        return None
+
+    def _get_edge_refine_guide_point(self):
+        center = getattr(self, 'center', None)
+        if center is None:
+            return None
+        try:
+            return self.editor.tcg_to_texture(*center)
+        except Exception:
+            return None
 
     def _apply_depth_mask(self, image):
         switch_mask2_depth = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth')
@@ -1271,6 +1369,15 @@ class CircularGradientMask(BaseMask):
 
         #self.update_mask()
 
+    def _edge_refine_fill_grown_region(self):
+        return False
+
+    def _edge_refine_seed_from_guide(self):
+        return True
+
+    def _edge_refine_enabled_for_mask(self):
+        return False
+
     def on_touch_down(self, touch):
         if self.initializing:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
@@ -1677,6 +1784,15 @@ class GradientMask(BaseMask):
 
         self.rotate_rad = 0
         #self.update_mask()
+
+    def _edge_refine_fill_grown_region(self):
+        return False
+
+    def _edge_refine_seed_from_guide(self):
+        return True
+
+    def _edge_refine_enabled_for_mask(self):
+        return False
     
     def on_touch_down(self, touch):
         if self.initializing:
@@ -2098,6 +2214,15 @@ class FullMask(BaseMask):
 
         #self.update_mask()
 
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _edge_refine_seed_from_guide(self):
+        return True
+
+    def _edge_refine_enabled_for_mask(self):
+        return False
+
     def on_touch_down(self, touch):
         if self.initializing:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
@@ -2245,6 +2370,18 @@ class FreeDrawMask(BaseMask):
 
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _get_edge_refine_seed_mask(self, mask_shape, current_mask=None):
+        if current_mask is None:
+            return None
+        seed = edge_refine.make_confident_seed(current_mask)
+        return seed if np.any(seed) else None
+
+    def _edge_refine_selection_strategy(self):
+        return edge_refine.STRATEGY_DRAW
+
     def start(self):
         self.brush_color.rgba = (1, 1, 1, 1)
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
@@ -2346,16 +2483,18 @@ class FreeDrawMask(BaseMask):
 
                     return super().on_touch_down(touch)
 
-        if self.initializing:
+        was_initializing = self.initializing
+        if was_initializing:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.center_x = cx
             self.center_y = cy
             self.create_control_points()
-            self.editor.set_active_mask(self)            
+            self.editor.set_active_mask(self)
+            self.initializing = False
 
         # 右クリックで消去モード、左クリックで描画モード
         is_erasing = (touch.button == 'right')            
-        if not self.initializing:
+        if not was_initializing:
             get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
             self._stroke_history_started = True
 
@@ -2365,12 +2504,10 @@ class FreeDrawMask(BaseMask):
         self.editor.set_active_mask(self)
         self.lines.append(self.current_line)
 
-        self.update_mask()
-        self.editor.start_draw_image()
+        self._redraw_mask_content("freedraw_touch_down")
         
         # 初期化時はBaseMaskの方を呼び出さない
-        if self.initializing:
-            self.initializing = False
+        if was_initializing:
             return True
 
         return super().on_touch_down(touch)
@@ -2380,8 +2517,7 @@ class FreeDrawMask(BaseMask):
             return False
         if self.current_line is not None:
             self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("freedraw_touch_move")
             return True
 
         return super().on_touch_move(touch)
@@ -2392,8 +2528,7 @@ class FreeDrawMask(BaseMask):
             # ストロークの後始末は通常パスでも行う。ここでは描画動作だけ抑止する。
             if self.current_line is not None:
                 self.current_line = None
-                self.update_mask()
-                self.editor.start_draw_image()
+                self._redraw_mask_content("freedraw_touch_up_pan")
                 if self._stroke_history_started:
                     get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
                     self._stroke_history_started = False
@@ -2401,8 +2536,7 @@ class FreeDrawMask(BaseMask):
         if self.current_line is not None:
             self.current_line = None
             # マスクを更新
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("freedraw_touch_up")
             if self._stroke_history_started:
                 get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
                 self._stroke_history_started = False
@@ -2481,7 +2615,7 @@ class FreeDrawMask(BaseMask):
                     mask = 1.0 - mask
 
             # ルミナンスとマスクを作成
-            mask = self._apply_extened_params(mask)
+            mask = self._apply_extened_params(mask, edge_refine_draw_strokes=copy_lines)
 
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -2549,6 +2683,18 @@ class PolylineMask(BaseMask):
             KVPopMatrix()
 
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
+
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _get_edge_refine_seed_mask(self, mask_shape, current_mask=None):
+        if current_mask is None:
+            return None
+        seed = edge_refine.make_confident_seed(current_mask)
+        return seed if np.any(seed) else None
+
+    def _edge_refine_selection_strategy(self):
+        return edge_refine.STRATEGY_DRAW
 
     # ---- ライフサイクル ----
     def start(self):
@@ -2703,11 +2849,13 @@ class PolylineMask(BaseMask):
 
         # 初期化時 (最初の左クリックでのみマスク中心を確定)。
         # 右クリックでの初期化は中心だけ残って polyline が始まらないので不可。
-        if self.initializing and touch.button == 'left' and not getattr(touch, 'is_double_tap', False):
+        was_initializing = self.initializing
+        if was_initializing and touch.button == 'left' and not getattr(touch, 'is_double_tap', False):
             self.center_x = tcg_x
             self.center_y = tcg_y
             self.create_control_points()
             self.editor.set_active_mask(self)
+            self.initializing = False
 
         # 右クリック: 描画中のみ直近頂点を取消 (idle 右クリックは何もしない)
         if touch.button == 'right':
@@ -2720,8 +2868,7 @@ class PolylineMask(BaseMask):
                         get_history_ctrl().end_history_layer_ctrl(
                             self.editor, "Update", self.editor.get_mask_list().index(self))
                         self._stroke_history_started = False
-                self.update_mask()
-                self.editor.start_draw_image()
+                self._redraw_mask_content("polyline_undo_point")
                 return True
             # idle 右クリックは消費せず親に流す
             return super().on_touch_down(touch)
@@ -2733,8 +2880,7 @@ class PolylineMask(BaseMask):
             if getattr(touch, 'is_double_tap', False):
                 if self.current_polyline is not None:
                     self._finish_current_polyline(is_closed=False)
-                    self.update_mask()
-                    self.editor.start_draw_image()
+                    self._redraw_mask_content("polyline_finish_open")
                     if self.initializing:
                         self.initializing = False
                     return True
@@ -2743,8 +2889,7 @@ class PolylineMask(BaseMask):
             # 描画中で始点付近をクリックしたら閉じて確定
             if self.current_polyline is not None and self._is_near_first_point(tcg_x, tcg_y):
                 self._finish_current_polyline(is_closed=True)
-                self.update_mask()
-                self.editor.start_draw_image()
+                self._redraw_mask_content("polyline_finish_closed")
                 if self.initializing:
                     self.initializing = False
                 return True
@@ -2754,10 +2899,8 @@ class PolylineMask(BaseMask):
                 self._begin_new_polyline(tcg_x, tcg_y, is_erasing=False)
             else:
                 self.current_polyline.add_point(tcg_x, tcg_y)
-                self.update_mask()
-                self.editor.start_draw_image()
-            if self.initializing:
-                self.initializing = False
+                self._redraw_mask_content("polyline_add_point")
+            if was_initializing:
                 return True
             return super().on_touch_down(touch)
 
@@ -2790,8 +2933,7 @@ class PolylineMask(BaseMask):
         )
         self.current_polyline.add_point(tcg_x, tcg_y)
         self.editor.set_active_mask(self)
-        self.update_mask()
-        self.editor.start_draw_image()
+        self._redraw_mask_content("polyline_begin")
 
     def _finish_current_polyline(self, is_closed: bool):
         if self.current_polyline is None:
@@ -2817,8 +2959,7 @@ class PolylineMask(BaseMask):
         タブ切替やマスク非アクティブ化など、描画コンテキストを抜けるときに呼ぶ。"""
         if self.current_polyline is not None:
             self._finish_current_polyline(is_closed=False)
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("polyline_commit_in_progress")
         # 残留オーバーレイをリセット
         self.preview_line.points = []
         self.preview_color.rgba = (1, 1, 0, 0)
@@ -2939,8 +3080,7 @@ class PolylineMask(BaseMask):
                 instance.property('center').dispatch(instance)
             else:
                 instance.center = new_center
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("polyline_vertex_move")
         return _cb
 
     def on_center_control_point_move(self, instance, value):
@@ -2972,8 +3112,7 @@ class PolylineMask(BaseMask):
                 cp.property('center').dispatch(cp)
             else:
                 cp.center = center
-        self.update_mask()
-        self.editor.start_draw_image()
+        self._redraw_mask_content("polyline_center_move")
 
     # ---- カーソル ----
     def update_brush_cursor(self, x, y):
@@ -3090,6 +3229,9 @@ class SegmentMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -3331,6 +3473,9 @@ class DepthMapMask(BaseMask):
     def follows_mask_geometry(self):
         return False
 
+    def _edge_refine_support_softness(self):
+        return 1.0
+
     def on_touch_down(self, touch):
         if self.initializing:
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
@@ -3488,6 +3633,9 @@ class FaceMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -3671,6 +3819,9 @@ class TargetTextMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -3917,7 +4068,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def get_crop_image_hls(self):
         if self.crop_image_hls is None and self.crop_image_rgb is not None:
             self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
-            self.crop_image_rgb = None
+            # Keep the RGB crop alive. Edge-refine and its debug views must use
+            # the current zoom crop, even after HLS-based masks have run.
         return self.crop_image_hls
 
     def get_original_image_rgb(self):

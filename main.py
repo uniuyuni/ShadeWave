@@ -2522,6 +2522,9 @@ if __name__ == '__main__':
                     'slider_mask2_blur',
                     'slider_mask2_open_space',
                     'slider_mask2_close_space',
+                    'spinner_mask2_edge_refine_mode',
+                    'slider_mask2_edge_refine_radius',
+                    'slider_mask2_edge_refine_strength',
                 ),
                 not mask_specific_enabled,
             )

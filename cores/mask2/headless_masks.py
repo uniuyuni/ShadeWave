@@ -17,7 +17,7 @@ from cores.mask2 import mask_rasters
 from cores.mask2.mask_rasters import Line, draw_line_texture
 from cores.mask2.mask_rasters import Polyline as RasterPolyline, draw_polyline_texture
 from cores.mask2.exceptions import HeadlessMaskNotSupported
-from cores.mask2 import extended_params, inference_runtime
+from cores.mask2 import edge_refine, extended_params, inference_runtime
 from cores.mask2.mask_types import MaskTypeStr
 from cores.mask2 import mask_geometry as mask_geometry_mod
 from cores.mask2.mask_mesh import apply_mask_mesh_warp as _apply_mask_mesh_warp_shared
@@ -178,7 +178,13 @@ class HeadlessFullMask:
         ) and self.initializing is False:
             gradient_image = np.ones((image_size[1], image_size[0]), dtype=np.float32)
             gradient_image = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, gradient_image, self.center
+                self.ctx,
+                self.effects_param,
+                gradient_image,
+                self.center,
+                fill_grown_region=True,
+                seed_from_guide=True,
+                edge_refine_enabled=False,
             )
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -267,7 +273,13 @@ class HeadlessCircularGradientMask:
                 1.5,
             )
             gradient_image = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, gradient_image, self.center
+                self.ctx,
+                self.effects_param,
+                gradient_image,
+                self.center,
+                fill_grown_region=False,
+                seed_from_guide=True,
+                edge_refine_enabled=False,
             )
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -343,7 +355,13 @@ class HeadlessGradientMask:
                 image_size, center, start_point, end_point, 1
             )
             gradient_image = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, gradient_image, self.center
+                self.ctx,
+                self.effects_param,
+                gradient_image,
+                self.center,
+                fill_grown_region=False,
+                seed_from_guide=True,
+                edge_refine_enabled=False,
             )
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -429,7 +447,15 @@ class HeadlessFreeDrawMask:
                 allow_under_zero=allow_under_zero,
             )
             mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, mask, self.center
+                self.ctx,
+                self.effects_param,
+                mask,
+                self.center,
+                fill_grown_region=True,
+                seed_mask=edge_refine.make_confident_seed(mask),
+                edge_refine_debug_label="HeadlessFreeDrawMask",
+                edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
+                edge_refine_draw_strokes=copy_lines,
             )
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -517,7 +543,14 @@ class HeadlessPolylineMask:
                 allow_under_zero=False,
             )
             mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, mask, self.center
+                self.ctx,
+                self.effects_param,
+                mask,
+                self.center,
+                fill_grown_region=True,
+                seed_mask=edge_refine.make_confident_seed(mask),
+                edge_refine_debug_label="HeadlessPolylineMask",
+                edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
             )
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -634,7 +667,11 @@ class HeadlessSegmentMask:
                 constant_values=0,
             )
             segment_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, segment_mask, self.center
+                self.ctx,
+                self.effects_param,
+                segment_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.segment_mask_cache = segment_mask
 
@@ -737,7 +774,11 @@ class HeadlessDepthMapMask:
                 constant_values=0,
             )
             depth_map_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, depth_map_mask, self.center
+                self.ctx,
+                self.effects_param,
+                depth_map_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.depth_map_mask_cache = depth_map_mask
 
@@ -855,7 +896,11 @@ class HeadlessFaceMask:
                 constant_values=0,
             )
             faces_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, faces_mask, self.center
+                self.ctx,
+                self.effects_param,
+                faces_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.faces_mask_cache = faces_mask
 
@@ -964,7 +1009,11 @@ class HeadlessTargetTextMask:
                 constant_values=0,
             )
             segment_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, segment_mask, self.center
+                self.ctx,
+                self.effects_param,
+                segment_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.segment_mask_cache = segment_mask
 

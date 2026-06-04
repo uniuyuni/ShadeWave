@@ -3940,6 +3940,9 @@ class Mask2Effect(Effect):
             'mask2_close_space': 0,
             'mask2_freedraw_brush_hardness': 100,
             'mask2_polyline_fill': True,
+            'mask2_edge_refine_mode': 'Off',
+            'mask2_edge_refine_radius': 60,
+            'mask2_edge_refine_strength': 0,
             'switch_mask2_draw_effects': True,
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,
@@ -4040,6 +4043,9 @@ class Mask2Effect(Effect):
                     'mask2_close_space',
                     'mask2_freedraw_brush_hardness',
                     'mask2_polyline_fill',
+                    'mask2_edge_refine_mode',
+                    'mask2_edge_refine_radius',
+                    'mask2_edge_refine_strength',
                 )
             }
         if subname == 'mask_geometry':
@@ -4099,6 +4105,12 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
         widget.ids["slider_mask2_freedraw_brush_hardness"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_hardness'))
         widget.ids["checkbox_mask2_polyline_fill"].active = self._get_param(param, 'mask2_polyline_fill')
+        edge_refine_mode = self._get_param(param, 'mask2_edge_refine_mode')
+        if edge_refine_mode in ('Refine', 'Grow', 'Grow + Islands', 'Lock'):
+            edge_refine_mode = 'Quick Select'
+        widget.ids["spinner_mask2_edge_refine_mode"].set_text(edge_refine_mode)
+        widget.ids["slider_mask2_edge_refine_radius"].set_slider_value(self._get_param(param, 'mask2_edge_refine_radius'))
+        widget.ids["slider_mask2_edge_refine_strength"].set_slider_value(self._get_param(param, 'mask2_edge_refine_strength'))
         widget.ids["switch_mask2_draw_effects"].active = self._get_param(param, 'switch_mask2_draw_effects')
         widget.ids["slider_mask2_color_dodge"].set_slider_value(self._get_param(param, 'mask2_color_dodge'))
         widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
@@ -4141,6 +4153,9 @@ class Mask2Effect(Effect):
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
         param['mask2_freedraw_brush_hardness'] = widget.ids["slider_mask2_freedraw_brush_hardness"].value
         param['mask2_polyline_fill'] = widget.ids["checkbox_mask2_polyline_fill"].active
+        param['mask2_edge_refine_mode'] = widget.ids["spinner_mask2_edge_refine_mode"].text
+        param['mask2_edge_refine_radius'] = widget.ids["slider_mask2_edge_refine_radius"].value
+        param['mask2_edge_refine_strength'] = widget.ids["slider_mask2_edge_refine_strength"].value
         param['switch_mask2_draw_effects'] = widget.ids["switch_mask2_draw_effects"].active
         param['mask2_color_dodge'] = widget.ids["slider_mask2_color_dodge"].value
         param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value

@@ -3416,6 +3416,41 @@
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Quick"
+                                    VSpacer:
+                                        size_hint_x: 0.1
+                                    ParamSpinner:
+                                        id: spinner_mask2_edge_refine_mode
+                                        values: [ 'Off', 'Quick Select' ]
+                                        on_value:
+                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.apply_effects_lv(3, 'mask2')
+                                            root.end_history_effect_ctrl(3, 'mask2')
+
+                                ParamSlider:
+                                    id: slider_mask2_edge_refine_radius
+                                    text: "Quick Radius"
+                                    min: 1
+                                    max: 200
+                                    value: 60
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                ParamSlider:
+                                    id: slider_mask2_edge_refine_strength
+                                    text: "Edge Lock"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
                                 ParamSlider:
                                     id: slider_mask2_freedraw_brush_hardness
                                     text: "Brush Hardness"
