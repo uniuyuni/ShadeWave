@@ -8,6 +8,7 @@ import numpy as np
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import cores.core as core
 from cores.mask2.coordinate_context import Mask2CoordinateContext
 from cores.mask2 import edge_refine, extended_params, mask_rasters
 from cores.mask2.edge_refine import refine_mask_edge_aware
@@ -788,6 +789,31 @@ class EdgeRefineTest(unittest.TestCase):
             )
         )
 
+    def test_draw_target_edge_ignores_weak_boundary_surface_lines(self):
+        h, w = 80, 140
+        component = np.zeros((h, w), dtype=bool)
+        component[28:54, 24:116] = True
+        seed = np.zeros_like(component)
+        seed[38:44, 42:98] = True
+
+        edge_strength = np.zeros((h, w), dtype=np.float32)
+        cv2.line(edge_strength, (28, 29), (112, 29), 0.18, 1, cv2.LINE_AA)
+        hard_edge = edge_strength >= 0.25
+        self.assertFalse(np.any(hard_edge))
+
+        target = edge_refine._draw_component_target_edge(
+            hard_edge,
+            edge_strength,
+            component,
+            search_radius=24,
+            half_width=13,
+            seed=seed,
+            seed_from_stroke=True,
+            strength=90,
+        )
+
+        self.assertEqual(int(np.count_nonzero(target)), 0)
+
     def test_draw_component_snap_crop_matches_full_render_for_simple_edge(self):
         h, w = 120, 160
         image = np.zeros((h, w, 3), dtype=np.float32)
@@ -1004,6 +1030,75 @@ class EdgeRefineTest(unittest.TestCase):
         guide = extended_params._get_edge_refine_guide_image(ctx, (100, 100))
 
         self.assertIs(guide, crop)
+
+    def test_freedraw_full_view_roi_uses_padded_square_coordinates(self):
+        image = np.zeros((60, 100, 3), dtype=np.float32)
+        image[..., 0] = np.arange(100, dtype=np.float32)[None, :] / 100.0
+        image[..., 1] = np.arange(60, dtype=np.float32)[:, None] / 60.0
+
+        full = extended_params._crop_padded_image_region(image, (0, 20, 100, 80))
+        top_pad = extended_params._crop_padded_image_region(image, (0, 0, 100, 20))
+
+        self.assertEqual(full.shape, image.shape)
+        self.assertTrue(np.allclose(full, image))
+        self.assertEqual(top_pad.shape, (20, 100, 3))
+        self.assertLess(float(np.max(top_pad)), 0.001)
+
+    def test_freedraw_full_view_matches_local_preview_scale_for_full_display(self):
+        original = np.zeros((100, 160, 3), dtype=np.float32)
+        original[:, :80] = (0.2, 0.7, 0.2)
+        original[:, 80:] = (0.4, 0.7, 1.0)
+        preview = cv2.resize(original, (80, 50), interpolation=cv2.INTER_AREA)
+        disp_info = core.convert_rect_to_info(core.get_initial_crop_rect(160, 100), 0.5)
+
+        ctx = Mask2CoordinateContext()
+        ctx.set_texture_size(80, 80)
+        primary = {
+            "original_img_size": (160, 100),
+            "img_size": (160, 100),
+            "disp_info": disp_info,
+            "rotation": 0,
+            "rotation2": 0,
+            "flip_mode": 0,
+            "matrix": np.eye(3),
+        }
+        ctx.set_primary_param(primary, disp_info)
+        ctx.set_ref_image(preview, original)
+
+        line = mask_rasters.Line(False, 20, 100)
+        for x in (30, 60, 90, 130):
+            line.add_point(x - 80, 50 - 80)
+        texture_line = mask_rasters.Line(False, ctx.tcg_to_image_scale(line.size, 0)[0], 100)
+        for point in line.points:
+            texture_line.add_point(*ctx.tcg_to_texture(*point))
+        mask = mask_rasters.draw_line_texture((80, 80), [texture_line])
+        effects_param = {
+            "switch_mask2_options": True,
+            "mask2_edge_refine_mode": "Quick Select",
+            "mask2_edge_refine_radius": 24,
+            "mask2_edge_refine_strength": 80,
+        }
+
+        local = extended_params.apply_extended_params(
+            ctx,
+            effects_param,
+            mask,
+            line.points[1],
+            fill_grown_region=True,
+            seed_mask=edge_refine.make_confident_seed(mask),
+            edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
+            edge_refine_draw_strokes=[texture_line],
+        )
+        full = extended_params.render_freedraw_edge_refine_full_view(
+            ctx,
+            effects_param,
+            [line],
+            line.points[1],
+            mask.shape,
+        )
+
+        self.assertIsNotNone(full)
+        self.assertLess(float(np.abs(local - full).mean()), 0.015)
 
     def test_headless_parametric_masks_ignore_quick_select(self):
         image = np.zeros((100, 100, 3), dtype=np.float32)

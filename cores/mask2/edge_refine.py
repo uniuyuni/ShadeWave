@@ -332,6 +332,7 @@ def _draw_grabcut_band_support(guide, mask, radius, strength, seed_mask=None, dr
             component_half_width,
             seed=fg_stroke_seed[sl] if has_strokes else None,
             seed_from_stroke=has_strokes,
+            strength=strength,
         )
         raw_target_edge_roi = target_edge_roi.copy()
 
@@ -807,7 +808,7 @@ def _draw_grabcut_band_cleanup(
 
     support |= fg_seed
     support &= ~bg_seed
-    if not np.any(target_edge):
+    if np.any(target_edge) and int(np.count_nonzero(target_edge)) <= 512:
         support |= _restore_edge_pixels(candidate, support, target_edge)
     if not np.any(target_edge):
         support = _fill_draw_support_pinholes(
@@ -911,6 +912,7 @@ def _draw_random_walker_support(guide, mask, radius, strength, seed_mask=None, d
             component_half_width,
             seed=fg_roi if has_strokes else None,
             seed_from_stroke=has_strokes,
+            strength=strength,
         )
         if has_strokes:
             original_fg_roi = fg_roi.copy()
@@ -1458,6 +1460,7 @@ def _draw_component_edge_snap_support(guide, mask, radius, strength, seed_mask=N
             component_half_width,
             seed=seed_roi,
             seed_from_stroke=stroke_seed is not None,
+            strength=strength,
         )
 
         dist_to_component = _distance_from(comp_roi)
@@ -1842,7 +1845,12 @@ def _draw_component_target_edge(
         search_radius,
         half_width,
         seed=None,
-        seed_from_stroke=False):
+        seed_from_stroke=False,
+        strength=60.0):
+    # edge is already thresholded upstream. Do not promote sub-threshold
+    # edge_strength here: target_edge becomes a GrabCut barrier, so weak image
+    # texture can split the user's stroke into hollow stripes.
+    _ = edge_strength, strength
     edge = np.asarray(edge, dtype=bool)
     if not np.any(edge):
         return edge
@@ -1861,37 +1869,35 @@ def _draw_component_target_edge(
     )
     boundary_distance = _distance_from(boundary)
     near_boundary = boundary_distance <= boundary_reach
+    boundary_surface_reach = max(3.0, min(search_radius, half_width * 0.75 + 6.0))
+    boundary_surface = boundary_distance <= boundary_surface_reach
+
     local_edge = edge & near_boundary
     if seed is not None:
         seed = np.asarray(seed, dtype=bool)
         if seed.shape[:2] == local_edge.shape[:2] and np.any(seed):
+            boundary_edge = local_edge & boundary_surface
             center_reach = _draw_target_edge_center_reach(
                 search_radius,
                 half_width,
                 seed_from_stroke=seed_from_stroke,
             )
-            local_edge &= _distance_from(seed) <= center_reach
+            center_edge = local_edge & (_distance_from(seed) <= center_reach)
+            local_edge = center_edge | boundary_edge
     if not np.any(local_edge):
         return local_edge
-
-    edge_strength = np.asarray(edge_strength, dtype=np.float32)
-    if edge_strength.shape[:2] != local_edge.shape[:2]:
-        edge_strength = cv2.resize(
-            edge_strength,
-            (int(local_edge.shape[1]), int(local_edge.shape[0])),
-            interpolation=cv2.INTER_LINEAR,
-        )
 
     n_labels, labels = cv2.connectedComponents(local_edge.astype(np.uint8), connectivity=8)
     if n_labels <= 2:
         return local_edge
 
     min_area = max(8, int(round(half_width * 0.75)))
+    min_surface_area = max(3, int(round(half_width * 0.22)))
     keep = np.zeros_like(local_edge, dtype=bool)
     for label_id in range(1, n_labels):
         part = labels == label_id
         area = int(np.count_nonzero(part))
-        if area >= min_area:
+        if area >= min_area or (area >= min_surface_area and np.any(part & boundary_surface)):
             keep |= labels == label_id
 
     if np.count_nonzero(keep) < max(3, min_area // 2):

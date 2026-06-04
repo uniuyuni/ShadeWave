@@ -446,17 +446,28 @@ class HeadlessFreeDrawMask:
                 allow_over_one=allow_over_one,
                 allow_under_zero=allow_under_zero,
             )
-            mask = extended_params.apply_extended_params(
+            full_refined = extended_params.render_freedraw_edge_refine_full_view(
                 self.ctx,
                 self.effects_param,
-                mask,
+                self.lines,
                 self.center,
-                fill_grown_region=True,
-                seed_mask=edge_refine.make_confident_seed(mask),
-                edge_refine_debug_label="HeadlessFreeDrawMask",
-                edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
-                edge_refine_draw_strokes=copy_lines,
+                mask.shape,
+                debug_label="HeadlessFreeDrawMaskFull",
             )
+            if full_refined is None:
+                mask = extended_params.apply_extended_params(
+                    self.ctx,
+                    self.effects_param,
+                    mask,
+                    self.center,
+                    fill_grown_region=True,
+                    seed_mask=edge_refine.make_confident_seed(mask),
+                    edge_refine_debug_label="HeadlessFreeDrawMask",
+                    edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
+                    edge_refine_draw_strokes=copy_lines,
+                )
+            else:
+                mask = full_refined
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
 

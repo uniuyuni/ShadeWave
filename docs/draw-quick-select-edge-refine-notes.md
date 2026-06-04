@@ -410,11 +410,20 @@ Draw Quick Select の通常経路を Random Walker から外し、`_draw_grabcut
 - eraser stroke と band 外周を hard BG seed にする
 - OpenCV `grabCut` は band 内の補助的な領域推定として使う
 - 実際の境界決定は、target edge が属する image edge 成分を壁にした band 内連結選択で行う
-- target edge が少ない単純境界では edge pixel を追加復元する
+- edge barrier 側で、選択側に隣接する薄い境界面の pixel を復元する
+- 汎用の post-solve target edge 復元は小さい edge 断片だけに限定する
 - 雲/雪のような大量エッジでは追加復元を抑え、外側漏れを防ぐ
 - 長い stroke に対して target edge が短い断片しか出ない場合は、その edge は切断に使わず `raw_target_edge` として debug にだけ残す
-- stroke がエッジをうっかり跨いだ場合は、跨いだ FG seed を BG seed へ回して外側を落とす
+- stroke がエッジをうっかり跨いだ場合は、target edge が連続した境界として信用できる時だけ、跨いだ FG seed を BG seed へ回して外側を落とす。雪/木の細かい断片 edge では seed を切らず、stroke 中心線まわりだけを細く保護して内部穴あきを避ける。マスク内側全体を保護すると、太いブラシで本命エッジの遠い側を削れなくなる
+- target edge は stroke 中心線の近傍だけでなく、マスク境界面に近い連続 edge も残す。太いブラシでは本命境界が中心線より外周寄りにあるため、中心線距離だけで絞ると雲/木の境界を落として内部テクスチャだけが残る
 - target edge が seed を覆う場合は、free 領域の色を FG seed と比較して選択側を決める
+- zoom crop で巨大ブラシが crop 端に clipped blob / wide stroke として見える場合は、外側 grow を禁止しつつ stroke 中心線近傍へ制限して、拡大時だけ巨大な塗り領域になる挙動を避ける
+- FreeDraw の zoom/crop 表示では、crop-local の clipped stroke を直接 refine せず、フル画像座標系の余白付き小領域で Draw Quick Select を再計算してから現在表示へ切り出す。これにより通常表示・拡大表示・headless/export の基準を寄せる
+- この小領域は表示 crop だけでなく、表示 crop に触れている stroke の全体 bbox も含める。拡大表示で stroke の一部だけが切られて巨大な filled component になるのを避ける
+- 上記の余白付き領域が大きすぎる場合も従来の crop-local 経路へは戻さず、領域画像・stroke 座標・brush サイズ・半径・出力 crop 座標を同じ scale で内部縮小して処理する。Quick Select 選択時に元画像全体を同期処理して UI が戻らなくなるのを避けつつ、拡大時だけ座標系が変わる問題を防ぐ
+- FreeDraw の full-coordinate ROI は、実画像配列の左上座標ではなく TCG と同じ正方形パディング座標で作る。ROI から実画像を切り出す時だけパディングを差し引く
+- UI の通常 full 表示では、Full 経路でも current crop/preview 画像を source にして local 経路と同じ解像度で解く。export では crop と original が同じなので full 解像度になる
+- `FreeDrawMaskFull` の debug mosaic は内部計算領域を表示するため、拡大表示そのものにはならない。現在表示へ切り出した後の確認用に `FreeDrawMaskFullCrop` debug mosaic も出す
 
 OpenCV `grabCut` 単独では不十分だった点:
 
@@ -447,6 +456,6 @@ pixi run python -m unittest discover -s tests -p test_edge_refine.py
 結果:
 
 ```text
-Ran 36 tests
+Ran 39 tests
 OK
 ```

@@ -52,6 +52,7 @@ import macos as device
 
 from cores.mask2 import mask_rasters
 from cores.mask2 import edge_refine
+from cores.mask2 import extended_params
 
 
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -2615,7 +2616,18 @@ class FreeDrawMask(BaseMask):
                     mask = 1.0 - mask
 
             # ルミナンスとマスクを作成
-            mask = self._apply_extened_params(mask, edge_refine_draw_strokes=copy_lines)
+            full_refined = extended_params.render_freedraw_edge_refine_full_view(
+                self.editor,
+                self.effects_param,
+                self.lines,
+                self.center,
+                mask.shape,
+                debug_label=f"{self.__class__.__name__}Full",
+            )
+            if full_refined is None:
+                mask = self._apply_extened_params(mask, edge_refine_draw_strokes=copy_lines)
+            else:
+                mask = full_refined
 
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
