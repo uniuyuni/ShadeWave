@@ -2014,8 +2014,10 @@ class LightNoiseReductionEffect(Effect):
             param_hash = hash((its, col))
             if self.hash != param_hash:  
                 self.hash = param_hash
+                from radiance_denoise import denoise_native
 
-                self.diff = core.light_denoise(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
+                self.diff = denoise_native(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
+                #self.diff = core.light_denoise(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
 
         return self.diff
 
@@ -3941,8 +3943,8 @@ class Mask2Effect(Effect):
             'mask2_freedraw_brush_hardness': 100,
             'mask2_polyline_fill': True,
             'mask2_edge_refine_mode': 'Off',
-            'mask2_edge_refine_radius': 60,
-            'mask2_edge_refine_strength': 0,
+            'mask2_edge_refine_radius': 0,
+            'mask2_edge_refine_strength': 60,
             'switch_mask2_draw_effects': True,
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,

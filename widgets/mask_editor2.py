@@ -747,9 +747,16 @@ class BaseMask(KVWidget):
         out[dst_y0:dst_y1, dst_x0:dst_x1] = content[src_y0:src_y1, src_x0:src_x1]
         return out
 
-    def _apply_extened_params(self, image, edge_refine_draw_strokes=None):
+    def _apply_extened_params(
+            self,
+            image,
+            edge_refine_draw_strokes=None,
+            edge_refine_enabled=True):
         simg = self._apply_mask_space(image)
-        simg, edge_support = self._apply_edge_refine(simg, edge_refine_draw_strokes=edge_refine_draw_strokes)
+        if edge_refine_enabled:
+            simg, edge_support = self._apply_edge_refine(simg, edge_refine_draw_strokes=edge_refine_draw_strokes)
+        else:
+            edge_support = None
         dimg = self._apply_depth_mask(simg)
         himg = self._draw_hue_mask(dimg)
         limg = self._draw_lum_mask(himg)
@@ -876,7 +883,7 @@ class BaseMask(KVWidget):
             disp_scale = float(params.get_disp_info(self.editor.tcg_info)[4])
         except Exception:
             disp_scale = 1.0
-        return max(1.0, float(radius) * disp_scale)
+        return float(radius) * disp_scale
 
     def _get_edge_refine_guide_image(self, mask_shape):
         crop = getattr(self.editor, 'crop_image_rgb', None)
@@ -2356,6 +2363,7 @@ class FreeDrawMask(BaseMask):
         self.current_line = None
         self.brush_size = 300
         self._stroke_history_started = False
+        self._drag_base_mask = None
 
         with self.canvas:
             KVPushMatrix()
@@ -2394,6 +2402,7 @@ class FreeDrawMask(BaseMask):
     def clear(self):
         self.lines = []
         self.current_line = None
+        self._drag_base_mask = None
         super().clear()
 
     def serialize(self):
@@ -2485,6 +2494,9 @@ class FreeDrawMask(BaseMask):
                     return super().on_touch_down(touch)
 
         was_initializing = self.initializing
+        if not self._touch_in_draw_area(touch):
+            return super().on_touch_down(touch)
+
         if was_initializing:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.center_x = cx
@@ -2498,6 +2510,8 @@ class FreeDrawMask(BaseMask):
         if not was_initializing:
             get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
             self._stroke_history_started = True
+
+        self._drag_base_mask = self._current_committed_preview_base()
 
         hardness = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
         self.current_line = FreeDrawMask.Line(is_erasing, self.brush_size, hardness)
@@ -2529,6 +2543,7 @@ class FreeDrawMask(BaseMask):
             # ストロークの後始末は通常パスでも行う。ここでは描画動作だけ抑止する。
             if self.current_line is not None:
                 self.current_line = None
+                self._drag_base_mask = None
                 self._redraw_mask_content("freedraw_touch_up_pan")
                 if self._stroke_history_started:
                     get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
@@ -2536,6 +2551,7 @@ class FreeDrawMask(BaseMask):
             return False
         if self.current_line is not None:
             self.current_line = None
+            self._drag_base_mask = None
             # マスクを更新
             self._redraw_mask_content("freedraw_touch_up")
             if self._stroke_history_started:
@@ -2544,6 +2560,12 @@ class FreeDrawMask(BaseMask):
             return True
 
         return super().on_touch_up(touch)
+
+    def _touch_in_draw_area(self, touch):
+        checker = getattr(self.editor, "window_point_in_image_rect", None)
+        if callable(checker):
+            return bool(checker(*touch.pos))
+        return bool(self.editor.collide_point(*touch.pos))
 
     def create_control_points(self):
         # 中心のコントロールポイント
@@ -2569,6 +2591,56 @@ class FreeDrawMask(BaseMask):
         inner_size = max(0.0, brush_size * (hardness / 100.0))
         inner_off = (brush_size - inner_size) / 2.0
         self.brush_cursor_inner.ellipse = (inner_off, inner_off, inner_size, inner_size)
+
+    def _edge_refine_preview_freeze_enabled(self):
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') != True:
+            return False
+        mode = effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode')
+        return edge_refine.is_enabled(mode)
+
+    def _current_committed_preview_base(self):
+        if not self._edge_refine_preview_freeze_enabled():
+            return None
+        try:
+            base = self.get_mask_image()
+            return np.asarray(base, dtype=np.float32).copy()
+        except Exception:
+            logging.exception("FreeDraw Quick Select preview base capture failed")
+            return None
+
+    def _preview_current_line_over_base(self, image_size, copy_lines):
+        if self.current_line is None or self._drag_base_mask is None:
+            return None
+        try:
+            line_index = self.lines.index(self.current_line)
+        except ValueError:
+            line_index = len(copy_lines) - 1
+        if line_index < 0 or line_index >= len(copy_lines):
+            return None
+
+        base = np.asarray(self._drag_base_mask, dtype=np.float32)
+        expected_shape = (int(image_size[1]), int(image_size[0]))
+        if base.shape[:2] != expected_shape:
+            return None
+
+        src = copy_lines[line_index]
+        preview_line = FreeDrawMask.Line(False, src.size, src.soft)
+        for point in src.points:
+            preview_line.add_point(*point)
+        current = mask_rasters.draw_line_texture(
+            image_size,
+            [preview_line],
+            allow_over_one=False,
+            allow_under_zero=False,
+        )
+        current = self._apply_extened_params(
+            current,
+            edge_refine_draw_strokes=[preview_line],
+            edge_refine_enabled=False,
+        )
+        if bool(getattr(src, "is_erasing", False)):
+            return np.clip(base - current, 0.0, 1.0).astype(np.float32, copy=False)
+        return np.maximum(base, current).astype(np.float32, copy=False)
 
     def update_mask(self):
         if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
@@ -2615,19 +2687,23 @@ class FreeDrawMask(BaseMask):
                 if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
                     mask = 1.0 - mask
 
-            # ルミナンスとマスクを作成
-            full_refined = extended_params.render_freedraw_edge_refine_full_view(
-                self.editor,
-                self.effects_param,
-                self.lines,
-                self.center,
-                mask.shape,
-                debug_label=f"{self.__class__.__name__}Full",
-            )
-            if full_refined is None:
-                mask = self._apply_extened_params(mask, edge_refine_draw_strokes=copy_lines)
+            drag_preview = self._preview_current_line_over_base(image_size, copy_lines)
+            if drag_preview is not None:
+                mask = drag_preview
             else:
-                mask = full_refined
+                # ルミナンスとマスクを作成
+                full_refined = extended_params.render_freedraw_edge_refine_full_view(
+                    self.editor,
+                    self.effects_param,
+                    self.lines,
+                    self.center,
+                    mask.shape,
+                    debug_label=f"{self.__class__.__name__}Full",
+                )
+                if full_refined is None:
+                    mask = self._apply_extened_params(mask, edge_refine_draw_strokes=copy_lines)
+                else:
+                    mask = full_refined
 
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -4176,6 +4252,17 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         marginx = (self.size[0] - texture_size[0] * scale) / 2
         marginy = (self.size[1] - texture_size[1] * scale) / 2
         return (px + marginx, py + marginy), (texture_size[0] * scale, texture_size[1] * scale)
+
+    def window_point_in_image_rect(self, x, y):
+        if not self.collide_point(x, y):
+            return False
+        try:
+            (rx, ry), (rw, rh) = self._get_mask_image_rect(tuple(self.texture_size))
+            if rw <= 0 or rh <= 0:
+                return False
+            return rx <= float(x) <= rx + rw and ry <= float(y) <= ry + rh
+        except Exception:
+            return False
 
     def reposition_mask_image(self):
         if self.rectangle is not None:

@@ -113,6 +113,8 @@ def render_freedraw_edge_refine_full_view(
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):
         return None
+    if os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return None
     original = ctx.get_original_image_rgb()
     if original is None or getattr(original, "size", 0) == 0:
         return None
@@ -181,6 +183,7 @@ def render_freedraw_edge_refine_full_view(
         debug_label=debug_label,
         selection_strategy=edge_refine.STRATEGY_DRAW,
         draw_strokes=render_lines,
+        draw_pixel_scale=total_scale,
         return_support=True,
     )
 
@@ -706,7 +709,7 @@ def _edge_refine_radius_to_texture(ctx, radius):
         disp_scale = float(params.get_disp_info(ctx.tcg_info)[4])
     except Exception:
         disp_scale = 1.0
-    return max(1.0, float(radius) * disp_scale)
+    return float(radius) * disp_scale
 
 
 def _get_edge_refine_guide_image(ctx, mask_shape):

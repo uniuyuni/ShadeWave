@@ -87,6 +87,7 @@ def refine_mask_edge_aware(
         support_softness=0.0,
         selection_strategy=STRATEGY_REFINE,
         draw_strokes=None,
+        draw_pixel_scale=1.0,
         return_support=False):
     mode = normalize_mode(mode)
     mask_f = _as_mask(mask)
@@ -98,17 +99,36 @@ def refine_mask_edge_aware(
     if guide is None:
         return (mask_f, None) if return_support else mask_f
 
-    radius = int(max(1, radius))
+    raw_radius = float(radius)
+    radius = int(max(1, raw_radius))
     strength = float(np.clip(strength, 0, 100))
     if selection_strategy == STRATEGY_DRAW:
-        seed, candidate, support, extra_debug_planes = _draw_grabcut_band_support(
-            guide,
-            mask_f,
-            radius,
-            strength,
-            seed_mask=seed_mask,
-            draw_strokes=draw_strokes,
-        )
+        if os.environ.get("PLATYPUS_DRAW_QS_LEGACY"):
+            # Legacy grabCut/target-edge path kept for one release as a fallback.
+            seed, candidate, support, extra_debug_planes = _draw_grabcut_band_support(
+                guide,
+                mask_f,
+                radius,
+                strength,
+                seed_mask=seed_mask,
+                draw_strokes=draw_strokes,
+                pixel_scale=draw_pixel_scale,
+            )
+        else:
+            from cores.mask2 import draw_quick_select as _draw_quick_select
+            _draw_result = _draw_quick_select.compute_draw_support(
+                guide,
+                mask_f,
+                raw_radius,
+                strength,
+                seed_mask=seed_mask,
+                draw_strokes=draw_strokes,
+                pixel_scale=draw_pixel_scale,
+            )
+            seed = _draw_result.seed
+            candidate = _draw_result.candidate
+            support = _draw_result.support
+            extra_debug_planes = _draw_result.debug_planes
         if support is None:
             support = _fallback_support(mask_f, seed, candidate)
         refined = _compose_refined_mask(
@@ -116,6 +136,9 @@ def refine_mask_edge_aware(
             support,
             fill_grown_region,
             support_softness=support_softness,
+            guide=guide,
+            natural_edge=True,
+            edge_lock=strength,
         )
         _debug_dump_refine_state(
             guide,
@@ -293,6 +316,17 @@ def _draw_grabcut_band_support(guide, mask, radius, strength, seed_mask=None, dr
         hint,
     )
     stroke_half_width = _draw_strokes_half_width(draw_strokes)
+    geometry_snap_all = np.zeros_like(hint, dtype=bool)
+    if has_strokes:
+        _geometry_seed, _geometry_candidate, geometry_support = _draw_stroke_geometry_snap_support(
+            guide,
+            hint.shape,
+            draw_strokes,
+            radius,
+            strength,
+        )
+        if geometry_support is not None:
+            geometry_snap_all = np.asarray(geometry_support, dtype=bool) & ~bg_stroke_seed
     guide_u8 = _draw_grabcut_band_guide_image(guide, strength)
 
     n_labels, labels = cv2.connectedComponents(hint.astype(np.uint8), connectivity=8)
@@ -335,6 +369,15 @@ def _draw_grabcut_band_support(guide, mask, radius, strength, seed_mask=None, dr
             strength=strength,
         )
         raw_target_edge_roi = target_edge_roi.copy()
+        if (
+                has_strokes
+                and np.any(geometry_snap_all)
+                and float(search_radius) >= max(80.0, float(component_half_width) * 5.0)):
+            target_edge_roi = _draw_grabcut_band_geometry_target_edge(
+                target_edge_roi,
+                geometry_snap_all[sl],
+                component_half_width,
+            )
 
         fg_roi = _draw_grabcut_band_fg_seed(
             comp_roi,
@@ -425,6 +468,18 @@ def _draw_grabcut_band_support(guide, mask, radius, strength, seed_mask=None, dr
             target_edge_roi,
             component_half_width,
         )
+        if has_strokes and np.any(geometry_snap_all):
+            support_roi = _draw_grabcut_band_geometry_guard(
+                support_roi,
+                comp_roi,
+                candidate_roi,
+                fg_roi,
+                bg_roi,
+                target_edge_roi,
+                geometry_snap_all[sl],
+                search_radius,
+                component_half_width,
+            )
 
         seed_all[sl] |= fg_roi
         bg_seed_all[sl] |= bg_roi
@@ -450,6 +505,8 @@ def _draw_grabcut_band_support(guide, mask, radius, strength, seed_mask=None, dr
         ("probable_bg", probable_bg_all),
         ("grabcut_result", grabcut_result_all),
     ]
+    if np.any(geometry_snap_all):
+        extra_debug_planes.append(("geometry_snap", geometry_snap_all))
     return seed_all, candidate_all, support_all, extra_debug_planes
 
 
@@ -820,6 +877,102 @@ def _draw_grabcut_band_cleanup(
     if np.count_nonzero(support) < max(1, int(np.count_nonzero(fg_seed) * 0.75)):
         support = component.copy()
     return support & np.asarray(candidate, dtype=bool)
+
+
+def _draw_grabcut_band_geometry_guard(
+        support,
+        component,
+        candidate,
+        fg_seed,
+        bg_seed,
+        target_edge,
+        geometry_support,
+        search_radius,
+        half_width):
+    support = np.asarray(support, dtype=bool) & np.asarray(candidate, dtype=bool)
+    component = np.asarray(component, dtype=bool)
+    candidate = np.asarray(candidate, dtype=bool)
+    geometry_support = np.asarray(geometry_support, dtype=bool) & candidate
+    if not np.any(support) or not np.any(component) or not np.any(geometry_support):
+        return support
+
+    component_pixels = int(np.count_nonzero(component))
+    support_pixels = int(np.count_nonzero(support))
+    geometry_pixels = int(np.count_nonzero(geometry_support))
+    if component_pixels <= 0 or geometry_pixels <= 0:
+        return support
+
+    overlap = int(np.count_nonzero(geometry_support & component))
+    overlap_floor = max(8, int(round(min(component_pixels, geometry_pixels) * 0.18)))
+    if overlap < overlap_floor:
+        return support
+
+    radius_gate = float(search_radius) >= max(24.0, float(half_width) * 2.4)
+    overgrown = support_pixels > max(
+        int(round(component_pixels * 2.4)),
+        int(round(geometry_pixels * 1.65)),
+    )
+    far_limit = max(
+        float(half_width) * 1.3,
+        min(float(search_radius) * 0.35, float(half_width) * 3.0),
+    )
+    far_growth = support & ~component & (_distance_from(component) > far_limit)
+    far_growth_pixels = int(np.count_nonzero(far_growth))
+    far_growth = far_growth_pixels > max(32, int(round(geometry_pixels * 0.10)))
+    if not (radius_gate and (overgrown or far_growth)):
+        return support
+
+    near_geometry = _distance_from(geometry_support) <= max(1.5, min(4.0, float(half_width) * 0.35))
+    guarded = geometry_support | (support & near_geometry) | (np.asarray(fg_seed, dtype=bool) & candidate)
+    guarded &= candidate
+    guarded &= ~np.asarray(bg_seed, dtype=bool)
+    if int(np.count_nonzero(guarded)) < max(1, int(round(component_pixels * 0.35))):
+        return support
+
+    return _draw_grabcut_band_cleanup(
+        guarded,
+        component,
+        candidate,
+        fg_seed,
+        bg_seed,
+        target_edge,
+        half_width,
+    )
+
+
+def _draw_grabcut_band_geometry_target_edge(target_edge, geometry_support, half_width):
+    target_edge = np.asarray(target_edge, dtype=bool)
+    geometry_support = np.asarray(geometry_support, dtype=bool)
+    if not np.any(target_edge) or not np.any(geometry_support):
+        return target_edge
+
+    geometry_boundary = _mask_boundary_bool(geometry_support)
+    if not np.any(geometry_boundary):
+        return target_edge
+
+    reach = max(2.5, min(7.0, float(half_width) * 0.45 + 2.0))
+    near_geometry_boundary = _distance_from(geometry_boundary) <= reach
+    filtered = target_edge & near_geometry_boundary
+    if not np.any(filtered):
+        return target_edge
+
+    n_labels, labels = cv2.connectedComponents(filtered.astype(np.uint8), connectivity=8)
+    if n_labels <= 2:
+        return filtered
+
+    geometry_touch = cv2.dilate(
+        geometry_boundary.astype(np.uint8),
+        np.ones((3, 3), dtype=np.uint8),
+        iterations=2,
+    ) > 0
+    keep = np.zeros_like(filtered, dtype=bool)
+    min_pixels = max(4, int(round(float(half_width) * 0.25)))
+    for label_id in range(1, n_labels):
+        part = labels == label_id
+        if int(np.count_nonzero(part)) < min_pixels and not np.any(part & geometry_touch):
+            continue
+        keep |= part
+    return keep if np.any(keep) else filtered
 
 
 def _draw_random_walker_support(guide, mask, radius, strength, seed_mask=None, draw_strokes=None):
@@ -2621,7 +2774,14 @@ def _fallback_support(mask, seed, candidate):
     return _as_mask(mask) > 0.5
 
 
-def _compose_refined_mask(mask, support, fill_grown_region, support_softness=0.0):
+def _compose_refined_mask(
+        mask,
+        support,
+        fill_grown_region,
+        support_softness=0.0,
+        guide=None,
+        natural_edge=False,
+        edge_lock=0.0):
     support = np.asarray(support, dtype=bool)
     if not np.any(support):
         return np.zeros_like(mask, dtype=np.float32)
@@ -2629,10 +2789,110 @@ def _compose_refined_mask(mask, support, fill_grown_region, support_softness=0.0
         result = support.astype(np.float32)
     else:
         result = np.where(support, mask, 0.0).astype(np.float32, copy=False)
+    if natural_edge:
+        result = _apply_natural_edge_matte(guide, result, support, edge_lock=edge_lock)
     support_softness = float(max(0.0, support_softness))
     if support_softness > 0.01:
         result = cv2.GaussianBlur(result, (0, 0), support_softness)
     return np.clip(result, 0.0, 1.0).astype(np.float32, copy=False)
+
+
+def _apply_natural_edge_matte(guide, mask, support, edge_lock=0.0):
+    guide = _prepare_guide_image(guide, np.asarray(mask).shape[:2])
+    if guide is None:
+        return np.asarray(mask, dtype=np.float32)
+
+    support = np.asarray(support, dtype=bool)
+    if int(np.count_nonzero(support)) < 64:
+        return np.asarray(mask, dtype=np.float32)
+
+    if guide.ndim == 2:
+        guide_rgb = np.repeat(guide[..., None], 3, axis=2)
+    else:
+        guide_rgb = guide[..., :3]
+    guide_rgb = guide_rgb.astype(np.float32, copy=False)
+
+    inside_dist = cv2.distanceTransform(support.astype(np.uint8), cv2.DIST_L2, 3)
+    outside_dist = cv2.distanceTransform((~support).astype(np.uint8), cv2.DIST_L2, 3)
+    edge_width = 2.25
+    sample_width = 9.0
+    edge_band = support & (inside_dist <= edge_width)
+    if int(np.count_nonzero(edge_band)) < 16:
+        return np.asarray(mask, dtype=np.float32)
+
+    fg_samples = support & (inside_dist >= max(2.0, edge_width * 0.75))
+    bg_samples = (~support) & (outside_dist <= sample_width)
+    if int(np.count_nonzero(fg_samples)) < 16 or int(np.count_nonzero(bg_samples)) < 16:
+        return np.asarray(mask, dtype=np.float32)
+
+    fg_global = np.median(guide_rgb[fg_samples].reshape(-1, guide_rgb.shape[-1]), axis=0)
+    bg_global = np.median(guide_rgb[bg_samples].reshape(-1, guide_rgb.shape[-1]), axis=0)
+    if float(np.linalg.norm(fg_global - bg_global)) < 0.018:
+        return np.asarray(mask, dtype=np.float32)
+    luma = np.asarray([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    dim_fg_global = float(np.dot(fg_global[:3], luma)) < float(np.dot(bg_global[:3], luma)) + 0.015
+
+    fg_local, fg_weight = _local_sample_mean(guide_rgb, fg_samples, sigma=5.0, fallback=fg_global)
+    bg_local, bg_weight = _local_sample_mean(guide_rgb, bg_samples, sigma=5.0, fallback=bg_global)
+
+    direction = fg_local - bg_local
+    denom = np.sum(direction * direction, axis=2)
+    color_alpha = np.sum((guide_rgb - bg_local) * direction, axis=2) / np.maximum(denom, 1e-5)
+    color_alpha = np.clip(color_alpha, 0.0, 1.0)
+    color_alpha = cv2.GaussianBlur(color_alpha.astype(np.float32), (0, 0), 0.45)
+
+    contrast = np.sqrt(np.maximum(denom, 0.0))
+    sample_confidence = np.minimum(fg_weight, bg_weight)
+    color_weight = np.clip((contrast - 0.025) / 0.13, 0.0, 1.0)
+    color_weight *= np.clip(sample_confidence / 0.020, 0.0, 1.0)
+
+    t = np.clip((inside_dist - 0.35) / max(edge_width, 1e-3), 0.0, 1.0)
+    smooth_t = t * t * (3.0 - 2.0 * t)
+    edge_floor = 0.52
+    lower_floor = 0.34
+    geometric_alpha = edge_floor + (1.0 - edge_floor) * smooth_t
+    color_weight *= 0.82
+    alpha = geometric_alpha * (1.0 - color_weight) + color_alpha * color_weight
+    alpha = np.maximum(alpha, lower_floor + (1.0 - lower_floor) * smooth_t)
+    if dim_fg_global:
+        dim_outer_cap = 0.43 + 0.57 * np.clip((inside_dist - 0.95) / 1.20, 0.0, 1.0)
+        alpha = np.where(edge_band, np.minimum(alpha, dim_outer_cap), alpha)
+    alpha = np.clip(alpha, 0.0, 1.0).astype(np.float32, copy=False)
+
+    out = np.asarray(mask, dtype=np.float32).copy()
+    out[edge_band] = np.minimum(out[edge_band], alpha[edge_band])
+    return out
+
+
+def _local_sample_mean(image, sample_mask, sigma, fallback):
+    sample = np.asarray(sample_mask, dtype=np.float32)
+    sigma = float(max(0.1, sigma))
+    weight = cv2.GaussianBlur(sample, (0, 0), sigma)
+    weighted = cv2.GaussianBlur(
+        np.asarray(image, dtype=np.float32) * sample[..., None],
+        (0, 0),
+        sigma,
+    )
+    out = weighted / np.maximum(weight[..., None], 1e-5)
+    fallback = np.asarray(fallback, dtype=np.float32)
+    out = np.where(weight[..., None] > 1e-5, out, fallback.reshape((1, 1, -1)))
+    return out.astype(np.float32, copy=False), weight.astype(np.float32, copy=False)
+
+
+def _debug_matte_drop(support, refined):
+    if support is None or refined is None:
+        return None
+    support_f = _as_mask(support).astype(np.float32, copy=False)
+    refined_f = _as_mask(refined).astype(np.float32, copy=False)
+    if support_f.size == 0 or refined_f.size == 0:
+        return None
+    if refined_f.shape[:2] != support_f.shape[:2]:
+        refined_f = cv2.resize(
+            refined_f,
+            (int(support_f.shape[1]), int(support_f.shape[0])),
+            interpolation=cv2.INTER_LINEAR,
+        )
+    return np.clip(support_f - refined_f, 0.0, 1.0).astype(np.float32, copy=False)
 
 
 def _edge_connected_component_and_stop(guide, seed, strength):
@@ -2762,6 +3022,9 @@ def _debug_dump_refine_state(
                 accepted=extra_map.get("accepted"),
             )),
         ]
+        matte_drop = _debug_matte_drop(support, refined)
+        if matte_drop is not None and np.any(matte_drop > 0.001):
+            planes.append(("matte_drop", _debug_gray_panel(matte_drop)))
         if extra_planes:
             for title, values in extra_planes:
                 planes.append((title, _debug_gray_panel(values)))
@@ -2788,10 +3051,17 @@ def _debug_dump_prefix(debug_label, stage):
     if not _debug_dump_enabled():
         return None
     try:
-        limit = int(os.getenv("PLATYPUS_DEBUG_EDGE_REFINE_LIMIT", "20"))
+        limit = int(os.getenv("PLATYPUS_DEBUG_EDGE_REFINE_LIMIT", "80"))
     except ValueError:
-        limit = 20
+        limit = 80
     if limit >= 0 and _DEBUG_DUMP_COUNTER >= limit:
+        if _DEBUG_DUMP_COUNTER == limit:
+            logging.warning(
+                "[EDGE_REFINE_DEBUG] skipped debug dump after reaching limit=%d; "
+                "set PLATYPUS_DEBUG_EDGE_REFINE_LIMIT=-1 for unlimited dumps",
+                limit,
+            )
+            _DEBUG_DUMP_COUNTER += 1
         return None
 
     dump_dir = os.getenv("PLATYPUS_DEBUG_EDGE_REFINE_DIR", "").strip()

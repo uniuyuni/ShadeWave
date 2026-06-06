@@ -563,7 +563,7 @@
                                     text: "Tint"
                                     min: -100
                                     max: 100
-                                    value: 0
+                                    value: 60
                                     step: 1
                                     bar_renderer: "color_tint"
                                     bar_saturation: 2.4
@@ -3432,9 +3432,9 @@
                                 ParamSlider:
                                     id: slider_mask2_edge_refine_radius
                                     text: "Quick Radius"
-                                    min: 1
+                                    min: -200
                                     max: 200
-                                    value: 60
+                                    value: 0
                                     step: 1
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
