@@ -3426,6 +3426,7 @@
                                         values: [ 'Off', 'Quick Select' ]
                                         on_value:
                                             root.begin_history_effect_ctrl(3, 'mask2')
+                                            if self.text == 'Quick Select': switch_mask2_options.active = True
                                             root.apply_effects_lv(3, 'mask2')
                                             root.end_history_effect_ctrl(3, 'mask2')
 
@@ -3446,7 +3447,8 @@
                                     min: 0
                                     max: 100
                                     value: 0
-                                    step: 1
+                                    step: 0.01
+                                    for_float: True
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')

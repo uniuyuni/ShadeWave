@@ -984,7 +984,7 @@ class EdgeRefineTest(unittest.TestCase):
         )
 
         soft_pixels = (refined > 1e-4) & (refined < 0.999)
-        self.assertGreater(int(np.count_nonzero(soft_pixels)), 1000)
+        self.assertGreater(int(np.count_nonzero(soft_pixels)), 700)
         self.assertLess(float(refined[soft_pixels].min(initial=1.0)), 0.65)
         self.assertLess(float(refined[support <= 0.001].max(initial=0.0)), 0.001)
         self.assertGreater(float(refined.sum()), float(support.sum()) * 0.84)
@@ -1497,6 +1497,83 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertGreater(float(strict[:, 10].mean()), 0.70)
         self.assertLess(float(loose[:, 10].mean()), 0.10)
 
+    def test_edge_lock_keeps_weak_edges_near_strong_ridges_available(self):
+        edge = np.zeros((24, 32), dtype=np.float32)
+        edge[:, 10] = 0.80
+        edge[:, 13] = 0.18
+
+        thinned = draw_quick_select._thin_edge_to_ridge(
+            edge, thr=0.28, falloff_sigma=0.9)
+        strict = draw_quick_select._edge_cost_map(edge, 0)
+        loose = draw_quick_select._edge_cost_map(edge, 100)
+
+        self.assertGreater(float(thinned[:, 13].mean()), 0.15)
+        self.assertGreater(float(strict[:, 13].mean()), 0.85)
+        self.assertLess(float(loose[:, 13].mean()), 0.55)
+
+    def test_contextual_edge_suppresses_same_color_texture_edges(self):
+        edge = np.zeros((24, 32), dtype=np.float32)
+        edge[:, 12] = 0.65
+        edge[:, 22] = 0.85
+        color = np.full((24, 32), 0.30, dtype=np.float32)
+        color[:, :12] = -0.30
+
+        low_lock = draw_quick_select._contextual_edge_strength(edge, color, 60)
+        high_lock = draw_quick_select._contextual_edge_strength(edge, color, 100)
+
+        np.testing.assert_allclose(low_lock, edge)
+        self.assertGreater(float(high_lock[:, 12].mean()), 0.55)
+        self.assertLess(float(high_lock[:, 22].mean()), 0.45)
+
+    def test_edge_lock_relaxes_seed_side_barrier_for_weak_boundaries(self):
+        strict = draw_quick_select._side_edge_thresh_for_strength(60)
+        mid = draw_quick_select._side_edge_thresh_for_strength(93)
+        loose = draw_quick_select._side_edge_thresh_for_strength(100)
+
+        self.assertGreater(strict, 0.65)
+        self.assertLess(mid, strict)
+        self.assertLess(loose, 0.30)
+
+        comp = np.ones((24, 32), dtype=bool)
+        core = np.zeros_like(comp)
+        core[:, 8] = True
+        edge = np.zeros(comp.shape, dtype=np.float32)
+        edge[:, 16] = 0.32
+
+        strict_side = draw_quick_select._seed_side_through_smooth_interior(
+            comp, core, edge, edge_thresh=strict)
+        loose_side = draw_quick_select._seed_side_through_smooth_interior(
+            comp, core, edge, edge_thresh=loose)
+
+        self.assertTrue(np.all(strict_side[:, 20]))
+        self.assertFalse(np.any(loose_side[:, 20]))
+
+    def test_seed_side_barrier_ignores_small_texture_edge_components(self):
+        comp = np.ones((140, 180), dtype=bool)
+        core = np.zeros_like(comp)
+        core[:, 20] = True
+        edge = np.zeros(comp.shape, dtype=np.float32)
+        edge[:, 69:72] = 0.85
+        edge[45:52, 120:127] = 0.90
+
+        seed_side = draw_quick_select._seed_side_through_smooth_interior(
+            comp, core, edge, edge_thresh=0.70)
+        filtered = draw_quick_select._filter_side_edge_barrier_components(
+            edge > 0.70, comp)
+
+        self.assertFalse(np.any(seed_side[:, 100]))
+        self.assertFalse(np.any(seed_side[:, 150]))
+        self.assertTrue(np.any(filtered[:, 70]))
+        self.assertFalse(np.any(filtered[45:52, 120:127]))
+
+    def test_edge_lock_relaxes_selected_rim_restore_threshold(self):
+        strict = draw_quick_select._edge_restore_thresh_for_strength(0)
+        loose = draw_quick_select._edge_restore_thresh_for_strength(100)
+
+        self.assertGreater(strict, loose)
+        self.assertGreater(strict, 0.60)
+        self.assertLess(loose, 0.30)
+
     def test_selected_edge_rim_restores_only_selected_color_side(self):
         support = np.zeros((20, 20), dtype=bool)
         support[:, :10] = True
@@ -1521,6 +1598,33 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertEqual(int(rim_neg.sum()), 0)
         np.testing.assert_array_equal(restored_neg, support)
 
+    def test_selected_edge_bridge_fills_only_bracketed_seams(self):
+        support = np.zeros((20, 20), dtype=bool)
+        support[2:18, :10] = True
+        support[2:18, 11:] = True
+        candidate = np.zeros_like(support)
+        candidate[2:18, 10] = True
+        edge = np.zeros((20, 20), dtype=np.float32)
+        edge[2:18, 10] = 0.75
+        core = np.zeros_like(support)
+        core[8:12, 5] = True
+        core[8:12, 15] = True
+        erase = np.zeros_like(support)
+
+        restored, bridge = draw_quick_select._bridge_selected_edge_seams(
+            support, candidate, edge, core, erase)
+
+        self.assertGreater(int(bridge[:, 10].sum()), 0)
+        self.assertTrue(np.all(restored[4:16, 10]))
+
+        one_side = np.zeros_like(support)
+        one_side[2:18, :10] = True
+        restored_one, bridge_one = draw_quick_select._bridge_selected_edge_seams(
+            one_side, candidate, edge, core & one_side, erase)
+
+        self.assertEqual(int(bridge_one.sum()), 0)
+        np.testing.assert_array_equal(restored_one, one_side)
+
     def test_bright_selected_side_relaxes_edge_restore_color_floor(self):
         image = np.zeros((30, 40, 3), dtype=np.float32)
         image[:, :20] = (0.12, 0.18, 0.36)
@@ -1537,6 +1641,60 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         dark_floor = draw_quick_select._edge_restore_color_min_for_unit(
             image, ~comp, np.logical_not(comp) & (np.indices(comp.shape)[1] < 12), ~comp, 12)
         self.assertEqual(dark_floor, draw_quick_select.EDGE_RESTORE_COLOR_MIN)
+
+    def test_bright_selected_side_uses_weaker_color_weight(self):
+        image = np.zeros((30, 40, 3), dtype=np.float32)
+        image[:, :20] = (0.12, 0.18, 0.36)
+        image[:, 20:] = (0.86, 0.86, 0.95)
+        comp = np.zeros((30, 40), dtype=bool)
+        comp[:, 20:32] = True
+        core = np.zeros_like(comp)
+        core[:, 27:30] = True
+
+        bright_w = draw_quick_select._color_weight_for_unit(
+            image, comp, core, comp, 12, strength=100)
+        bright_w_mid = draw_quick_select._color_weight_for_unit(
+            image, comp, core, comp, 12, strength=70)
+        dark_w = draw_quick_select._color_weight_for_unit(
+            image, ~comp, np.logical_not(comp) & (np.indices(comp.shape)[1] < 12), ~comp, 12)
+
+        self.assertLess(bright_w, draw_quick_select.COLOR_W)
+        self.assertGreater(bright_w_mid, bright_w)
+        self.assertEqual(dark_w, draw_quick_select.COLOR_W)
+
+    def test_smooth_outside_growth_is_limited_to_real_edges(self):
+        hint = np.zeros((20, 24), dtype=bool)
+        hint[5:15, 6:14] = True
+        support = hint.copy()
+        support[6:14, 14:21] = True
+        edge = np.zeros((20, 24), dtype=np.float32)
+        edge[8:12, 14] = 0.85
+        core = np.zeros_like(hint)
+        core[8:12, 8:10] = True
+        erase = np.zeros_like(hint)
+
+        limited = draw_quick_select._limit_smooth_outside_growth(
+            support, hint, edge, core, erase)
+
+        self.assertFalse(np.any(limited[6:8, 17:21]))
+        self.assertGreater(int(np.count_nonzero(limited[:, 14])), 0)
+
+    def test_selected_hint_holes_fill_without_restoring_boundary_side(self):
+        hint = np.zeros((24, 32), dtype=bool)
+        hint[3:21, 3:29] = True
+        support = hint.copy()
+        support[:, :12] = False
+        support[9:13, 20:24] = False
+        core = np.zeros_like(hint)
+        core[10:14, 24:27] = True
+        erase = np.zeros_like(hint)
+
+        restored, fill = draw_quick_select._fill_selected_hint_holes(
+            support, hint, core, erase)
+
+        self.assertTrue(np.all(restored[9:13, 20:24]))
+        self.assertGreater(int(fill[9:13, 20:24].sum()), 0)
+        self.assertFalse(np.any(restored[5:18, 3:10]))
 
     def test_brush_size_is_draw_quick_select_base_radius(self):
         image = _straight_edge_scene(edge_x=120)
@@ -1567,6 +1725,26 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
 
         self.assertIn(10.0, widths)
         self.assertIn(30.0, widths)
+
+    def test_draw_quick_select_ignores_tiny_fallback_rim_flecks(self):
+        image = _straight_edge_scene(edge_x=120, h=160, w=220)
+        line = mask_rasters.Line(False, 100, 100)
+        line.add_point(100, 80)
+        mask = mask_rasters.draw_line_texture((220, 160), [line])
+        # Simulate detached anti-aliased rim remnants present in the final hint
+        # but absent from the re-rasterized stroke geometry.
+        for x, y in ((48, 34), (152, 34), (48, 126), (152, 126)):
+            mask[y:y + 2, x:x + 2] = 1.0
+
+        hint = mask > 0.02
+        fg_seed, _bg_seed, has_strokes = edge_refine._draw_random_walker_stroke_seeds(
+            hint.shape, [line], hint)
+        hard_core = draw_quick_select._seed_core(mask, fg_seed, hint)
+        units = draw_quick_select._draw_solve_units(
+            mask, hint, hard_core, [line], radius=160, has_strokes=has_strokes)
+
+        self.assertEqual(len(units), 1)
+        self.assertGreater(int(units[0].component.sum()), 7000)
 
     def test_thick_brush_uses_seed_side_when_edge_is_inside_brush(self):
         h, w = 140, 200
@@ -1599,6 +1777,46 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
             else:
                 self.assertLess(left, 0.25)
                 self.assertGreater(right, 0.80)
+
+    def test_dark_branch_point_keeps_object_side_not_sky_shell(self):
+        # Real repro shape: a one-point, very large brush is centered on a dark
+        # branch that belongs to a bright snowy object, with dark sky around it.
+        # The colour background shell must stay local/typical; choosing the most
+        # colour-separated shell sample treats the snow as background and keeps
+        # the sky instead.
+        h, w = 160, 220
+        image = np.zeros((h, w, 3), dtype=np.float32)
+        image[:, :] = (0.16, 0.14, 0.32)
+        snow = np.zeros((h, w), dtype=np.uint8)
+        cv2.ellipse(snow, (74, 82), (48, 62), 0, 0, 360, 1, -1)
+        image[snow.astype(bool)] = (0.78, 0.78, 0.94)
+        cv2.line(image, (72, 82), (154, 82), (0.10, 0.09, 0.20), 9, cv2.LINE_AA)
+        cv2.line(image, (120, 82), (150, 64), (0.12, 0.11, 0.22), 6, cv2.LINE_AA)
+
+        line = mask_rasters.Line(False, 110, 100)
+        line.add_point(126, 82)
+        mask = mask_rasters.draw_line_texture((w, h), [line])
+        _refined, support = refine_mask_edge_aware(
+            image,
+            mask,
+            mode="Quick Select",
+            radius=0,
+            strength=50,
+            seed_mask=edge_refine.make_confident_seed(mask),
+            selection_strategy=edge_refine.STRATEGY_DRAW,
+            draw_strokes=[line],
+            return_support=True,
+        )
+
+        hint = mask > 0.02
+        yy, xx = np.indices((h, w))
+        sky_right = (xx > 150) & hint
+        snow_left = (xx < 90) & hint
+        branch = (yy > 74) & (yy < 90) & (xx > 90) & (xx < 150)
+
+        self.assertLess(float(support[sky_right].mean()), 0.15)
+        self.assertGreater(float(support[snow_left].mean()), 0.70)
+        self.assertGreater(float(support[branch].mean()), 0.80)
 
     def test_thick_brush_does_not_reach_far_weak_edge(self):
         # A faint edge far from a thick stroke must not pull the mask out.

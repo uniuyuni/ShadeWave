@@ -658,12 +658,13 @@ class BaseMask(KVWidget):
         """Mask pixels changed without going through ControlPoint properties."""
         if self.editor is None:
             return
-        try:
-            self.editor._invalidate_mask_render_family(self)
-        except Exception:
-            logging.exception("_redraw_mask_content: cache invalidation failed reason=%s", reason)
-        self.update_mask()
-        self.editor.start_draw_image()
+        self.editor.request_mask_render_update(
+            self,
+            reason=reason,
+            refresh_visibility=False,
+            redraw_overlay=True,
+            redraw_pipeline=True,
+        )
 
     def _fit_image_mask_to_texture(self, image):
         """original/full-image 空間の mask を現在 texture に配置する。
