@@ -17,6 +17,13 @@ import cv2
 
 from cores.distortion_correction.warp_correction import correct_with_lines
 import params
+from .ui_metrics import (
+    apply_geom_button_metrics,
+    apply_geom_layout_metrics,
+    geom_button_size,
+    geom_scaled,
+    install_geom_ref_scaling,
+)
 
 
 class LineGuideCorrectionWidget(KVFloatLayout):
@@ -59,22 +66,31 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         button_layout = MDBoxLayout(
             orientation='horizontal',
             size_hint=(None, None),
-            size=(100, 48),
+            size=geom_button_size(180),
             pos_hint={'center_x': 0.5, 'y': 0.02},
             adaptive_size=True,
-            spacing=20,
-            padding=10
+            spacing=geom_scaled(10),
+            padding=geom_scaled(5)
+        )
+        apply_geom_layout_metrics(
+            button_layout,
+            width_ref=180,
+            spacing_ref=10,
+            padding_ref=5,
         )
         
         self.clear_btn = MDRaisedButton(text="Reset")
+        apply_geom_button_metrics(self.clear_btn)
         self.clear_btn.bind(on_press=self.clear_lines)
         button_layout.add_widget(self.clear_btn)
 
         self.apply_btn = MDRaisedButton(text="Apply")
+        apply_geom_button_metrics(self.apply_btn)
         self.apply_btn.bind(on_press=lambda x: self.apply_lines())
         button_layout.add_widget(self.apply_btn)
 
         self.revert_btn = MDRaisedButton(text="Revert")
+        apply_geom_button_metrics(self.revert_btn)
         self.revert_btn.bind(on_press=self.revert_lines)
         button_layout.add_widget(self.revert_btn)
         
@@ -86,6 +102,7 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         self.bind(pos=self._redraw_lines)
 
         self._redraw_lines()
+        install_geom_ref_scaling(self)
 
     def set_callback(self, callback):
         self.on_callback = callback

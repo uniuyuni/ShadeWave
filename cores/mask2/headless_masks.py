@@ -17,9 +17,11 @@ from cores.mask2 import mask_rasters
 from cores.mask2.mask_rasters import Line, draw_line_texture
 from cores.mask2.mask_rasters import Polyline as RasterPolyline, draw_polyline_texture
 from cores.mask2.exceptions import HeadlessMaskNotSupported
-from cores.mask2 import extended_params, inference_runtime
+from cores.mask2 import edge_refine, extended_params, inference_runtime
 from cores.mask2.mask_types import MaskTypeStr
 from cores.mask2 import mask_geometry as mask_geometry_mod
+from cores.mask2.mask_mesh import apply_mask_mesh_warp as _apply_mask_mesh_warp_shared
+
 
 def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     min_value = None if allow_under_zero else 0
@@ -27,6 +29,23 @@ def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     if min_value is None and max_value is None:
         return image
     return np.clip(image, min_value, max_value)
+
+
+def _apply_mask_mesh_warp(composit, ctx, effects_param):
+    """共通ヘルパ cores.mask2.mask_mesh.apply_mask_mesh_warp への薄いラッパ。
+    mask_mesh_link_to_image=True の Composit は画像 mesh の CP を都度参照する。"""
+    orig = ctx.tcg_info.get('original_img_size') if isinstance(ctx.tcg_info, dict) else None
+    # t2t=texture px (disp_info込み), t2f=フル画像px (F=MLS構築空間)。マスク warp の
+    # 共役 (射影込みでズーム位置がズレないため) に両方必要。
+    t2t = getattr(ctx, 'tcg_to_texture', None)
+    t2f = getattr(ctx, 'tcg_to_full_image', None)
+    linked = effects.Mask2Effect.get_param(effects_param, 'mask_mesh_link_to_image')
+    if linked and getattr(ctx, 'primary_param', None) is not None:
+        merged = dict(effects_param)
+        merged['mask_mesh_control_points'] = ctx.primary_param.get('control_points', {})
+        merged['mask_mesh_size'] = ctx.primary_param.get('mesh_size', [4, 4])
+        return _apply_mask_mesh_warp_shared(composit, merged, orig, t2t, t2f)
+    return _apply_mask_mesh_warp_shared(composit, effects_param, orig, t2t, t2f)
 
 
 class HeadlessCompositMask:
@@ -50,6 +69,11 @@ class HeadlessCompositMask:
     def deserialize(self, d):
         self.name = d["name"]
         self.effects_param.update(d["effects_param"])
+        # 古いファイル互換: mask_mesh_link_to_image が未設定なら、自前 CP の有無で
+        # 判定 (空 → linked, あり → local 保持)。
+        if 'mask_mesh_link_to_image' not in d.get('effects_param', {}):
+            self.effects_param['mask_mesh_link_to_image'] = \
+                not bool(d.get('effects_param', {}).get('mask_mesh_control_points'))
         self.mask_list.clear()
         for i, mask_info in enumerate(d["mask_list"]):
             subd = mask_info[0]
@@ -100,6 +124,8 @@ class HeadlessCompositMask:
                     case _:
                         logging.error("Unknown mask operation: %s", maskop)
                         raise ValueError(maskop)
+            # mask Mesh warp: 合成済 composit に非線形 TPS 変形を適用 (空なら no-op)
+            composit = _apply_mask_mesh_warp(composit, ctx, self.effects_param)
             return composit
         finally:
             if saved_matrix is not None and ctx.tcg_info is not None:
@@ -152,7 +178,13 @@ class HeadlessFullMask:
         ) and self.initializing is False:
             gradient_image = np.ones((image_size[1], image_size[0]), dtype=np.float32)
             gradient_image = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, gradient_image, self.center
+                self.ctx,
+                self.effects_param,
+                gradient_image,
+                self.center,
+                fill_grown_region=True,
+                seed_from_guide=True,
+                edge_refine_enabled=False,
             )
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -241,7 +273,13 @@ class HeadlessCircularGradientMask:
                 1.5,
             )
             gradient_image = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, gradient_image, self.center
+                self.ctx,
+                self.effects_param,
+                gradient_image,
+                self.center,
+                fill_grown_region=False,
+                seed_from_guide=True,
+                edge_refine_enabled=False,
             )
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -317,7 +355,13 @@ class HeadlessGradientMask:
                 image_size, center, start_point, end_point, 1
             )
             gradient_image = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, gradient_image, self.center
+                self.ctx,
+                self.effects_param,
+                gradient_image,
+                self.center,
+                fill_grown_region=False,
+                seed_from_guide=True,
+                edge_refine_enabled=False,
             )
             self.image_mask_cache = gradient_image
             self.image_mask_cache_hash = newhash
@@ -402,9 +446,28 @@ class HeadlessFreeDrawMask:
                 allow_over_one=allow_over_one,
                 allow_under_zero=allow_under_zero,
             )
-            mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, mask, self.center
+            full_refined = extended_params.render_freedraw_edge_refine_full_view(
+                self.ctx,
+                self.effects_param,
+                self.lines,
+                self.center,
+                mask.shape,
+                debug_label="HeadlessFreeDrawMaskFull",
             )
+            if full_refined is None:
+                mask = extended_params.apply_extended_params(
+                    self.ctx,
+                    self.effects_param,
+                    mask,
+                    self.center,
+                    fill_grown_region=True,
+                    seed_mask=edge_refine.make_confident_seed(mask),
+                    edge_refine_debug_label="HeadlessFreeDrawMask",
+                    edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
+                    edge_refine_draw_strokes=copy_lines,
+                )
+            else:
+                mask = full_refined
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
 
@@ -491,7 +554,14 @@ class HeadlessPolylineMask:
                 allow_under_zero=False,
             )
             mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, mask, self.center
+                self.ctx,
+                self.effects_param,
+                mask,
+                self.center,
+                fill_grown_region=True,
+                seed_mask=edge_refine.make_confident_seed(mask),
+                edge_refine_debug_label="HeadlessPolylineMask",
+                edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
             )
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -549,6 +619,7 @@ class HeadlessSegmentMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         center = self.ctx.tcg_to_original_image(*self.center)
         corner = self.ctx.tcg_to_original_image(*self.corner)
         if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_settings") is True:
@@ -557,7 +628,7 @@ class HeadlessSegmentMask:
             invert = False
         segment_mask = None
 
-        newhash = hash((image_size, center, corner))
+        newhash = hash((original_image_size, center, corner, invert))
         if self.image_mask_cache_hash != newhash and not self.initializing:
             self.image_mask_cache_hash = newhash
             cx, cy = center
@@ -572,7 +643,7 @@ class HeadlessSegmentMask:
             )
             self.image_mask_cache = segment_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -607,7 +678,11 @@ class HeadlessSegmentMask:
                 constant_values=0,
             )
             segment_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, segment_mask, self.center
+                self.ctx,
+                self.effects_param,
+                segment_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.segment_mask_cache = segment_mask
 
@@ -664,9 +739,10 @@ class HeadlessDepthMapMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         depth_map_mask = None
 
-        newhash = hash((image_size,))
+        newhash = hash((original_image_size,))
         if (
             self.image_mask_cache is None or self.image_mask_cache_hash != newhash
         ) and not self.initializing:
@@ -675,7 +751,7 @@ class HeadlessDepthMapMask:
             depth_map_mask = inference_runtime.predict_depth_map(img)
             self.image_mask_cache = depth_map_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -709,7 +785,11 @@ class HeadlessDepthMapMask:
                 constant_values=0,
             )
             depth_map_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, depth_map_mask, self.center
+                self.ctx,
+                self.effects_param,
+                depth_map_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.depth_map_mask_cache = depth_map_mask
 
@@ -766,6 +846,7 @@ class HeadlessFaceMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         exclude_names = []
         if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_face") is True:
             if effects.Mask2Effect.get_param(self.effects_param, "mask2_face_face") is False:
@@ -782,7 +863,7 @@ class HeadlessFaceMask:
                 exclude_names.extend(["ulip", "llip"])
         faces_mask = None
 
-        newhash = hash((image_size, tuple(exclude_names)))
+        newhash = hash((original_image_size, tuple(exclude_names)))
         if (
             self.image_mask_cache is None or self.image_mask_cache_hash != newhash
         ) and not self.initializing:
@@ -791,7 +872,7 @@ class HeadlessFaceMask:
             faces_mask = inference_runtime.predict_face_mask(img, exclude_names)
             self.image_mask_cache = faces_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -826,7 +907,11 @@ class HeadlessFaceMask:
                 constant_values=0,
             )
             faces_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, faces_mask, self.center
+                self.ctx,
+                self.effects_param,
+                faces_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.faces_mask_cache = faces_mask
 
@@ -885,6 +970,7 @@ class HeadlessTargetTextMask:
 
     def get_mask_image(self):
         image_size = (int(self.ctx.texture_size[0]), int(self.ctx.texture_size[1]))
+        original_image_size = tuple(self.ctx.get_image_size())
         if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_settings") is True:
             invert = effects.Mask2Effect.get_param(self.effects_param, "mask2_invert")
         else:
@@ -892,14 +978,14 @@ class HeadlessTargetTextMask:
         text = self.target_text
         segment_mask = None
 
-        newhash = hash((image_size, text))
+        newhash = hash((original_image_size, text, invert))
         if self.image_mask_cache_hash != newhash and not self.initializing:
             self.image_mask_cache_hash = newhash
             img = self.ctx.get_original_image_rgb()
             segment_mask = inference_runtime.predict_sam3_text(img, text, invert)
             self.image_mask_cache = segment_mask
 
-        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items()))
+        newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
             self.image_mask_cache is not None
             and (
@@ -934,7 +1020,11 @@ class HeadlessTargetTextMask:
                 constant_values=0,
             )
             segment_mask = extended_params.apply_extended_params(
-                self.ctx, self.effects_param, segment_mask, self.center
+                self.ctx,
+                self.effects_param,
+                segment_mask,
+                self.center,
+                edge_refine_support_softness=1.0,
             )
             self.segment_mask_cache = segment_mask
 

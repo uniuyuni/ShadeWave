@@ -12,6 +12,8 @@ from .four_point_correction import correct_four_points, detect_rectangle, calcul
 
 from .warp_correction import (
     warp_mesh,
+    warp_mesh_with_mapper,
+    outer_ring_pins_tcg,
     correct_with_lines,
     calculate_lines_homography,
     get_mesh_coordinates
@@ -33,6 +35,8 @@ __all__ = [
     'detect_rectangle',
     # ワープ補正
     'warp_mesh',
+    'warp_mesh_with_mapper',
+    'outer_ring_pins_tcg',
     'correct_with_lines',
     'calculate_lines_homography',
     'get_mesh_coordinates',

@@ -3,6 +3,7 @@ import sys
 import io
 import cv2
 import math
+import os
 import numpy as np
 
 import logging
@@ -883,6 +884,14 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
     disp_info = _clamp_disp_info_to_image(disp_info, image_width, image_height)
 
     new_width, new_height, offset_x, offset_y = crop_size_and_offset_from_texture(texture_width, texture_height, disp_info)
+    debug_zoom_sync = os.getenv("PLATYPUS_DEBUG_MASK_ZOOM_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if debug_zoom_sync:
+        logging.warning(
+            "[MASK_ZOOM_SYNC] crop_image enter image=%s texture=%sx%s is_zoomed=%s zoom_ratio=%.3f disp=%s crop_rect=%s click=(%.2f,%.2f) center_pos=%s draw_size=%sx%s offset=(%s,%s)",
+            getattr(image, "shape", None), texture_width, texture_height, is_zoomed,
+            zoom_ratio, disp_info, crop_rect, click_x, click_y, center_pos,
+            new_width, new_height, offset_x, offset_y,
+        )
 
     # スケールを求める
     if disp_info[2] >= disp_info[3]:
@@ -915,20 +924,25 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
 
         if center_pos is not None:
              # 中心座標指定
-            crop_x = center_pos[0] - crop_width // 2
-            crop_y = center_pos[1] - crop_height // 2
+            crop_x = center_pos[0] - crop_width / 2.0
+            crop_y = center_pos[1] - crop_height / 2.0
 
         else:
             # 既に同じ倍率でズーム済みなら位置を維持
             if abs(scale - zoom_ratio) < 0.01:
-                crop_x = disp_info[0] + disp_info[2] / 2 - crop_width // 2
-                crop_y = disp_info[1] + disp_info[3] / 2 - crop_height // 2
+                crop_x = disp_info[0] + disp_info[2] / 2.0 - crop_width / 2.0
+                crop_y = disp_info[1] + disp_info[3] / 2.0 - crop_height / 2.0
             else:
                 # クリック位置を中心にする
-                crop_x = disp_info[0] + click_image_x - crop_width // 2
-                crop_y = disp_info[1] + click_image_y - crop_height // 2
+                crop_x = disp_info[0] + click_image_x - crop_width / 2.0
+                crop_y = disp_info[1] + click_image_y - crop_height / 2.0
 
         # クロップ
+        if debug_zoom_sync:
+            logging.warning(
+                "[MASK_ZOOM_SYNC] crop_image zoom_calc base_scale=%.6f click_image=(%.2f,%.2f) crop_xywh=(%.2f,%.2f,%s,%s)",
+                scale, click_image_x, click_image_y, crop_x, crop_y, crop_width, crop_height,
+            )
         result, disp_info = crop_image_info(image, (crop_x, crop_y, crop_width, crop_height, zoom_ratio), crop_rect)
         target_width = max(1, int(texture_width))
         target_height = max(1, int(texture_height))
@@ -937,6 +951,11 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
             result = cv2.resize(result, (target_width, target_height), interpolation=interpolation)
         actual_scale = target_width / max(1, disp_info[2])
         disp_info = (disp_info[0], disp_info[1], disp_info[2], disp_info[3], actual_scale)
+    if debug_zoom_sync:
+        logging.warning(
+            "[MASK_ZOOM_SYNC] crop_image leave result=%s out_disp=%s",
+            getattr(result, "shape", None), disp_info,
+        )
     
     return result, disp_info
 

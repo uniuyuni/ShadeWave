@@ -70,7 +70,6 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
     def delete_item(self):
         if self.mask_ref:
             self.mask_ref.editor.del_mask(self.mask_ref)
-            self.mask_ref.editor.dispatch('on_structure_change')
 
     def show_add_mask_popup(self, maskop):
         from kivy.uix.popup import Popup as KVPopup

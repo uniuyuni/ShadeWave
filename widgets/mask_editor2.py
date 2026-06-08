@@ -51,15 +51,22 @@ from history import LayerCtrl, get_history_ctrl
 import macos as device
 
 from cores.mask2 import mask_rasters
-from cores.mask2.cutout_guided import create_cutout_mask_guided
+from cores.mask2 import edge_refine
+from cores.mask2 import extended_params
 
 
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
+_DEBUG_MASK_ZOOM_SYNC = os.getenv("PLATYPUS_DEBUG_MASK_ZOOM_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _mask_geom_debug(message, *args):
     if _DEBUG_MASK_GEOMETRY:
         logging.warning("[MASK_GEOM] " + message, *args)
+
+
+def _mask_zoom_sync_debug(message, *args):
+    if _DEBUG_MASK_ZOOM_SYNC:
+        logging.warning("[MASK_ZOOM_SYNC] " + message, *args)
 
 
 def _mask_geom_id(mask):
@@ -116,6 +123,154 @@ def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     if min_value is None and max_value is None:
         return image
     return np.clip(image, min_value, max_value)
+
+
+# mask Mesh の core ヘルパは cores/mask2/mask_mesh.py に集約済み (Kivy / Headless で共用)。
+from cores.mask2.mask_mesh import (
+    apply_mask_mesh_warp as _apply_mask_mesh_warp_shared,
+    mesh_cps_hash_key as _mesh_cps_hash_key,
+    mask_mesh_source_bounds as _mask_mesh_source_bounds_shared,
+    normalize_mesh_cps as _normalize_mesh_cps,
+)
+
+
+def _linked_primary_mesh_hash_key(mask):
+    """linked モードの Composit: 画像 mesh の CP が変わったらキャッシュ invalidate するため、
+    画像 mesh の CP データを hash に含める。linked でないか primary_param が取れないなら空。"""
+    linked = effects.Mask2Effect.get_param(mask.effects_param, 'mask_mesh_link_to_image')
+    if not linked:
+        return ()
+    editor = getattr(mask, 'editor', None)
+    root = getattr(editor, 'root', None) if editor is not None else None
+    primary = getattr(root, 'primary_param', None) if root is not None else None
+    if not primary:
+        return ()
+    return (
+        tuple(primary.get('mesh_size') or ()),
+        _mesh_cps_hash_key(primary.get('control_points')),
+    )
+
+
+def _axis_polyline_with_arrow(origin_win, end_win, arrow_len=12.0, arrow_angle_deg=25.0):
+    """軸線 (origin -> end) の先端に矢印を付けた連続 polyline の points 列を返す。
+    Kivy の Line は polyline なので、矢印の両羽を `... end -> tipL -> end -> tipR` の
+    順で繋ぐと 1 つの Line で軸線+矢印を描画できる。"""
+    ox, oy = origin_win
+    ex, ey = end_win
+    dx, dy = ex - ox, ey - oy
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return (ox, oy, ex, ey)
+    ux, uy = dx / length, dy / length
+    a = math.radians(arrow_angle_deg)
+    # 矢印の羽は end から見て「軸の逆向きを ±a 度回転した方向」へ
+    cL, sL = math.cos(math.pi - a), math.sin(math.pi - a)
+    cR, sR = math.cos(math.pi + a), math.sin(math.pi + a)
+    tipL = (ex + arrow_len * (ux * cL - uy * sL),
+            ey + arrow_len * (ux * sL + uy * cL))
+    tipR = (ex + arrow_len * (ux * cR - uy * sR),
+            ey + arrow_len * (ux * sR + uy * cR))
+    return (ox, oy, ex, ey, tipL[0], tipL[1], ex, ey, tipR[0], tipR[1])
+
+
+def _effective_mask_mesh_param(editor, effects_param):
+    linked = effects.Mask2Effect.get_param(effects_param, 'mask_mesh_link_to_image')
+    if linked:
+        root = getattr(editor, 'root', None)
+        primary = getattr(root, 'primary_param', None) if root is not None else None
+        if primary is not None:
+            merged = dict(effects_param)
+            merged['mask_mesh_control_points'] = primary.get('control_points', {})
+            merged['mask_mesh_size'] = primary.get('mesh_size', [4, 4])
+            _mask_zoom_sync_debug(
+                "mask_mesh effective linked=True primary_cps=%d local_cps=%d primary_hash=%s local_hash=%s",
+                len(_normalize_mesh_cps(primary.get('control_points'))),
+                len(_normalize_mesh_cps(effects.Mask2Effect.get_param(effects_param, 'mask_mesh_control_points'))),
+                _mesh_cps_hash_key(primary.get('control_points')),
+                _mesh_cps_hash_key(effects.Mask2Effect.get_param(effects_param, 'mask_mesh_control_points')),
+            )
+            return merged
+    _mask_zoom_sync_debug(
+        "mask_mesh effective linked=False cps=%d hash=%s",
+        len(_normalize_mesh_cps(effects.Mask2Effect.get_param(effects_param, 'mask_mesh_control_points'))),
+        _mesh_cps_hash_key(effects.Mask2Effect.get_param(effects_param, 'mask_mesh_control_points')),
+    )
+    return effects_param
+
+
+def _mask_mesh_source_padding(editor, effects_param, output_shape):
+    """現在 viewport 外を warp が参照できるよう、ソースマスク描画に必要な余白を見積もる。"""
+    cps = _normalize_mesh_cps(effects.Mask2Effect.get_param(effects_param, 'mask_mesh_control_points'))
+    if not cps:
+        return 0
+    try:
+        disp = params.get_disp_info(editor.tcg_info)
+        scale = float(disp[4])
+        orig_w, orig_h = editor.tcg_info['original_img_size']
+        max_move = 0.0
+        for ox, oy in cps.values():
+            max_move = max(max_move, abs(float(ox)) * float(orig_w), abs(float(oy)) * float(orig_h))
+        # MLS の局所変形は CP 移動量より少し外側を参照することがあるため余裕を足す。
+        pad = int(math.ceil(max_move * scale + 64.0))
+        return max(0, min(pad, max(int(output_shape[0]), int(output_shape[1])) * 2))
+    except Exception:
+        return 0
+
+
+def _mask_mesh_source_region(editor, effects_param, output_shape):
+    """mask mesh warp が実際に参照する texture 範囲だけを source として描く。"""
+    orig = editor.tcg_info.get('original_img_size') if isinstance(getattr(editor, 'tcg_info', None), dict) else None
+    bounds = _mask_mesh_source_bounds_shared(
+        effects_param,
+        orig,
+        getattr(editor, 'tcg_to_texture', None),
+        getattr(editor, 'tcg_to_full_image', None),
+        output_shape=output_shape,
+    )
+    if bounds is None:
+        pad = _mask_mesh_source_padding(editor, effects_param, output_shape)
+        if pad <= 0:
+            return (int(output_shape[1]), int(output_shape[0])), (0.0, 0.0), 0
+        return (
+            (int(output_shape[1]) + pad * 2, int(output_shape[0]) + pad * 2),
+            (-float(pad), -float(pad)),
+            pad,
+        )
+
+    min_x, min_y, max_x, max_y = bounds
+    out_h, out_w = int(output_shape[0]), int(output_shape[1])
+    margin = 4
+    origin_x = min(0, int(math.floor(min_x)) - margin)
+    origin_y = min(0, int(math.floor(min_y)) - margin)
+    end_x = max(out_w, int(math.ceil(max_x)) + margin + 1)
+    end_y = max(out_h, int(math.ceil(max_y)) + margin + 1)
+    max_expand = max(out_w, out_h) * 2
+    origin_x = max(origin_x, -max_expand)
+    origin_y = max(origin_y, -max_expand)
+    end_x = min(end_x, out_w + max_expand)
+    end_y = min(end_y, out_h + max_expand)
+    source_w = max(1, end_x - origin_x)
+    source_h = max(1, end_y - origin_y)
+    pad_equiv = max(-origin_x, -origin_y, end_x - out_w, end_y - out_h, 0)
+    return (source_w, source_h), (float(origin_x), float(origin_y)), int(pad_equiv)
+
+
+def _apply_mask_mesh_warp(composit, editor, effects_param,
+                          output_shape=None, source_origin_tex=(0.0, 0.0)):
+    """共通ヘルパ cores.mask2.mask_mesh.apply_mask_mesh_warp への薄いラッパ。
+    mask_mesh_link_to_image=True の Composit は **画像 mesh の CP を都度参照** する
+    (Mask2Effect の mask_mesh_link_to_image 仕様)。False なら自前 CP。"""
+    orig = editor.tcg_info.get('original_img_size') if isinstance(getattr(editor, 'tcg_info', None), dict) else None
+    # t2t=texture px (disp_info込み), t2f=フル画像px (F=MLS構築空間)。マスク warp の
+    # 共役 (射影込みでズーム位置がズレないため) に両方必要。
+    t2t = getattr(editor, 'tcg_to_texture', None)
+    t2f = getattr(editor, 'tcg_to_full_image', None)
+    effective = _effective_mask_mesh_param(editor, effects_param)
+    return _apply_mask_mesh_warp_shared(
+        composit, effective, orig, t2t, t2f,
+        output_shape=output_shape,
+        source_origin_tex=source_origin_tex,
+    )
 
 
 class TextInputDialog(KVPopup):
@@ -345,6 +500,55 @@ class BaseMask(KVWidget):
         self.refresh_control_points_for_overlay()
         self.update_mask()
 
+    def show_hidden(self, keep_overlay=False):
+        """マスクの CP 表示を隠す (別 Composit 所属マスク用、または Mesh Edit モード時)。
+        効果自体は pipeline 側で反映され続ける。
+        keep_overlay=True なら is_draw_mask を残して overlay 描画を継続する
+        (Mesh Edit モード中の active Composit 用)。"""
+        self.opacity = 0
+        for cp in self.control_points:
+            cp.opacity = 0
+        if keep_overlay:
+            self.is_draw_mask = True
+            self.refresh_control_points_for_overlay()
+            self.update_mask()
+        else:
+            self.is_draw_mask = False
+            self.refresh_control_points_for_overlay()
+
+    def update_visibility_for_active(self, active_mask, mesh_edit_active):
+        """active_mask と Composit 関係に応じて表示モードを切り替える。
+
+        - mesh_edit_active=True:
+          - active と同じ Composit のマスク: CP 非表示 + overlay 継続 (= 結果が見える)
+          - 別 Composit のマスク: 完全非表示
+        - mesh_edit_active=False:
+          - self が active_mask: show_all_control_points (フル表示)
+          - active と同じ Composit: show_center_control_point_only (中央 CP 薄く)
+          - 別 Composit: show_hidden
+        """
+        editor = self.editor
+        if editor is None:
+            return
+        if mesh_edit_active:
+            if active_mask is not None and editor._is_in_same_composit(self, active_mask):
+                self.show_hidden(keep_overlay=True)
+            else:
+                self.show_hidden(keep_overlay=False)
+            return
+        if active_mask is None:
+            if self is editor.active_mask:
+                self.show_all_control_points()
+            else:
+                self.show_center_control_point_only()
+            return
+        if self is active_mask:
+            self.show_all_control_points()
+        elif editor._is_in_same_composit(self, active_mask):
+            self.show_center_control_point_only()
+        else:
+            self.show_hidden()
+
     def is_center_click(self, touch):
         for cp in self.control_points:
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
@@ -375,7 +579,14 @@ class BaseMask(KVWidget):
         for cp in self.control_points:
             if cp.touching:
                 cp.on_touch_move(touch)
-                #self.is_draw_mask = True
+                self.is_draw_mask = True
+                self.editor.request_mask_render_update(
+                    self,
+                    reason="control_point_drag",
+                    refresh_visibility=False,
+                    redraw_overlay=True,
+                    redraw_pipeline=True,
+                )
                 return True
         return False
 
@@ -384,7 +595,12 @@ class BaseMask(KVWidget):
             if cp.touching:
                 cp.on_touch_up(touch)
                 get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
-                self.editor.start_draw_image(fast_display=False)
+                self.editor.request_mask_render_update(
+                    self,
+                    reason="control_point_touch_up",
+                    redraw_overlay=True,
+                    redraw_pipeline=True,
+                )
                 return True
         return False
 
@@ -419,8 +635,13 @@ class BaseMask(KVWidget):
                 cp.property('center').dispatch(cp)
         self.update_control_points()
         self.update_mask()
-        if moved:
-            self.editor.start_draw_image()
+        if moved and not getattr(instance, 'touching', False):
+            self.editor.request_mask_render_update(
+                self,
+                reason="center_control_point_move",
+                redraw_overlay=False,
+                redraw_pipeline=True,
+            )
     
     def draw_mask_to_fbo(self, absolute=False):
         if getattr(self.editor, "_suppress_mask_overlay_draw", False):
@@ -433,15 +654,128 @@ class BaseMask(KVWidget):
             # イメージを描画してもらう
             self.editor.draw_mask_image(mask_image)
 
-    def _apply_extened_params(self, image):
+    def _redraw_mask_content(self, reason="mask_content"):
+        """Mask pixels changed without going through ControlPoint properties."""
+        if self.editor is None:
+            return
+        self.editor.request_mask_render_update(
+            self,
+            reason=reason,
+            refresh_visibility=False,
+            redraw_overlay=True,
+            redraw_pipeline=True,
+        )
+
+    def _fit_image_mask_to_texture(self, image):
+        """original/full-image 空間の mask を現在 texture に配置する。
+
+        Mask Mesh の source 拡張中は disp_info の x/y が負になることがある。
+        numpy slice に負値を渡すと画像末尾からの参照になり、AI系マスクが消えるため、
+        範囲外は 0 として扱う。
+        """
+        texture_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        texture_w, texture_h = texture_size
+        if image is None or texture_w <= 0 or texture_h <= 0:
+            return np.zeros((max(texture_h, 0), max(texture_w, 0)), dtype=np.float32)
+
+        disp_info = params.get_disp_info(self.editor.tcg_info)
+        if disp_info is None:
+            return np.zeros((texture_h, texture_w), dtype=image.dtype)
+
+        nw, nh, ox, oy = core.crop_size_and_offset_from_texture(texture_w, texture_h, disp_info)
+        if nw <= 0 or nh <= 0:
+            return np.zeros((texture_h, texture_w), dtype=image.dtype)
+
+        cx, cy, cw, ch, _scale = disp_info
+        cx, cy, cw, ch = int(cx), int(cy), int(cw), int(ch)
+        if cw <= 0 or ch <= 0:
+            return np.zeros((texture_h, texture_w), dtype=image.dtype)
+
+        src_h, src_w = image.shape[:2]
+        orig_w, orig_h = self.editor.tcg_info.get('original_img_size', (src_w, src_h))
+        maxsize = max(int(orig_w), int(orig_h))
+        if (src_w, src_h) == (int(orig_w), int(orig_h)) and (src_w, src_h) != (maxsize, maxsize):
+            pad_x = (maxsize - int(orig_w)) / 2.0
+            pad_y = (maxsize - int(orig_h)) / 2.0
+            cx = float(cx) - pad_x
+            cy = float(cy) - pad_y
+            _mask_zoom_sync_debug(
+                "fit_image_mask_to_texture source_unpadded mask=%s image=%s orig=%s pad=(%.2f,%.2f) disp=%s src_rect=(%.2f,%.2f,%s,%s)",
+                _mask_geom_id(self), getattr(image, "shape", None),
+                (orig_w, orig_h), pad_x, pad_y, disp_info, cx, cy, cw, ch,
+            )
+
+        in_bounds = 0 <= cx and 0 <= cy and cx + cw <= src_w and cy + ch <= src_h
+        integer_rect = abs(float(cx) - round(float(cx))) < 1e-6 and abs(float(cy) - round(float(cy))) < 1e-6
+        if in_bounds and integer_rect:
+            x0 = int(round(cx))
+            y0 = int(round(cy))
+            content = cv2.resize(image[y0:y0 + ch, x0:x0 + cw], (nw, nh))
+        else:
+            sx = float(cw) / float(nw)
+            sy = float(ch) / float(nh)
+            # cv2.resize の half-pixel 規則に寄せた dst->src 変換。
+            matrix = np.array([
+                [sx, 0.0, float(cx) + sx * 0.5 - 0.5],
+                [0.0, sy, float(cy) + sy * 0.5 - 0.5],
+            ], dtype=np.float32)
+            content = cv2.warpAffine(
+                image,
+                matrix,
+                (nw, nh),
+                flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0,
+            )
+            _mask_zoom_sync_debug(
+                "fit_image_mask_to_texture out_of_bounds mask=%s image=%s disp=%s texture=%s content=%s offset=%s",
+                _mask_geom_id(self), getattr(image, "shape", None), disp_info,
+                texture_size, getattr(content, "shape", None), (ox, oy),
+            )
+
+        out = np.zeros((texture_h, texture_w) + image.shape[2:], dtype=content.dtype)
+        dst_x0 = max(0, int(ox))
+        dst_y0 = max(0, int(oy))
+        dst_x1 = min(texture_w, int(ox) + nw)
+        dst_y1 = min(texture_h, int(oy) + nh)
+        if dst_x1 <= dst_x0 or dst_y1 <= dst_y0:
+            return out
+
+        src_x0 = dst_x0 - int(ox)
+        src_y0 = dst_y0 - int(oy)
+        src_x1 = src_x0 + (dst_x1 - dst_x0)
+        src_y1 = src_y0 + (dst_y1 - dst_y0)
+        out[dst_y0:dst_y1, dst_x0:dst_x1] = content[src_y0:src_y1, src_x0:src_x1]
+        return out
+
+    def _apply_extened_params(
+            self,
+            image,
+            edge_refine_draw_strokes=None,
+            edge_refine_enabled=True):
         simg = self._apply_mask_space(image)
+        if edge_refine_enabled:
+            simg, edge_support = self._apply_edge_refine(simg, edge_refine_draw_strokes=edge_refine_draw_strokes)
+        else:
+            edge_support = None
         dimg = self._apply_depth_mask(simg)
         himg = self._draw_hue_mask(dimg)
         limg = self._draw_lum_mask(himg)
         simg = self._draw_sat_mask(limg)
         bimg = self._apply_mask_blur(simg)
+        if edge_support is not None:
+            bimg = np.where(edge_support > 0.001, bimg, 0.0)
 
         return bimg
+
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _edge_refine_seed_from_guide(self):
+        return False
+
+    def _get_edge_refine_seed_mask(self, mask_shape, current_mask=None):
+        return None
 
     def get_hash_items(self):
         # tcg_info['matrix'] のバイト列を末尾に含めることで、CompositMask.get_mask_image が
@@ -483,6 +817,16 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
+                # mask Mesh warp 関連 (Composit のみ実際に効くが、子マスクでも
+                # placeholder default ({} と [4,4]) で hash が安定するので一律含める)
+                tuple(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_size') or ()),
+                _mesh_cps_hash_key(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_control_points')),
+                bool(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_link_to_image')),
+                # linked=True のとき: 画像 mesh CP の変更でキャッシュを invalidate するため hash に含める
+                _linked_primary_mesh_hash_key(self),
                 matrix_bytes)
 
     def _apply_mask_space(self, image):
@@ -495,6 +839,78 @@ class BaseMask(KVWidget):
             image = expand_mask.adjust_holes_only(image, close_space * params.get_disp_info(self.editor.tcg_info)[4], False)
         
         return image
+
+    def _apply_edge_refine(self, image, edge_refine_draw_strokes=None):
+        if not self._edge_refine_enabled_for_mask():
+            return image, None
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') != True:
+            return image, None
+        mode = effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode')
+        if not edge_refine.is_enabled(mode):
+            return image, None
+        guide = self._get_edge_refine_guide_image(image.shape[:2])
+        guide_point = self._get_edge_refine_guide_point()
+        seed_mask = self._get_edge_refine_seed_mask(image.shape[:2], image)
+        refined, support = edge_refine.refine_mask_edge_aware(
+            guide,
+            image,
+            guide_point=guide_point,
+            mode=mode,
+            radius=self._edge_refine_radius_to_texture(
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius')),
+            strength=effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
+            fill_grown_region=self._edge_refine_fill_grown_region(),
+            seed_from_guide=self._edge_refine_seed_from_guide(),
+            seed_mask=seed_mask,
+            debug_label=self.__class__.__name__,
+            support_softness=self._edge_refine_support_softness(),
+            selection_strategy=self._edge_refine_selection_strategy(),
+            draw_strokes=edge_refine_draw_strokes,
+            return_support=True,
+        )
+        return refined, support
+
+    def _edge_refine_enabled_for_mask(self):
+        return True
+
+    def _edge_refine_support_softness(self):
+        return 0.0
+
+    def _edge_refine_selection_strategy(self):
+        return edge_refine.STRATEGY_REFINE
+
+    def _edge_refine_radius_to_texture(self, radius):
+        try:
+            disp_scale = float(params.get_disp_info(self.editor.tcg_info)[4])
+        except Exception:
+            disp_scale = 1.0
+        return float(radius) * disp_scale
+
+    def _get_edge_refine_guide_image(self, mask_shape):
+        crop = getattr(self.editor, 'crop_image_rgb', None)
+        if crop is not None and getattr(crop, 'shape', (None, None))[:2] == tuple(mask_shape):
+            return crop
+
+        original = self.editor.get_original_image_rgb()
+        if original is not None:
+            guide = self._fit_image_mask_to_texture(original)
+            if getattr(guide, 'shape', (None, None))[:2] != tuple(mask_shape):
+                guide = cv2.resize(guide, (int(mask_shape[1]), int(mask_shape[0])), interpolation=cv2.INTER_LINEAR)
+            return guide
+
+        hls = getattr(self.editor, 'crop_image_hls', None)
+        if hls is not None:
+            return hls[..., 1]
+        return None
+
+    def _get_edge_refine_guide_point(self):
+        center = getattr(self, 'center', None)
+        if center is None:
+            return None
+        try:
+            return self.editor.tcg_to_texture(*center)
+        except Exception:
+            return None
 
     def _apply_depth_mask(self, image):
         switch_mask2_depth = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth')
@@ -619,17 +1035,38 @@ class CompositMask(BaseMask):
 
     def add_mask(self, mask, maskop='Add', index=0):
         # 子マスクの追加
+        if mask is None:
+            logging.warning("CompositMask.add_mask: mask is None; ignored")
+            return
         self.mask_list.insert(index, (mask, maskop))
-        #self.editor.dispatch('on_structure_change')
+        if self.editor is not None:
+            ready = not getattr(mask, 'initializing', False)
+            self.editor.request_mask_render_update(
+                mask,
+                reason="composit.add_mask",
+                structure_changed=True,
+                redraw_overlay=ready,
+                redraw_pipeline=ready,
+            )
 
     def remove_mask(self, mask):
         # 子マスクの削除
+        removed = False
         for item in self.mask_list:
             if item[0] is mask:
                 mask.clear()
                 self.mask_list.remove(item)
+                removed = True
                 break
-        #self.editor.dispatch('on_structure_change')
+        if removed:
+            if self.editor is not None:
+                self.editor.request_mask_render_update(
+                    self,
+                    reason="composit.remove_mask",
+                    structure_changed=True,
+                    redraw_overlay=True,
+                    redraw_pipeline=True,
+                )
 
     def get_mask_list(self):
         # 子マスクのリスト
@@ -714,6 +1151,11 @@ class CompositMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
         effects.set_composit_mask_noop_defaults(self.effects_param)
+        # 古いファイル互換: mask_mesh_link_to_image が未設定なら、自前 CP の有無で判定
+        # (空 → linked、あり → local)。Headless 側と同じ流儀。
+        if 'mask_mesh_link_to_image' not in dict.get('effects_param', {}):
+            self.effects_param['mask_mesh_link_to_image'] = \
+                not bool(dict.get('effects_param', {}).get('mask_mesh_control_points'))
         # 子マスクのデシリアライズ
         index = self.editor.mask_list.index(self)
         for i, mask_info in enumerate(dict['mask_list']):
@@ -726,12 +1168,35 @@ class CompositMask(BaseMask):
         if self.is_draw_mask == True:
             self.draw_mask_to_fbo()
 
+    def _composit_cache_key(self, output_shape, source_size, source_origin_tex):
+        child_state = tuple(
+            (
+                getattr(child, 'mask_id', None),
+                maskop,
+                getattr(child, 'image_mask_cache_hash', None),
+                getattr(child, 'segment_mask_cache_hash', None),
+                getattr(child, 'depth_map_mask_cache_hash', None),
+                getattr(child, 'faces_mask_cache_hash', None),
+            )
+            for child, maskop in getattr(self, 'mask_list', [])
+        )
+        return hash((
+            self.get_hash_items(),
+            self.editor.get_hash_items(),
+            tuple(output_shape),
+            tuple(source_size),
+            tuple(round(float(v), 6) for v in source_origin_tex),
+            child_state,
+        ))
+
     def get_mask_image(self):
         # mask Geometry: この Composit の mask Geom matrix を tcg_info['matrix'] に
         # 一時的に乗せて、子マスクの座標変換に含めるよう差し替え。finally で必ず復元。
         editor = self.editor
         with editor._matrix_lock:
             saved_matrix = editor.tcg_info['matrix']
+            saved_texture_size = tuple(editor.texture_size)
+            saved_disp = params.get_disp_info(editor.tcg_info)
             base = editor._image_only_matrix
             enabled = False
             matrix_before_hash = _mask_geom_matrix_hash(saved_matrix)
@@ -756,6 +1221,62 @@ class CompositMask(BaseMask):
             )
 
             try:
+                effective_mesh_param = _effective_mask_mesh_param(editor, self.effects_param)
+                output_shape = (int(editor.texture_size[1]), int(editor.texture_size[0]))
+                # Mask Mesh は Mask Geom ではなく画像 Geom にだけ追従する仕様。
+                # 子マスク自体はこの Composit の Mask Geom 込みで rasterize するが、
+                # mesh の変形場は image-only matrix で計算する。
+                source_size, source_origin_tex, pad = editor._call_with_image_only_matrix(
+                    _mask_mesh_source_region, editor, effective_mesh_param, output_shape)
+                source_w, source_h = int(source_size[0]), int(source_size[1])
+                expand_source = (source_w, source_h) != (int(output_shape[1]), int(output_shape[0]))
+                if expand_source and saved_disp is None:
+                    expand_source = False
+                    source_origin_tex = (0.0, 0.0)
+                if expand_source and saved_disp is not None:
+                    _, _, saved_ox, saved_oy = core.crop_size_and_offset_from_texture(
+                        int(output_shape[1]), int(output_shape[0]), saved_disp)
+                    if saved_ox != 0 or saved_oy != 0:
+                        # disp_info cannot express "expand the texture by a few px while
+                        # preserving the existing letterbox offset". Reusing it here turns
+                        # portrait/landscape crops back into a square viewport and shifts
+                        # AI masks by the padding width when leaving Ge.
+                        _mask_zoom_sync_debug(
+                            "Composit.get_mask_image skip_expanded_source_letterbox composit=%s output=%s source=%s origin=%s saved_disp=%s offset=(%s,%s)",
+                            _mask_geom_id(self), output_shape,
+                            (source_w, source_h), source_origin_tex,
+                            saved_disp, saved_ox, saved_oy,
+                        )
+                        expand_source = False
+                        source_size = (int(output_shape[1]), int(output_shape[0]))
+                        source_w, source_h = int(source_size[0]), int(source_size[1])
+                        source_origin_tex = (0.0, 0.0)
+                if expand_source and saved_disp is not None:
+                    scale = float(saved_disp[4]) if saved_disp[4] else 1.0
+                    expanded_disp = (
+                        saved_disp[0] + source_origin_tex[0] / scale,
+                        saved_disp[1] + source_origin_tex[1] / scale,
+                        source_w / scale,
+                        source_h / scale,
+                        scale,
+                    )
+                    editor.texture_size = (source_w, source_h)
+                    params.set_disp_info(editor.tcg_info, expanded_disp)
+                    _mask_zoom_sync_debug(
+                        "Composit.get_mask_image expanded_source composit=%s output=%s source=%s origin=%s pad=%d saved_disp=%s expanded_disp=%s",
+                        _mask_geom_id(self), output_shape,
+                        (source_w, source_h), source_origin_tex, pad, saved_disp,
+                        params.get_disp_info(editor.tcg_info),
+                    )
+
+                cache_key = self._composit_cache_key(output_shape, (source_w, source_h), source_origin_tex)
+                if self.image_mask_cache is not None and self.image_mask_cache_hash == cache_key:
+                    _mask_zoom_sync_debug(
+                        "Composit.get_mask_image cache_hit composit=%s output=%s source=%s origin=%s hash=%s",
+                        _mask_geom_id(self), output_shape, (source_w, source_h), source_origin_tex, cache_key,
+                    )
+                    return self.image_mask_cache
+
                 # 合成マスクの画像作成
                 composit = np.zeros((int(editor.texture_size[1]), int(editor.texture_size[0])), dtype=np.float32)
                 allow_over_one = False
@@ -802,6 +1323,21 @@ class CompositMask(BaseMask):
                             logger.error(f"Unknown mask operation: {maskop}")
                             assert False
 
+                # mask Mesh warp: 合成済 composit に非線形 TPS 変形を適用 (空なら no-op)。
+                # 変形場は image-only matrix で固定し、Mask Geom の回転/scale/flip には
+                # 追従させない。
+                if expand_source and saved_disp is not None:
+                    editor.texture_size = saved_texture_size
+                    params.set_disp_info(editor.tcg_info, saved_disp)
+                composit = editor._call_with_image_only_matrix(
+                    _apply_mask_mesh_warp,
+                    composit, editor, effective_mesh_param,
+                    output_shape=output_shape,
+                    source_origin_tex=source_origin_tex,
+                )
+                cache_key = self._composit_cache_key(output_shape, (source_w, source_h), source_origin_tex)
+                self.image_mask_cache = composit
+                self.image_mask_cache_hash = cache_key
                 if _DEBUG_MASK_GEOMETRY:
                     _mask_geom_debug(
                         "Composit.get_mask_image done composit=%s stats=%s",
@@ -810,6 +1346,9 @@ class CompositMask(BaseMask):
                     )
                 return composit
             finally:
+                editor.texture_size = saved_texture_size
+                if saved_disp is not None:
+                    params.set_disp_info(editor.tcg_info, saved_disp)
                 editor.tcg_info['matrix'] = saved_matrix
 
 
@@ -838,6 +1377,15 @@ class CircularGradientMask(BaseMask):
             KVPopMatrix()
 
         #self.update_mask()
+
+    def _edge_refine_fill_grown_region(self):
+        return False
+
+    def _edge_refine_seed_from_guide(self):
+        return True
+
+    def _edge_refine_enabled_for_mask(self):
+        return False
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -1245,6 +1793,15 @@ class GradientMask(BaseMask):
 
         self.rotate_rad = 0
         #self.update_mask()
+
+    def _edge_refine_fill_grown_region(self):
+        return False
+
+    def _edge_refine_seed_from_guide(self):
+        return True
+
+    def _edge_refine_enabled_for_mask(self):
+        return False
     
     def on_touch_down(self, touch):
         if self.initializing:
@@ -1666,6 +2223,15 @@ class FullMask(BaseMask):
 
         #self.update_mask()
 
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _edge_refine_seed_from_guide(self):
+        return True
+
+    def _edge_refine_enabled_for_mask(self):
+        return False
+
     def on_touch_down(self, touch):
         if self.initializing:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
@@ -1798,6 +2364,7 @@ class FreeDrawMask(BaseMask):
         self.current_line = None
         self.brush_size = 300
         self._stroke_history_started = False
+        self._drag_base_mask = None
 
         with self.canvas:
             KVPushMatrix()
@@ -1813,6 +2380,18 @@ class FreeDrawMask(BaseMask):
 
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _get_edge_refine_seed_mask(self, mask_shape, current_mask=None):
+        if current_mask is None:
+            return None
+        seed = edge_refine.make_confident_seed(current_mask)
+        return seed if np.any(seed) else None
+
+    def _edge_refine_selection_strategy(self):
+        return edge_refine.STRATEGY_DRAW
+
     def start(self):
         self.brush_color.rgba = (1, 1, 1, 1)
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
@@ -1824,6 +2403,7 @@ class FreeDrawMask(BaseMask):
     def clear(self):
         self.lines = []
         self.current_line = None
+        self._drag_base_mask = None
         super().clear()
 
     def serialize(self):
@@ -1874,6 +2454,16 @@ class FreeDrawMask(BaseMask):
         self.create_control_points()
 
     def on_mouse_pos(self, window, pos):
+        # 自分が active / 作成中でないなら brush_cursor を完全に非表示にする。
+        # __init__ で KVWindow.bind(mouse_pos=self.on_mouse_pos) しているので、
+        # マスクを選択していない / 別マスクを選択中でも mouse_pos イベントは飛んでくる。
+        # 表示制御は brush_color の alpha で行う。
+        is_active = self.editor.get_active_mask() is self
+        is_created = self.editor.get_created_mask() is self
+        if not (is_active or is_created):
+            self.brush_color.rgba = (0, 0, 0, 0)
+            return
+        self.brush_color.rgba = (1, 1, 1, 1)
         self.update_brush_cursor(pos[0], pos[1])
 
     def _pan_mode_active(self):
@@ -1904,18 +2494,25 @@ class FreeDrawMask(BaseMask):
 
                     return super().on_touch_down(touch)
 
-        if self.initializing:
+        was_initializing = self.initializing
+        if not self._touch_in_draw_area(touch):
+            return super().on_touch_down(touch)
+
+        if was_initializing:
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.center_x = cx
             self.center_y = cy
             self.create_control_points()
-            self.editor.set_active_mask(self)            
+            self.editor.set_active_mask(self)
+            self.initializing = False
 
         # 右クリックで消去モード、左クリックで描画モード
         is_erasing = (touch.button == 'right')            
-        if not self.initializing:
+        if not was_initializing:
             get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
             self._stroke_history_started = True
+
+        self._drag_base_mask = self._current_committed_preview_base()
 
         hardness = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
         self.current_line = FreeDrawMask.Line(is_erasing, self.brush_size, hardness)
@@ -1923,12 +2520,10 @@ class FreeDrawMask(BaseMask):
         self.editor.set_active_mask(self)
         self.lines.append(self.current_line)
 
-        self.update_mask()
-        self.editor.start_draw_image()
+        self._redraw_mask_content("freedraw_touch_down")
         
         # 初期化時はBaseMaskの方を呼び出さない
-        if self.initializing:
-            self.initializing = False
+        if was_initializing:
             return True
 
         return super().on_touch_down(touch)
@@ -1938,8 +2533,7 @@ class FreeDrawMask(BaseMask):
             return False
         if self.current_line is not None:
             self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("freedraw_touch_move")
             return True
 
         return super().on_touch_move(touch)
@@ -1950,23 +2544,29 @@ class FreeDrawMask(BaseMask):
             # ストロークの後始末は通常パスでも行う。ここでは描画動作だけ抑止する。
             if self.current_line is not None:
                 self.current_line = None
-                self.update_mask()
-                self.editor.start_draw_image()
+                self._drag_base_mask = None
+                self._redraw_mask_content("freedraw_touch_up_pan")
                 if self._stroke_history_started:
                     get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
                     self._stroke_history_started = False
             return False
         if self.current_line is not None:
             self.current_line = None
+            self._drag_base_mask = None
             # マスクを更新
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("freedraw_touch_up")
             if self._stroke_history_started:
                 get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
                 self._stroke_history_started = False
             return True
 
         return super().on_touch_up(touch)
+
+    def _touch_in_draw_area(self, touch):
+        checker = getattr(self.editor, "window_point_in_image_rect", None)
+        if callable(checker):
+            return bool(checker(*touch.pos))
+        return bool(self.editor.collide_point(*touch.pos))
 
     def create_control_points(self):
         # 中心のコントロールポイント
@@ -1992,6 +2592,56 @@ class FreeDrawMask(BaseMask):
         inner_size = max(0.0, brush_size * (hardness / 100.0))
         inner_off = (brush_size - inner_size) / 2.0
         self.brush_cursor_inner.ellipse = (inner_off, inner_off, inner_size, inner_size)
+
+    def _edge_refine_preview_freeze_enabled(self):
+        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') != True:
+            return False
+        mode = effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode')
+        return edge_refine.is_enabled(mode)
+
+    def _current_committed_preview_base(self):
+        if not self._edge_refine_preview_freeze_enabled():
+            return None
+        try:
+            base = self.get_mask_image()
+            return np.asarray(base, dtype=np.float32).copy()
+        except Exception:
+            logging.exception("FreeDraw Quick Select preview base capture failed")
+            return None
+
+    def _preview_current_line_over_base(self, image_size, copy_lines):
+        if self.current_line is None or self._drag_base_mask is None:
+            return None
+        try:
+            line_index = self.lines.index(self.current_line)
+        except ValueError:
+            line_index = len(copy_lines) - 1
+        if line_index < 0 or line_index >= len(copy_lines):
+            return None
+
+        base = np.asarray(self._drag_base_mask, dtype=np.float32)
+        expected_shape = (int(image_size[1]), int(image_size[0]))
+        if base.shape[:2] != expected_shape:
+            return None
+
+        src = copy_lines[line_index]
+        preview_line = FreeDrawMask.Line(False, src.size, src.soft)
+        for point in src.points:
+            preview_line.add_point(*point)
+        current = mask_rasters.draw_line_texture(
+            image_size,
+            [preview_line],
+            allow_over_one=False,
+            allow_under_zero=False,
+        )
+        current = self._apply_extened_params(
+            current,
+            edge_refine_draw_strokes=[preview_line],
+            edge_refine_enabled=False,
+        )
+        if bool(getattr(src, "is_erasing", False)):
+            return np.clip(base - current, 0.0, 1.0).astype(np.float32, copy=False)
+        return np.maximum(base, current).astype(np.float32, copy=False)
 
     def update_mask(self):
         if not self.editor or self.editor.get_image_size()[0] == 0 or self.editor.get_image_size()[1] == 0:
@@ -2038,8 +2688,23 @@ class FreeDrawMask(BaseMask):
                 if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
                     mask = 1.0 - mask
 
-            # ルミナンスとマスクを作成
-            mask = self._apply_extened_params(mask)
+            drag_preview = self._preview_current_line_over_base(image_size, copy_lines)
+            if drag_preview is not None:
+                mask = drag_preview
+            else:
+                # ルミナンスとマスクを作成
+                full_refined = extended_params.render_freedraw_edge_refine_full_view(
+                    self.editor,
+                    self.effects_param,
+                    self.lines,
+                    self.center,
+                    mask.shape,
+                    debug_label=f"{self.__class__.__name__}Full",
+                )
+                if full_refined is None:
+                    mask = self._apply_extened_params(mask, edge_refine_draw_strokes=copy_lines)
+                else:
+                    mask = full_refined
 
             self.image_mask_cache = mask
             self.image_mask_cache_hash = newhash
@@ -2107,6 +2772,18 @@ class PolylineMask(BaseMask):
             KVPopMatrix()
 
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
+
+    def _edge_refine_fill_grown_region(self):
+        return True
+
+    def _get_edge_refine_seed_mask(self, mask_shape, current_mask=None):
+        if current_mask is None:
+            return None
+        seed = edge_refine.make_confident_seed(current_mask)
+        return seed if np.any(seed) else None
+
+    def _edge_refine_selection_strategy(self):
+        return edge_refine.STRATEGY_DRAW
 
     # ---- ライフサイクル ----
     def start(self):
@@ -2181,6 +2858,19 @@ class PolylineMask(BaseMask):
 
     # ---- マウス入力 ----
     def on_mouse_pos(self, window, pos):
+        # 自分が active / 作成中でないなら brush_cursor + preview_line を非表示にする。
+        # FreeDrawMask と同等。
+        is_active = self.editor.get_active_mask() is self
+        is_created = self.editor.get_created_mask() is self
+        if not (is_active or is_created):
+            self.brush_color.rgba = (0, 0, 0, 0)
+            # preview line も消す
+            try:
+                self.preview_line.points = []
+            except Exception:
+                pass
+            return
+        self.brush_color.rgba = (1, 1, 1, 1)
         self.update_brush_cursor(pos[0], pos[1])
         self._update_preview_line(pos)
 
@@ -2248,11 +2938,13 @@ class PolylineMask(BaseMask):
 
         # 初期化時 (最初の左クリックでのみマスク中心を確定)。
         # 右クリックでの初期化は中心だけ残って polyline が始まらないので不可。
-        if self.initializing and touch.button == 'left' and not getattr(touch, 'is_double_tap', False):
+        was_initializing = self.initializing
+        if was_initializing and touch.button == 'left' and not getattr(touch, 'is_double_tap', False):
             self.center_x = tcg_x
             self.center_y = tcg_y
             self.create_control_points()
             self.editor.set_active_mask(self)
+            self.initializing = False
 
         # 右クリック: 描画中のみ直近頂点を取消 (idle 右クリックは何もしない)
         if touch.button == 'right':
@@ -2265,8 +2957,7 @@ class PolylineMask(BaseMask):
                         get_history_ctrl().end_history_layer_ctrl(
                             self.editor, "Update", self.editor.get_mask_list().index(self))
                         self._stroke_history_started = False
-                self.update_mask()
-                self.editor.start_draw_image()
+                self._redraw_mask_content("polyline_undo_point")
                 return True
             # idle 右クリックは消費せず親に流す
             return super().on_touch_down(touch)
@@ -2278,8 +2969,7 @@ class PolylineMask(BaseMask):
             if getattr(touch, 'is_double_tap', False):
                 if self.current_polyline is not None:
                     self._finish_current_polyline(is_closed=False)
-                    self.update_mask()
-                    self.editor.start_draw_image()
+                    self._redraw_mask_content("polyline_finish_open")
                     if self.initializing:
                         self.initializing = False
                     return True
@@ -2288,8 +2978,7 @@ class PolylineMask(BaseMask):
             # 描画中で始点付近をクリックしたら閉じて確定
             if self.current_polyline is not None and self._is_near_first_point(tcg_x, tcg_y):
                 self._finish_current_polyline(is_closed=True)
-                self.update_mask()
-                self.editor.start_draw_image()
+                self._redraw_mask_content("polyline_finish_closed")
                 if self.initializing:
                     self.initializing = False
                 return True
@@ -2299,10 +2988,8 @@ class PolylineMask(BaseMask):
                 self._begin_new_polyline(tcg_x, tcg_y, is_erasing=False)
             else:
                 self.current_polyline.add_point(tcg_x, tcg_y)
-                self.update_mask()
-                self.editor.start_draw_image()
-            if self.initializing:
-                self.initializing = False
+                self._redraw_mask_content("polyline_add_point")
+            if was_initializing:
                 return True
             return super().on_touch_down(touch)
 
@@ -2335,8 +3022,7 @@ class PolylineMask(BaseMask):
         )
         self.current_polyline.add_point(tcg_x, tcg_y)
         self.editor.set_active_mask(self)
-        self.update_mask()
-        self.editor.start_draw_image()
+        self._redraw_mask_content("polyline_begin")
 
     def _finish_current_polyline(self, is_closed: bool):
         if self.current_polyline is None:
@@ -2362,8 +3048,7 @@ class PolylineMask(BaseMask):
         タブ切替やマスク非アクティブ化など、描画コンテキストを抜けるときに呼ぶ。"""
         if self.current_polyline is not None:
             self._finish_current_polyline(is_closed=False)
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("polyline_commit_in_progress")
         # 残留オーバーレイをリセット
         self.preview_line.points = []
         self.preview_color.rgba = (1, 1, 0, 0)
@@ -2484,8 +3169,7 @@ class PolylineMask(BaseMask):
                 instance.property('center').dispatch(instance)
             else:
                 instance.center = new_center
-            self.update_mask()
-            self.editor.start_draw_image()
+            self._redraw_mask_content("polyline_vertex_move")
         return _cb
 
     def on_center_control_point_move(self, instance, value):
@@ -2517,8 +3201,7 @@ class PolylineMask(BaseMask):
                 cp.property('center').dispatch(cp)
             else:
                 cp.center = center
-        self.update_mask()
-        self.editor.start_draw_image()
+        self._redraw_mask_content("polyline_center_move")
 
     # ---- カーソル ----
     def update_brush_cursor(self, x, y):
@@ -2562,7 +3245,7 @@ class PolylineMask(BaseMask):
             render.append(self.current_polyline)
         result = []
         for src in render:
-            tex_poly = polyline_raster.Polyline(
+            tex_poly = mask_rasters.Polyline(
                 is_erasing=src.is_erasing,
                 size=self.editor.tcg_to_image_scale(src.size, 0)[0],
                 soft=src.soft,
@@ -2626,8 +3309,8 @@ class SegmentMask(BaseMask):
             self.scissor = self.editor.push_scissor()
             # center位置への移動
             self.translate = KVTranslate(0, 0)
-            KVColor(*self.color)
-            self.rect_line = KVLine(points=[], close=True, width=2)
+            KVColor(1, 0, 0, 1)
+            self.rect_line = KVLine(points=[], close=True, width=max(1.0, 1.5 * device.dpi_scale()))
             self.editor.pop_scissor()
             KVPopMatrix()
 
@@ -2635,6 +3318,9 @@ class SegmentMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -2793,6 +3479,7 @@ class SegmentMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        original_image_size = tuple(self.editor.get_image_size())
         center = self.editor.tcg_to_original_image(*self.center)
         corner = self.editor.tcg_to_original_image(*self.corner)
         if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
@@ -2802,7 +3489,7 @@ class SegmentMask(BaseMask):
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
-        newhash = hash((image_size, center, corner))
+        newhash = hash((original_image_size, center, corner, invert))
         if (self.image_mask_cache_hash != newhash) and self.initializing == False:
             self.image_mask_cache_hash = newhash
 
@@ -2817,14 +3504,14 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_prosessing(self._draw_segment, image_size, [min_x, min_y, w, h], invert)
-            #segment_mask = self._draw_segment(image_size, [min_x, min_y, w, h])
+            segment_mask = wait_prosessing(self._draw_segment, original_image_size, [min_x, min_y, w, h], invert)
+            #segment_mask = self._draw_segment(original_image_size, [min_x, min_y, w, h])
 
             # SegmentMask用のキャッシュ
             self.image_mask_cache = segment_mask
 
         # その他更新用
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
         if self.image_mask_cache is not None and (self.image_mask_cache is segment_mask or self.segment_mask_cache is None or self.segment_mask_cache_hash != newhash) and self.initializing == False:
             self.segment_mask_cache_hash = newhash
 
@@ -2836,11 +3523,7 @@ class SegmentMask(BaseMask):
             segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             #segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
-            cx, cy ,cw, ch, scale = disp_info
-            #cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
-            segment_mask = cv2.resize(segment_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[1]-(oy+nh)), (ox, self.editor.texture_size[0]-(ox+nw))), constant_values=0)
+            segment_mask = self._fit_image_mask_to_texture(segment_mask)
 
             # ルミノシティマスクを作成
             segment_mask = self._apply_extened_params(segment_mask)
@@ -2878,6 +3561,9 @@ class DepthMapMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -2977,19 +3663,20 @@ class DepthMapMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        original_image_size = tuple(self.editor.get_image_size())
         center = self.editor.tcg_to_original_image(*self.center)
         depth_map_mask = None
 
-        newhash = hash((image_size))
+        newhash = hash((original_image_size,))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             self.image_mask_cache_hash = newhash
 
-            depth_map_mask = wait_prosessing(self.draw_depth_map, image_size)
-            #depth_map_mask = self.draw_depth_map(image_size)
+            depth_map_mask = wait_prosessing(self.draw_depth_map, original_image_size)
+            #depth_map_mask = self.draw_depth_map(original_image_size)
 
             self.image_mask_cache = depth_map_mask
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
         if self.image_mask_cache is not None and (self.image_mask_cache is depth_map_mask or self.depth_map_mask_cache is None or self.depth_map_mask_cache_hash != newhash) and self.initializing == False:
             self.depth_map_mask_cache_hash = newhash
 
@@ -2998,13 +3685,7 @@ class DepthMapMask(BaseMask):
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
             depth_map_mask = core.rotation(depth_map_mask, rotate_rad, flip, np.array(matrix).reshape(3, 3))
-            depth_map_mask = core.crop_image_with_disp_info(depth_map_mask, disp_info)
-
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(self.editor.texture_size[0], self.editor.texture_size[1], disp_info)
-            cx, cy ,cw, ch, scale = disp_info
-            cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
-            depth_map_mask = cv2.resize(depth_map_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            depth_map_mask = np.pad(depth_map_mask, ((oy, self.editor.texture_size[0]-(oy+nh)), (ox, self.editor.texture_size[1]-(ox+nw))), constant_values=0)
+            depth_map_mask = self._fit_image_mask_to_texture(depth_map_mask)
 
             # ルミノシティマスクを作成
             depth_map_mask = self._apply_extened_params(depth_map_mask)
@@ -3041,6 +3722,9 @@ class FaceMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -3139,6 +3823,7 @@ class FaceMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        original_image_size = tuple(self.editor.get_image_size())
         center = self.editor.tcg_to_original_image(*self.center)
         exclude_names = []
         if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_face') == True:
@@ -3156,17 +3841,17 @@ class FaceMask(BaseMask):
                 exclude_names.extend(['ulip', 'llip'])
         faces_mask = None
 
-        newhash = hash((image_size, tuple(exclude_names)))
+        newhash = hash((original_image_size, tuple(exclude_names)))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             self.image_mask_cache_hash = newhash
 
             # 描画
-            faces_mask = wait_prosessing(self.draw_face, image_size, exclude_names)
-            #faces_mask = self.draw_face(image_size, exclude_names)
+            faces_mask = wait_prosessing(self.draw_face, original_image_size, exclude_names)
+            #faces_mask = self.draw_face(original_image_size, exclude_names)
 
             self.image_mask_cache = faces_mask
 
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
         if self.image_mask_cache is not None and (self.image_mask_cache is faces_mask or self.faces_mask_cache is None or self.faces_mask_cache_hash != newhash) and self.initializing == False:
             self.faces_mask_cache_hash = newhash
 
@@ -3177,11 +3862,7 @@ class FaceMask(BaseMask):
             faces_mask = core.rotation(faces_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             #faces_mask = core.crop_image_with_disp_info(faces_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
-            cx, cy ,cw, ch, scale = disp_info
-            #cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
-            faces_mask = cv2.resize(faces_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            faces_mask = np.pad(faces_mask, ((oy, self.editor.texture_size[1]-(oy+nh)), (ox, self.editor.texture_size[0]-(ox+nw))), constant_values=0)
+            faces_mask = self._fit_image_mask_to_texture(faces_mask)
 
             # ルミノシティマスクを作成
             faces_mask = self._apply_extened_params(faces_mask)
@@ -3227,6 +3908,9 @@ class TargetTextMask(BaseMask):
 
     def follows_mask_geometry(self):
         return False
+
+    def _edge_refine_support_softness(self):
+        return 1.0
 
     def on_touch_down(self, touch):
         if self.initializing:
@@ -3340,6 +4024,7 @@ class TargetTextMask(BaseMask):
 
         # パラメータ設定
         image_size = (int(self.editor.texture_size[0]), int(self.editor.texture_size[1]))
+        original_image_size = tuple(self.editor.get_image_size())
         center = self.editor.tcg_to_original_image(*self.center)
         if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
             invert = effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert')
@@ -3349,19 +4034,19 @@ class TargetTextMask(BaseMask):
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
-        newhash = hash((image_size, text))
+        newhash = hash((original_image_size, text, invert))
         if (self.image_mask_cache_hash != newhash) and self.initializing == False:
             self.image_mask_cache_hash = newhash
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_prosessing(self._draw_segment, image_size, text, invert)
-            #segment_mask = self._draw_segment(image_size, text)
+            segment_mask = wait_prosessing(self._draw_segment, original_image_size, text, invert)
+            #segment_mask = self._draw_segment(original_image_size, text)
 
             # SegmentMask用のキャッシュ
             self.image_mask_cache = segment_mask
 
         # その他更新用
-        newhash = hash((self.get_hash_items(), self.editor.get_hash_items()))
+        newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
         if self.image_mask_cache is not None and (self.image_mask_cache is segment_mask or self.segment_mask_cache is None or self.segment_mask_cache_hash != newhash) and self.initializing == False:
             self.segment_mask_cache_hash = newhash
 
@@ -3373,11 +4058,7 @@ class TargetTextMask(BaseMask):
             segment_mask = core.rotation(segment_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             #segment_mask = core.crop_image_with_disp_info(segment_mask, disp_info)
 
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(*self.editor.texture_size, disp_info)
-            cx, cy ,cw, ch, scale = disp_info
-            #cx, cy, cw, ch = int(cx * scale), int(cy * scale), int(cw * scale), int(ch * scale)
-            segment_mask = cv2.resize(segment_mask[cy:cy+ch, cx:cx+cw], (nw, nh))
-            segment_mask = np.pad(segment_mask, ((oy, self.editor.texture_size[1]-(oy+nh)), (ox, self.editor.texture_size[0]-(ox+nw))), constant_values=0)
+            segment_mask = self._fit_image_mask_to_texture(segment_mask)
 
             # ルミノシティマスクを作成
             segment_mask = self._apply_extened_params(segment_mask)
@@ -3425,17 +4106,17 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self._image_only_matrix = None
         self._matrix_lock = threads.mask_editor_matrix_lock
 
-        # mask Geometry 軸表示用 (X=赤, Y=緑)。Composit active + switch_mask_geometry ON 時に表示。
+        # mask Geometry 軸表示用 (X / Y 軸ともグレーで矢印付き)。
+        # Composit active + switch_mask_geometry ON 時に表示。
         # 軸の原点は post-translation 点 (= image_center + translation)。flip 軸は軸線そのもの。
-        # rotation/scale pivot は image center に固定なので、別途小さなマーカーで示す。
         with self.canvas.after:
             self._axes_scissor = self.push_scissor()
-            # 軸 (translation 後の原点を通る)
-            self._axes_color_x = KVColor(1, 0, 0, 0.85)
-            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=2)
-            self._axes_color_y = KVColor(0, 1, 0, 0.85)
-            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=2)
-            # rotation/scale pivot マーカー (image center の小さな円)
+            # 軸線 (本体 + 矢印を 1 つの polyline で描画。先端から左右の羽が伸びる)
+            self._axes_color_x = KVColor(0.7, 0.7, 0.7, 0.9)
+            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=max(1.0, 1.5 * device.dpi_scale()))
+            self._axes_color_y = KVColor(0.7, 0.7, 0.7, 0.9)
+            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=max(1.0, 1.5 * device.dpi_scale()))
+            # 互換用の instruction。中心点表示は使わないので常に size=(0, 0) のまま。
             self._pivot_color = KVColor(1, 1, 0, 0.85)
             self._pivot_marker = KVEllipse(pos=(0, 0), size=(0, 0))
             self.pop_scissor()
@@ -3476,7 +4157,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def get_crop_image_hls(self):
         if self.crop_image_hls is None and self.crop_image_rgb is not None:
             self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
-            self.crop_image_rgb = None
+            # Keep the RGB crop alive. Edge-refine and its debug views must use
+            # the current zoom crop, even after HLS-based masks have run.
         return self.crop_image_hls
 
     def get_original_image_rgb(self):
@@ -3490,11 +4172,13 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def set_texture_size(self, tx, ty):
         with self._matrix_lock:
             self.texture_size = (tx, ty)
+        _mask_zoom_sync_debug("mask_editor.set_texture_size texture_size=%s", self.texture_size)
 
-    def set_primary_param(self, primary_param, disp_info):
+    def set_primary_param(self, primary_param, disp_info, redraw_mask=True):
 
         # TCG情報を設定
         with self._matrix_lock:
+            old_view_key = self._mask_overlay_view_key_locked()
             self.tcg_info = params.param_to_tcg_info(primary_param)
             params.set_disp_info(self.tcg_info, disp_info) # これだけ引数の値を設定
 
@@ -3504,7 +4188,37 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             # mask Geometry: 画像 Geom のみの matrix を退避し、active Composit の
             # mask Geom matrix を合成して tcg_info['matrix'] に反映する。
             self._image_only_matrix = np.array(self.tcg_info['matrix'], dtype=np.float64).copy()
-        self._set_active_composit_matrix()
+            logged_disp = params.get_disp_info(self.tcg_info)
+            logged_orig = self.tcg_info.get('original_img_size')
+            new_view_key = self._mask_overlay_view_key_locked()
+        # redraw_mask=False は通常フレームでの重い overlay 再描画を抑えるためだが、
+        # zoom / scroll / texture resize で viewport が変わった場合は overlay texture
+        # 自体を作り直さないと古い crop のマスクが残る。
+        redraw_overlay = redraw_mask or (old_view_key is not None and old_view_key != new_view_key)
+        self._set_active_composit_matrix(redraw_mask=redraw_overlay)
+        _mask_zoom_sync_debug(
+            "mask_editor.set_primary_param texture_size=%s disp=%s input_disp=%s orig=%s active=%s redraw=%s view_changed=%s",
+            self.texture_size, logged_disp, disp_info, logged_orig,
+            _mask_geom_id(self.get_active_mask()), redraw_overlay, old_view_key != new_view_key,
+        )
+
+    def _mask_overlay_view_key_locked(self):
+        tcg_info = getattr(self, 'tcg_info', None)
+        if not isinstance(tcg_info, dict):
+            return None
+        matrix = tcg_info.get('matrix')
+        matrix_key = None
+        if matrix is not None:
+            matrix_key = tuple(np.asarray(matrix, dtype=np.float64).flatten())
+        return (
+            tuple(self.texture_size),
+            params.get_disp_info(tcg_info),
+            tuple(tcg_info.get('original_img_size', ())),
+            tcg_info.get('rotation'),
+            tcg_info.get('rotation2'),
+            tcg_info.get('flip_mode'),
+            matrix_key,
+        )
 
     def _call_with_image_only_matrix(self, func, *args, **kwargs):
         if self._image_only_matrix is None or 'matrix' not in self.tcg_info:
@@ -3531,16 +4245,32 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if clear:
             self.draw_mask_image(None)
 
-    def _get_mask_image_rect(self):
+    def _get_mask_image_rect(self, texture_size=None):
+        if texture_size is None:
+            texture_size = tuple(self.texture_size)
         scale = device.dpi_scale()
         px, py = self.to_window(*self.pos)
-        marginx = (self.size[0] - self.texture_size[0] * scale) / 2
-        marginy = (self.size[1] - self.texture_size[1] * scale) / 2
-        return (px + marginx, py + marginy), (self.texture_size[0] * scale, self.texture_size[1] * scale)
+        marginx = (self.size[0] - texture_size[0] * scale) / 2
+        marginy = (self.size[1] - texture_size[1] * scale) / 2
+        return (px + marginx, py + marginy), (texture_size[0] * scale, texture_size[1] * scale)
+
+    def window_point_in_image_rect(self, x, y):
+        if not self.collide_point(x, y):
+            return False
+        try:
+            (rx, ry), (rw, rh) = self._get_mask_image_rect(tuple(self.texture_size))
+            if rw <= 0 or rh <= 0:
+                return False
+            return rx <= float(x) <= rx + rw and ry <= float(y) <= ry + rh
+        except Exception:
+            return False
 
     def reposition_mask_image(self):
         if self.rectangle is not None:
-            self.rectangle.pos, self.rectangle.size = self._get_mask_image_rect()
+            with self._matrix_lock:
+                texture_size = tuple(self.texture_size)
+                rect = self._get_mask_image_rect(texture_size)
+            self.rectangle.pos, self.rectangle.size = rect
 
     def get_hash_items(self):
         with self._matrix_lock:
@@ -3671,14 +4401,20 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     # mask2_content用
     def add_mask(self, mask_type, op_type, index):
+        if self._mask_mesh_editor_locks_input():
+            return None
         return self._create_start_new_mask(mask_type, op_type, index)
 
     # mask2_content用
     def add_composit_mask(self, instance):
+        if self._mask_mesh_editor_locks_input():
+            return
         self._create_start_new_mask(MaskType.COMPOSIT, "Composit")
-    
+
     # mask2_content用
     def del_mask(self, mask):
+        if self._mask_mesh_editor_locks_input():
+            return
         index = self.get_mask_list().index(mask)
         is_composit = mask.is_composit()
         if is_composit:
@@ -3704,13 +4440,87 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if mask is not None:
             mask.is_draw_mask = is_draw_mask
             if is_draw_mask == True and refresh:
-                mask.update()
+                self.request_mask_render_update(
+                    mask,
+                    reason="set_draw_mask",
+                    structure_changed=False,
+                    redraw_overlay=True,
+                    redraw_pipeline=False,
+                )
     
     def start_draw_image(self, fast_display=True, skip_histogram=None):
         if self.root is not None:
             if skip_histogram is None:
                 skip_histogram = fast_display
             self.root.start_draw_image(fast_display=fast_display, skip_histogram=skip_histogram)
+
+    def _composit_for_render_update(self, mask):
+        if mask is None:
+            return None
+        try:
+            return mask if mask.is_composit() else self.find_composit_mask(mask)
+        except Exception:
+            return None
+
+    def _invalidate_mask_render_family(self, mask):
+        invalidated = []
+        if mask is not None:
+            try:
+                mask.invalidate_render_cache()
+                invalidated.append(_mask_geom_id(mask))
+            except Exception:
+                logging.exception("request_mask_render_update: mask invalidate failed")
+        composit = self._composit_for_render_update(mask)
+        if composit is not None and composit is not mask:
+            try:
+                composit.invalidate_render_cache()
+                invalidated.append(_mask_geom_id(composit))
+            except Exception:
+                logging.exception("request_mask_render_update: composit invalidate failed")
+        return invalidated
+
+    def request_mask_render_update(self, mask=None, reason="", structure_changed=False,
+                                   refresh_visibility=True, redraw_overlay=True,
+                                   redraw_pipeline=True, clear_overlay=False):
+        """マスク描画更新の単一入口。
+
+        構造変更・パラメータ変更・作成完了・削除はすべてここを通す。
+        ここで cache invalidate、表示状態更新、overlay redraw、pipeline redraw、
+        structure event を同じ順序で処理する。
+        """
+        if mask is None:
+            mask = self.get_active_mask()
+        invalidated = self._invalidate_mask_render_family(mask)
+
+        if refresh_visibility:
+            try:
+                self.refresh_mask_visibility()
+            except Exception:
+                logging.exception("request_mask_render_update: refresh visibility failed")
+
+        if clear_overlay:
+            self.draw_mask_image(None)
+        elif redraw_overlay:
+            overlay_mask = self.get_active_mask() or mask
+            if overlay_mask is not None:
+                try:
+                    overlay_mask.update_mask()
+                except Exception:
+                    logging.exception("request_mask_render_update: overlay update failed")
+            else:
+                self.draw_mask_image(None)
+
+        if structure_changed:
+            self.dispatch('on_structure_change')
+
+        if redraw_pipeline:
+            self.start_draw_image(fast_display=False)
+
+        _mask_zoom_sync_debug(
+            "request_mask_render_update reason=%s mask=%s active=%s structure=%s overlay=%s pipeline=%s invalidated=%s",
+            reason, _mask_geom_id(mask), _mask_geom_id(self.get_active_mask()),
+            structure_changed, redraw_overlay, redraw_pipeline, invalidated,
+        )
 
     def draw_mask_image(self, glayimg):
         if self.rectangle is not None:
@@ -3722,6 +4532,14 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             self.rectangle = None
 
         if glayimg is not None:
+            with self._matrix_lock:
+                texture_size = tuple(self.texture_size)
+                disp_info = params.get_disp_info(self.tcg_info) if getattr(self, "tcg_info", None) is not None else None
+                rect = self._get_mask_image_rect(texture_size)
+            _mask_zoom_sync_debug(
+                "mask_editor.draw_mask_image mask_shape=%s texture_size=%s disp=%s rect=%s",
+                getattr(glayimg, "shape", None), texture_size, disp_info, rect,
+            )
             with self.mask_container.canvas.before:
                 # マスクをアルファとして扱い、ルミナンスを白(1.0)にする
                 glayimg = np.clip(glayimg, 0, 1)
@@ -3732,7 +4550,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 texture = KVTexture.create(size=(w, h), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.blit_buffer(la_img.tobytes(), colorfmt='luminance_alpha', bufferfmt='float')
                 texture.flip_vertical()
-                pos, size = self._get_mask_image_rect()
+                pos, size = rect
                 KVColor(1, 0, 0, 0.4)
                 self.rectangle = KVRectangle(texture=texture, pos=pos, size=size)
 
@@ -3759,43 +4577,71 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             self._create_end_new_mask()
             self.created_mask = None
 
-        return self.created_mask
+        return mask
 
     def _create_end_new_mask(self):
-        self.set_active_mask(self.created_mask)
+        mask = self.created_mask
+        self.set_active_mask(mask)
+        self.request_mask_render_update(
+            mask,
+            reason="create_end",
+            structure_changed=True,
+            redraw_overlay=True,
+            redraw_pipeline=True,
+        )
         
         # 履歴記録。 create_maskがレイヤーリストにある場合のみ
-        if self.created_mask in self.get_mask_list():
-            get_history_ctrl().end_history_layer_ctrl(self, "Create", self.get_mask_list().index(self.created_mask))
+        if mask in self.get_mask_list():
+            get_history_ctrl().end_history_layer_ctrl(self, "Create", self.get_mask_list().index(mask))
+
+    def _mask_mesh_editor_locks_input(self):
+        """Mesh 編集モード中はマスク側の入力を全ロック。
+        Mesh widget は preview_widget に直接マウントされているので、
+        ここで MaskEditor2 のイベント連鎖を抑止すれば衝突しない。"""
+        try:
+            from kivy.app import App as _App
+            app = _App.get_running_app()
+            if app is None or app.root is None:
+                return False
+            check = getattr(app.root, 'is_mask_mesh_editor_active', None)
+            return bool(check()) if callable(check) else False
+        except Exception:
+            return False
 
     def on_touch_down(self, touch):
         if self.disabled == True:
             return False
-      
+        if self._mask_mesh_editor_locks_input():
+            # Mesh モード中: MaskEditor2 と全 child mask のイベント連鎖を抑止して、
+            # preview_widget 直下にマウントされた MeshWarpWidget に処理を委ねる。
+            return False
+
         # アクティブなマスクを先に処理
         if self.created_mask is not None:
             if self.created_mask.on_touch_down(touch):
                 return True
-        """    
+        """
         # 既存のマスクに対するタッチイベントを処理（新しい方から）
         for mask in self.mask_list:
             if mask.on_touch_down(touch):
                 return True
         """
         return KVFloatLayout.on_touch_down(self, touch)
-        
+
     def on_touch_up(self, touch):
         if self.disabled == True:
             return False
-        
+        if self._mask_mesh_editor_locks_input():
+            return False
+
         result = KVFloatLayout.on_touch_up(self, touch)
 
         # こっちを後でやらないとまだコントロールポイントが作られてない
         if self.created_mask is not None:
             if self.created_mask.initializing == False:
-                self._create_end_new_mask()        
+                self._create_end_new_mask()
                 self.created_mask = None
-        
+
         return result
 
     def _create_mask_object(self, mask_type):
@@ -3847,6 +4693,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         return mask
 
     def _remove_mask(self, mask):
+        if mask is None:
+            return
+        removed_parent = None
         # 削除する前にアクティブなものを移動する
         if len(self.mask_list) <= 1:
             self.draw_mask_image(None)
@@ -3863,9 +4712,11 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             for child, _ in list(composit_mask.get_mask_list()):
                 self._remove_mask(child)
             composit_mask.clear()
+            removed_parent = composit_mask
         elif composit_mask is not None:
             # Compositでないなら親から削除
             composit_mask.remove_mask(mask)
+            removed_parent = composit_mask
         else:
             logging.error(f"MaskEditor: 親が見つかりませんでした。マスクを削除できません。")
             assert False
@@ -3875,9 +4726,14 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.mask_list.remove(mask)
 
         # 再描画
-        if self.active_mask:
-            self.active_mask.update_mask()
-        #self.dispatch('on_structure_change')
+        self.request_mask_render_update(
+            self.active_mask or removed_parent,
+            reason="remove_mask",
+            structure_changed=True,
+            redraw_overlay=True,
+            redraw_pipeline=True,
+            clear_overlay=self.active_mask is None,
+        )
 
     def clear_mask(self):
         self.set_active_mask(None)
@@ -3887,7 +4743,15 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.mask_list.clear()
         self._set_active_composit_matrix()
         FaceMask.delete_faces()
-        self.dispatch('on_structure_change')
+        self.request_mask_render_update(
+            None,
+            reason="clear_mask",
+            structure_changed=True,
+            refresh_visibility=False,
+            redraw_overlay=False,
+            redraw_pipeline=True,
+            clear_overlay=True,
+        )
 
     def find_composit_mask(self, mask, index=0):
         # 自分の親（コンポジット）を探す
@@ -4064,21 +4928,29 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         # mask Geom 軸の表示更新
         self._draw_mask_geom_axes()
 
+    def clear_mask_geom_axes(self):
+        try:
+            self._axis_x_line.points = (0, 0, 0, 0)
+            self._axis_y_line.points = (0, 0, 0, 0)
+            self._pivot_marker.size = (0, 0)
+        except Exception:
+            pass
+
     def _draw_mask_geom_axes(self):
         """Composit active かつ switch_mask_geometry ON のとき、mask Geom 座標系を overlay 表示。
         - 軸 (X=赤, Y=緑) の原点 = post-translation 点 (image_center + (tx, ty))
         - 軸の向き = rotation + flip を反映
         - Scale 効果は除外 (= 軸の "向き" だけを伝える)
-        - rotation/scale/flip の pivot (image center) は黄色の小さな円で別途表示
         - flip 軸線そのものが mirror axis (flip H なら Y軸線、flip V なら X軸線が mirror)
         """
         if self._image_only_matrix is None:
             return
+        if self._is_mesh_edit_active():
+            self.clear_mask_geom_axes()
+            return
         composit = self._active_composit_or_none()
         if composit is None or not mask_geometry_mod.is_enabled(composit.effects_param):
-            self._axis_x_line.points = (0, 0, 0, 0)
-            self._axis_y_line.points = (0, 0, 0, 0)
-            self._pivot_marker.size = (0, 0)
+            self.clear_mask_geom_axes()
             return
 
         try:
@@ -4107,26 +4979,60 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                     self.tcg_to_window(ox_tcg, oy_tcg),
                     self.tcg_to_window(*x_end_tcg),
                     self.tcg_to_window(*y_end_tcg),
-                    self.tcg_to_window(0.0, 0.0),
                 )
-            origin_win, x_end_win, y_end_win, pivot_win = self._call_with_image_only_matrix(_axis_points)
+            origin_win, x_end_win, y_end_win = self._call_with_image_only_matrix(_axis_points)
 
-            self._axis_x_line.points = (origin_win[0], origin_win[1], x_end_win[0], x_end_win[1])
-            self._axis_y_line.points = (origin_win[0], origin_win[1], y_end_win[0], y_end_win[1])
-            # rotation/scale/flip pivot を image center に小円表示 (半径 6px)
-            r = 6.0
-            self._pivot_marker.pos = (pivot_win[0] - r, pivot_win[1] - r)
-            self._pivot_marker.size = (r * 2, r * 2)
+            self._axis_x_line.points = _axis_polyline_with_arrow(origin_win, x_end_win)
+            self._axis_y_line.points = _axis_polyline_with_arrow(origin_win, y_end_win)
+            self._pivot_marker.size = (0, 0)
             # scissor はウィジェットの現在サイズに合わせて更新
             self.set_scissor(self._axes_scissor)
         except Exception:
             logging.exception("_draw_mask_geom_axes 失敗")
+            self.clear_mask_geom_axes()
+
+    def _is_in_same_composit(self, mask, other):
+        """mask と other が同じ Composit ツリーに属するか判定。
+        各 mask の「親 Composit」(自身が Composit なら self) を取って同一性比較する。"""
+        if mask is other:
+            return True
+        try:
+            def _parent(m):
+                return m if m.is_composit() else self.find_composit_mask(m)
+            return _parent(mask) is _parent(other)
+        except Exception:
+            return False
+
+    def _is_mesh_edit_active(self):
+        """Mesh Edit モードが有効か (main MainWidget 側のフラグを参照)。"""
+        try:
+            from kivy.app import App as _App
+            app = _App.get_running_app()
+            root = app.root if (app and app.root) else None
+            if root is None:
+                return False
+            check = getattr(root, 'is_mask_mesh_editor_active', None)
+            return bool(check()) if callable(check) else False
+        except Exception:
+            return False
+
+    def refresh_mask_visibility(self, mesh_edit_active=None):
+        """全 mask の表示モードを refresh する。set_active_mask の最後や
+        Mesh Edit モード切替時に呼ばれる。"""
+        if mesh_edit_active is None:
+            mesh_edit_active = self._is_mesh_edit_active()
+        active = self.active_mask
+        for m in self.mask_list:
             try:
-                self._axis_x_line.points = (0, 0, 0, 0)
-                self._axis_y_line.points = (0, 0, 0, 0)
-                self._pivot_marker.size = (0, 0)
+                m.update_visibility_for_active(active, mesh_edit_active)
             except Exception:
-                pass
+                logging.exception("refresh_mask_visibility failed for top mask")
+            if m.is_composit():
+                for child, _op in getattr(m, 'mask_list', []):
+                    try:
+                        child.update_visibility_for_active(active, mesh_edit_active)
+                    except Exception:
+                        logging.exception("refresh_mask_visibility failed for child mask")
 
     def set_active_mask(self, mask):
         if self.active_mask is mask:
@@ -4171,6 +5077,13 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         # mask Geometry: active Composit の matrix を tcg_info に反映 (overlay も再描画)
         self._set_active_composit_matrix()
+
+        # 仕様変更: active mask が属する Composit のマスクだけ CP / overlay 表示。
+        # 別 Composit のマスクは完全に隠す。Mesh Edit モード中は全 CP 非表示。
+        try:
+            self.refresh_mask_visibility()
+        except Exception:
+            logging.exception("set_active_mask: refresh_mask_visibility failed")
 
     def get_rotate_rad(self, rotate_rad):
         # 画像の回転角度を取得する
@@ -4226,12 +5139,13 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         #cx, cy = cx * device.dpi_scale(), cy * device.dpi_scale()
         with self._matrix_lock:
             disp_info = params.get_disp_info(self.tcg_info)
+            texture_size = tuple(self.texture_size)
             imax = max(self.tcg_info['original_img_size'][0]/2, self.tcg_info['original_img_size'][1]/2)
             cx, cy = params.center_rotate(cx, cy, self.tcg_info)
         cx, cy = cx + imax, cy + imax
         cx, cy = cx - disp_info[0], cy - disp_info[1]
         cx, cy = cx * disp_info[4], cy * disp_info[4]        
-        _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*self.texture_size, disp_info)
+        _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(*texture_size, disp_info)
         cx, cy = cx + offset_x, cy + offset_y
         return (cx, cy)
 

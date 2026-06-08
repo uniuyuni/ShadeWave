@@ -16,6 +16,7 @@ import cv2
 
 from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
 import params
+from .ui_metrics import apply_geom_button_metrics, install_geom_ref_scaling
 
 class FourPointCorrectionWidget(KVFloatLayout):
     """4点自由補正Widget"""
@@ -40,9 +41,9 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.reset_btn = MDRaisedButton(
             text="Reset",
             size_hint=(None, None),
-            size=(100, 48),
             pos_hint={'center_x': 0.35, 'y': 0.02},
         )
+        apply_geom_button_metrics(self.reset_btn)
         self.reset_btn.bind(on_press=self.reset_corners)
         self.add_widget(self.reset_btn)
 
@@ -50,9 +51,9 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.apply_btn = MDRaisedButton(
             text="Apply",
             size_hint=(None, None),
-            size=(100, 48),
             pos_hint={'center_x': 0.5, 'y': 0.02},
         )
+        apply_geom_button_metrics(self.apply_btn)
         self.apply_btn.bind(on_press=self._apply_corners)
         self.add_widget(self.apply_btn)
 
@@ -60,9 +61,9 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.revert_btn = MDRaisedButton(
             text="Revert",
             size_hint=(None, None),
-            size=(100, 48),
             pos_hint={'center_x': 0.65, 'y': 0.02},
         )
+        apply_geom_button_metrics(self.revert_btn)
         self.revert_btn.bind(on_press=self._revert_corners)
         self.add_widget(self.revert_btn)
 
@@ -75,6 +76,7 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.bind(size=self._sync_tcg_to_kivy, pos=self._sync_tcg_to_kivy)
 
         self._reset_corners()
+        install_geom_ref_scaling(self)
 
     @staticmethod
     def _default_corners():
@@ -151,7 +153,7 @@ class FourPointCorrectionWidget(KVFloatLayout):
         four_points = param.get('four_points', [])
         self._using_default_corners = four_points == []
         # 未設定の Four Points は param としては [] のまま扱う。
-        # 表示時だけ、四隅に置いたマーカー中心が画面外へ出ないよう補正する。
+        # 表示時だけ、四隅に置いたマーカー中心が画面外へ出た場合に端へ戻す。
         self.tcg_info = params.param_to_tcg_info(param)
         self.corner_positions_tcg = list(four_points) if four_points != [] else self._default_corners()
         self._sync_tcg_to_kivy()
@@ -200,14 +202,12 @@ class FourPointCorrectionWidget(KVFloatLayout):
             tx, ty = params.window_to_tcg(kx, ky, self, self.texture_size, self.tcg_info)
             self.corner_positions_tcg.append((tx, ty))
 
-    def _clamp_handle_center_to_widget(self, x, y, handle):
-        half_w = handle.width / 2
-        half_h = handle.height / 2
+    def _clamp_handle_center_to_widget(self, x, y, _handle):
         wx, wy = self.to_window(*self.pos)
-        min_x = wx + half_w
-        min_y = wy + half_h
-        max_x = wx + self.width - half_w
-        max_y = wy + self.height - half_h
+        min_x = wx
+        min_y = wy
+        max_x = wx + self.width
+        max_y = wy + self.height
         if max_x < min_x:
             min_x = max_x = wx + self.width / 2
         if max_y < min_y:

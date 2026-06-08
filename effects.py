@@ -1632,25 +1632,63 @@ class CropEffect(Effect):
         else:
             self._close_crop_editor(param, widget)
 
+    def _full_preview_disp_info(self, param):
+        original_img_size = param.get('original_img_size')
+        if original_img_size is None:
+            return None
+        msize = max(original_img_size[0], original_img_size[1])
+        scale = config.get_preview_texture_side() / msize
+        return (0, 0, msize, msize, scale)
+
+    def _is_full_preview_disp_info(self, param, disp_info):
+        full_disp_info = self._full_preview_disp_info(param)
+        if full_disp_info is None or disp_info is None:
+            return False
+        return (
+            int(disp_info[0]) == int(full_disp_info[0]) and
+            int(disp_info[1]) == int(full_disp_info[1]) and
+            int(disp_info[2]) == int(full_disp_info[2]) and
+            int(disp_info[3]) == int(full_disp_info[3]) and
+            abs(float(disp_info[4]) - float(full_disp_info[4])) < 1e-6
+        )
+
+    def _crop_rect_disp_info(self, param):
+        crop_rect = params.get_crop_rect(param)
+        original_img_size = param.get('original_img_size')
+        if crop_rect is None or original_img_size is None:
+            return None
+        return core.convert_rect_to_info(
+            crop_rect,
+            config.get_preview_texture_side() / max(original_img_size),
+        )
+
     def make_diff(self, img, param, efconfig):
         crop_editing = getattr(efconfig, 'crop_editing', False)
         disp_info = params.get_disp_info(param)
 
         self.backup_img = img
 
-        if crop_editing or disp_info is None:
+        if crop_editing:
             self.diff = None
             self.hash = None
             param['img_size'] = (param['original_img_size'][0], param['original_img_size'][1])
-            msize = max(param['original_img_size'][0], param['original_img_size'][1])
-            scale = config.get_preview_texture_side()/msize
-            params.set_disp_info(param, (0, 0, msize, msize, scale))
+            params.set_disp_info(param, self._full_preview_disp_info(param))
         else:
-            param_hash = hash((crop_editing))
+            if disp_info is None or self._is_full_preview_disp_info(param, disp_info):
+                crop_disp_info = self._crop_rect_disp_info(param)
+                if crop_disp_info is not None:
+                    params.set_disp_info(param, crop_disp_info)
+                    disp_info = params.get_disp_info(param)
+                elif disp_info is None:
+                    params.set_disp_info(param, self._full_preview_disp_info(param))
+                    disp_info = params.get_disp_info(param)
+
+            param_hash = hash((crop_editing, disp_info))
             if self.hash != param_hash:
                 self.diff = disp_info
                 self.hash = param_hash
-                param['img_size'] = (disp_info[2], disp_info[3])
+                if disp_info is not None:
+                    param['img_size'] = (disp_info[2], disp_info[3])
         return self.diff
 
     def apply_diff(self, img):
@@ -1976,8 +2014,10 @@ class LightNoiseReductionEffect(Effect):
             param_hash = hash((its, col))
             if self.hash != param_hash:  
                 self.hash = param_hash
+                from radiance_denoise import denoise_native
 
-                self.diff = core.light_denoise(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
+                self.diff = denoise_native(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
+                #self.diff = core.light_denoise(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
 
         return self.diff
 
@@ -3902,6 +3942,9 @@ class Mask2Effect(Effect):
             'mask2_close_space': 0,
             'mask2_freedraw_brush_hardness': 100,
             'mask2_polyline_fill': True,
+            'mask2_edge_refine_mode': 'Off',
+            'mask2_edge_refine_radius': 0,
+            'mask2_edge_refine_strength': 60,
             'switch_mask2_draw_effects': True,
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,
@@ -3926,6 +3969,9 @@ class Mask2Effect(Effect):
             'mask_scale_y': 1.0,
             'mask_mesh_size': [4, 4],        # Step 4 用 (placeholder)
             'mask_mesh_control_points': {},  # Step 4 用 (placeholder)
+            # True: 画像 mesh の CP を都度参照 (画像 mesh が変わったらマスクも追従)
+            # False: 自前 mask_mesh_control_points を使う (独立 = 画像 mesh と切り離し)
+            'mask_mesh_link_to_image': True,
         }
         if subname == 'mask2_draw_effects':
             return {
@@ -3999,6 +4045,9 @@ class Mask2Effect(Effect):
                     'mask2_close_space',
                     'mask2_freedraw_brush_hardness',
                     'mask2_polyline_fill',
+                    'mask2_edge_refine_mode',
+                    'mask2_edge_refine_radius',
+                    'mask2_edge_refine_strength',
                 )
             }
         if subname == 'mask_geometry':
@@ -4014,6 +4063,7 @@ class Mask2Effect(Effect):
                     'mask_scale_y',
                     'mask_mesh_size',
                     'mask_mesh_control_points',
+                    'mask_mesh_link_to_image',
                 )
             }
         if subname == 'mask2_face':
@@ -4057,6 +4107,12 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
         widget.ids["slider_mask2_freedraw_brush_hardness"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_hardness'))
         widget.ids["checkbox_mask2_polyline_fill"].active = self._get_param(param, 'mask2_polyline_fill')
+        edge_refine_mode = self._get_param(param, 'mask2_edge_refine_mode')
+        if edge_refine_mode in ('Refine', 'Grow', 'Grow + Islands', 'Lock'):
+            edge_refine_mode = 'Quick Select'
+        widget.ids["spinner_mask2_edge_refine_mode"].set_text(edge_refine_mode)
+        widget.ids["slider_mask2_edge_refine_radius"].set_slider_value(self._get_param(param, 'mask2_edge_refine_radius'))
+        widget.ids["slider_mask2_edge_refine_strength"].set_slider_value(self._get_param(param, 'mask2_edge_refine_strength'))
         widget.ids["switch_mask2_draw_effects"].active = self._get_param(param, 'switch_mask2_draw_effects')
         widget.ids["slider_mask2_color_dodge"].set_slider_value(self._get_param(param, 'mask2_color_dodge'))
         widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
@@ -4099,6 +4155,9 @@ class Mask2Effect(Effect):
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
         param['mask2_freedraw_brush_hardness'] = widget.ids["slider_mask2_freedraw_brush_hardness"].value
         param['mask2_polyline_fill'] = widget.ids["checkbox_mask2_polyline_fill"].active
+        param['mask2_edge_refine_mode'] = widget.ids["spinner_mask2_edge_refine_mode"].text
+        param['mask2_edge_refine_radius'] = widget.ids["slider_mask2_edge_refine_radius"].value
+        param['mask2_edge_refine_strength'] = widget.ids["slider_mask2_edge_refine_strength"].value
         param['switch_mask2_draw_effects'] = widget.ids["switch_mask2_draw_effects"].active
         param['mask2_color_dodge'] = widget.ids["slider_mask2_color_dodge"].value
         param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value
@@ -4181,6 +4240,7 @@ class MaskGeometryEffect(Effect):
                 'mask_scale_y',
                 'mask_mesh_size',
                 'mask_mesh_control_points',
+                'mask_mesh_link_to_image',
             )
         }
 

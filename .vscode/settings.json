@@ -4,6 +4,7 @@
         "path": "/bin/zsh",
         "args": []
     },
+    "terminal.integrated.scrollback": 10000,
     "python.terminal.activateEnvironment": false,
     // Debug Console が stderr を赤扱いし、出力がすべて赤に見えることがある対策
     "workbench.colorCustomizations": {

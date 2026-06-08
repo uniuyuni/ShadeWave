@@ -13,11 +13,22 @@ from kivy.clock import mainthread as kvmainthread
 from kivymd.uix.button import MDRaisedButton, MDIconButton, MDTextButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
+import os
+import copy
 import numpy as np
 import cv2
 
 from cores.distortion_correction.warp_correction import get_mesh_coordinates
 import params
+from .ui_metrics import (
+    apply_geom_button_metrics,
+    apply_geom_layout_metrics,
+    geom_scaled,
+    install_geom_ref_scaling,
+)
+
+
+_MESH_DEBUG = os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on")
 
 class MeshWarpWidget(KVFloatLayout):
     """メッシュワープWidget"""
@@ -26,11 +37,35 @@ class MeshWarpWidget(KVFloatLayout):
     mesh_size = KVListProperty([4, 4]) # [rows, cols]
     control_offsets_tcg = KVDictProperty({}) # {(row, col): (off_x, off_y)}
     
-    def __init__(self, texture_size, param, **kwargs):
+    def __init__(self, texture_size, param, force_square_disp_info=False, **kwargs):
+        """
+        Args:
+            texture_size: preview texture サイズ (W, H)
+            param: 画像 param (primary_param)
+            force_square_disp_info: True のとき、param の disp_info を「正方形全範囲」
+                に強制上書きする旧互換用オプション。
+                Mask Geometry 編集モード (Mask2 ON + Ge タブ) では pipeline 側が
+                primary_param['disp_info'] を画像 aspect (非正方形) に書き換える。
+                このとき MeshWarpWidget 内部の座標計算スケールが画像 mesh と 2 倍違い、
+                CP 表示が右下に拡大するため、square 範囲の disp_info を明示する必要が
+                ある。画像 mesh editor (= 通常用途) では False のままで OK。
+        """
         super().__init__(**kwargs)
-        
+
         self.texture_size = texture_size
         self.tcg_info = params.param_to_tcg_info(param)
+        self._view_context = None
+        self._view_context_image_only_matrix = False
+
+        if force_square_disp_info:
+            import config as _config
+            orig = self.tcg_info.get('original_img_size') or (0, 0)
+            imax = max(orig)
+            if imax > 0:
+                # normalized 表現の「画像全体正方形」を強制
+                self.tcg_info['disp_info'] = (
+                    0.0, 0.0, 1.0, 1.0, _config.get_preview_texture_side() / imax,
+                )
 
         self.on_callback = None
         
@@ -47,11 +82,17 @@ class MeshWarpWidget(KVFloatLayout):
             orientation='horizontal',
             pos_hint={'center_x': 0.5, 'y': 0.02},
             adaptive_size=True,
-            spacing=10,
-            padding=10
+            spacing=geom_scaled(5),
+            padding=geom_scaled(5)
+        )
+        apply_geom_layout_metrics(
+            button_layout,
+            spacing_ref=5,
+            padding_ref=5,
         )
 
         self.reset_btn = MDRaisedButton(text="Reset")
+        apply_geom_button_metrics(self.reset_btn)
         self.reset_btn.bind(on_press=self.reset_mesh)
         button_layout.add_widget(self.reset_btn)
 
@@ -100,6 +141,7 @@ class MeshWarpWidget(KVFloatLayout):
         button_layout.add_widget(btn_col_plus)
         
         self.apply_btn = MDRaisedButton(text="Apply")
+        apply_geom_button_metrics(self.apply_btn)
         self.apply_btn.bind(on_press=lambda x: self._apply())
         button_layout.add_widget(self.apply_btn)
 
@@ -120,6 +162,7 @@ class MeshWarpWidget(KVFloatLayout):
         self.bind(control_offsets_tcg=self._redraw_mesh)
         self.bind(size=self._redraw_mesh)
         self.bind(pos=self._redraw_mesh)
+        install_geom_ref_scaling(self)
 
     def _update_labels(self, instance, value):
         self.label_rows.text = str(value[0])
@@ -167,8 +210,104 @@ class MeshWarpWidget(KVFloatLayout):
         self.on_callback = callback
 
     def set_texture_size(self, texture_size):
+        if self._view_context is not None:
+            self.sync_view_from_context()
+            return
         self.texture_size = texture_size
         self._redraw_mesh()
+
+    @staticmethod
+    def _copy_tcg_info(tcg_info):
+        copied = {}
+        for key, value in tcg_info.items():
+            if key == 'matrix':
+                copied[key] = np.array(value, dtype=np.float64, copy=True)
+            else:
+                copied[key] = copy.deepcopy(value)
+        return copied
+
+    def set_tcg_info(self, tcg_info):
+        """表示中 preview と同じ座標系へ同期する。
+
+        control_offsets_tcg は正規化TCG上の編集値なので保持し、disp_info / matrix など
+        view 変換だけを差し替える。Mask Mesh editor が zoom/scroll 後も表示cropに追従
+        するために使う。
+        """
+        if not isinstance(tcg_info, dict):
+            return
+        self._view_context = None
+        self._view_context_image_only_matrix = False
+        self.tcg_info = self._copy_tcg_info(tcg_info)
+        self._redraw_mesh()
+
+    def set_view_param(self, param):
+        self.set_tcg_info(params.param_to_tcg_info(param))
+
+    def set_view_context(self, context, image_only_matrix=False):
+        """外部の表示座標 context をこの widget の view source にする。
+
+        MeshWarpWidget 自身は control_offsets_tcg だけを編集状態として持ち、
+        zoom / scroll / crop は context 側を正とする。Mask Mesh editor では
+        MaskEditor2 を渡しつつ image_only_matrix=True にすることで、Mask Geom ではなく
+        画像 Geom の座標系にメッシュグリッドを固定する。
+        """
+        self._view_context = context
+        self._view_context_image_only_matrix = bool(image_only_matrix)
+        self.sync_view_from_context()
+
+    def sync_view_from_context(self):
+        if self._sync_view_from_context():
+            self._redraw_mesh()
+
+    def _sync_view_from_context(self):
+        context = self._view_context
+        if context is None:
+            return False
+
+        lock = getattr(context, '_matrix_lock', None)
+        if lock is None:
+            texture_size = getattr(context, 'texture_size', None)
+            tcg_info = getattr(context, 'tcg_info', None)
+        else:
+            with lock:
+                texture_size = getattr(context, 'texture_size', None)
+                tcg_info = getattr(context, 'tcg_info', None)
+                texture_size = tuple(texture_size) if texture_size is not None else None
+                tcg_info = self._copy_tcg_info(tcg_info) if isinstance(tcg_info, dict) else None
+                if self._view_context_image_only_matrix and tcg_info is not None:
+                    image_only = getattr(context, '_image_only_matrix', None)
+                    if image_only is not None:
+                        tcg_info['matrix'] = np.array(image_only, dtype=np.float64, copy=True)
+
+        if lock is None:
+            texture_size = tuple(texture_size) if texture_size is not None else None
+            tcg_info = self._copy_tcg_info(tcg_info) if isinstance(tcg_info, dict) else None
+            if self._view_context_image_only_matrix and tcg_info is not None:
+                image_only = getattr(context, '_image_only_matrix', None)
+                if image_only is not None:
+                    tcg_info['matrix'] = np.array(image_only, dtype=np.float64, copy=True)
+
+        changed = False
+        if texture_size is not None and texture_size != tuple(self.texture_size):
+            self.texture_size = texture_size
+            changed = True
+        if tcg_info is not None:
+            old_info = self.tcg_info if isinstance(self.tcg_info, dict) else {}
+            old_matrix = old_info.get('matrix')
+            new_matrix = tcg_info.get('matrix')
+            matrix_changed = (
+                old_matrix is None
+                or new_matrix is None
+                or not np.array_equal(np.asarray(old_matrix), np.asarray(new_matrix))
+            )
+            view_changed = any(
+                old_info.get(key) != tcg_info.get(key)
+                for key in ('disp_info', 'original_img_size', 'rotation', 'rotation2', 'flip_mode')
+            )
+            if view_changed or matrix_changed:
+                self.tcg_info = tcg_info
+                changed = True
+        return changed
 
     def on_edit_start(self):
         if self.on_callback:
@@ -224,6 +363,7 @@ class MeshWarpWidget(KVFloatLayout):
             self.on_callback('apply', self)
 
     def _get_tcg_pos(self, touch_pos):
+        self._sync_view_from_context()
         tx, ty = params.window_to_tcg(touch_pos[0], touch_pos[1], self, self.texture_size, self.tcg_info)
         return tx, ty
 
@@ -327,8 +467,31 @@ class MeshWarpWidget(KVFloatLayout):
         return True
 
     def _redraw_mesh(self, *args):
+        self._sync_view_from_context()
+        # 環境変数 PLATYPUS_DEBUG_MESH_WARP=1 のときだけ debug log を出力。
+        # 通常は早期 if で skip するので hot path に影響しない。
+        if _MESH_DEBUG:
+            try:
+                import logging
+                import macos as _device
+                _disp = self.tcg_info.get('disp_info') if isinstance(self.tcg_info, dict) else None
+                logging.warning(
+                    "[MESH_DEBUG] _redraw_mesh widget_id=%s parent=%s self.size=%s self.pos=%s "
+                    "texture_size=%s mesh_size=%s n_cps=%d disp_info=%s orig=%s dpi=%s",
+                    id(self),
+                    type(self.parent).__name__ if self.parent else "None",
+                    tuple(self.size), tuple(self.pos),
+                    tuple(self.texture_size), tuple(self.mesh_size),
+                    len(self.control_offsets_tcg or {}),
+                    _disp,
+                    self.tcg_info.get('original_img_size') if isinstance(self.tcg_info, dict) else None,
+                    _device.dpi_scale() if hasattr(_device, 'dpi_scale') else None,
+                )
+            except Exception:
+                pass
+
         self.draw_overlay.canvas.clear()
-        
+
         rows, cols = self.mesh_size
         if self.texture_size[0] == 0: return
 

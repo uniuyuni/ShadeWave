@@ -21,6 +21,7 @@ from kivy.uix.floatlayout import FloatLayout
 from kivymd.uix.card import MDCard
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
+from kivy.clock import Clock as KVClock
 from kivy.clock import mainthread as kvmainthread
 from kivy.uix.recycleview import RecycleView
 from kivy.uix.recycleview.views import RecycleDataViewBehavior
@@ -41,6 +42,7 @@ from utils import preset_utils
 
 _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
+_THUMBNAIL_CARD_WIDTH_RATIO = 0.7
 
 class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     file_path = KVStringProperty()
@@ -54,6 +56,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        self._bound_layout_parent = None
         self.exif_data = None
         self.orientation = 'vertical'
         self.size_hint = (None, 1)
@@ -119,14 +122,24 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.bind(file_path=self.update_filename)
 
     def on_parent(self, instance, value):
+        if self._bound_layout_parent is not None:
+            self._bound_layout_parent.unbind(height=self._set_width)
+        self._bound_layout_parent = value
+        if value is not None:
+            value.bind(height=self._set_width)
         self._set_width()
+        KVClock.schedule_once(lambda _dt: self._set_width(), 0)
     
     def on_size(self, instance, value):
         self._set_width()
     
-    def _set_width(self):
-        if self.parent:
-            self.width = self.parent.height * 0.7
+    def _set_width(self, *_args):
+        layout_height = self.parent.height if self.parent else self.height
+        if layout_height <= 0:
+            return
+        width = layout_height * _THUMBNAIL_CARD_WIDTH_RATIO
+        if abs(self.width - width) > 0.5:
+            self.width = width
 
     def _update_pmck_icon_layout(self, *_args):
         if not hasattr(self, "pmck_icon"):
@@ -163,6 +176,11 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self._update_pmck_icon_layout()
         return r
 
+    def refresh_view_layout(self, rv, index, layout, viewport):
+        r = super().refresh_view_layout(rv, index, layout, viewport)
+        self._set_width()
+        return r
+
     def on_selected(self, instance, value):
         self.md_bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]
 
@@ -195,6 +213,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
 class ViewerWidget(RecycleView, DraggableWidget):
     last_selected_index = KVNumericProperty(None, allownone=True)
     cols = KVNumericProperty(4)
+    card_width = KVNumericProperty(112)
     thumb_width = KVNumericProperty(120*2)
     
     # Selection state
@@ -204,9 +223,35 @@ class ViewerWidget(RecycleView, DraggableWidget):
         super().__init__(**kwargs)
         self.data = []
         self.watch_directory = None
+        self._card_width_layout_event = None
 
         threading.Thread(target=self._watchfiles_thread, daemon=True).start()
         KVWindow.bind(on_key_down=self.on_key_down)
+        self.bind(height=self._schedule_card_width_sync)
+        KVClock.schedule_once(lambda _dt: self._sync_card_width(), 0)
+
+    def on_kv_post(self, base_widget):
+        self._sync_card_width()
+
+    def _schedule_card_width_sync(self, *_args):
+        if self._card_width_layout_event is None:
+            self._card_width_layout_event = KVClock.schedule_once(
+                lambda _dt: self._sync_card_width(), 0
+            )
+
+    def _sync_card_width(self):
+        self._card_width_layout_event = None
+        if self.height <= 0:
+            return
+        width = max(1, self.height * _THUMBNAIL_CARD_WIDTH_RATIO)
+        if abs(self.card_width - width) > 0.5:
+            self.card_width = width
+        layout = getattr(self, "layout_manager", None)
+        if layout is None and self.children:
+            layout = self.children[0]
+        if layout is not None and hasattr(layout, "default_size"):
+            layout.default_size = (width, None)
+        self.refresh_from_layout()
 
     def _watchfiles_thread(self):
         action_type_map = {
