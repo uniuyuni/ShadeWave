@@ -3944,7 +3944,7 @@ class Mask2Effect(Effect):
             'mask2_polyline_fill': True,
             'mask2_edge_refine_mode': 'Off',
             'mask2_edge_refine_radius': 0,
-            'mask2_edge_refine_strength': 60,
+            'mask2_edge_refine_strength': 0,
             'switch_mask2_draw_effects': True,
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,

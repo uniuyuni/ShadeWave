@@ -913,6 +913,19 @@ radius=93 support=8205  refsum=7042.3  lower=0.0
   空側/雪側の debug npz を replay し、refined mask を足した alpha が shared seam 上で
   `0.5` 未満になる gap ratio を測る。`qs_input_007.npz + qs_input_009.npz` は
   `gap_ratio=0.0144`, `alpha_components=1` で、旧実装の `0.177` から改善。
+- 追加問題: UI radius を大きくすると、エッジのない外側 grow 領域にブラシ状の膨らみが出る。
+  `qs_input_039.npz` では radius 75 で support outside が 678px あり、edge_restore と min-cut の
+  外側選択が混ざっていた。対策として edge_restore は元ブラシ内側だけに限定し、外側 grow は
+  `QS_OUTSIDE_KEEP_EDGE_THRESH=0.60` 以上の画像エッジ近傍だけ残す guard を追加。
+  同じ 039 では outside が 18px まで低下。さらに natural matte は画像エッジ近傍の support boundary
+  だけに適用し、ただのブラシ境界に alpha リムを作らないようにした。
+- 追加問題: `qs_input_021.npz` では EdgeLock を動かしても実用域での見た目差が小さい。
+  原因は、EdgeLock で変換した `edge_cost` を brush 内 side split の barrier にも使っていたため、
+  弱い雪テクスチャまで opposite-side prior になり、25 以上が似た collapse に寄っていたこと。
+  side split は raw strong ridge のみを見る `QS_SIDE_EDGE_THRESH=0.70` に分離し、EdgeLock は
+  min-cut の edge cost と selected rim restore threshold (`0.70 -> 0.25`) に効かせるよう変更。
+  最新 021 replay では `0 -> 100` で support 差分 1474px、restore は 1625px から 5466px に増え、
+  高 EdgeLock ほど境界の細部を拾う方向になった。
 - 追加観察: 「EdgeLock が厳しくなっただけに見える。しかも拡大時だけ」。
   最新 debug では同じ single stroke が current-view `657x657`（brush 54.75）と full-view
   `1132x1060`（brush 190.78）で別々に解かれていた。full-view high-res solve では EdgeLock が

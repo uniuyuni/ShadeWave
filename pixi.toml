@@ -20,6 +20,12 @@ install-sam3 = { cmd = "python -m pip install -e SAM3" }
 setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && python -m pip install -e libraw_enhanced --no-build-isolation'" }
 test-hls-color-adjust = { cmd = "python tests/test_hls_color_adjust.py" }
 check-exr-export-env = { cmd = "python scripts/check_exr_export_env.py" }
+build-denoise-native = """
+cmake -G Ninja -S radiance_denoise/native -B radiance_denoise/native/build -DCMAKE_BUILD_TYPE=Release && \
+cmake --build radiance_denoise/native/build
+"""
+# radiance_denoise を未取得なら clone し、ネイティブ拡張をビルドして配置（初回セットアップ用）
+setup-denoise = { cmd = "bash scripts/setup_radiance_denoise.sh" }
 
 [dependencies]
 autoconf = ">=2.71,<3"
@@ -34,3 +40,10 @@ pkg-config = ">=0.29,<1"
 python = ">=3.11.13,<3.12"
 llvm-openmp = ">=22.1.3,<23"
 py-spy = ">=0.4.2,<0.5"
+cmake = "*"
+ninja = "*"
+cxx-compiler = "*"
+pybind11 = "*"
+
+[pypi-dependencies]
+radiance_denoise = { path = "radiance_denoise", editable = true }

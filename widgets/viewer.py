@@ -1,11 +1,7 @@
 import os
-import json
-import subprocess
-import shutil
 import threading
 import base64
 import rawpy
-import exiftool
 import numpy as np
 import cv2
 from watchfiles import watch
@@ -49,6 +45,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     thumb_source = KVObjectProperty(None, allownone=True, force_dispatch=True)
     rating = KVNumericProperty(0)
     pmck_exists = KVBooleanProperty(False)
+    load_pending = KVBooleanProperty(True)
     selected = KVBooleanProperty(False)
     ctx = KVObjectProperty(None)
     index = KVNumericProperty(None)
@@ -172,6 +169,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.rating_row.ctx = data.get("ctx")
         self.rating_row.exif_pane = False
         self.pmck_exists = bool(data.get("pmck_exists", False))
+        self.load_pending = bool(data.get("load_pending", False))
         self.pmck_icon.opacity = 1.0 if self.pmck_exists else 0.0
         self._update_pmck_icon_layout()
         return r
@@ -202,6 +200,8 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         # 子（星スロット）へ先に伝播。ここで丸呑みするとタッチが RatingRow に届かない。
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
+        if self.load_pending and not touch.is_mouse_scrolling and touch.button == 'left':
+            return True
         for child in reversed(self.children):
             if child.dispatch("on_touch_down", touch):
                 return True
@@ -287,6 +287,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 'file_path': file_path,
                 'thumb_source': None,
                 'exif_data': None,
+                'load_pending': True,
                 'selected': False,
                 'ctx': self,
                 'rating': 0,
@@ -355,6 +356,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     'file_path': file_path,
                     'thumb_source': None,
                     'exif_data': None,
+                    'load_pending': True,
                     'selected': False,
                     'ctx': self,
                     'rating': 0,
@@ -370,7 +372,18 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def load_images(self, file_path_dict):
         if len(file_path_dict) > 0:
+            self._set_load_pending(file_path_dict, True)
             threading.Thread(target=self.load_images_thread, args=(file_path_dict, 16), daemon=True).start()
+
+    @kvmainthread
+    def _set_load_pending(self, file_path_dict, pending):
+        changed = False
+        for file_path, idx in file_path_dict.items():
+            if idx < len(self.data) and self.data[idx].get('file_path') == file_path:
+                self.data[idx]['load_pending'] = bool(pending)
+                changed = True
+        if changed:
+            self.refresh_from_data()
 
     @staticmethod
     def _norm_path_key(p: str) -> str:
@@ -379,75 +392,18 @@ class ViewerWidget(RecycleView, DraggableWidget):
         except OSError:
             return os.path.normcase(p or "")
 
-    @staticmethod
-    def _merge_exif_xmp_ratings_for_chunk(chunk, exif_data_list):
-        """
-        PyExifTool の get_metadata(-b,-s) では星が他タグに潰れて出ない場合がある。
-        同一 chunk を exiftool -j で XMP/Composite 由来のRatingだけ追加取得する。
-        返却行は SourceFile で chunk の行に対応付ける（順序のみだと1件エラーでズレる）。
-        """
-        if not chunk or not exif_data_list or len(chunk) != len(exif_data_list):
-            return exif_data_list
-        exr = shutil.which("exiftool") or "exiftool"
-        try:
-            p = subprocess.run(
-                [exr, "-j", "-n", "-m", "-XMP:Rating", "-XMP-xmp:Rating", "-Rating", "-Composite:Rating", *chunk],
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
-            logging.warning("XMP星の追読 (exiftool) を実行できません: %s", e)
-            return exif_data_list
-        if p.returncode != 0 and not (p.stdout or "").strip():
-            err = (p.stderr or p.stdout or "").strip()[:800]
-            logging.warning("XMP星の追読 exiftool 終了 code=%s: %s", p.returncode, err)
-            return exif_data_list
-        if p.returncode != 0:
-            err = (p.stderr or "").strip()[:400]
-            if err:
-                logging.info("XMP星の追読 (warning): %s", err)
-        if not (p.stdout or "").strip():
-            return exif_data_list
-        try:
-            arr = json.loads(p.stdout)
-        except json.JSONDecodeError:
-            logging.warning("XMP星の追読: JSON 解析失敗。exiftool stderr=%s", (p.stderr or "")[:400])
-            return exif_data_list
-        if not isinstance(arr, list):
-            return exif_data_list
-        index_by = {}
-        for i, fp in enumerate(chunk):
-            index_by[ViewerWidget._norm_path_key(fp)] = i
-        for row in arr:
-            if not isinstance(row, dict):
-                continue
-            sf = row.get("SourceFile")
-            if not sf:
-                continue
-            key = ViewerWidget._norm_path_key(str(sf))
-            i = index_by.get(key)
-            if i is None:
-                for cand in chunk:
-                    if os.path.basename(cand) == os.path.basename(str(sf)):
-                        i = index_by.get(ViewerWidget._norm_path_key(cand))
-                        break
-            if i is None or i >= len(exif_data_list):
-                continue
-            ex0 = (exif_data_list[i] or {}).copy()
-            rating_utils.merge_exiftool_j_row_into_exif(ex0, row)
-            exif_data_list[i] = ex0
-        return exif_data_list
-
     def load_images_thread(self, file_path_dict, chunk_size):
         file_path_list = list(file_path_dict.keys())
 
         for i in range(0, len(file_path_list), chunk_size):
             chunk = file_path_list[i:i + chunk_size]
             try:
-                #exif_data_list = safe_get_metadata(chunk, common_args=['-b', '-s' ])
-                exif_data_list = safe_get_metadata(chunk, common_args=["-b", "-s", "-x", "IFD1:PreviewTIFF", "-x", "SubIFD1:PreviewTIFF" ])
-                exif_data_list = self._merge_exif_xmp_ratings_for_chunk(chunk, exif_data_list)
+                # -a -G1 keeps duplicate Rating tags as group-qualified keys.
+                # safe_get_metadata also adds short-name aliases for existing UI code.
+                exif_data_list = safe_get_metadata(
+                    chunk,
+                    common_args=["-b", "-s", "-a", "-G1", "-x", "IFD1:PreviewTIFF", "-x", "SubIFD1:PreviewTIFF"],
+                )
 
                 thumb_data_list = self.process_exif_data(chunk, exif_data_list)
 
@@ -461,6 +417,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                         item = self.data[idx]
                         item['thumb_source'] = thumb_data_list[k]
                         item['exif_data'] = exif_data_list[k]
+                        item['load_pending'] = False
                         ex0 = exif_data_list[k] or {}
                         if rating_utils.is_raw_path(file_path):
                             item['rating'] = rating_io.read_raw_pmck_rating_value(file_path)
@@ -472,11 +429,24 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 self._apply_updates(updates)
             except Exception:
                 logging.exception("load_images_thread: chunk 処理失敗。スキップして続行 (chunk size=%d)", len(chunk))
+                self._finish_failed_chunk(chunk, file_path_dict)
 
     @kvmainthread
     def _apply_updates(self, updates):
         for idx, item in updates.items():
             self.data[idx] = item
+        self.refresh_from_data()
+
+    @kvmainthread
+    def _finish_failed_chunk(self, chunk, file_path_dict):
+        for file_path in chunk:
+            idx = file_path_dict.get(file_path)
+            if idx is None:
+                continue
+            if idx < len(self.data) and self.data[idx].get('file_path') == file_path:
+                self.data[idx]['load_pending'] = False
+                if self.data[idx].get('exif_data') is None:
+                    self.data[idx]['exif_data'] = {}
         self.refresh_from_data()
 
     def is_supported_image(self, file_name):
@@ -579,6 +549,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def handle_selection(self, index, touch):
         # We also need to notify MainWidget about selection change
+        if not self._is_item_ready(index):
+            return
         should_notify = False
         
         if not touch.is_mouse_scrolling and touch.button == 'left':
@@ -613,6 +585,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
                  self.notify_selection_change(index)
 
     def notify_selection_change(self, index):
+        if not self._is_item_ready(index):
+            return
         app = MDApp.get_running_app()
         if app and hasattr(app, 'main_widget'):
              # Create a mock card object for the newly selected item
@@ -627,13 +601,13 @@ class ViewerWidget(RecycleView, DraggableWidget):
              app.main_widget.on_select(MockCard(selected_data))
 
     def select_at(self, index):
-        if 0 <= index < len(self.data):
+        if self._is_item_ready(index):
             self.data[index]['selected'] = True
             self.selected_indices.add(index)
             self.refresh_from_data()
 
     def toggle_at(self, index):
-        if 0 <= index < len(self.data):
+        if self._is_item_ready(index):
             val = not self.data[index]['selected']
             self.data[index]['selected'] = val
             if val: self.selected_indices.add(index)
@@ -661,6 +635,14 @@ class ViewerWidget(RecycleView, DraggableWidget):
             self.load_images({d["file_path"]: i})
             return True
         return False
+
+    def _is_item_ready(self, index):
+        return (
+            index is not None
+            and 0 <= index < len(self.data)
+            and not bool(self.data[index].get("load_pending", False))
+            and self.data[index].get("exif_data") is not None
+        )
 
     def set_selection_silent(self, file_path):
         """サムネの選択表示だけを合わせる。on_select（画像の再ロード）は呼ばない。"""
@@ -757,7 +739,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             return True
 
     def on_rating_slot(self, index, slot: int):
-        if index is None or index < 0 or index >= len(self.data):
+        if not self._is_item_ready(index):
             return
         cur = int(self.data[index].get("rating", 0) or 0)
         new_r = rating_utils.new_rating_on_slot_click(cur, slot)

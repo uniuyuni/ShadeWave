@@ -2060,15 +2060,18 @@ if __name__ == '__main__':
             texture 外になり、zoom crop が端へ clamp される。マスク overlay とは別の
             「ズーム中心が意図せず飛ぶ」原因になるので、zoom-in 時は実画像領域だけ許可する。
             """
+            return self._preview_texture_pos_from_window_pos(touch.pos)
+
+        def _preview_texture_pos_from_window_pos(self, pos):
             preview = self.ids.get('preview')
             if preview is None:
                 return None
-            tex_x, tex_y = utils.to_texture(touch.pos, preview)
+            tex_x, tex_y = utils.to_texture(pos, preview)
             tw, th = getattr(preview, 'texture_size', (0, 0))
             if tex_x < 0 or tex_y < 0 or tex_x >= tw or tex_y >= th:
                 self._mask_zoom_sync_log(
-                    "ignore texture-outside touch pos=%s tex=(%.2f,%.2f) texture_size=%s preview_pos=%s preview_size=%s",
-                    touch.pos, tex_x, tex_y, (tw, th), tuple(preview.pos), tuple(preview.size),
+                    "ignore texture-outside pos=%s tex=(%.2f,%.2f) texture_size=%s preview_pos=%s preview_size=%s",
+                    pos, tex_x, tex_y, (tw, th), tuple(preview.pos), tuple(preview.size),
                 )
                 return None
             return tex_x, tex_y
@@ -2141,6 +2144,72 @@ if __name__ == '__main__':
                     center_pos=self._current_zoom_center_pos(),
                 )
 
+        def _reset_preview_zoom(self):
+            if not self.is_zoomed or not self._image_interaction_ready():
+                return False
+            self.is_zoomed = False
+            self.click_x, self.click_y = 0, 0
+            self.drag_center_start = None
+            disp_info = core.convert_rect_to_info(
+                params.get_crop_rect(self.primary_param),
+                config.get_preview_texture_side() / max(self.primary_param['original_img_size']),
+            )
+            params.set_disp_info(self.primary_param, disp_info)
+            effects.reeffect_all(self.primary_effects, 1)
+            self.start_draw_image_and_crop(self.imgset)
+            return True
+
+        def _preview_texture_center_pos(self):
+            preview = self.ids.get('preview')
+            if preview is None:
+                return None
+            tw, th = getattr(preview, 'texture_size', (0, 0))
+            if tw <= 0 or th <= 0:
+                return None
+            return tw / 2.0, th / 2.0
+
+        def _zoom_preview_from_keyboard(self):
+            if self.is_zoomed:
+                return self._reset_preview_zoom()
+            if (not self._image_interaction_ready()
+                    or self._is_image_geometry_mode()
+                    or self.is_mask_mesh_editor_active()):
+                return False
+            tex_pos = self._preview_texture_pos_from_window_pos(KVWindow.mouse_pos)
+            if tex_pos is None:
+                tex_pos = self._preview_texture_center_pos()
+            if tex_pos is None:
+                return False
+            self.is_zoomed = True
+            self.click_x, self.click_y = tex_pos
+            self.drag_center_start = None
+            effects.reeffect_all(self.primary_effects, 1)
+            self.start_draw_image_and_crop(self.imgset)
+            return True
+
+        def _text_input_has_focus(self):
+            stack = [self]
+            try:
+                stack.extend(KVWindow.children)
+            except Exception:
+                pass
+            seen = set()
+            while stack:
+                widget = stack.pop()
+                if widget is None:
+                    continue
+                wid = id(widget)
+                if wid in seen:
+                    continue
+                seen.add(wid)
+                if isinstance(widget, KVTextInput) and getattr(widget, "focus", False):
+                    return True
+                try:
+                    stack.extend(widget.children)
+                except Exception:
+                    pass
+            return False
+
         def _is_mask2_on(self):
             """Mask2 トグルが ON 状態か。マスク編集モードの判定軸。
             個別マスクが Active かどうかではなく、Mask2 パネル全体が有効か否かで判定する
@@ -2196,16 +2265,13 @@ if __name__ == '__main__':
                         next_zoomed, touch.pos, tex_pos,
                         params.get_disp_info(self.primary_param), self.zoom_ratio,
                     )
-                    self.is_zoomed = next_zoomed
-                    if self.is_zoomed == False:
-                        self.click_x, self.click_y = 0, 0
-                        self.drag_center_start = None
-                        disp_info = core.convert_rect_to_info(params.get_crop_rect(self.primary_param), config.get_preview_texture_side()/max(self.primary_param['original_img_size']))
-                        params.set_disp_info(self.primary_param, disp_info)
+                    if not next_zoomed:
+                        self._reset_preview_zoom()
+                        return False
 
-                    else:
-                        # ウィンドウ座標からローカルイメージ座標に変換
-                        self.click_x, self.click_y = tex_pos
+                    self.is_zoomed = True
+                    # ウィンドウ座標からローカルイメージ座標に変換
+                    self.click_x, self.click_y = tex_pos
 
                     effects.reeffect_all(self.primary_effects, 1)
                     self.start_draw_image_and_crop(self.imgset)
@@ -3329,6 +3395,11 @@ if __name__ == '__main__':
                 
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             #print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
+
+            if codepoint == '0' or key == 48:
+                if not self._text_input_has_focus():
+                    return self._zoom_preview_from_keyboard()
+                return False
 
             if key == 32:
                 if self.is_press_space == False:

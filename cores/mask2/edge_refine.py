@@ -101,8 +101,10 @@ def refine_mask_edge_aware(
 
     raw_radius = float(radius)
     radius = int(max(1, raw_radius))
-    strength = float(np.clip(strength, 0, 100))
+    raw_strength = float(strength)
+    strength = float(np.clip(raw_strength, 0, 100))
     if selection_strategy == STRATEGY_DRAW:
+        draw_strength = raw_strength
         if os.environ.get("PLATYPUS_DRAW_QS_LEGACY"):
             # Legacy grabCut/target-edge path kept for one release as a fallback.
             seed, candidate, support, extra_debug_planes = _draw_grabcut_band_support(
@@ -114,13 +116,14 @@ def refine_mask_edge_aware(
                 draw_strokes=draw_strokes,
                 pixel_scale=draw_pixel_scale,
             )
+            effective_edge_lock = strength
         else:
             from cores.mask2 import draw_quick_select as _draw_quick_select
             _draw_result = _draw_quick_select.compute_draw_support(
                 guide,
                 mask_f,
                 raw_radius,
-                strength,
+                draw_strength,
                 seed_mask=seed_mask,
                 draw_strokes=draw_strokes,
                 pixel_scale=draw_pixel_scale,
@@ -129,6 +132,7 @@ def refine_mask_edge_aware(
             candidate = _draw_result.candidate
             support = _draw_result.support
             extra_debug_planes = _draw_result.debug_planes
+            effective_edge_lock = float(getattr(_draw_result, "edge_lock", strength))
         if support is None:
             support = _fallback_support(mask_f, seed, candidate)
         refined = _compose_refined_mask(
@@ -138,7 +142,7 @@ def refine_mask_edge_aware(
             support_softness=support_softness,
             guide=guide,
             natural_edge=True,
-            edge_lock=strength,
+            edge_lock=effective_edge_lock,
         )
         _debug_dump_refine_state(
             guide,
@@ -148,7 +152,7 @@ def refine_mask_edge_aware(
             seed,
             candidate,
             support,
-            _draw_barrier_strength(strength),
+            _draw_barrier_strength(effective_edge_lock),
             seed_from_guide,
             debug_label,
             "edge_snap",
@@ -2817,6 +2821,16 @@ def _apply_natural_edge_matte(guide, mask, support, edge_lock=0.0):
     edge_width = 2.25
     sample_width = 9.0
     edge_band = support & (inside_dist <= edge_width)
+    image_edge = _draw_snap_edge_strength(guide_rgb)
+    if image_edge is not None:
+        edge_near = image_edge >= 0.25
+        if np.any(edge_near):
+            edge_near = cv2.dilate(
+                edge_near.astype(np.uint8),
+                np.ones((3, 3), dtype=np.uint8),
+                iterations=2,
+            ) > 0
+            edge_band &= edge_near
     if int(np.count_nonzero(edge_band)) < 16:
         return np.asarray(mask, dtype=np.float32)
 

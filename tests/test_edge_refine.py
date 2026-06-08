@@ -2,6 +2,7 @@ import os
 import pathlib
 import sys
 import unittest
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -1365,6 +1366,36 @@ def _dqs_support(image, lines, radius, strength=0):
     return res, mask, hint
 
 
+def _load_qs_input(name):
+    path = PROJECT_ROOT / "edge_refine_debug" / f"qs_input_{name}.npz"
+    if not path.exists():
+        path = PROJECT_ROOT / "edge_refine_debug" / f"qs_input_{name}npz"
+    if not path.exists():
+        raise unittest.SkipTest(f"missing debug sample: {path}")
+    data = np.load(path, allow_pickle=True)
+    strokes = []
+    for raw in data["strokes"]:
+        if isinstance(raw, np.ndarray) and raw.shape == ():
+            raw = raw.item()
+        points = np.asarray(raw.get("points", []), dtype=np.float32)
+        strokes.append(SimpleNamespace(
+            points=[(float(x), float(y)) for x, y in points[:, :2]],
+            size=float(raw.get("size", 1.0)),
+            soft=float(raw.get("soft", 100.0)),
+            is_erasing=bool(raw.get("is_erasing", False)),
+        ))
+    seed_mask = data["seed_mask"] if data["seed_mask"].size else None
+    return {
+        "guide": data["guide"].astype(np.float32),
+        "mask": data["mask"].astype(np.float32),
+        "seed_mask": seed_mask,
+        "radius": float(data["radius"]),
+        "strength": float(data["strength"]),
+        "pixel_scale": float(data["pixel_scale"]) if "pixel_scale" in data.files else 1.0,
+        "strokes": strokes,
+    }
+
+
 def _straight_edge_scene(edge_x=120, h=160, w=200):
     image = np.zeros((h, w, 3), dtype=np.float32)
     image[:, :edge_x] = (0.20, 0.20, 0.50)
@@ -1521,9 +1552,21 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         low_lock = draw_quick_select._contextual_edge_strength(edge, color, 60)
         high_lock = draw_quick_select._contextual_edge_strength(edge, color, 100)
 
-        np.testing.assert_allclose(low_lock, edge)
+        self.assertGreater(float(low_lock[:, 12].mean()), 0.55)
+        self.assertLess(float(low_lock[:, 22].mean()), 0.45)
         self.assertGreater(float(high_lock[:, 12].mean()), 0.55)
         self.assertLess(float(high_lock[:, 22].mean()), 0.45)
+
+    def test_contextual_edge_weakens_edges_without_color_signal(self):
+        edge = np.zeros((24, 32), dtype=np.float32)
+        edge[:, 12] = 0.65
+        edge[:, 22] = 0.85
+        color = np.zeros((24, 32), dtype=np.float32)
+
+        high_lock = draw_quick_select._contextual_edge_strength(edge, color, 100)
+
+        self.assertLess(float(high_lock[:, 12].mean()), 0.30)
+        self.assertLess(float(high_lock[:, 22].mean()), 0.35)
 
     def test_edge_lock_relaxes_seed_side_barrier_for_weak_boundaries(self):
         strict = draw_quick_select._side_edge_thresh_for_strength(60)
@@ -1565,6 +1608,21 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertFalse(np.any(seed_side[:, 150]))
         self.assertTrue(np.any(filtered[:, 70]))
         self.assertFalse(np.any(filtered[45:52, 120:127]))
+
+    def test_seed_side_barrier_keeps_thin_branch_components(self):
+        comp = np.ones((80, 120), dtype=bool)
+        core = np.zeros_like(comp)
+        core[:, 15] = True
+        edge = np.zeros(comp.shape, dtype=np.float32)
+        edge[:, 58] = 0.90
+
+        seed_side = draw_quick_select._seed_side_through_smooth_interior(
+            comp, core, edge, edge_thresh=0.70)
+        filtered = draw_quick_select._filter_side_edge_barrier_components(
+            edge > 0.70, comp)
+
+        self.assertTrue(np.any(filtered))
+        self.assertFalse(np.any(seed_side[:, 95]))
 
     def test_edge_lock_relaxes_selected_rim_restore_threshold(self):
         strict = draw_quick_select._edge_restore_thresh_for_strength(0)
@@ -1843,6 +1901,98 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertGreaterEqual(n_labels - 1, 2)
         # The erased column stays empty.
         self.assertEqual(int(sup[78:83, 92:98].sum()), 0)
+
+    def test_eraser_stroke_snaps_to_edge_before_subtracting(self):
+        image = _straight_edge_scene(edge_x=90, h=120, w=180)
+        add = mask_rasters.Line(False, 70, 100)
+        add.add_point(120, 60)
+        erase = mask_rasters.Line(True, 70, 100)
+        erase.add_point(75, 60)
+        h, w = image.shape[:2]
+        mask = mask_rasters.draw_line_texture((w, h), [add, erase])
+
+        res = draw_quick_select.compute_draw_support(
+            image, mask, 1, 0, seed_mask=edge_refine.make_confident_seed(mask),
+            draw_strokes=[add, erase])
+        legacy = draw_quick_select._compute_draw_support_core(
+            image, mask, 1, 0, draw_strokes=[add, erase])
+
+        right_overlap = np.s_[48:72, 94:110]
+        self.assertLess(float(mask[right_overlap].mean()), 0.05)
+        self.assertGreater(float(res.support[right_overlap].mean()), 0.70)
+        self.assertLess(float(res.support[48:72, 55:82].mean()), 0.15)
+        self.assertTrue(np.all(res.support | ~legacy.support))
+
+    def test_edge_lock_ui_value_offsets_auto_strength(self):
+        image = _straight_edge_scene(edge_x=120)
+        line = _straight_edge_line(stroke_x=110, size=26)
+        h, w = image.shape[:2]
+        mask = mask_rasters.draw_line_texture((w, h), [line])
+
+        auto = draw_quick_select.compute_draw_support(image, mask, 1, 0, draw_strokes=[line])
+        strict = draw_quick_select.compute_draw_support(image, mask, 1, 25, draw_strokes=[line])
+        loose = draw_quick_select.compute_draw_support(image, mask, 1, -25, draw_strokes=[line])
+
+        self.assertLess(strict.edge_lock, auto.edge_lock)
+        self.assertGreater(loose.edge_lock, auto.edge_lock)
+
+    def test_auto_strength_uses_hint_boundary_edge_distribution(self):
+        image = np.zeros((80, 100, 3), dtype=np.float32)
+        mask = np.zeros((80, 100), dtype=np.float32)
+        mask[20:60, 25:75] = 1.0
+        weak_edge = np.zeros(mask.shape, dtype=np.float32)
+        weak_edge[20:60, 24:27] = 0.24
+        strong_edge = np.zeros(mask.shape, dtype=np.float32)
+        strong_edge[19:22, 24:76] = 0.90
+        strong_edge[58:61, 24:76] = 0.90
+        strong_edge[20:60, 24:27] = 0.90
+        strong_edge[20:60, 73:76] = 0.90
+        original = draw_quick_select._er._draw_snap_edge_strength
+        try:
+            draw_quick_select._er._draw_snap_edge_strength = lambda _guide: weak_edge
+            weak_auto = draw_quick_select._estimate_auto_strength(image, mask, [])
+            draw_quick_select._er._draw_snap_edge_strength = lambda _guide: strong_edge
+            strong_auto = draw_quick_select._estimate_auto_strength(image, mask, [])
+        finally:
+            draw_quick_select._er._draw_snap_edge_strength = original
+
+        self.assertGreater(weak_auto, 60.0)
+        self.assertLess(strong_auto, weak_auto)
+
+    def test_debug_qs_samples_are_replayed_including_recent_additions(self):
+        # These are real captured production inputs. Keep this list explicit so
+        # newly added failure samples cannot silently fall out of the target set.
+        expected_ratio_min = {
+            "easy": 0.60,
+            "erase": 0.90,
+            "lowcontrast": 0.90,
+            "tree": 0.90,
+            "animal": 0.84,
+            "flower": 0.78,
+            "roof": 0.94,
+            "snow_edge": 0.60,
+        }
+        for name, min_ratio in expected_ratio_min.items():
+            with self.subTest(name=name):
+                sample = _load_qs_input(name)
+                seed = (
+                    sample["seed_mask"]
+                    if sample["seed_mask"] is not None
+                    else edge_refine.make_confident_seed(sample["mask"])
+                )
+                result = draw_quick_select.compute_draw_support(
+                    sample["guide"],
+                    sample["mask"],
+                    sample["radius"],
+                    sample["strength"],
+                    seed_mask=seed,
+                    draw_strokes=sample["strokes"],
+                    pixel_scale=sample["pixel_scale"],
+                )
+                hint = sample["mask"] > 0.02
+                ratio = float(result.support.sum()) / max(float(hint.sum()), 1.0)
+                self.assertGreater(ratio, min_ratio)
+                self.assertGreater(int(result.support.sum()), 0)
 
     def test_all_erased_returns_empty_support(self):
         image = _straight_edge_scene(edge_x=180)

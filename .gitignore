@@ -13,11 +13,15 @@ SAM3/
 SCUNet/
 demosaicnet_torch/
 Real-ESRGAN/
+radiance_denoise/
 splitimage/**build/**
 splitimage/*.egg*/**
 
 **/__pycache__/**
 **/venv3.11.9/**
+
+# Debug outputs
+edge_refine_debug/
 
 # pixi environments
 .pixi/*
