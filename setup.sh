@@ -10,30 +10,26 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-# HTTPS クローン可能な git を選ぶ。pixi 環境の conda git は git-remote-https を
-# 欠くことがあり HTTPS clone が "remote helper 'https' aborted session" で失敗する
-# ため、git-remote-https を持つ git（多くは system git）を優先的に使う。
-select_git() {
-  local g
-  for g in git /usr/bin/git "$ROOT_DIR/.pixi/envs/default/bin/git"; do
-    command -v "$g" >/dev/null 2>&1 || continue
-    if ls "$("$g" --exec-path 2>/dev/null)" 2>/dev/null | grep -q '^git-remote-https$'; then
-      echo "$g"
-      return 0
-    fi
-  done
-  echo "エラー: HTTPS クローン可能な git が見つかりません (git-remote-https が必要)。" >&2
-  exit 1
-}
-GIT="$(select_git)"
-echo "git: $GIT ($("$GIT" --version))"
+# pixi 環境の conda git は git-remote-https を欠き、HTTPS clone が
+#   "remote helper 'https' aborted session"
+# で失敗する。pip が内部で git clone https を呼ぶ場合も同じ。
+# GIT_EXEC_PATH を system git のヘルパーディレクトリに向けることで
+# pixi git / pip 内部 git を含むすべての git 呼び出しを一括で修正する。
+_sys_git_exec="$(/usr/bin/git --exec-path 2>/dev/null)"
+if [ -n "$_sys_git_exec" ] && [ -f "$_sys_git_exec/git-remote-https" ]; then
+  export GIT_EXEC_PATH="$_sys_git_exec"
+  echo "GIT_EXEC_PATH → $_sys_git_exec (git-remote-https available)"
+else
+  echo "警告: /usr/bin/git に git-remote-https が見つかりません。HTTPS clone が失敗する可能性があります。" >&2
+fi
+unset _sys_git_exec
 
 clone_if_missing() {
   local repo_url="$1"
   local target_dir="$2"
 
   if [ ! -d "$target_dir" ]; then
-    "$GIT" clone --depth 1 "$repo_url" "$target_dir"
+    git clone --depth 1 "$repo_url" "$target_dir"
   fi
 }
 
@@ -65,11 +61,11 @@ ensure_sam3() {
   local patch="$ROOT_DIR/patches/sam3-macos.patch"
 
   if [ ! -d "SAM3" ]; then
-    "$GIT" clone https://github.com/facebookresearch/sam3.git SAM3
-    "$GIT" -C SAM3 checkout --quiet "$pin"
+    git clone https://github.com/facebookresearch/sam3.git SAM3
+    git -C SAM3 checkout --quiet "$pin"
     # 既に適用済みでない場合のみ当てる（再実行の冪等性）
-    if ! "$GIT" -C SAM3 apply --reverse --check "$patch" >/dev/null 2>&1; then
-      "$GIT" -C SAM3 apply "$patch"
+    if ! git -C SAM3 apply --reverse --check "$patch" >/dev/null 2>&1; then
+      git -C SAM3 apply "$patch"
       echo "SAM3: macOS パッチを適用しました ($patch)"
     fi
   fi
