@@ -450,7 +450,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self.refresh_from_data()
 
     def is_supported_image(self, file_name):
-        return file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB) or file_name.lower().endswith(define.SUPPORTED_FORMATS_RAW)
+        return (file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB)
+                or file_name.lower().endswith(define.SUPPORTED_FORMATS_RAW)
+                or file_name.lower().endswith(define.SUPPORTED_FORMATS_EXR))
 
     def _image_path_for_pmck_sidecar(self, file_path):
         if not file_path:
@@ -509,6 +511,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
                         with rawpy.imread(file_path) as raw:
                             thumb = raw.postprocess()
+                    elif file_path.lower().endswith(define.SUPPORTED_FORMATS_EXR):
+                        # EXR は pyvips 非対応。OpenEXR で読み、表示用にトーンマップ済み float32[0,1] を得る。
+                        import cores.exr_io as exr_io
+                        thumb = exr_io.read_exr_thumbnail(file_path)
                     else:
                         with pyvips.Image.new_from_file(file_path) as vips_image:
                             thumb = np.array(vips_image)

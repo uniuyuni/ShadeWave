@@ -306,7 +306,7 @@ def _profile_colourspace_name(icc_profile):
     return _ICC_PROFILE_ALIASES.get(icc_profile, icc_profile)
 
 
-def _convert_to_profile_linear(img, icc_profile):
+def _convert_to_profile_linear(img, icc_profile, apply_gamut_mapping=True):
     colourspace_name = _profile_colourspace_name(icc_profile)
     if colourspace_name in colour_functions.RGB_COLOURSPACES:
         return colour_functions.RGB_to_RGB(
@@ -315,7 +315,7 @@ def _convert_to_profile_linear(img, icc_profile):
             colourspace_name,
             _export_chromatic_adaptation_transform(),
             apply_cctf_encoding=False,
-            apply_gamut_mapping=True,
+            apply_gamut_mapping=apply_gamut_mapping,
         ).astype(np.float32)
 
     matrix, _white_xyz = _icc_profile_matrix_and_whitepoint(icc_profile)
@@ -330,10 +330,13 @@ def _convert_to_profile_linear(img, icc_profile):
 
 
 def _convert_export_color(img, format, icc_profile):
-    img = _convert_to_profile_linear(img, icc_profile)
-    if format != '.EXR':
+    # EXR はシーンリニアの交換フォーマット。色域外・負値・HDR をそのまま保持するのが作法なので
+    # ガマットマッピングを行わない（受け手アプリが chromaticities を見て表示変換する）。
+    # 非 EXR は従来どおりガマット内に収めてから transfer 付与＋[0,1]クリップ。
+    is_exr = (format == '.EXR')
+    img = _convert_to_profile_linear(img, icc_profile, apply_gamut_mapping=not is_exr)
+    if not is_exr:
         img = _encode_profile_transfer(img, icc_profile)
-    if format != '.EXR':
         img = np.clip(img, 0, 1) # ここじゃないとダメ
     return img
 

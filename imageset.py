@@ -472,6 +472,42 @@ class ImageSet:
 
         return (file_path, self, exif_data, param, LoadStage.RGB_DONE)
 
+    def _load_exr(self, raw, file_path, exif_data, param):
+        perf_trace.event("exr_load.enter")
+        import cores.exr_io as exr_io
+
+        # EXR はリニア。chromaticities からソース色空間を決め、ProPhoto RGB リニアへ変換。
+        # HDR(>1) を保持するためガンマ補正/ガマットマッピングはしない。
+        img_array, src_space = exr_io.read_exr_linear(
+            file_path, output_colourspace='ProPhoto RGB', cat=config.get_config('cat')
+        )
+        perf_trace.event("exr_load.decoded", shape=list(img_array.shape), src=src_space)
+        logging.info(f"EXR loaded: {file_path} src_colourspace={src_space} shape={img_array.shape} "
+                     f"range=[{img_array.min():.4f}, {img_array.max():.4f}]")
+
+        img_array = np.ascontiguousarray(img_array, dtype=np.float32)
+
+        # 画像からホワイトバランスパラメータ取得（RGB 同様ニュートラル）
+        params.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
+
+        # クロップとexifデータの回転（EXR は通常 Orientation 無し）
+        self._delete_exif_orientation(exif_data)
+
+        # 自動露出調整値を適当に設定する
+        param['rgb_or_raw'] = 'rgb'
+        param['auto_exposure'] = -2.5
+
+        # 情報の設定
+        params.set_image_param(param, img_array)
+        param['lens_modifier'] = False
+        param['exif_data'] = exif_data
+
+        self.img = img_array
+        self.fidelity = ImageFidelity.FULL
+        perf_trace.event("exr_load.done")
+
+        return (file_path, self, exif_data, param, LoadStage.RGB_DONE)
+
     class Result():
         def __init__(self, worker, source):
             self.worker = worker
@@ -486,7 +522,12 @@ class ImageSet:
             result.append(ImageSet.Result(worker="_load_raw_full", source=None))
 
             return result
-            
+
+        elif file_path.lower().endswith(define.SUPPORTED_FORMATS_EXR):
+            result = []
+            result.append(ImageSet.Result(worker="_load_exr", source=None))
+            return result
+
         elif file_path.lower().endswith(define.SUPPORTED_FORMATS_RGB):
             result = []
             result.append(ImageSet.Result(worker="_load_rgb", source=None))

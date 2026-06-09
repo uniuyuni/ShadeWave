@@ -19,7 +19,6 @@ from kivy.app import App as KVApp
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
 from kivy.uix.image import Image as KVImage
-from kivy.uix.button import Button as KVButton
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.properties import (
@@ -33,8 +32,6 @@ from kivy.graphics import (
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.clock import Clock as KVClock
 from kivy.uix.label import Label as KVLabel
-from kivy.uix.popup import Popup as KVPopup
-from kivy.uix.textinput import TextInput as KVTextInput
 
 import cores.core as core
 import cores.expand_mask as expand_mask
@@ -272,40 +269,6 @@ def _apply_mask_mesh_warp(composit, editor, effects_param,
         source_origin_tex=source_origin_tex,
     )
 
-
-class TextInputDialog(KVPopup):
-    def __init__(self, callback, **kwargs):
-        super().__init__(**kwargs)
-        self.title = "Input Target Text in English"
-        self.size_hint = (None, None)
-        self.ref_width = 420
-        self.ref_height = 240
-        
-        layout = KVBoxLayout(orientation='vertical')
-        layout.ref_padding = 10
-        layout.ref_spacing = 10
-        self.text_input = KVTextInput(multiline=False, size_hint_y=None)
-        self.text_input.ref_height = 50
-        self.text_input.bind(on_text_validate=lambda x: self.save(callback))
-        
-        btn_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None)
-        btn_layout.ref_height = 40
-        btn_layout.ref_spacing = 10
-        save_button = KVButton(text='OK')
-        save_button.bind(on_press=lambda x: self.save(callback))
-        btn_layout.add_widget(save_button)
-        
-        layout.add_widget(self.text_input)
-        layout.add_widget(btn_layout)
-        self.content = layout
-        dialogutils.install_ref_scaling(self)
-
-    def save(self, callback):
-        text = self.text_input.text
-        if not text or text.isspace():
-            text = "All"
-        self.dismiss()
-        KVClock.schedule_once(lambda dt: callback(text), 0.5)
 
 class MaskType(str, Enum):
     COMPOSIT = 'composit'
@@ -3930,10 +3893,9 @@ class TargetTextMask(BaseMask):
             self.create_control_points()
             self.editor.set_active_mask(self)
             
-            # text inout dialog
-            dialog = TextInputDialog(self.on_text_entered)
-            dialog.open()
-            
+            # text input dialog（macOS ネイティブ。見た目 + 日本語 IME 対応）
+            self._prompt_target_text(self.on_text_entered)
+
             return True
         else:
             return super().on_touch_up(touch)
@@ -3951,6 +3913,30 @@ class TargetTextMask(BaseMask):
 
         if not self.active:
             self.show_center_control_point_only()
+
+    def _prompt_target_text(self, callback):
+        """
+        macOS ネイティブのテキスト入力ダイアログ（NSAlert + NSTextField）を出す。
+        FileChooser(NSOpenPanel) と同じく **メインスレッドで modal 実行**する必要がある
+        （別スレッド/別プロセスだと前面のウィンドウにフォーカスを奪われ、カーソル非表示・
+        IME 不可・初回フリーズの原因になる）。on_touch_up はメインスレッドなのでそのまま呼ぶ。
+
+        キャンセルボタンは無く OK のみ。空入力は旧挙動どおり "All" にフォールバックする。
+        後続処理（マスク生成）は modal 復帰直後のスタックから切り離すため Clock 経由で呼ぶ。
+        """
+        try:
+            text = device.prompt_native(
+                message="Target text (English only)",
+                title="ターゲットテキスト入力",
+                default=self.target_text or "",
+                ascii_only=True,  # SAM3 側が日本語非対応のため非 ASCII を抑止
+            )
+        except Exception as e:
+            logging.warning(f"target text prompt failed: {e}")
+            text = None
+        if not text or text.isspace():
+            text = "All"
+        KVClock.schedule_once(lambda dt: callback(text), 0)
 
     def on_text_entered(self, text):
         self.target_text = text
@@ -4684,8 +4670,16 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         # デシリアライズ
         if dict is not None:
             mask.deserialize(dict)
+        elif self.root is not None:
+            # Quick Select is a sticky drawing tool setting. A freshly created
+            # DRAW mask should inherit the last user-set edge-refine controls,
+            # while deserialized masks keep their saved values.
+            sticky = getattr(self.root, '_sticky_mask2_edge_refine', None)
+            if sticky and mask._edge_refine_selection_strategy() == edge_refine.STRATEGY_DRAW:
+                for k, v in sticky.items():
+                    mask.effects_param[k] = v
 
-        # パラメータをウィジェットに反映        
+        # パラメータをウィジェットに反映
         if self.root is not None:
             self.root.set2widget_all(mask.effects, mask.effects_param)
 

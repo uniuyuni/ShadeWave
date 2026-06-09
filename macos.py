@@ -1,7 +1,7 @@
 
 import AppKit
 import fcntl
-from AppKit import NSScreen, NSApplication, NSEvent, NSBundle
+from AppKit import NSScreen, NSApplication, NSEvent, NSBundle, NSObject
 from Quartz import CGDisplayScreenSize, CGDisplayPixelsWide, CGDisplayPixelsHigh
 
 import define
@@ -382,7 +382,7 @@ macOS ネイティブダイアログを Python から呼び出すモジュール
 対応ダイアログ:
   - alert()          : 警告/情報ダイアログ
   - confirm()        : OK/キャンセル 確認ダイアログ
-  - prompt()         : テキスト入力ダイアログ
+  - prompt_native()  : テキスト入力ダイアログ（PyObjC NSAlert、要メインスレッド）
   - choose_from_list(): リスト選択ダイアログ
   - file_open()      : ファイルを開くダイアログ
   - file_save()      : ファイルを保存ダイアログ
@@ -393,7 +393,7 @@ macOS ネイティブダイアログを Python から呼び出すモジュール
   import macos_dialog as dlg
 
   dlg.alert("エラーが発生しました", title="エラー", icon="stop")
-  name = dlg.prompt("名前を入力してください", default="太郎")
+  name = dlg.prompt_native("名前を入力してください", default="太郎")
   path = dlg.file_open(file_types=["txt", "csv"])
 """
 
@@ -500,42 +500,161 @@ def confirm(
     return raw == ok_label
 
 
-def prompt(
-    message: str,
+# prompt_native の ascii_only フラグ。ダイアログは常にメインスレッドで modal（同時に1つ）の
+# ため、デリゲートからはモジュール変数で参照すれば十分。
+_prompt_ascii_only = False
+
+
+class _PromptController(NSObject):
+    """prompt_native のボタンターゲット兼テキスト入力デリゲート。"""
+
+    def ok_(self, sender):
+        NSApplication.sharedApplication().stopModalWithCode_(1)
+
+    def cancel_(self, sender):
+        NSApplication.sharedApplication().stopModalWithCode_(0)
+
+    def controlTextDidChange_(self, notification):
+        # ascii_only 指定時は非 ASCII（日本語等）を打ち込んだ端から除去する。
+        if not _prompt_ascii_only:
+            return
+        field = notification.object()
+        s = str(field.stringValue())
+        filtered = "".join(ch for ch in s if ord(ch) < 128)
+        if filtered != s:
+            field.setStringValue_(filtered)
+
+
+def prompt_native(
+    message: str = "",
     title: str = "入力",
     default: str = "",
-    hidden: bool = False,
     ok_label: str = "OK",
+    show_cancel: bool = False,
     cancel_label: str = "キャンセル",
+    ascii_only: bool = False,
+    width: float = 360.0,
 ) -> Optional[str]:
     """
-    テキスト入力ダイアログ。
+    PyObjC ネイティブのテキスト入力ダイアログ（自前 NSWindow）。
+
+    NSAlert と違いアイコン枠が無く、OK ボタンは右下に置く。FileChooser(NSOpenPanel) 同様に
+    アプリ本体プロセス内で modal 実行するため最前面でフォーカスを取れる
+    （カーソル表示・IME 有効）。**必ずメインスレッドから呼ぶこと**
+    （runModalForWindow_ がメインスレッドをブロックする）。
 
     Parameters
     ----------
-    hidden: True にするとパスワード入力（文字が隠れる）
+    show_cancel : True でキャンセルボタンを表示。押下時は None を返す。
+    ascii_only  : True で非 ASCII（日本語等）の入力を抑止する（処理側が日本語非対応な用途向け）。
 
     Returns
     -------
-    入力された文字列。キャンセル時は None。
+    入力文字列。show_cancel=True でキャンセルされた場合のみ None。
     """
-    hidden_str = "with hidden answer" if hidden else ""
-    script = f"""
-    try
-        set result to display dialog "{_escape(message)}" ¬
-            with title "{_escape(title)}" ¬
-            default answer "{_escape(default)}" ¬
-            buttons {{"{_escape(cancel_label)}", "{_escape(ok_label)}"}} ¬
-            default button "{_escape(ok_label)}" ¬
-            cancel button "{_escape(cancel_label)}" ¬
-            {hidden_str}
-        return text returned of result
-    on error
-        return ""
-    end try
-    """
-    raw = _run_applescript(script)
-    return raw if raw != "" else None
+    global _prompt_ascii_only
+    _prompt_ascii_only = ascii_only
+
+    app = NSApplication.sharedApplication()
+    controller = _PromptController.alloc().init()
+
+    # レイアウト定数（AppKit 座標は左下原点）。pad=左右余白 / pad_y=上下余白（やや詰める）
+    pad = 20.0
+    pad_y = 12.0
+    field_h = 24.0
+    btn_w, btn_h = 90.0, 32.0
+    gap = 12.0
+    win_w = float(width) + pad * 2
+
+    has_msg = bool(message)
+    msg_h = 36.0 if has_msg else 0.0
+
+    y_btn = pad_y
+    y_field = y_btn + btn_h + gap
+    y_msg = y_field + field_h + gap
+    win_h = (y_msg + msg_h if has_msg else y_field + field_h) + pad_y
+
+    win = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        AppKit.NSMakeRect(0.0, 0.0, win_w, win_h),
+        AppKit.NSWindowStyleMaskTitled,
+        AppKit.NSBackingStoreBuffered,
+        False,
+    )
+    win.setTitle_(title)
+    content = win.contentView()
+
+    # メッセージ（任意）: ラベル（枠なし・背景なし・編集不可）
+    if has_msg:
+        label = AppKit.NSTextField.alloc().initWithFrame_(
+            AppKit.NSMakeRect(pad, y_msg, win_w - pad * 2, msg_h)
+        )
+        label.setStringValue_(message)
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        content.addSubview_(label)
+
+    # 入力フィールド
+    field = AppKit.NSTextField.alloc().initWithFrame_(
+        AppKit.NSMakeRect(pad, y_field, win_w - pad * 2, field_h)
+    )
+    field.setStringValue_(default or "")
+    field.setDelegate_(controller)
+    content.addSubview_(field)
+
+    # OK ボタン（右下、Enter がデフォルト）
+    ok_x = win_w - pad - btn_w
+    ok_btn = AppKit.NSButton.alloc().initWithFrame_(
+        AppKit.NSMakeRect(ok_x, y_btn, btn_w, btn_h)
+    )
+    ok_btn.setTitle_(ok_label)
+    ok_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+    ok_btn.setTarget_(controller)
+    ok_btn.setAction_("ok:")
+    ok_btn.setKeyEquivalent_("\r")
+    content.addSubview_(ok_btn)
+
+    # キャンセルボタン（任意、OK の左、Esc）
+    if show_cancel:
+        cancel_x = ok_x - btn_w - gap
+        cancel_btn = AppKit.NSButton.alloc().initWithFrame_(
+            AppKit.NSMakeRect(cancel_x, y_btn, btn_w, btn_h)
+        )
+        cancel_btn.setTitle_(cancel_label)
+        cancel_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        cancel_btn.setTarget_(controller)
+        cancel_btn.setAction_("cancel:")
+        cancel_btn.setKeyEquivalent_("\x1b")  # Esc
+        content.addSubview_(cancel_btn)
+
+    # 表示 + 最前面化 + テキストフィールドにフォーカス + modal
+    win.center()
+    app.activateIgnoringOtherApps_(True)
+    win.makeKeyAndOrderFront_(None)
+    win.makeFirstResponder_(field)
+
+    if ascii_only:
+        # 入力コンテキストを Roman（アルファベット）入力ソースに制限し、日本語 IME 自体を抑止する。
+        # フォーカス中の実体はフィールドエディタ(NSTextView)なので、その input context に設定する。
+        # （取れない場合のフォールバックとして controlTextDidChange_ 側の非 ASCII 除去も残してある）
+        responder = win.firstResponder()
+        for obj in (responder, field):
+            try:
+                ic = obj.inputContext() if obj is not None else None
+            except Exception:
+                ic = None
+            if ic is not None:
+                ic.setAllowedInputSourceLocales_(
+                    [AppKit.NSAllRomanInputSourcesLocaleIdentifier]
+                )
+
+    code = app.runModalForWindow_(win)
+    win.orderOut_(None)
+
+    if show_cancel and code == 0:
+        return None
+    return str(field.stringValue())
 
 
 def choose_from_list(
