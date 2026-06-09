@@ -40,7 +40,7 @@ def setup_sam3(device="cpu"):
     if __model is None:
         __model = build_sam3_image_model(
             bpe_path=str(_BPE_VOCAB),
-            checkpoint_path="checkpoints/sam3.pt",
+            checkpoint_path="checkpoints/sam3.1_multiplex.pt",
             device=device,
         )
     elif not _device_equal(next(__model.parameters()).device, torch_device):

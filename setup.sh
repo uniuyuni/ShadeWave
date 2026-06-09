@@ -74,16 +74,16 @@ if [ ! -f "checkpoints/SCUNet/scunet_color_real_psnr.pth" ]; then
   pixi run python SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
 fi
 
-if [ ! -f "checkpoints/sam3.pt" ]; then
+if [ ! -f "checkpoints/sam3.1_multiplex.pt" ]; then
   if [ -z "${HF_TOKEN:-}" ] && [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
     cat >&2 <<'EOF'
-sam3.pt を Hugging Face から取得するにはアクセストークンが必要です。
+sam3.1_multiplex.pt を Hugging Face から取得するにはアクセストークンが必要です。
 
   1. トークンをまだお持ちでない場合は、次のページで作成できます（Read で可）。
      https://huggingface.co/settings/tokens
 
   2. ゲート付きモデルの場合は、利用規約に同意してアクセスを有効にしてください。
-     https://huggingface.co/facebook/sam3
+     https://huggingface.co/facebook/sam3.1
 
 続けてトークンを入力すると、このシェルに HF_TOKEN が設定され、ダウンロードが実行されます（入力は画面に表示されません）。
 EOF
@@ -102,8 +102,8 @@ EOF
     export HF_TOKEN="${HF_TOKEN_INPUT}"
     unset HF_TOKEN_INPUT
   fi
-  if ! pixi run python -c 'from huggingface_hub import hf_hub_download; hf_hub_download(repo_id="facebook/sam3", filename="sam3.pt", local_dir="checkpoints")'; then
-    echo '警告: sam3.pt を取得できませんでした。モデルページでアクセス権を確認し、トークンを再確認してください。' >&2
+  if ! pixi run python -c 'from huggingface_hub import hf_hub_download; hf_hub_download(repo_id="facebook/sam3.1", filename="sam3.1_multiplex.pt", local_dir="checkpoints")'; then
+    echo '警告: sam3.1_multiplex.pt を取得できませんでした。モデルページでアクセス権を確認し、トークンを再確認してください。' >&2
   fi
 fi
 
