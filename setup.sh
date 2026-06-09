@@ -40,13 +40,30 @@ ensure_libraw_enhanced() {
   fi
 }
 
+# 公式 facebookresearch/sam3 を pin コミットで clone し、macOS(MPS/CPU) 用
+# パッチ(patches/sam3-macos.patch)を適用する。詳細は patches/README.md 参照。
+ensure_sam3() {
+  local pin="8e451d5eb43c817b64ae7577fb7b9ae223db88a9"
+  local patch="$ROOT_DIR/patches/sam3-macos.patch"
+
+  if [ ! -d "SAM3" ]; then
+    pixi run git clone https://github.com/facebookresearch/sam3.git SAM3
+    pixi run git -C SAM3 checkout --quiet "$pin"
+    # 既に適用済みでない場合のみ当てる（再実行の冪等性）
+    if ! pixi run git -C SAM3 apply --reverse --check "$patch" >/dev/null 2>&1; then
+      pixi run git -C SAM3 apply "$patch"
+      echo "SAM3: macOS パッチを適用しました ($patch)"
+    fi
+  fi
+}
+
 mkdir -p checkpoints depth_pro/checkpoints
 
 pixi install
 
 ensure_libraw_enhanced
 
-clone_if_missing https://github.com/uniuyuni/SAM3.git SAM3
+ensure_sam3
 
 # libraw_enhanced は pixi 内でビルドした LibRaw（third_party/libraw-install）にリンクする（システム LibRaw 不要）
 echo "LibRaw を third_party/libraw-install にビルドしています..."

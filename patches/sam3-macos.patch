@@ -1,0 +1,1504 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 9df1b67..c31f92c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -59,7 +59,7 @@ notebooks = [
+     "ipycanvas",
+     "ipympl",
+     "pycocotools",
+-    "decord",
++    "decord2",
+     "opencv-python",
+     "einops",
+     "scikit-image",
+diff --git a/sam3/eval/postprocessors.py b/sam3/eval/postprocessors.py
+index 44eb103..c86dfad 100644
+--- a/sam3/eval/postprocessors.py
++++ b/sam3/eval/postprocessors.py
+@@ -154,9 +154,13 @@ class PostProcessImage(nn.Module):
+         if pred_masks is None:
+             return None
+         if self.always_interpolate_masks_on_gpu:
+-            gpu_device = target_sizes.device
+-            assert gpu_device.type == "cuda"
+-            pred_masks = pred_masks.to(device=gpu_device)
++            device = target_sizes.device
++            if device.type == "cpu":
++                logging.warning(
++                    "always_interpolate_masks_on_gpu=True but data is on CPU; "
++                    "falling back to CPU interpolation"
++                )
++            pred_masks = pred_masks.to(device=device)
+         if consistent:
+             assert keep is None, "TODO: implement?"
+             # All masks should have the same shape, expected when processing a batch of size 1
+@@ -458,9 +462,13 @@ class PostProcessAPIVideo(PostProcessImage):
+             ]  # [P,Q,...] --> [K,...]
+             meta_td = meta_td[tracked_obj_ids_idx[PROMPT_AXIS].cpu()]
+             if self.always_interpolate_masks_on_gpu:
+-                gpu_device = meta_td["original_size"].device
+-                assert gpu_device.type == "cuda"
+-                tracked_objs_outs_td = tracked_objs_outs_td.to(device=gpu_device)
++                device = meta_td["original_size"].device
++                if device.type == "cpu":
++                    logging.warning(
++                        "always_interpolate_masks_on_gpu=True but data is on CPU; "
++                        "falling back to CPU interpolation"
++                    )
++                tracked_objs_outs_td = tracked_objs_outs_td.to(device=device)
+             frame_results_td = self(
+                 tracked_objs_outs_td.unsqueeze(1),
+                 (
+diff --git a/sam3/model/decoder.py b/sam3/model/decoder.py
+index b90e55f..0a1226a 100644
+--- a/sam3/model/decoder.py
++++ b/sam3/model/decoder.py
+@@ -25,6 +25,7 @@ from .model_misc import (
+     gen_sineembed_for_position,
+     get_activation_fn,
+     get_clones,
++    get_default_device,
+     inverse_sigmoid,
+     MLP,
+ )
+@@ -70,7 +71,11 @@ class TransformerDecoderLayer(nn.Module):
+ 
+     @staticmethod
+     def with_pos_embed(tensor, pos):
+-        return tensor if pos is None else tensor + pos
++        if pos is None:
++            return tensor
++        if pos.device != tensor.device:
++            pos = pos.to(device=tensor.device)
++        return tensor + pos
+ 
+     def forward_ffn(self, tgt):
+         with torch.amp.autocast(device_type="cuda", enabled=False):
+@@ -279,8 +284,9 @@ class TransformerDecoder(nn.Module):
+ 
+             if resolution is not None and stride is not None:
+                 feat_size = resolution // stride
++                device = get_default_device()
+                 coords_h, coords_w = self._get_coords(
+-                    feat_size, feat_size, device="cuda"
++                    feat_size, feat_size, device=device
+                 )
+                 self.compilable_cord_cache = (coords_h, coords_w)
+                 self.compilable_stored_size = (feat_size, feat_size)
+@@ -344,6 +350,11 @@ class TransformerDecoder(nn.Module):
+         ):
+             # good, hitting the cache, will be compilable
+             coords_h, coords_w = self.compilable_cord_cache
++            # Ensure cache is on the same device as input (handles model.to(device) calls)
++            if coords_h.device != reference_boxes.device:
++                coords_h = coords_h.to(reference_boxes.device)
++                coords_w = coords_w.to(reference_boxes.device)
++                self.compilable_cord_cache = (coords_h, coords_w)
+         else:
+             # cache miss, will create compilation issue
+             # In case we're not compiling, we'll still rely on the dict-based cache
+diff --git a/sam3/model/edt.py b/sam3/model/edt.py
+index 498f28f..b31f017 100644
+--- a/sam3/model/edt.py
++++ b/sam3/model/edt.py
+@@ -4,9 +4,31 @@
+ 
+ """Triton kernel for euclidean distance transform (EDT)"""
+ 
++import logging
++
+ import torch
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++
++    HAS_TRITON = True
++except ImportError:
++    logging.debug(
++        "triton not found. Falling back to OpenCV for EDT computation. "
++        "Triton is not available on Windows. For Linux, install with: pip install triton"
++    )
++    HAS_TRITON = False
++    try:
++        import cv2
++        import numpy as np
++
++        HAS_OPENCV = True
++    except ImportError:
++        logging.warning(
++            "OpenCV not found. EDT computation will fail. Install with: pip install opencv-python"
++        )
++        HAS_OPENCV = False
+ 
+ """
+ Disclaimer: This implementation is not meant to be extremely efficient. A CUDA kernel would likely be more efficient.
+@@ -52,68 +74,70 @@ Overall, despite being quite naive, this implementation is roughly 5.5x faster t
+ """
+ 
+ 
+-@triton.jit
+-def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.constexpr):
+-    # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
+-    # It can be applied horizontally or vertically depending if we're doing the first or second stage.
+-    # It's parallelized across batch+row (or batch+col if horizontal=False)
+-    # TODO: perhaps the implementation can be revisited if/when local gather/scatter become available in triton
+-    batch_id = tl.program_id(axis=0)
+-    if horizontal:
+-        row_id = tl.program_id(axis=1)
+-        block_start = (batch_id * height * width) + row_id * width
+-        length = width
+-        stride = 1
+-    else:
+-        col_id = tl.program_id(axis=1)
+-        block_start = (batch_id * height * width) + col_id
+-        length = height
+-        stride = width
+-
+-    # This will be the index of the right most parabola in the envelope ("the top of the stack")
+-    k = 0
+-    for q in range(1, length):
+-        # Read the function value at the current location. Note that we're doing a singular read, not very efficient
+-        cur_input = tl.load(inputs_ptr + block_start + (q * stride))
+-        # location of the parabola on top of the stack
+-        r = tl.load(v + block_start + (k * stride))
+-        # associated boundary
+-        z_k = tl.load(z + block_start + (k * stride))
+-        # value of the function at the parabola location
+-        previous_input = tl.load(inputs_ptr + block_start + (r * stride))
+-        # intersection between the two parabolas
+-        s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
+-
+-        # we'll pop as many parabolas as required
+-        while s <= z_k and k - 1 >= 0:
+-            k = k - 1
++if HAS_TRITON:
++
++    @triton.jit
++    def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.constexpr):
++        # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
++        # It can be applied horizontally or vertically depending if we're doing the first or second stage.
++        # It's parallelized across batch+row (or batch+col if horizontal=False)
++        # TODO: perhaps the implementation can be revisited if/when local gather/scatter become available in triton
++        batch_id = tl.program_id(axis=0)
++        if horizontal:
++            row_id = tl.program_id(axis=1)
++            block_start = (batch_id * height * width) + row_id * width
++            length = width
++            stride = 1
++        else:
++            col_id = tl.program_id(axis=1)
++            block_start = (batch_id * height * width) + col_id
++            length = height
++            stride = width
++
++        # This will be the index of the right most parabola in the envelope ("the top of the stack")
++        k = 0
++        for q in range(1, length):
++            # Read the function value at the current location. Note that we're doing a singular read, not very efficient
++            cur_input = tl.load(inputs_ptr + block_start + (q * stride))
++            # location of the parabola on top of the stack
+             r = tl.load(v + block_start + (k * stride))
++            # associated boundary
+             z_k = tl.load(z + block_start + (k * stride))
++            # value of the function at the parabola location
+             previous_input = tl.load(inputs_ptr + block_start + (r * stride))
++            # intersection between the two parabolas
+             s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
+ 
+-        # Store the new one
+-        k = k + 1
+-        tl.store(v + block_start + (k * stride), q)
+-        tl.store(z + block_start + (k * stride), s)
+-        if k + 1 < length:
+-            tl.store(z + block_start + ((k + 1) * stride), 1e9)
+-
+-    # Last step, we read the envelope to find the min in every location
+-    k = 0
+-    for q in range(length):
+-        while (
+-            k + 1 < length
+-            and tl.load(
+-                z + block_start + ((k + 1) * stride), mask=(k + 1) < length, other=q
+-            )
+-            < q
+-        ):
+-            k += 1
+-        r = tl.load(v + block_start + (k * stride))
+-        d = q - r
+-        old_value = tl.load(inputs_ptr + block_start + (r * stride))
+-        tl.store(outputs_ptr + block_start + (q * stride), old_value + d * d)
++            # we'll pop as many parabolas as required
++            while s <= z_k and k - 1 >= 0:
++                k = k - 1
++                r = tl.load(v + block_start + (k * stride))
++                z_k = tl.load(z + block_start + (k * stride))
++                previous_input = tl.load(inputs_ptr + block_start + (r * stride))
++                s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
++
++            # Store the new one
++            k = k + 1
++            tl.store(v + block_start + (k * stride), q)
++            tl.store(z + block_start + (k * stride), s)
++            if k + 1 < length:
++                tl.store(z + block_start + ((k + 1) * stride), 1e9)
++
++        # Last step, we read the envelope to find the min in every location
++        k = 0
++        for q in range(length):
++            while (
++                k + 1 < length
++                and tl.load(
++                    z + block_start + ((k + 1) * stride), mask=(k + 1) < length, other=q
++                )
++                < q
++            ):
++                k += 1
++            r = tl.load(v + block_start + (k * stride))
++            d = q - r
++            old_value = tl.load(inputs_ptr + block_start + (r * stride))
++            tl.store(outputs_ptr + block_start + (q * stride), old_value + d * d)
+ 
+ 
+ def edt_triton(data: torch.Tensor):
+@@ -128,48 +152,66 @@ def edt_triton(data: torch.Tensor):
+         It should be equivalent to a batched version of cv2.distanceTransform(input, cv2.DIST_L2, 0)
+     """
+     assert data.dim() == 3
+-    assert data.is_cuda
+     B, H, W = data.shape
+     data = data.contiguous()
+ 
+-    # Allocate the "function" tensor. Implicitly the function is 0 if data[i,j]==0 else +infinity
+-    output = torch.where(data, 1e18, 0.0)
+-    assert output.is_contiguous()
+-
+-    # Scratch tensors for the parabola stacks
+-    parabola_loc = torch.zeros(B, H, W, dtype=torch.uint32, device=data.device)
+-    parabola_inter = torch.empty(B, H, W, dtype=torch.float, device=data.device)
+-    parabola_inter[:, :, 0] = -1e18
+-    parabola_inter[:, :, 1] = 1e18
+-
+-    # Grid size (number of blocks)
+-    grid = (B, H)
+-
+-    # Launch initialization kernel
+-    edt_kernel[grid](
+-        output.clone(),
+-        output,
+-        parabola_loc,
+-        parabola_inter,
+-        H,
+-        W,
+-        horizontal=True,
+-    )
+-
+-    # reset the parabola stacks
+-    parabola_loc.zero_()
+-    parabola_inter[:, :, 0] = -1e18
+-    parabola_inter[:, :, 1] = 1e18
+-
+-    grid = (B, W)
+-    edt_kernel[grid](
+-        output.clone(),
+-        output,
+-        parabola_loc,
+-        parabola_inter,
+-        H,
+-        W,
+-        horizontal=False,
+-    )
+-    # don't forget to take sqrt at the end
+-    return output.sqrt()
++    if HAS_TRITON and data.is_cuda:
++        # Use Triton implementation for CUDA
++        assert data.is_cuda
++        # Allocate the "function" tensor. Implicitly the function is 0 if data[i,j]==0 else +infinity
++        output = torch.where(data, 1e18, 0.0)
++        assert output.is_contiguous()
++
++        # Scratch tensors for the parabola stacks
++        parabola_loc = torch.zeros(B, H, W, dtype=torch.uint32, device=data.device)
++        parabola_inter = torch.empty(B, H, W, dtype=torch.float, device=data.device)
++        parabola_inter[:, :, 0] = -1e18
++        parabola_inter[:, :, 1] = 1e18
++
++        # Grid size (number of blocks)
++        grid = (B, H)
++
++        # Launch initialization kernel
++        edt_kernel[grid](
++            output.clone(),
++            output,
++            parabola_loc,
++            parabola_inter,
++            H,
++            W,
++            horizontal=True,
++        )
++
++        # reset the parabola stacks
++        parabola_loc.zero_()
++        parabola_inter[:, :, 0] = -1e18
++        parabola_inter[:, :, 1] = 1e18
++
++        grid = (B, W)
++        edt_kernel[grid](
++            output.clone(),
++            output,
++            parabola_loc,
++            parabola_inter,
++            H,
++            W,
++            horizontal=False,
++        )
++        # don't forget to take sqrt at the end
++        return output.sqrt()
++    elif HAS_OPENCV:
++        # Fallback to OpenCV implementation
++        device = data.device
++        data_np = data.cpu().numpy().astype(np.uint8)
++        output_list = []
++        for b in range(B):
++            dt = cv2.distanceTransform(data_np[b], cv2.DIST_L2, 0)
++            output_list.append(torch.from_numpy(dt).float())
++        output = torch.stack(output_list, dim=0).to(device)
++        return output
++    else:
++        raise RuntimeError(
++            "Neither triton nor OpenCV is available. Please install one of them:\n"
++            "  - For Linux: pip install triton\n"
++            "  - For Windows/fallback: pip install opencv-python"
++        )
+diff --git a/sam3/model/encoder.py b/sam3/model/encoder.py
+index 3fc9406..b28cfd8 100644
+--- a/sam3/model/encoder.py
++++ b/sam3/model/encoder.py
+@@ -112,6 +112,11 @@ class TransformerEncoderLayer(nn.Module):
+         Returns:
+             Processed tensor
+         """
++        if pos is not None and pos.device != memory.device:
++            pos = pos.to(device=memory.device)
++        if query_pos is not None and query_pos.device != tgt.device:
++            query_pos = query_pos.to(device=tgt.device)
++
+         q = k = tgt + query_pos if self.pos_enc_at_attn else tgt
+ 
+         # Self attention
+@@ -173,6 +178,11 @@ class TransformerEncoderLayer(nn.Module):
+         Returns:
+             Processed tensor
+         """
++        if pos is not None and pos.device != memory.device:
++            pos = pos.to(device=memory.device)
++        if query_pos is not None and query_pos.device != tgt.device:
++            query_pos = query_pos.to(device=tgt.device)
++
+         if dac:
+             # we only apply self attention to the first half of the queries
+             assert tgt.shape[0] % 2 == 0
+diff --git a/sam3/model/geometry_encoders.py b/sam3/model/geometry_encoders.py
+index d60ee54..ab479b0 100644
+--- a/sam3/model/geometry_encoders.py
++++ b/sam3/model/geometry_encoders.py
+@@ -11,7 +11,7 @@ from typing_extensions import override
+ 
+ from .act_ckpt_utils import activation_ckpt_wrapper
+ from .box_ops import box_cxcywh_to_xyxy
+-from .model_misc import get_clones
++from .model_misc import get_clones, tensor_to_device
+ 
+ 
+ def is_right_padded(mask):
+@@ -45,8 +45,13 @@ def concat_padded_sequences(seq1, mask1, seq2, mask2, return_index: bool = False
+     assert seq1_length == mask1.size(1)
+     assert seq2_length == mask2.size(1)
+ 
+-    torch._assert_async(is_right_padded(mask1))
+-    torch._assert_async(is_right_padded(mask2))
++    # Use regular assert on non-CUDA devices (torch._assert_async is CUDA-only)
++    if mask1.is_cuda:
++        torch._assert_async(is_right_padded(mask1))
++        torch._assert_async(is_right_padded(mask2))
++    else:
++        assert is_right_padded(mask1), "mask1 must be right-padded"
++        assert is_right_padded(mask2), "mask2 must be right-padded"
+ 
+     actual_seq1_lengths = (~mask1).sum(dim=-1)
+     actual_seq2_lengths = (~mask2).sum(dim=-1)
+@@ -595,7 +600,7 @@ class SequenceGeometryEncoder(nn.Module):
+             assert points_embed is None
+             points_embed = proj
+ 
+-        if self.points_pool_project is not None:
++        if self.points_pool_project is not None and n_points > 0:
+             # points are [Num_points, bs, 2], normalized in [0, 1]
+             # the grid needs to be [Bs, H_out, W_out, 2] normalized in [-1,1]
+             # Will take H_out = num_points, w_out = 1
+@@ -645,7 +650,7 @@ class SequenceGeometryEncoder(nn.Module):
+             # We need to denormalize, and convert to [x, y, x, y]
+             boxes_xyxy = box_cxcywh_to_xyxy(boxes)
+             scale = torch.tensor([W, H, W, H], dtype=boxes_xyxy.dtype)
+-            scale = scale.pin_memory().to(device=boxes_xyxy.device, non_blocking=True)
++            scale = tensor_to_device(scale, boxes_xyxy.device)
+             scale = scale.view(1, 1, 4)
+             boxes_xyxy = boxes_xyxy * scale
+             sampled = torchvision.ops.roi_align(
+diff --git a/sam3/model/io_utils.py b/sam3/model/io_utils.py
+index b1b803c..cbd7c77 100644
+--- a/sam3/model/io_utils.py
++++ b/sam3/model/io_utils.py
+@@ -17,6 +17,7 @@ import torch.nn.functional as F
+ import torchvision.transforms.functional as TF
+ from PIL import Image
+ from sam3.logger import get_logger
++from sam3.model.model_misc import get_default_device
+ from tqdm import tqdm
+ 
+ logger = get_logger(__name__)
+@@ -28,10 +29,18 @@ IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"]
+ VIDEO_EXTS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+ 
+ 
++def _get_float_dtype(device):
++    """Return appropriate float dtype for the device (float32 for CPU, float16 for GPU)."""
++    if device.type == 'cpu':
++        return torch.float32
++    return torch.float16
++
++
+ def load_resource_as_video_frames(
+     resource_path: Union[str, list],
+     image_size: int,
+     offload_video_to_cpu: bool,
++    device=None,
+     img_mean: tuple[float, float, float] = (0.5, 0.5, 0.5),
+     img_std: tuple[float, float, float] = (0.5, 0.5, 0.5),
+     async_loading_frames: bool = False,
+@@ -41,9 +50,12 @@ def load_resource_as_video_frames(
+     Load video frames from either a video or an image (as a single-frame video).
+     Alternatively, if input is a list of PIL images, convert its format
+     """
++    if device is None:
++        device = get_default_device()
++    float_dtype = _get_float_dtype(device)
+     if isinstance(resource_path, list):
+-        img_mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
+-        img_std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
++        img_mean = torch.tensor(img_mean, dtype=float_dtype)[:, None, None]
++        img_std = torch.tensor(img_std, dtype=float_dtype)[:, None, None]
+         assert all(isinstance(img_pil, Image.Image) for img_pil in resource_path)
+         assert len(resource_path) is not None
+         orig_height, orig_width = resource_path[0].size
+@@ -57,15 +69,14 @@ def load_resource_as_video_frames(
+             assert img_np.dtype == np.uint8, "np.uint8 is expected for JPEG images"
+             img_np = img_np / 255.0
+             img = torch.from_numpy(img_np).permute(2, 0, 1)
+-            # float16 precision should be sufficient for image tensor storage
+-            img = img.to(dtype=torch.float16)
++            img = img.to(dtype=float_dtype)
+             # normalize by mean and std
+             img -= img_mean
+             img /= img_std
+             images.append(img)
+         images = torch.stack(images)
+         if not offload_video_to_cpu:
+-            images = images.cuda()
++            images = images.to(device)
+         return images, orig_height, orig_width
+ 
+     is_image = (
+@@ -77,6 +88,7 @@ def load_resource_as_video_frames(
+             image_path=resource_path,
+             image_size=image_size,
+             offload_video_to_cpu=offload_video_to_cpu,
++            device=device,
+             img_mean=img_mean,
+             img_std=img_std,
+         )
+@@ -85,6 +97,7 @@ def load_resource_as_video_frames(
+             video_path=resource_path,
+             image_size=image_size,
+             offload_video_to_cpu=offload_video_to_cpu,
++            device=device,
+             img_mean=img_mean,
+             img_std=img_std,
+             async_loading_frames=async_loading_frames,
+@@ -96,19 +109,23 @@ def load_image_as_single_frame_video(
+     image_path: str,
+     image_size: int,
+     offload_video_to_cpu: bool,
++    device=None,
+     img_mean: tuple[float, float, float] = (0.5, 0.5, 0.5),
+     img_std: tuple[float, float, float] = (0.5, 0.5, 0.5),
+ ) -> tuple[torch.Tensor, int, int]:
+     """Load an image as a single-frame video."""
++    if device is None:
++        device = get_default_device()
++    float_dtype = _get_float_dtype(device)
+     images, image_height, image_width = _load_img_as_tensor(image_path, image_size)
+-    images = images.unsqueeze(0).half()
++    images = images.unsqueeze(0).to(float_dtype)
+ 
+-    img_mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
+-    img_std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
++    img_mean = torch.tensor(img_mean, dtype=float_dtype)[:, None, None]
++    img_std = torch.tensor(img_std, dtype=float_dtype)[:, None, None]
+     if not offload_video_to_cpu:
+-        images = images.cuda()
+-        img_mean = img_mean.cuda()
+-        img_std = img_std.cuda()
++        images = images.to(device)
++        img_mean = img_mean.to(device)
++        img_std = img_std.to(device)
+     # normalize by mean and std
+     images -= img_mean
+     images /= img_std
+@@ -119,6 +136,7 @@ def load_video_frames(
+     video_path,
+     image_size,
+     offload_video_to_cpu,
++    device=None,
+     img_mean=(0.5, 0.5, 0.5),
+     img_std=(0.5, 0.5, 0.5),
+     async_loading_frames=False,
+@@ -128,24 +146,33 @@ def load_video_frames(
+     Load the video frames from video_path. The frames are resized to image_size as in
+     the model and are loaded to GPU if offload_video_to_cpu=False. This is used by the demo.
+     """
++    if device is None:
++        device = get_default_device()
+     assert isinstance(video_path, str)
+     if video_path.startswith("<load-dummy-video"):
+         # Check for pattern <load-dummy-video-N> where N is an integer
+         match = re.match(r"<load-dummy-video-(\d+)>", video_path)
+         num_frames = int(match.group(1)) if match else 60
+-        return load_dummy_video(image_size, offload_video_to_cpu, num_frames=num_frames)
++        return load_dummy_video(
++            image_size, offload_video_to_cpu, device, num_frames=num_frames
++        )
+     elif video_path.startswith("<load-zero-video"):
+         # Check for pattern <load-zero-video-N> where N is an integer
+         match = re.match(r"<load-zero-video-(\d+)>", video_path)
+         num_frames = int(match.group(1)) if match else 60
+         return load_dummy_video(
+-            image_size, offload_video_to_cpu, num_frames=num_frames, do_zeros=True
++            image_size,
++            offload_video_to_cpu,
++            device,
++            num_frames=num_frames,
++            do_zeros=True,
+         )
+     elif os.path.isdir(video_path):
+         return load_video_frames_from_image_folder(
+             image_folder=video_path,
+             image_size=image_size,
+             offload_video_to_cpu=offload_video_to_cpu,
++            device=device,
+             img_mean=img_mean,
+             img_std=img_std,
+             async_loading_frames=async_loading_frames,
+@@ -155,6 +182,7 @@ def load_video_frames(
+             video_path=video_path,
+             image_size=image_size,
+             offload_video_to_cpu=offload_video_to_cpu,
++            device=device,
+             img_mean=img_mean,
+             img_std=img_std,
+             async_loading_frames=async_loading_frames,
+@@ -184,6 +212,7 @@ def load_video_frames_from_image_folder(
+     image_folder,
+     image_size,
+     offload_video_to_cpu,
++    device,
+     img_mean,
+     img_std,
+     async_loading_frames,
+@@ -191,6 +220,7 @@ def load_video_frames_from_image_folder(
+     """
+     Load the video frames from a directory of image files ("<frame_index>.<img_ext>" format)
+     """
++    float_dtype = _get_float_dtype(device)
+     frame_names = [
+         p
+         for p in os.listdir(image_folder)
+@@ -209,26 +239,25 @@ def load_video_frames_from_image_folder(
+     if num_frames == 0:
+         raise RuntimeError(f"no images found in {image_folder}")
+     img_paths = [os.path.join(image_folder, frame_name) for frame_name in frame_names]
+-    img_mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
+-    img_std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
++    img_mean = torch.tensor(img_mean, dtype=float_dtype)[:, None, None]
++    img_std = torch.tensor(img_std, dtype=float_dtype)[:, None, None]
+ 
+     if async_loading_frames:
+         lazy_images = AsyncImageFrameLoader(
+-            img_paths, image_size, offload_video_to_cpu, img_mean, img_std
++            img_paths, image_size, offload_video_to_cpu, device, img_mean, img_std
+         )
+         return lazy_images, lazy_images.video_height, lazy_images.video_width
+ 
+-    # float16 precision should be sufficient for image tensor storage
+-    images = torch.zeros(num_frames, 3, image_size, image_size, dtype=torch.float16)
++    images = torch.zeros(num_frames, 3, image_size, image_size, dtype=float_dtype)
+     video_height, video_width = None, None
+     for n, img_path in enumerate(
+         tqdm(img_paths, desc=f"frame loading (image folder) [rank={RANK}]")
+     ):
+         images[n], video_height, video_width = _load_img_as_tensor(img_path, image_size)
+     if not offload_video_to_cpu:
+-        images = images.cuda()
+-        img_mean = img_mean.cuda()
+-        img_std = img_std.cuda()
++        images = images.to(device)
++        img_mean = img_mean.to(device)
++        img_std = img_std.to(device)
+     # normalize by mean and std
+     images -= img_mean
+     images /= img_std
+@@ -239,6 +268,7 @@ def load_video_frames_from_video_file(
+     video_path,
+     image_size,
+     offload_video_to_cpu,
++    device,
+     img_mean,
+     img_std,
+     async_loading_frames,
+@@ -254,6 +284,7 @@ def load_video_frames_from_video_file(
+             img_mean=img_mean,
+             img_std=img_std,
+             offload_video_to_cpu=offload_video_to_cpu,
++            device=device,
+         )
+     elif video_loader_type == "torchcodec":
+         logger.info("Using torchcodec to load video file")
+@@ -265,6 +296,7 @@ def load_video_frames_from_video_file(
+             img_std=img_std,
+             gpu_acceleration=gpu_acceleration,
+             gpu_device=gpu_device,
++            device=device,
+         )
+         # The `AsyncVideoFileLoaderWithTorchCodec` class always loads the videos asynchronously,
+         # so we just wait for its loading thread to finish if async_loading_frames=False.
+@@ -283,6 +315,7 @@ def load_video_frames_from_video_file_using_cv2(
+     img_mean: tuple = (0.5, 0.5, 0.5),
+     img_std: tuple = (0.5, 0.5, 0.5),
+     offload_video_to_cpu: bool = False,
++    device: torch.device = None,
+ ) -> torch.Tensor:
+     """
+     Load video from path, convert to normalized tensor with specified preprocessing
+@@ -294,10 +327,14 @@ def load_video_frames_from_video_file_using_cv2(
+         img_std: Normalization standard deviation (RGB)
+ 
+     Returns:
+-        torch.Tensor: Preprocessed video tensor in shape (T, C, H, W) with float16 dtype
++        torch.Tensor: Preprocessed video tensor in shape (T, C, H, W)
+     """
+     import cv2  # delay OpenCV import to avoid unnecessary dependency
+ 
++    if device is None:
++        device = get_default_device()
++    float_dtype = _get_float_dtype(device)
++
+     # Initialize video capture
+     cap = cv2.VideoCapture(video_path)
+     if not cap.isOpened():
+@@ -335,29 +372,32 @@ def load_video_frames_from_video_file_using_cv2(
+     frames_np = np.stack(frames, axis=0).astype(np.float32)  # (T, H, W, C)
+     video_tensor = torch.from_numpy(frames_np).permute(0, 3, 1, 2)  # (T, C, H, W)
+ 
+-    img_mean = torch.tensor(img_mean, dtype=torch.float16).view(1, 3, 1, 1)
+-    img_std = torch.tensor(img_std, dtype=torch.float16).view(1, 3, 1, 1)
++    img_mean = torch.tensor(img_mean, dtype=float_dtype).view(1, 3, 1, 1)
++    img_std = torch.tensor(img_std, dtype=float_dtype).view(1, 3, 1, 1)
+     if not offload_video_to_cpu:
+-        video_tensor = video_tensor.cuda()
+-        img_mean = img_mean.cuda()
+-        img_std = img_std.cuda()
++        video_tensor = video_tensor.to(device)
++        img_mean = img_mean.to(device)
++        img_std = img_std.to(device)
+     # normalize by mean and std
+     video_tensor -= img_mean
+     video_tensor /= img_std
+     return video_tensor, original_height, original_width
+ 
+ 
+-def load_dummy_video(image_size, offload_video_to_cpu, num_frames=60, do_zeros=False):
++def load_dummy_video(
++    image_size, offload_video_to_cpu, device, num_frames=60, do_zeros=False
++):
+     """
+     Load a dummy video with random frames for testing and compilation warmup purposes.
+     """
++    float_dtype = _get_float_dtype(device)
+     video_height, video_width = 480, 640  # dummy original video sizes
+     if not do_zeros:
+-        images = torch.randn(num_frames, 3, image_size, image_size, dtype=torch.float16)
++        images = torch.randn(num_frames, 3, image_size, image_size, dtype=float_dtype)
+     else:
+-        images = torch.zeros(num_frames, 3, image_size, image_size, dtype=torch.float16)
++        images = torch.zeros(num_frames, 3, image_size, image_size, dtype=float_dtype)
+     if not offload_video_to_cpu:
+-        images = images.cuda()
++        images = images.to(device)
+     return images, video_height, video_width
+ 
+ 
+@@ -377,10 +417,11 @@ class AsyncImageFrameLoader:
+     A list of video frames to be load asynchronously without blocking session start.
+     """
+ 
+-    def __init__(self, img_paths, image_size, offload_video_to_cpu, img_mean, img_std):
++    def __init__(self, img_paths, image_size, offload_video_to_cpu, device, img_mean, img_std):
+         self.img_paths = img_paths
+         self.image_size = image_size
+         self.offload_video_to_cpu = offload_video_to_cpu
++        self.device = device
+         self.img_mean = img_mean
+         self.img_std = img_std
+         # items in `self._images` will be loaded asynchronously
+@@ -422,13 +463,12 @@ class AsyncImageFrameLoader:
+         )
+         self.video_height = video_height
+         self.video_width = video_width
+-        # float16 precision should be sufficient for image tensor storage
+-        img = img.to(dtype=torch.float16)
++        img = img.to(dtype=_get_float_dtype(self.device))
+         # normalize by mean and std
+         img -= self.img_mean
+         img /= self.img_std
+         if not self.offload_video_to_cpu:
+-            img = img.cuda()
++            img = img.to(self.device)
+         self.images[index] = img
+         return img
+ 
+@@ -547,6 +587,7 @@ class AsyncVideoFileLoaderWithTorchCodec:
+         img_std: Union[tuple[float, float, float], torch.Tensor],
+         gpu_acceleration: bool = True,
+         gpu_device: Optional[torch.device] = None,
++        device=None,
+         use_rand_seek_in_loading: bool = False,
+     ) -> None:
+         # Check and possibly infer the output device (and also get its GPU id when applicable)
+@@ -554,31 +595,34 @@ class AsyncVideoFileLoaderWithTorchCodec:
+         gpu_id = (
+             gpu_device.index
+             if gpu_device is not None and gpu_device.index is not None
+-            else torch.cuda.current_device()
++            else (torch.cuda.current_device() if torch.cuda.is_available() else None)
+         )
+-        if offload_video_to_cpu:
++        if device is not None:
++            out_device = device
++        elif offload_video_to_cpu:
+             out_device = torch.device("cpu")
+         else:
+             out_device = torch.device("cuda") if gpu_device is None else gpu_device
+         self.out_device = out_device
+-        self.gpu_acceleration = gpu_acceleration
++        float_dtype = _get_float_dtype(out_device)
++        self.gpu_acceleration = gpu_acceleration and out_device.type == "cuda"
+         self.gpu_id = gpu_id
+         self.image_size = image_size
+         self.offload_video_to_cpu = offload_video_to_cpu
+         if not isinstance(img_mean, torch.Tensor):
+-            img_mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
++            img_mean = torch.tensor(img_mean, dtype=float_dtype)[:, None, None]
+         self.img_mean = img_mean
+         if not isinstance(img_std, torch.Tensor):
+-            img_std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
++            img_std = torch.tensor(img_std, dtype=float_dtype)[:, None, None]
+         self.img_std = img_std
+ 
+-        if gpu_acceleration:
++        if self.gpu_acceleration:
+             self.img_mean = self.img_mean.to(f"cuda:{self.gpu_id}")
+             self.img_std = self.img_std.to(f"cuda:{self.gpu_id}")
+             decoder_option = {"device": f"cuda:{self.gpu_id}"}
+         else:
+-            self.img_mean = self.img_mean.cpu()
+-            self.img_std = self.img_std.cpu()
++            self.img_mean = self.img_mean.to(out_device)
++            self.img_std = self.img_std.to(out_device)
+             decoder_option = {"num_threads": 1}  # use a single thread to save memory
+ 
+         self.rank = int(os.environ.get("RANK", "0"))
+@@ -598,7 +642,7 @@ class AsyncVideoFileLoaderWithTorchCodec:
+             3,
+             self.image_size,
+             self.image_size,
+-            dtype=torch.float16,
++            dtype=float_dtype,
+             device=self.out_device,
+         )
+         # catch and raise any exceptions in the async loading thread
+@@ -699,15 +743,14 @@ class AsyncVideoFileLoaderWithTorchCodec:
+             mode="bicubic",
+             align_corners=False,
+         )[0]
+-        # float16 precision should be sufficient for image tensor storage
+-        frame_resized = frame_resized.half()  # uint8 -> float16
++        frame_resized = frame_resized.to(dtype=_get_float_dtype(self.out_device))
+         frame_resized /= 255
+         frame_resized -= self.img_mean
+         frame_resized /= self.img_std
+         if self.offload_video_to_cpu:
+             frame_resized = frame_resized.cpu()
+         elif frame_resized.device != self.out_device:
+-            frame_resized = frame_resized.to(device=self.out_device, non_blocking=True)
++            frame_resized = frame_resized.to(device=self.out_device, non_blocking=torch.cuda.is_available())
+         return frame_resized
+ 
+     def __getitem__(self, index: int) -> torch.Tensor:
+diff --git a/sam3/model/model_misc.py b/sam3/model/model_misc.py
+index 56d51c2..707f2aa 100644
+--- a/sam3/model/model_misc.py
++++ b/sam3/model/model_misc.py
+@@ -37,6 +37,33 @@ def inverse_sigmoid(x, eps=1e-3):
+     return torch.log(x1 / x2)
+ 
+ 
++def get_default_device() -> torch.device:
++    """
++    Get the default device for tensor operations.
++
++    Returns cuda if available, then mps if available, otherwise cpu.
++    """
++    if torch.cuda.is_available():
++        return torch.device("cuda")
++    elif torch.backends.mps.is_available():
++        return torch.device("mps")
++    else:
++        return torch.device("cpu")
++
++
++def tensor_to_device(tensor: Tensor, device: torch.device) -> Tensor:
++    """
++    Transfer a tensor to the target device efficiently.
++
++    For CUDA devices, uses pin_memory() for faster CPU→GPU transfers.
++    For other devices (MPS, CPU), uses direct .to() transfer.
++    """
++    if device.type == "cuda":
++        return tensor.pin_memory().to(device=device, non_blocking=True)
++    else:
++        return tensor.to(device=device)
++
++
+ def get_sdpa_settings():
+     if torch.cuda.is_available():
+         old_gpu = torch.cuda.get_device_properties(0).major < 7
+diff --git a/sam3/model/position_encoding.py b/sam3/model/position_encoding.py
+index f38c62b..4465bb3 100644
+--- a/sam3/model/position_encoding.py
++++ b/sam3/model/position_encoding.py
+@@ -8,6 +8,8 @@ from typing import Optional
+ import torch
+ from torch import nn
+ 
++from .model_misc import get_default_device
++
+ 
+ class PositionEmbeddingSine(nn.Module):
+     """
+@@ -51,8 +53,9 @@ class PositionEmbeddingSine(nn.Module):
+                 (int(precompute_resolution // 28), int(precompute_resolution // 28)),
+                 (precompute_resolution // 32, precompute_resolution // 32),
+             ]
++            device = get_default_device()
+             for size in precompute_sizes:
+-                tensors = torch.zeros((1, 1) + size, device="cuda")
++                tensors = torch.zeros((1, 1) + size, device=device)
+                 self.forward(tensors)
+                 # further clone and detach it in the cache (just to be safe)
+                 self.cache[size] = self.cache[size].clone().detach()
+diff --git a/sam3/model/sam3_image.py b/sam3/model/sam3_image.py
+index f1f63cf..2f796f1 100644
+--- a/sam3/model/sam3_image.py
++++ b/sam3/model/sam3_image.py
+@@ -120,7 +120,10 @@ class Sam3Image(torch.nn.Module):
+                 # If this assert fails, it likely means we're requesting different img_ids (perhaps a different frame?)
+                 # We currently don't expect this to happen. We could technically trigger a recompute here,
+                 # but likely at the cost of a cpu<->gpu sync point, which would deteriorate perf
+-                torch._assert_async((img_ids >= 0).all())
++                if img_ids.is_cuda:
++                    torch._assert_async((img_ids >= 0).all())
++                else:
++                    assert (img_ids >= 0).all(), "img_ids must be non-negative"
+ 
+             vis_feats = backbone_out["backbone_fpn"][-self.num_feature_levels :]
+             vis_pos_enc = backbone_out["vision_pos_enc"][-self.num_feature_levels :]
+@@ -861,7 +864,10 @@ class Sam3ImageOnVideoMultiGPU(Sam3Image):
+             assert len(feats["backbone_fpn"]) == 3  # SAM2 backbone always have 3 levels
+             # cast the SAM2 backbone features to bfloat16 for all-gather (this is usually
+             # a no-op, SAM2 backbone features are likely already in bfloat16 due to AMP)
+-            backbone_fpn_bf16 = [x.to(torch.bfloat16) for x in feats["backbone_fpn"]]
++            if torch.cuda.is_available():
++                backbone_fpn_bf16 = [x.to(torch.bfloat16) for x in feats["backbone_fpn"]]
++            else:
++                backbone_fpn_bf16 = list(feats["backbone_fpn"])
+             fpn0, fpn_handle0 = self._gather_tensor(backbone_fpn_bf16[0])
+             fpn1, fpn_handle1 = self._gather_tensor(backbone_fpn_bf16[1])
+             fpn2, fpn_handle2 = self._gather_tensor(backbone_fpn_bf16[2])
+diff --git a/sam3/model/sam3_image_processor.py b/sam3/model/sam3_image_processor.py
+index 83bbb0d..371e7ff 100644
+--- a/sam3/model/sam3_image_processor.py
++++ b/sam3/model/sam3_image_processor.py
+@@ -8,15 +8,18 @@ import PIL
+ import torch
+ from sam3.model import box_ops
+ from sam3.model.data_misc import FindStage, interpolate
++from sam3.model.model_misc import get_default_device
+ from torchvision.transforms import v2
+ 
+ 
+ class Sam3Processor:
+     """ """
+ 
+-    def __init__(self, model, resolution=1008, device="cuda", confidence_threshold=0.5):
++    def __init__(self, model, resolution=1008, device=None, confidence_threshold=0.5):
+         self.model = model
+         self.resolution = resolution
++        if device is None:
++            device = get_default_device()
+         self.device = device
+         self.transform = v2.Compose(
+             [
+@@ -47,7 +50,7 @@ class Sam3Processor:
+         if isinstance(image, PIL.Image.Image):
+             width, height = image.size
+         elif isinstance(image, (torch.Tensor, np.ndarray)):
+-            height, width = image.shape[-2:]
++            height, width = image.shape[:2]
+         else:
+             raise ValueError("Image must be a PIL image or a tensor")
+ 
+@@ -167,6 +170,7 @@ class Sam3Processor:
+         for key in keys_to_del:
+             if key in state:
+                 del state[key]
++        state["geometric_prompt"] = self.model._get_dummy_prompt()
+ 
+     @torch.inference_mode()
+     def set_confidence_threshold(self, threshold: float, state=None):
+diff --git a/sam3/model/sam3_tracker_base.py b/sam3/model/sam3_tracker_base.py
+index c7f40b7..c1e13a1 100644
+--- a/sam3/model/sam3_tracker_base.py
++++ b/sam3/model/sam3_tracker_base.py
+@@ -7,6 +7,7 @@ import logging
+ import torch
+ import torch.nn.functional as F
+ from sam3.model.memory import SimpleMaskEncoder
++from sam3.model.model_misc import tensor_to_device
+ from sam3.model.sam3_tracker_utils import get_1d_sine_pe, select_closest_cond_frames
+ from sam3.sam.mask_decoder import MaskDecoder, MLP
+ from sam3.sam.prompt_encoder import PromptEncoder
+@@ -164,7 +165,7 @@ class Sam3TrackerBase(torch.nn.Module):
+ 
+         t_diff_max = max_abs_pos - 1 if max_abs_pos is not None else 1
+         pos_enc = (
+-            torch.tensor(rel_pos_list).pin_memory().to(device=device, non_blocking=True)
++            tensor_to_device(torch.tensor(rel_pos_list), device)
+             / t_diff_max
+         )
+         tpos_dim = self.hidden_dim
+@@ -652,15 +653,15 @@ class Sam3TrackerBase(torch.nn.Module):
+                 if prev is None:
+                     continue  # skip padding frames
+                 # "maskmem_features" might have been offloaded to CPU in demo use cases,
+-                # so we load it back to GPU (it's a no-op if it's already on GPU).
+-                feats = prev["maskmem_features"].cuda(non_blocking=True)
++                # so we load it back to device (it's a no-op if it's already on device).
++                feats = prev["maskmem_features"].to(device, non_blocking=torch.cuda.is_available())
+                 seq_len = feats.shape[-2] * feats.shape[-1]
+                 to_cat_prompt.append(feats.flatten(2).permute(2, 0, 1))
+                 to_cat_prompt_mask.append(
+                     torch.zeros(B, seq_len, device=device, dtype=bool)
+                 )
+                 # Spatial positional encoding (it might have been offloaded to CPU in eval)
+-                maskmem_enc = prev["maskmem_pos_enc"][-1].cuda()
++                maskmem_enc = prev["maskmem_pos_enc"][-1].to(device)
+                 maskmem_enc = maskmem_enc.flatten(2).permute(2, 0, 1)
+ 
+                 if (
+@@ -789,6 +790,13 @@ class Sam3TrackerBase(torch.nn.Module):
+             feat_sizes=feat_sizes,
+             num_obj_ptr_tokens=num_obj_ptr_tokens,
+         )
++
++        # MPS memory management: Synchronize and clear caches after encoder
++        # to prevent MPSGraph command queue buildup and memory leaks
++        if device.type == "mps":
++            torch.mps.synchronize()
++            torch.mps.empty_cache()
++
+         # reshape the output (HW)BC => BCHW
+         pix_feat_with_mem = encoder_out["memory"].permute(1, 2, 0).view(B, C, H, W)
+         return pix_feat_with_mem
+diff --git a/sam3/model/sam3_tracker_utils.py b/sam3/model/sam3_tracker_utils.py
+index 74e9e12..0f40d5f 100644
+--- a/sam3/model/sam3_tracker_utils.py
++++ b/sam3/model/sam3_tracker_utils.py
+@@ -6,7 +6,15 @@ import numpy as np
+ import torch
+ import torch.nn.functional as F
+ from numpy.typing import NDArray
+-from sam3.model.edt import edt_triton
++
++# Triton is only available on CUDA (not Apple Silicon/MPS)
++try:
++    from sam3.model.edt import edt_triton
++
++    _HAS_TRITON = True
++except ImportError:
++    _HAS_TRITON = False
++    edt_triton = None
+ 
+ 
+ def sample_box_points(
+@@ -149,6 +157,10 @@ def sample_one_point_from_error_center(gt_masks, pred_masks, padding=True):
+     - points: [B, 1, 2], dtype=torch.float, contains (x, y) coordinates of each sampled point
+     - labels: [B, 1], dtype=torch.int32, where 1 means positive clicks and 0 means negative clicks
+     """
++    # Fall back to slow (OpenCV-based) implementation if Triton is not available
++    if not _HAS_TRITON or not gt_masks.is_cuda:
++        return sample_one_point_from_error_center_slow(gt_masks, pred_masks, padding)
++
+     if pred_masks is None:
+         pred_masks = torch.zeros_like(gt_masks)
+     assert gt_masks.dtype == torch.bool and gt_masks.size(1) == 1
+diff --git a/sam3/model/sam3_tracking_predictor.py b/sam3/model/sam3_tracking_predictor.py
+index 43b068b..d85943a 100644
+--- a/sam3/model/sam3_tracking_predictor.py
++++ b/sam3/model/sam3_tracking_predictor.py
+@@ -47,8 +47,11 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+         self.max_point_num_in_prompt_enc = max_point_num_in_prompt_enc
+         self.non_overlap_masks_for_output = non_overlap_masks_for_output
+ 
+-        self.bf16_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+-        self.bf16_context.__enter__()  # keep using for the entire model process
++        if torch.cuda.is_available():
++            self.bf16_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
++            self.bf16_context.__enter__()  # keep using for the entire model process
++        else:
++            self.bf16_context = None
+ 
+         self.iter_use_prev_mask_pred = True
+         self.add_all_frames_to_correct_as_cond = True
+@@ -76,7 +79,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+         # and from 24 to 21 when tracking two objects)
+         inference_state["offload_state_to_cpu"] = offload_state_to_cpu
+         inference_state["device"] = self.device
+-        if offload_state_to_cpu:
++        if offload_state_to_cpu or not torch.cuda.is_available():
+             inference_state["storage_device"] = torch.device("cpu")
+         else:
+             inference_state["storage_device"] = torch.device("cuda")
+@@ -301,7 +304,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+                     prev_out = obj_output_dict["non_cond_frame_outputs"].get(frame_idx)
+ 
+             if prev_out is not None and prev_out["pred_masks"] is not None:
+-                prev_sam_mask_logits = prev_out["pred_masks"].cuda(non_blocking=True)
++                prev_sam_mask_logits = prev_out["pred_masks"].to(inference_state["device"], non_blocking=torch.cuda.is_available())
+                 # Clamp the scale of prev_sam_mask_logits to avoid rare numerical issues.
+                 prev_sam_mask_logits = torch.clamp(prev_sam_mask_logits, -32.0, 32.0)
+         current_out, _ = self._run_single_frame_inference(
+@@ -470,7 +473,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+         device = inference_state["device"]
+         video_H = inference_state["video_height"]
+         video_W = inference_state["video_width"]
+-        any_res_masks = any_res_masks.to(device, non_blocking=True)
++        any_res_masks = any_res_masks.to(device, non_blocking=torch.cuda.is_available())
+         if any_res_masks.shape[-2:] == (video_H, video_W):
+             video_res_masks = any_res_masks
+         else:
+@@ -610,7 +613,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+         if run_mem_encoder:
+             device = inference_state["device"]
+             high_res_masks = torch.nn.functional.interpolate(
+-                consolidated_out["pred_masks"].to(device, non_blocking=True),
++                consolidated_out["pred_masks"].to(device, non_blocking=torch.cuda.is_available()),
+                 size=(self.image_size, self.image_size),
+                 mode="bilinear",
+                 align_corners=False,
+@@ -870,6 +873,12 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+             low_res_masks, video_res_masks = self._get_orig_video_res_output(
+                 inference_state, pred_masks
+             )
++
++            # MPS synchronization to prevent command queue buildup and memory leaks
++            # This forces completion of all pending MPS operations before continuing
++            if inference_state["device"].type == "mps":
++                torch.mps.synchronize()
++
+             yield frame_idx, obj_ids, low_res_masks, video_res_masks, obj_scores
+ 
+     def _add_output_per_object(
+@@ -1022,7 +1031,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+                 )
+             else:
+                 # Cache miss -- we will run inference on a single image
+-                image = inference_state["images"][frame_idx].cuda().float().unsqueeze(0)
++                image = inference_state["images"][frame_idx].to(inference_state["device"]).float().unsqueeze(0)
+                 backbone_out = self.forward_image(image)
+                 # Cache the most recent frame's feature (for repeated interactions with
+                 # a frame; we can use an LRU cache for more frames in the future).
+@@ -1094,10 +1103,11 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+         storage_device = inference_state["storage_device"]
+         maskmem_features = current_out["maskmem_features"]
+         if maskmem_features is not None:
+-            maskmem_features = maskmem_features.to(torch.bfloat16)
+-            maskmem_features = maskmem_features.to(storage_device, non_blocking=True)
++            if torch.cuda.is_available():
++                maskmem_features = maskmem_features.to(torch.bfloat16)
++            maskmem_features = maskmem_features.to(storage_device, non_blocking=torch.cuda.is_available())
+         pred_masks_gpu = current_out["pred_masks"]
+-        pred_masks = pred_masks_gpu.to(storage_device, non_blocking=True)
++        pred_masks = pred_masks_gpu.to(storage_device, non_blocking=torch.cuda.is_available())
+         # "maskmem_pos_enc" is the same across frames, so we only need to store one copy of it
+         maskmem_pos_enc = self._get_maskmem_pos_enc(inference_state, current_out)
+         # object pointer is a small tensor, so we always keep it on GPU memory for fast access
+@@ -1145,8 +1155,9 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
+ 
+         # optionally offload the output to CPU memory to save GPU space
+         storage_device = inference_state["storage_device"]
+-        maskmem_features = maskmem_features.to(torch.bfloat16)
+-        maskmem_features = maskmem_features.to(storage_device, non_blocking=True)
++        if torch.cuda.is_available():
++            maskmem_features = maskmem_features.to(torch.bfloat16)
++        maskmem_features = maskmem_features.to(storage_device, non_blocking=torch.cuda.is_available())
+         # "maskmem_pos_enc" is the same across frames, so we only need to store one copy of it
+         maskmem_pos_enc = self._get_maskmem_pos_enc(
+             inference_state, {"maskmem_pos_enc": maskmem_pos_enc}
+diff --git a/sam3/model/sam3_video_inference.py b/sam3/model/sam3_video_inference.py
+index 375d9ec..bb75598 100644
+--- a/sam3/model/sam3_video_inference.py
++++ b/sam3/model/sam3_video_inference.py
+@@ -16,6 +16,7 @@ from sam3.model.box_ops import box_xywh_to_cxcywh, box_xyxy_to_xywh
+ from sam3.model.data_misc import BatchedDatapoint, convert_my_tensors, FindStage
+ from sam3.model.geometry_encoders import Prompt
+ from sam3.model.io_utils import IMAGE_EXTS, load_resource_as_video_frames
++from sam3.model.model_misc import tensor_to_device
+ from sam3.model.sam3_tracker_utils import fill_holes_in_mask_scores
+ from sam3.model.sam3_video_base import MaskletConfirmationStatus, Sam3VideoBase
+ from sam3.model.utils.misc import copy_data_to_device
+@@ -61,10 +62,14 @@ class Sam3VideoInference(Sam3VideoBase):
+         video_loader_type="cv2",
+     ):
+         """Initialize an inference state from `resource_path` (an image or a video)."""
++        # Get actual current device from model parameters
++        device = next(self.parameters()).device
++
+         images, orig_height, orig_width = load_resource_as_video_frames(
+             resource_path=resource_path,
+             image_size=self.image_size,
+             offload_video_to_cpu=offload_video_to_cpu,
++            device=device,
+             img_mean=self.image_mean,
+             img_std=self.image_std,
+             async_loading_frames=async_loading_frames,
+@@ -150,7 +155,7 @@ class Sam3VideoInference(Sam3VideoBase):
+             find_targets=[None] * num_frames,
+             find_metadatas=[None] * num_frames,
+         )
+-        input_batch = copy_data_to_device(input_batch, device, non_blocking=True)
++        input_batch = copy_data_to_device(input_batch, device, non_blocking=torch.cuda.is_available())
+         inference_state["input_batch"] = input_batch
+ 
+         # construct the placeholder interactive prompts and tracking queries
+@@ -480,9 +485,7 @@ class Sam3VideoInference(Sam3VideoBase):
+ 
+             # slice those valid entries from the original outputs
+             keep_idx = torch.nonzero(keep, as_tuple=True)[0]
+-            keep_idx_gpu = keep_idx.pin_memory().to(
+-                device=out_binary_masks.device, non_blocking=True
+-            )
++            keep_idx_gpu = tensor_to_device(keep_idx, out_binary_masks.device)
+ 
+             out_obj_ids = torch.index_select(out_obj_ids, 0, keep_idx)
+             out_probs = torch.index_select(out_probs, 0, keep_idx)
+diff --git a/sam3/model/sam3_video_predictor.py b/sam3/model/sam3_video_predictor.py
+index a7660af..b75f50b 100644
+--- a/sam3/model/sam3_video_predictor.py
++++ b/sam3/model/sam3_video_predictor.py
+@@ -17,6 +17,7 @@ from typing import List, Optional
+ import psutil
+ import torch
+ from sam3.logger import get_logger
++from sam3.model.model_misc import get_default_device
+ from sam3.model.sam3_base_predictor import Sam3BasePredictor
+ 
+ logger = get_logger(__name__)
+@@ -40,6 +41,9 @@ class Sam3VideoPredictor(Sam3BasePredictor):
+         self.video_loader_type = video_loader_type
+         from sam3.model_builder import build_sam3_video_model
+ 
++        self.device = get_default_device()
++        logger.info(f"Sam3VideoPredictor using device: {self.device}")
++
+         self.model = (
+             build_sam3_video_model(
+                 checkpoint_path=checkpoint_path,
+@@ -50,7 +54,7 @@ class Sam3VideoPredictor(Sam3BasePredictor):
+                 apply_temporal_disambiguation=apply_temporal_disambiguation,
+                 compile=compile,
+             )
+-            .cuda()
++            .to(self.device)
+             .eval()
+         )
+ 
+@@ -79,22 +83,27 @@ class Sam3VideoPredictor(Sam3BasePredictor):
+             nf = s["state"]["num_frames"]
+             live_session_strs.append(f"'{sid}' ({nf} frames)")
+         joined = ", ".join(live_session_strs)
+-        mem_alloc = torch.cuda.memory_allocated() // 1024**2
+-        mem_res = torch.cuda.memory_reserved() // 1024**2
+-        max_alloc = torch.cuda.max_memory_allocated() // 1024**2
+-        max_res = torch.cuda.max_memory_reserved() // 1024**2
+-        return (
+-            f"live sessions: [{joined}], GPU memory: "
+-            f"{mem_alloc} MiB used and {mem_res} MiB reserved"
+-            f" (max over time: {max_alloc} MiB used and {max_res} MiB reserved)"
+-        )
++        if torch.cuda.is_available():
++            mem_alloc = torch.cuda.memory_allocated() // 1024**2
++            mem_res = torch.cuda.memory_reserved() // 1024**2
++            max_alloc = torch.cuda.max_memory_allocated() // 1024**2
++            max_res = torch.cuda.max_memory_reserved() // 1024**2
++            mem_stats = (
++                f"GPU memory: {mem_alloc} MiB used and {mem_res} MiB reserved"
++                f" (max over time: {max_alloc} MiB used and {max_res} MiB reserved)"
++            )
++        else:
++            mem_stats = "Running on CPU/MPS (no CUDA memory stats)"
++        return f"live sessions: [{joined}], {mem_stats}"
+ 
+     def _get_torch_and_gpu_properties(self):
+         """Get a string for PyTorch and GPU properties."""
+-        return (
+-            f"torch: {torch.__version__} with CUDA arch {torch.cuda.get_arch_list()}, "
+-            f"GPU device: {torch.cuda.get_device_properties(torch.cuda.current_device())}"
+-        )
++        if torch.cuda.is_available():
++            return (
++                f"torch: {torch.__version__} with CUDA arch {torch.cuda.get_arch_list()}, "
++                f"GPU device: {torch.cuda.get_device_properties(torch.cuda.current_device())}"
++            )
++        return f"torch: {torch.__version__} (non-CUDA mode)"
+ 
+ 
+ class Sam3VideoPredictorMultiGPU(Sam3VideoPredictor):
+diff --git a/sam3/model/utils/sam2_utils.py b/sam3/model/utils/sam2_utils.py
+index e824fe1..5b14ec7 100644
+--- a/sam3/model/utils/sam2_utils.py
++++ b/sam3/model/utils/sam2_utils.py
+@@ -87,7 +87,7 @@ class AsyncVideoFrameLoader:
+         img -= self.img_mean
+         img /= self.img_std
+         if not self.offload_video_to_cpu:
+-            img = img.to(self.compute_device, non_blocking=True)
++            img = img.to(self.compute_device, non_blocking=torch.cuda.is_available())
+         self.images[index] = img
+         return img
+ 
+@@ -212,7 +212,10 @@ def load_video_frames_from_video_file(
+     compute_device=torch.device("cuda"),
+ ):
+     """Load the video frames from a video file."""
+-    import decord
++    try:
++        import decord2 as decord
++    except ImportError:
++        import decord
+ 
+     img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
+     img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
+diff --git a/sam3/model/vitdet.py b/sam3/model/vitdet.py
+index f6771a1..4acf055 100644
+--- a/sam3/model/vitdet.py
++++ b/sam3/model/vitdet.py
+@@ -71,6 +71,8 @@ class Mlp(nn.Module):
+         x = addmm_act(type(self.act), self.fc1, x)
+         x = self.drop1(x)
+         x = self.norm(x)
++        # addmm_act は内部で bfloat16 に寄せる一方、LayerNorm は float32 を返すことがあり、fc2 と dtype がずれる
++        x = x.to(dtype=self.fc2.weight.dtype)
+         x = self.fc2(x)
+         x = self.drop2(x)
+         return x
+diff --git a/sam3/model/vl_combiner.py b/sam3/model/vl_combiner.py
+index b2cf102..dc88b25 100644
+--- a/sam3/model/vl_combiner.py
++++ b/sam3/model/vl_combiner.py
+@@ -13,6 +13,7 @@ from torch.nn.attention import sdpa_kernel, SDPBackend
+ 
+ from .act_ckpt_utils import activation_ckpt_wrapper
+ from .data_misc import NestedTensor
++from .model_misc import get_default_device
+ from .necks import Sam3DualViTDetNeck, Sam3TriViTDetNeck
+ 
+ 
+@@ -121,8 +122,10 @@ class SAM3VLBackbone(nn.Module):
+         return output
+ 
+     def forward_text(
+-        self, captions, input_boxes=None, additional_text=None, device="cuda"
++        self, captions, input_boxes=None, additional_text=None, device=None
+     ):
++        if device is None:
++            device = get_default_device()
+         return activation_ckpt_wrapper(self._forward_text_no_ack_ckpt)(
+             captions=captions,
+             input_boxes=input_boxes,
+@@ -136,8 +139,10 @@ class SAM3VLBackbone(nn.Module):
+         captions,
+         input_boxes=None,
+         additional_text=None,
+-        device="cuda",
++        device=None,
+     ):
++        if device is None:
++            device = get_default_device()
+         output = {}
+ 
+         # Forward through text_encoder
+@@ -324,8 +329,10 @@ class VisionOnly(nn.Module):
+         captions,
+         input_boxes=None,
+         additional_text=None,
+-        device="cuda",
++        device=None,
+     ):
++        if device is None:
++            device = get_default_device()
+         bs = len(captions)
+         output = {
+             "language_features": torch.zeros((0, bs, self.n_features), device=device),
+diff --git a/sam3/model_builder.py b/sam3/model_builder.py
+index a5dea87..5dd493c 100644
+--- a/sam3/model_builder.py
++++ b/sam3/model_builder.py
+@@ -41,7 +41,7 @@ from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
+ from sam3.model.sam3_image import Sam3Image, Sam3ImageOnVideoMultiGPU
+ from sam3.model.sam3_tracking_predictor import Sam3TrackerPredictor
+ from sam3.model.sam3_video_inference import Sam3VideoInferenceWithInstanceInteractivity
+-from sam3.model.sam3_video_predictor import Sam3VideoPredictorMultiGPU
++from sam3.model.sam3_video_predictor import Sam3VideoPredictor, Sam3VideoPredictorMultiGPU
+ from sam3.model.text_encoder_ve import VETextEncoder
+ from sam3.model.tokenizer_ve import SimpleTokenizer
+ from sam3.model.video_tracking_multiplex import VideoTrackingDynamicMultiplex
+@@ -563,8 +563,14 @@ def _load_checkpoint(model, checkpoint_path):
+ 
+ def _setup_device_and_mode(model, device, eval_mode):
+     """Setup model device and evaluation mode."""
+-    if device == "cuda":
++    if isinstance(device, str):
++        device = device.strip().lower()
++    if device == "cuda" and torch.cuda.is_available():
+         model = model.cuda()
++    elif device == "cpu":
++        model = model.cpu()
++    else:
++        model = model.to(device)
+     if eval_mode:
+         model.eval()
+     return model
+@@ -815,6 +821,9 @@ def build_sam3_video_model(
+ 
+ 
+ def build_sam3_video_predictor(*model_args, gpus_to_use=None, **model_kwargs):
++    # Use single-device predictor on CPU, multi-GPU predictor only when CUDA is available
++    if not torch.cuda.is_available():
++        return Sam3VideoPredictor(*model_args, **model_kwargs)
+     return Sam3VideoPredictorMultiGPU(
+         *model_args, gpus_to_use=gpus_to_use, **model_kwargs
+     )
+diff --git a/sam3/perflib/connected_components.py b/sam3/perflib/connected_components.py
+index fa0506d..3158f62 100644
+--- a/sam3/perflib/connected_components.py
++++ b/sam3/perflib/connected_components.py
+@@ -41,6 +41,13 @@ def connected_components_cpu(input_tensor: torch.Tensor):
+         )
+ 
+     batch_size = input_tensor.shape[0]
++    # Handle empty batch case
++    if batch_size == 0:
++        return (
++            torch.zeros(out_shape, dtype=torch.int64, device=input_tensor.device),
++            torch.zeros(out_shape, dtype=torch.int64, device=input_tensor.device),
++        )
++
+     labels_list = []
+     counts_list = []
+     for b in range(batch_size):
+diff --git a/sam3/sam/rope.py b/sam3/sam/rope.py
+index 6099273..eda2169 100644
+--- a/sam3/sam/rope.py
++++ b/sam3/sam/rope.py
+@@ -75,7 +75,14 @@ def apply_rotary_enc(
+     # repeat freqs along seq_len dim to match k seq_len
+     if repeat_freqs_k:
+         r = xk_.shape[-2] // xq_.shape[-2]
+-        freqs_cis = freqs_cis.repeat(*([1] * (freqs_cis.ndim - 2)), r, 1)
++        # MPS doesn't support repeat() for complex tensors, so we work around it
++        # by repeating real and imaginary parts separately and recombining
++        if freqs_cis.device.type == "mps":
++            freqs_real = freqs_cis.real.repeat(*([1] * (freqs_cis.ndim - 2)), r, 1)
++            freqs_imag = freqs_cis.imag.repeat(*([1] * (freqs_cis.ndim - 2)), r, 1)
++            freqs_cis = torch.complex(freqs_real, freqs_imag)
++        else:
++            freqs_cis = freqs_cis.repeat(*([1] * (freqs_cis.ndim - 2)), r, 1)
+     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+     return xq_out.type_as(xq).to(xq.device), xk_out.type_as(xk).to(xk.device)
+ 
+diff --git a/sam3/sam/transformer.py b/sam3/sam/transformer.py
+index 1ff2380..01755db 100644
+--- a/sam3/sam/transformer.py
++++ b/sam3/sam/transformer.py
+@@ -8,6 +8,8 @@ from typing import Tuple, Type
+ 
+ import torch
+ import torch.nn.functional as F
++
++from sam3.model.model_misc import get_default_device
+ from sam3.sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
+ from torch import nn, Tensor
+ 
+@@ -283,7 +285,7 @@ class RoPEAttention(Attention):
+         self.compute_cis = partial(
+             compute_axial_cis, dim=self.internal_dim // self.num_heads, theta=rope_theta
+         )
+-        device = torch.device("cuda") if torch.cuda.is_available() else None
++        device = get_default_device()
+         self.freqs_cis = self.compute_cis(
+             end_x=feat_sizes[0], end_y=feat_sizes[1], device=device
+         )
+@@ -307,7 +309,7 @@ class RoPEAttention(Attention):
+ 
+         # Apply rotary position encoding
+         w = h = math.sqrt(q.shape[-2])
+-        if self.freqs_cis.shape[0] != q.shape[-2]:
++        if self.freqs_cis.shape[0] != q.shape[-2] or self.freqs_cis.device != q.device:
+             self.freqs_cis = self.compute_cis(end_x=w, end_y=h, device=q.device)
+             self.freqs_cis_real = self.freqs_cis.real
+             self.freqs_cis_imag = self.freqs_cis.imag
+diff --git a/sam3/visualization_utils.py b/sam3/visualization_utils.py
+index c007c38..7f7e5c5 100644
+--- a/sam3/visualization_utils.py
++++ b/sam3/visualization_utils.py
+@@ -41,7 +41,7 @@ def generate_colors(n_colors=256, n_samples=5000):
+     return colors_rgb
+ 
+ 
+-COLORS = generate_colors(n_colors=128, n_samples=5000)
++#COLORS = generate_colors(n_colors=128, n_samples=5000)
+ 
+ 
+ def show_img_tensor(img_batch, vis_img_idx=0):

@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 import torch
 import numpy as np
@@ -8,10 +7,6 @@ from sam3.model_builder import build_sam3_image_model
 from sam3.model.box_ops import box_xywh_to_cxcywh
 from sam3.model.sam3_image_processor import Sam3Processor
 from sam3.visualization_utils import normalize_bbox
-
-# setup.sh で clone した SAM3 リポジトリ直下の assets（pip install -e ではパッケージ外）
-_PLATYPUS_ROOT = Path(__file__).resolve().parents[1]
-_BPE_VOCAB = _PLATYPUS_ROOT / "SAM3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
 
 RESIZE_FACTOR = 1.0
 
@@ -38,8 +33,9 @@ def setup_sam3(device="cpu"):
         device = device.strip().lower()
     torch_device = torch.device(device)
     if __model is None:
+        # bpe_path 省略時は公式パッケージ同梱の
+        # sam3/assets/bpe_simple_vocab_16e6.txt.gz が pkg_resources で解決される
         __model = build_sam3_image_model(
-            bpe_path=str(_BPE_VOCAB),
             checkpoint_path="checkpoints/sam3.1_multiplex.pt",
             device=device,
         )
