@@ -110,3 +110,11 @@ fi
 if [ ! -f "depth_pro/checkpoints/depth_pro.pt" ]; then
   pixi run curl -fSL -C - 'https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt' -o 'depth_pro/checkpoints/depth_pro.pt'
 fi
+
+if [ ! -f "checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf" ]; then
+  pixi run curl -fSL -C - 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true' -o 'checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf'
+fi
+
+if [ ! -f "checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
+  pixi run curl -fSL -C - 'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true' -o 'checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'
+fi

@@ -14,11 +14,59 @@ from kivy.lang import Builder as KVBuilder
 from kivy.config import Config as KVConfig
 from colorsys import rgb_to_hls, hls_to_rgb
 import math
+import logging
+import threading
 
+import macos as device
 import widgets.param_slider
 
 class CWColorPreview(MDCard):
     color = KVListProperty([0.5, 0.5, 0.5, 1])
+
+    # 親 CWColorPicker への参照（on_kv_post で設定）
+    picker = None
+
+    def on_touch_down(self, touch):
+        # ダブルクリックで「文字列→色」入力ダイアログを開く
+        if self.collide_point(*touch.pos) and touch.is_double_tap:
+            self._open_text_color_dialog()
+            return True
+        return super().on_touch_down(touch)
+
+    def _open_text_color_dialog(self):
+        if self.picker is None:
+            return
+        # macOS ネイティブの入力ダイアログ（日本語可・キャンセル可）。メインスレッドで modal。
+        try:
+            text = device.prompt_native(
+                message="色を表す言葉（例: 夕焼けのオレンジ）",
+                title="色を入力",
+                default="",
+                show_cancel=True,
+                ascii_only=False,
+            )
+        except Exception as e:
+            logging.warning(f"color text prompt failed: {e}")
+            return
+        # キャンセル(None)・空入力は何もしない
+        if not text or not text.strip():
+            return
+
+        picker = self.picker
+
+        # color_resolver は LLM フォールバックで重くなり得るのでバックグラウンドで解決し、
+        # 結果（RGB 0-255）をメインスレッドへ戻して反映する。
+        def worker():
+            try:
+                from cores import color_resolver
+                rgb = color_resolver.resolve_color(text)
+            except Exception as e:
+                logging.warning(f"color_resolver failed for {text!r}: {e}")
+                return
+            if rgb is not None:
+                KVClock.schedule_once(lambda dt: picker.set_color_from_rgb(rgb), 0)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 class CWColorWheel(MDBoxLayout):
     selected_color = KVListProperty([0, 0.5, 0])
@@ -205,6 +253,9 @@ class CWColorPicker(MDCard):
         self.ids.color_wheel.bind(after_edit=self.on_wheel_after_edit)
         self.bind(current_color=self.on_current_color)
 
+        # プレビューのダブルクリック（文字列→色）から色を反映できるよう参照を渡す
+        self.ids.preview.picker = self
+
     def on_current_color(self, instance, value):
         h, l, s = value
         self.ids.slider_hue.set_slider_value(h * 360)
@@ -242,6 +293,15 @@ class CWColorPicker(MDCard):
     def get_current_color_rgb(self):
         r, g, b = hls_to_rgb(*self.current_color)
         return [r, g, b, 1]
+
+    def set_color_from_rgb(self, rgb):
+        """color_resolver 由来の RGB(0-255) を現在色へ反映する。
+        ホイール編集と同様に before_edit/after_edit を増分して編集履歴に乗せる。"""
+        r, g, b = [max(0, min(255, int(c))) / 255.0 for c in rgb[:3]]
+        h, l, s = rgb_to_hls(r, g, b)
+        self.before_edit += 1            # 履歴開始（変更前の状態をスナップ）
+        self.current_color = [h, l, s]   # on_current_color → スライダー/ホイール/preview/効果適用
+        self.after_edit += 1             # 履歴確定
 
     def on_wheel_before_edit(self, instance, value):
         self.before_edit += 1

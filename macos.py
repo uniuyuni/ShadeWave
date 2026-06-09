@@ -571,7 +571,7 @@ def prompt_native(
 
     y_btn = pad_y
     y_field = y_btn + btn_h + gap
-    y_msg = y_field + field_h + gap
+    y_msg = y_field + field_h #+ gap
     win_h = (y_msg + msg_h if has_msg else y_field + field_h) + pad_y
 
     win = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -604,7 +604,7 @@ def prompt_native(
     content.addSubview_(field)
 
     # OK ボタン（右下、Enter がデフォルト）
-    ok_x = win_w - pad - btn_w
+    ok_x = win_w - pad / 2 - btn_w
     ok_btn = AppKit.NSButton.alloc().initWithFrame_(
         AppKit.NSMakeRect(ok_x, y_btn, btn_w, btn_h)
     )
@@ -617,7 +617,7 @@ def prompt_native(
 
     # キャンセルボタン（任意、OK の左、Esc）
     if show_cancel:
-        cancel_x = ok_x - btn_w - gap
+        cancel_x = ok_x - btn_w - gap / 2
         cancel_btn = AppKit.NSButton.alloc().initWithFrame_(
             AppKit.NSMakeRect(cancel_x, y_btn, btn_w, btn_h)
         )

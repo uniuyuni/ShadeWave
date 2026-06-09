@@ -194,7 +194,12 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/xorg-libxt-1.3.1-h5505292_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-1.3.2-h8088a28_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
+      - pypi: https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/83/c1/ac90e90d28f405009a89f08a5727d3f0dac49309575fb2d1a5ff1d265826/llama_cpp_python-0.3.28.tar.gz
+      - pypi: https://files.pythonhosted.org/packages/e1/2e/5898933336b61975ce9dc04decbc0a7f2fee78c30353c5efba7f2d6ff27a/markupsafe-3.0.3-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/0e/0d/f5957185c0ee2f3e12f78715aa9e3b353fd83633316c8532b38faa37e3f6/numpy-2.4.6-cp311-cp311-macosx_11_0_arm64.whl
+      - pypi: https://files.pythonhosted.org/packages/e2/cc/e097523dd85c9cf5d354f78310927f1656c422bd7b2613b2db3e3f9a0f2c/webcolors-25.10.0-py3-none-any.whl
       - pypi: ./radiance_denoise
 packages:
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
@@ -628,6 +633,11 @@ packages:
   purls: []
   size: 316394
   timestamp: 1685695959391
+- pypi: https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl
+  name: diskcache
+  version: 5.6.3
+  sha256: 5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19
+  requires_python: '>=3'
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/epoxy-1.5.10-hc919400_2.conda
   sha256: ba685b87529c95a4bf9de140a33d703d57dc46b036e9586ed26890de65c1c0d5
   md5: 3b87dabebe54c6d66a07b97b53ac5874
@@ -1065,6 +1075,14 @@ packages:
   purls: []
   size: 43001
   timestamp: 1621514956496
+- pypi: https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl
+  name: jinja2
+  version: 3.1.6
+  sha256: 85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+  requires_dist:
+  - markupsafe>=2.0
+  - babel>=2.7 ; extra == 'i18n'
+  requires_python: '>=3.7'
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/krb5-1.22.2-h385eeb1_0.conda
   sha256: c0a0bf028fe7f3defcdcaa464e536cf1b202d07451e18ad83fdd169d15bef6ed
   md5: e446e1822f4da8e5080a9de93474184d
@@ -1870,6 +1888,38 @@ packages:
   purls: []
   size: 47759
   timestamp: 1774072956767
+- pypi: https://files.pythonhosted.org/packages/83/c1/ac90e90d28f405009a89f08a5727d3f0dac49309575fb2d1a5ff1d265826/llama_cpp_python-0.3.28.tar.gz
+  name: llama-cpp-python
+  version: 0.3.28
+  sha256: 958227b394f413425d6039952096daa0b8b98328c6b99d652862aec775f1672d
+  requires_dist:
+  - typing-extensions>=4.5.0
+  - numpy>=1.20.0
+  - diskcache>=5.6.1
+  - jinja2>=2.11.3
+  - uvicorn>=0.22.0 ; extra == 'server'
+  - fastapi>=0.100.0 ; extra == 'server'
+  - pydantic-settings>=2.0.1 ; extra == 'server'
+  - sse-starlette>=1.6.1 ; extra == 'server'
+  - starlette-context>=0.3.6,<0.4 ; extra == 'server'
+  - pyyaml>=5.1 ; extra == 'server'
+  - pytest>=7.4.0 ; extra == 'test'
+  - httpx>=0.24.1 ; extra == 'test'
+  - scipy>=1.10 ; extra == 'test'
+  - fastapi>=0.100.0 ; extra == 'test'
+  - sse-starlette>=1.6.1 ; extra == 'test'
+  - starlette-context>=0.3.6,<0.4 ; extra == 'test'
+  - pydantic-settings>=2.0.1 ; extra == 'test'
+  - huggingface-hub>=0.23.0 ; extra == 'test'
+  - ruff>=0.15.7 ; extra == 'dev'
+  - twine>=4.0.2 ; extra == 'dev'
+  - mkdocs>=1.4.3 ; extra == 'dev'
+  - mkdocstrings[python]>=0.22.0 ; extra == 'dev'
+  - mkdocs-material>=9.1.18 ; extra == 'dev'
+  - pytest>=7.4.0 ; extra == 'dev'
+  - httpx>=0.24.1 ; extra == 'dev'
+  - llama-cpp-python[server,test,dev] ; extra == 'all'
+  requires_python: '>=3.8'
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/llvm-openmp-22.1.3-hc7d1edf_0.conda
   sha256: 71dcf9a9df103f57a0d5b0abc2594a15c2dd3afe52f07ac2d1c471552a61fb8d
   md5: 086b00b77f5f0f7ef5c2a99855650df4
@@ -1945,6 +1995,11 @@ packages:
   purls: []
   size: 234333
   timestamp: 1770423104357
+- pypi: https://files.pythonhosted.org/packages/e1/2e/5898933336b61975ce9dc04decbc0a7f2fee78c30353c5efba7f2d6ff27a/markupsafe-3.0.3-cp311-cp311-macosx_11_0_arm64.whl
+  name: markupsafe
+  version: 3.0.3
+  sha256: 4bd4cd07944443f5a265608cc6aab442e4f74dff8088b0dfc8238647b8f6ae9a
+  requires_python: '>=3.9'
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.5-h5e97a16_3.conda
   sha256: 2827ada40e8d9ca69a153a45f7fd14f32b2ead7045d3bbb5d10964898fe65733
   md5: 068d497125e4bf8a66bf707254fff5ae
@@ -2459,6 +2514,11 @@ packages:
   - pkg:pypi/urllib3?source=hash-mapping
   size: 103172
   timestamp: 1767817860341
+- pypi: https://files.pythonhosted.org/packages/e2/cc/e097523dd85c9cf5d354f78310927f1656c422bd7b2613b2db3e3f9a0f2c/webcolors-25.10.0-py3-none-any.whl
+  name: webcolors
+  version: 25.10.0
+  sha256: 032c727334856fc0b968f63daa252a1ac93d33db2f5267756623c210e57a4f1d
+  requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.46.3-pyhd8ed1ab_0.conda
   sha256: d6cf2f0ebd5e09120c28ecba450556ce553752652d91795442f0e70f837126ae
   md5: bdbd7385b4a67025ac2dba4ef8cb6a8f
