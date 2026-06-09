@@ -1,7 +1,16 @@
 diff --git a/pyproject.toml b/pyproject.toml
-index 9df1b67..c31f92c 100644
+index 9df1b67..58f0612 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
+@@ -26,7 +26,7 @@ classifiers = [
+ ]
+ dependencies = [
+     "timm>=1.0.17",
+-    "numpy>=1.26,<2",
++    "numpy>=2",
+     "tqdm",
+     "ftfy==6.1.1",
+     "regex",
 @@ -59,7 +59,7 @@ notebooks = [
      "ipycanvas",
      "ipympl",

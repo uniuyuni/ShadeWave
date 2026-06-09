@@ -102,7 +102,7 @@ clone_if_missing https://github.com/cszn/SCUNet.git SCUNet
 clone_if_missing https://github.com/gfacciol/demosaicnet_torch.git demosaicnet_torch
 
 if [ ! -d "icc" ] || [ ! -d "dcp" ] || [ ! -d "luts" ]; then
-  pixi run gdown --folder --remaining-ok "https://drive.google.com/drive/folders/1dWrL7ciw5DWlk9zFEBf63Gz9uKsWjJ_W?usp=sharing"
+  pixi run python -m gdown --folder --remaining-ok "https://drive.google.com/drive/folders/1dWrL7ciw5DWlk9zFEBf63Gz9uKsWjJ_W?usp=sharing"
 fi
 
 mkdir -p checkpoints/SCUNet
