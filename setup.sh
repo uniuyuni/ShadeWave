@@ -10,12 +10,30 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+# HTTPS クローン可能な git を選ぶ。pixi 環境の conda git は git-remote-https を
+# 欠くことがあり HTTPS clone が "remote helper 'https' aborted session" で失敗する
+# ため、git-remote-https を持つ git（多くは system git）を優先的に使う。
+select_git() {
+  local g
+  for g in git /usr/bin/git "$ROOT_DIR/.pixi/envs/default/bin/git"; do
+    command -v "$g" >/dev/null 2>&1 || continue
+    if ls "$("$g" --exec-path 2>/dev/null)" 2>/dev/null | grep -q '^git-remote-https$'; then
+      echo "$g"
+      return 0
+    fi
+  done
+  echo "エラー: HTTPS クローン可能な git が見つかりません (git-remote-https が必要)。" >&2
+  exit 1
+}
+GIT="$(select_git)"
+echo "git: $GIT ($("$GIT" --version))"
+
 clone_if_missing() {
   local repo_url="$1"
   local target_dir="$2"
 
   if [ ! -d "$target_dir" ]; then
-    pixi run git clone --depth 1 "$repo_url" "$target_dir"
+    "$GIT" clone --depth 1 "$repo_url" "$target_dir"
   fi
 }
 
@@ -47,11 +65,11 @@ ensure_sam3() {
   local patch="$ROOT_DIR/patches/sam3-macos.patch"
 
   if [ ! -d "SAM3" ]; then
-    pixi run git clone https://github.com/facebookresearch/sam3.git SAM3
-    pixi run git -C SAM3 checkout --quiet "$pin"
+    "$GIT" clone https://github.com/facebookresearch/sam3.git SAM3
+    "$GIT" -C SAM3 checkout --quiet "$pin"
     # 既に適用済みでない場合のみ当てる（再実行の冪等性）
-    if ! pixi run git -C SAM3 apply --reverse --check "$patch" >/dev/null 2>&1; then
-      pixi run git -C SAM3 apply "$patch"
+    if ! "$GIT" -C SAM3 apply --reverse --check "$patch" >/dev/null 2>&1; then
+      "$GIT" -C SAM3 apply "$patch"
       echo "SAM3: macOS パッチを適用しました ($patch)"
     fi
   fi
