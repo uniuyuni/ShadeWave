@@ -90,7 +90,12 @@ grep -v '^[[:space:]]*-e[[:space:]].*libraw_enhanced' requirements.txt | \
   grep -v '^[[:space:]]*-e[[:space:]].*SAM3' >"$REQ_NO_LOCAL"
 pixi run python -m pip install -r "$REQ_NO_LOCAL"
 rm -f "$REQ_NO_LOCAL"
-pixi run python -m pip install -e ./libraw_enhanced --no-build-isolation
+# pixi の conda clang (arm64-apple-darwin20.0.0-clang++) は新しい macOS SDK (26.x)
+# と組み合わせると "could not build module 'Darwin'" および pixi ncurses ヘッダと
+# macOS SDK curses.h の "conflicting types for 'unctrl'" でビルドが失敗する。
+# system clang (Apple Clang) は SDK を完全に認識するためこれらの問題が起きない。
+CC=/usr/bin/clang CXX=/usr/bin/clang++ \
+  pixi run python -m pip install -e ./libraw_enhanced --no-build-isolation
 pixi run python -m pip install -e ./SAM3
 
 clone_if_missing https://github.com/cszn/SCUNet.git SCUNet

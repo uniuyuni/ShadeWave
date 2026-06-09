@@ -14,10 +14,10 @@ build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
 # external/LibRaw-master を autotools で third_party/libraw-install にビルド（pixi の autoconf/automake/libtool を使用）
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
 # 拡張モジュールのみ再ビルド（LibRaw は既に third_party にある想定）
-install-libraw-enhanced = { cmd = "python -m pip install -e libraw_enhanced --no-build-isolation" }
+install-libraw-enhanced = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip install -e libraw_enhanced --no-build-isolation" }
 install-sam3 = { cmd = "python -m pip install -e SAM3" }
 # 初回: LibRaw ビルド → editable インストール（毎回フルビルドしたい場合はこちら）
-setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && python -m pip install -e libraw_enhanced --no-build-isolation'" }
+setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip install -e libraw_enhanced --no-build-isolation'" }
 test-hls-color-adjust = { cmd = "python tests/test_hls_color_adjust.py" }
 check-exr-export-env = { cmd = "python scripts/check_exr_export_env.py" }
 build-denoise-native = """
