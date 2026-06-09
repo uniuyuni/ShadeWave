@@ -47,6 +47,7 @@
                 "PLATYPUS_DEBUG_EDGE_REFINE": "1",
                 "PLATYPUS_DEBUG_EDGE_REFINE_DIR": "./edge_refine_debug",
                 "PLATYPUS_DEBUG_EDGE_REFINE_LIMIT": "100"
+                //"PLATYPUS_DRAW_QS_FULL_VIEW": "1"
                 //"QS_DUMP_INPUT_LIMIT": "100",
                 //"QS_BRUSH_AS_RADIUS": "1",
                 //"QS_COLOR_W_OUT": "0.9"
