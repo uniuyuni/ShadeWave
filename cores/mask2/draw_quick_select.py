@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import os
-from types import SimpleNamespace
 from typing import List, NamedTuple, Tuple
 
 import cv2
@@ -105,15 +104,11 @@ SIDE_EDGE_RELAX_START = _envf("QS_SIDE_EDGE_RELAX_START", 70.0)
 SIDE_EDGE_SOFT_WINDOW = _envf("QS_SIDE_EDGE_SOFT_WINDOW", 0.10)
 SIDE_EDGE_MIN_COMPONENT_AREA = _envf("QS_SIDE_EDGE_MIN_COMPONENT_AREA", 512.0)
 SIDE_EDGE_MIN_COMPONENT_FRAC = _envf("QS_SIDE_EDGE_MIN_COMPONENT_FRAC", 0.01)
-SIDE_EDGE_THIN_COMPONENT_DIAGONAL = _envf("QS_SIDE_EDGE_THIN_COMPONENT_DIAGONAL", 18.0)
-SIDE_EDGE_THIN_COMPONENT_ASPECT = _envf("QS_SIDE_EDGE_THIN_COMPONENT_ASPECT", 8.0)
-SIDE_EDGE_THIN_COMPONENT_FILL = _envf("QS_SIDE_EDGE_THIN_COMPONENT_FILL", 0.35)
 SIDE_DILATE = int(max(0, round(_envf("QS_SIDE_DILATE", 0.0))))
 # At high EdgeLock, raw image edges inside snowy/leafy texture can be stronger
 # than the actual object/cloud boundary. Blend in a colour-context gate so edges
 # that do not separate FG-like and BG-like colours stop dominating the cut.
 EDGE_CONTEXT_START = _envf("QS_EDGE_CONTEXT_START", 70.0)
-EDGE_CONTEXT_BASE_WEIGHT = _envf("QS_EDGE_CONTEXT_BASE_WEIGHT", 1.0)
 EDGE_CONTEXT_FLOOR = _envf("QS_EDGE_CONTEXT_FLOOR", 0.35)
 EDGE_CONTEXT_SPAN_SCALE = _envf("QS_EDGE_CONTEXT_SPAN_SCALE", 0.16)
 EDGE_CONTEXT_SIGN_THRESH = _envf("QS_EDGE_CONTEXT_SIGN_THRESH", 0.035)
@@ -161,7 +156,6 @@ class DrawSupportResult(NamedTuple):
     candidate: np.ndarray       # bool HxW  the search band (debug 'candidate')
     support: np.ndarray         # bool HxW  binary min-cut result (pre-matte)
     debug_planes: List[Tuple[str, np.ndarray]]
-    edge_lock: float = 60.0     # effective internal EdgeLock (0 strict, 100 loose)
 
 
 class _Scales(NamedTuple):
@@ -175,7 +169,6 @@ class _SolveUnit(NamedTuple):
     component: np.ndarray       # bool HxW; one stroke-owned active island
     core: np.ndarray            # bool HxW; centerline/core for this unit only
     scales: _Scales             # resolved from this unit's stroke size
-    side_split: bool = True      # False for lasso/region-like strokes
 
 
 # --- public entry ------------------------------------------------------------
@@ -194,42 +187,13 @@ def compute_draw_support(
     """
     mask_f = _er._as_mask(mask)
     _maybe_dump_input(guide, mask_f, radius, strength, seed_mask, draw_strokes, pixel_scale)
-    h, w = mask_f.shape[:2]
-    empty = np.zeros((h, w), dtype=bool)
-    if maximum_flow is None:
-        return DrawSupportResult(empty, empty, empty.copy(), [])
-
-    guide = _er._prepare_guide_image(guide, (h, w))
-    if guide is None:
-        return DrawSupportResult(empty, empty, empty.copy(), [])
-
-    draw_strokes = _normalize_draw_strokes(draw_strokes)
-    effective_strength, auto_strength = _effective_strength_from_offset(
-        guide, mask_f, draw_strokes, strength)
-    edge_erase = _compute_edge_erase_support(
-        guide, mask_f, radius, effective_strength, seed_mask, draw_strokes, pixel_scale)
-    if edge_erase is not None:
-        return _with_edge_lock(edge_erase, effective_strength, auto_strength)
-
-    result = _compute_draw_support_core(
-        guide, mask_f, radius, effective_strength, seed_mask, draw_strokes, pixel_scale)
-    return _with_edge_lock(result, effective_strength, auto_strength)
-
-
-def _compute_draw_support_core(
-        guide,
-        mask_f,
-        radius,
-        strength,
-        seed_mask=None,
-        draw_strokes=None,
-        pixel_scale=1.0) -> DrawSupportResult:
     hint = mask_f > 0.02
     h, w = hint.shape[:2]
     empty = np.zeros((h, w), dtype=bool)
     if not np.any(hint) or maximum_flow is None:
         return DrawSupportResult(empty, empty, empty.copy(), [])
 
+    guide = _er._prepare_guide_image(guide, (h, w))
     scales = _resolve_scales(radius, draw_strokes, hint)
     strength = float(np.clip(strength, 0.0, 100.0))
 
@@ -294,16 +258,10 @@ def _compute_draw_support_core(
             erase_bg[sl],
             color_roi,
             component_scales,
-            solver_edge_strength[sl] if unit.side_split else None,
+            unit_edge_strength,
             color_weight=color_weight,
-            side_edge_thresh=(
-                _side_edge_thresh_for_strength(strength)
-                if unit.side_split else None
-            ),
-            side_relax_weight=(
-                _side_edge_relax_weight_for_strength(strength)
-                if unit.side_split else 0.0
-            ),
+            side_edge_thresh=_side_edge_thresh_for_strength(strength),
+            side_relax_weight=_side_edge_relax_weight_for_strength(strength),
         )
         color_all[sl] = np.where(out.band | comp, color_roi, color_all[sl])
         edge_cost_all[sl] = np.where(out.band | comp, g_roi, edge_cost_all[sl])
@@ -385,225 +343,6 @@ def _compute_draw_support_core(
     return DrawSupportResult(fg_seed_all, band_all, support_all, debug_planes)
 
 
-def _compute_edge_erase_support(
-        guide,
-        mask_f,
-        radius,
-        strength,
-        seed_mask,
-        draw_strokes,
-        pixel_scale) -> DrawSupportResult | None:
-    _ = seed_mask
-    if not draw_strokes:
-        return None
-    add_strokes = [s for s in draw_strokes if not bool(getattr(s, "is_erasing", False))]
-    erase_strokes = [s for s in draw_strokes if bool(getattr(s, "is_erasing", False))]
-    if not add_strokes or not erase_strokes:
-        return None
-
-    h, w = mask_f.shape[:2]
-    try:
-        from cores.mask2 import mask_rasters
-        add_mask = mask_rasters.draw_line_texture((w, h), add_strokes)
-        erase_as_add = [_clone_stroke(stroke, is_erasing=False) for stroke in erase_strokes]
-        erase_mask = mask_rasters.draw_line_texture((w, h), erase_as_add)
-    except Exception:
-        logging.exception("[DRAW_QS] failed to replay draw strokes for edge-aware eraser")
-        return None
-
-    if not np.any(add_mask > 0.02):
-        empty = np.zeros((h, w), dtype=bool)
-        return DrawSupportResult(empty, empty, empty.copy(), [])
-    if not np.any(erase_mask > 0.02):
-        return None
-
-    add_result = _compute_draw_support_core(
-        guide, add_mask, radius, strength,
-        seed_mask=None, draw_strokes=add_strokes, pixel_scale=pixel_scale)
-    if not np.any(add_result.support):
-        return add_result
-
-    erase_result = _compute_draw_support_core(
-        guide, erase_mask, radius, strength,
-        seed_mask=None, draw_strokes=erase_as_add, pixel_scale=pixel_scale)
-    if not np.any(erase_result.support):
-        return add_result
-
-    erase_support = erase_result.support & add_result.support
-    support = add_result.support & ~erase_support
-    raw_result = _compute_draw_support_core(
-        guide, mask_f, radius, strength,
-        seed_mask=None, draw_strokes=draw_strokes, pixel_scale=pixel_scale)
-    erase_floor = raw_result.support
-    support |= erase_floor
-    debug_planes = list(add_result.debug_planes)
-    debug_planes.extend([
-        ("add_support", add_result.support),
-        ("erase_support", erase_support),
-        ("erase_candidate", erase_result.candidate),
-        ("erase_floor", erase_floor),
-    ])
-    logging.info(
-        "[DRAW_QS] edge_erase add=%d erase=%d floor=%d final=%d strokes=%d/%d",
-        int(np.count_nonzero(add_result.support)),
-        int(np.count_nonzero(erase_support)),
-        int(np.count_nonzero(erase_floor)),
-        int(np.count_nonzero(support)),
-        len(add_strokes),
-        len(erase_strokes),
-    )
-    return DrawSupportResult(
-        add_result.seed | raw_result.seed,
-        add_result.candidate | erase_result.candidate | raw_result.candidate,
-        support,
-        debug_planes,
-    )
-
-
-def _normalize_draw_strokes(draw_strokes):
-    if draw_strokes is None:
-        return draw_strokes
-    try:
-        strokes = list(draw_strokes)
-    except TypeError:
-        strokes = [draw_strokes]
-    if not strokes:
-        return []
-    return [_clone_stroke(stroke) for stroke in strokes]
-
-
-def _clone_stroke(stroke, is_erasing=None):
-    def attr(name, default):
-        if isinstance(stroke, dict):
-            return stroke.get(name, default)
-        return getattr(stroke, name, default)
-
-    points = np.asarray(attr("points", []), dtype=np.float32)
-    if points.ndim != 2 or points.shape[1] < 2:
-        points = np.zeros((0, 2), dtype=np.float32)
-    try:
-        size = float(attr("size", 1.0))
-    except Exception:
-        size = 1.0
-    try:
-        soft = float(attr("soft", 100.0))
-    except Exception:
-        soft = 100.0
-    erasing = bool(attr("is_erasing", False)) if is_erasing is None else bool(is_erasing)
-    return SimpleNamespace(
-        points=[(float(x), float(y)) for x, y in points[:, :2]],
-        size=max(1.0, size),
-        soft=float(np.clip(soft, 0.0, 100.0)),
-        is_erasing=erasing,
-    )
-
-
-def _effective_strength_from_offset(guide, mask_f, draw_strokes, ui_offset):
-    auto = _estimate_auto_strength(guide, mask_f, draw_strokes)
-    try:
-        offset = float(ui_offset)
-    except Exception:
-        offset = 0.0
-    # UI semantics: 0 = auto, positive = stricter, negative = looser. The
-    # internal solver still uses the old scale: 0 strict, 100 loose.
-    effective = float(np.clip(auto - offset, 0.0, 100.0))
-    return effective, auto
-
-
-def _estimate_auto_strength(guide, mask_f, draw_strokes):
-    hint = np.asarray(mask_f, dtype=np.float32) > 0.02
-    if not np.any(hint):
-        return 50.0
-
-    guide_arr = np.asarray(guide, dtype=np.float32)
-    finite = guide_arr[np.isfinite(guide_arr)]
-    guide_span = 1.0
-    if finite.size:
-        p1, p99 = np.percentile(finite, [1.0, 99.0])
-        guide_span = float(max(0.0, p99 - p1))
-
-    if guide_arr.ndim == 3 and guide_arr.shape[-1] >= 3:
-        rgb = guide_arr[..., :3]
-        luma = rgb[..., 0] * 0.299 + rgb[..., 1] * 0.587 + rgb[..., 2] * 0.114
-    elif guide_arr.ndim == 2:
-        luma = guide_arr
-    else:
-        luma = np.zeros(hint.shape, dtype=np.float32)
-    luma_vals = luma[hint] if luma.shape == hint.shape else np.array([], dtype=np.float32)
-    luma_std = float(np.std(luma_vals)) if luma_vals.size else 0.0
-
-    edge = _er._draw_snap_edge_strength(guide_arr)
-    edge_density = 0.0
-    if edge is not None and edge.shape == hint.shape:
-        vals = edge[hint]
-        if vals.size:
-            edge_density = float(np.mean(vals >= 0.60))
-        boundary_vals = _hint_boundary_edge_values(edge, hint)
-    else:
-        boundary_vals = np.array([], dtype=np.float32)
-
-    has_erase = any(bool(getattr(s, "is_erasing", False)) for s in (draw_strokes or []))
-    auto = 50.0
-    if guide_span < 0.05:
-        auto = 35.0
-    if edge_density > 0.10:
-        auto -= 12.0
-    if luma_std > 0.20:
-        auto -= 8.0
-    elif luma_std < 0.08:
-        auto += 6.0
-    if has_erase:
-        auto -= 8.0
-    if boundary_vals.size:
-        p90 = float(np.percentile(boundary_vals, 90.0))
-        density_mid = float(np.mean(boundary_vals >= 0.35))
-        density_strong = float(np.mean(boundary_vals >= 0.60))
-        if p90 < 0.30 and density_mid < 0.10:
-            auto += 28.0
-        elif p90 < 0.50 and density_strong < 0.10:
-            auto += 18.0
-        elif p90 > 0.75 and density_strong > 0.15:
-            auto -= 10.0
-    return float(np.clip(auto, 0.0, 100.0))
-
-
-def _hint_boundary_edge_values(edge, hint, width=8):
-    edge = np.asarray(edge, dtype=np.float32)
-    hint = np.asarray(hint, dtype=bool)
-    if edge.shape != hint.shape or not np.any(hint):
-        return np.array([], dtype=np.float32)
-    width = int(max(1, round(float(width))))
-    dist_in = cv2.distanceTransform(hint.astype(np.uint8), cv2.DIST_L2, 3)
-    dist_out = cv2.distanceTransform((~hint).astype(np.uint8), cv2.DIST_L2, 3)
-    band = ((hint & (dist_in <= width)) | ((~hint) & (dist_out <= width)))
-    vals = edge[band]
-    if vals.size == 0:
-        return np.array([], dtype=np.float32)
-    return vals.astype(np.float32, copy=False)
-
-
-def _with_edge_lock(result, effective_strength, auto_strength=None):
-    debug_planes = list(result.debug_planes)
-    if result.support.size:
-        shape = result.support.shape
-        debug_planes.append((
-            "edge_lock_effective",
-            np.full(shape, float(effective_strength) / 100.0, dtype=np.float32),
-        ))
-        if auto_strength is not None:
-            debug_planes.append((
-                "edge_lock_auto",
-                np.full(shape, float(auto_strength) / 100.0, dtype=np.float32),
-            ))
-    return DrawSupportResult(
-        result.seed,
-        result.candidate,
-        result.support,
-        debug_planes,
-        float(effective_strength),
-    )
-
-
 _DUMP_COUNTER = 0
 
 
@@ -630,7 +369,7 @@ def _maybe_dump_input(guide, mask, radius, strength, seed_mask, draw_strokes, pi
     try:
         os.makedirs(d, exist_ok=True)
         strokes = []
-        for s in (_normalize_draw_strokes(draw_strokes) or []):
+        for s in (draw_strokes or []):
             pts = np.asarray(getattr(s, "points", []), dtype=np.float32)
             strokes.append({
                 "points": pts,
@@ -691,6 +430,10 @@ def _draw_solve_units(mask_f, hint, hard_fg_core, draw_strokes, radius, has_stro
 
     if has_strokes and draw_strokes:
         shape = hint.shape
+        has_erase = any(bool(getattr(stroke, "is_erasing", False)) for stroke in draw_strokes)
+        hint_labels = None
+        if not has_erase and np.any(hint):
+            _, hint_labels = cv2.connectedComponents(hint.astype(np.uint8), connectivity=8)
         for stroke in draw_strokes:
             if bool(getattr(stroke, "is_erasing", False)):
                 continue
@@ -705,17 +448,27 @@ def _draw_solve_units(mask_f, hint, hard_fg_core, draw_strokes, radius, has_stro
             if not np.any(stroke_mask):
                 continue
             center = _er._stroke_center_mask(shape, points, size) & stroke_mask
-            stroke_core = _seed_core(np.asarray(mask_f) * stroke_mask, center, stroke_mask)
             stroke_scales = _resolve_scales(radius, [stroke], stroke_mask)
-            side_split = _stroke_side_split_enabled(stroke)
-            covered |= stroke_mask
-            _append_connected_units(
-                units,
-                stroke_mask,
-                stroke_core,
-                stroke_scales,
-                side_split=side_split,
-            )
+            if hint_labels is not None:
+                touched = np.unique(hint_labels[center]) if np.any(center) else np.array([], dtype=np.int32)
+                if touched.size == 0:
+                    touched = np.unique(hint_labels[stroke_mask])
+                for label_id in touched:
+                    label_id = int(label_id)
+                    if label_id == 0:
+                        continue
+                    component = hint_labels == label_id
+                    component_center = center & component
+                    if not np.any(component_center):
+                        component_center = stroke_mask & component
+                    stroke_core = _seed_core(
+                        np.asarray(mask_f) * component, component_center, component)
+                    covered |= component
+                    _append_connected_units(units, component, stroke_core, stroke_scales)
+            else:
+                stroke_core = _seed_core(np.asarray(mask_f) * stroke_mask, center, stroke_mask)
+                covered |= stroke_mask
+                _append_connected_units(units, stroke_mask, stroke_core, stroke_scales)
 
     fallback = hint & ~covered if units else hint
     if units:
@@ -725,43 +478,6 @@ def _draw_solve_units(mask_f, hint, hard_fg_core, draw_strokes, radius, has_stro
         _append_connected_units(units, fallback, hard_fg_core & fallback, fallback_scales)
 
     return units
-
-
-def _stroke_side_split_enabled(stroke):
-    """Return False for lasso/region-like strokes.
-
-    Side splitting is useful for an open brush stroke that crosses an edge:
-    it keeps the seed-side and pushes the opposite side to BG. For lasso-ish
-    strokes that trace around an object/region, the same rule cuts both sides
-    of the painted body and leaves only a skinny outline. Detect those strokes
-    from their path geometry and let the graph solve them as one region.
-    """
-    points = _er._stroke_points_array(stroke)
-    if points.shape[0] < 2:
-        return True
-    deltas = np.diff(points[:, :2], axis=0)
-    path_len = float(np.sum(np.linalg.norm(deltas, axis=1)))
-    if path_len <= 1e-6:
-        return False
-    try:
-        size = float(max(1.0, getattr(stroke, "size", 1.0)))
-    except Exception:
-        size = 1.0
-    if path_len < size * 0.75:
-        return False
-    if points.shape[0] < 3:
-        return True
-    close_dist = float(np.linalg.norm(points[0, :2] - points[-1, :2]))
-    bbox = np.ptp(points[:, :2], axis=0)
-    bbox_diag = float(np.linalg.norm(bbox))
-    # Path substantially longer than the brush and not a simple open sweep:
-    # likely an outline/region scribble. The bbox guard avoids classifying tiny
-    # jitter around one point as a lasso.
-    return not (
-        path_len >= size * 2.0
-        and bbox_diag >= size * 1.2
-        and close_dist <= path_len * 0.70
-    )
 
 
 def _drop_tiny_components(mask, min_area):
@@ -781,7 +497,7 @@ def _drop_tiny_components(mask, min_area):
     return np.isin(labels, keep_labels)
 
 
-def _append_connected_units(units, component_mask, core_mask, scales, side_split=True):
+def _append_connected_units(units, component_mask, core_mask, scales):
     component_mask = np.asarray(component_mask, dtype=bool)
     if not np.any(component_mask):
         return
@@ -795,7 +511,7 @@ def _append_connected_units(units, component_mask, core_mask, scales, side_split
         core = np.asarray(core_mask, dtype=bool) & component
         if not np.any(core):
             core = _seed_core(component.astype(np.float32), None, component)
-        units.append(_SolveUnit(component, core, scales, bool(side_split)))
+        units.append(_SolveUnit(component, core, scales))
 
 
 # --- edge cost ---------------------------------------------------------------
@@ -840,9 +556,7 @@ def _edge_cost_map(edge_strength, strength):
 def _edge_context_weight_for_strength(strength):
     start = float(np.clip(EDGE_CONTEXT_START, 0.0, 99.0))
     lock = float(np.clip(strength, 0.0, 100.0))
-    base = float(np.clip(EDGE_CONTEXT_BASE_WEIGHT, 0.0, 1.0))
-    t = float(np.clip((lock - start) / max(100.0 - start, 1e-3), 0.0, 1.0))
-    return float(base + (1.0 - base) * t)
+    return float(np.clip((lock - start) / max(100.0 - start, 1e-3), 0.0, 1.0))
 
 
 def _contextual_edge_strength(edge_strength, color_score, strength):
@@ -860,6 +574,9 @@ def _contextual_edge_strength(edge_strength, color_score, strength):
     c_hi = cv2.dilate(blurred, kernel)
     c_lo = cv2.erode(blurred, kernel)
     span = c_hi - c_lo
+    if float(np.max(span, initial=0.0)) < float(EDGE_CONTEXT_MIN_SPAN):
+        return edge
+
     transition = np.clip(span / max(float(EDGE_CONTEXT_SPAN_SCALE), 1e-6), 0.0, 1.0)
     sign_change = (c_hi > float(EDGE_CONTEXT_SIGN_THRESH)) & (c_lo < -float(EDGE_CONTEXT_SIGN_THRESH))
     gate_signal = np.maximum(
@@ -1254,31 +971,12 @@ def _filter_side_edge_barrier_components(barrier, comp):
     )
     if min_area <= 1.0:
         return barrier
-    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        barrier.astype(np.uint8), connectivity=8)
+    n_labels, labels = cv2.connectedComponents(barrier.astype(np.uint8), connectivity=8)
     if n_labels <= 1:
         return barrier
-    keep = []
-    for label in range(1, n_labels):
-        area = float(stats[label, cv2.CC_STAT_AREA])
-        if area >= float(min_area):
-            keep.append(label)
-            continue
-        width = float(stats[label, cv2.CC_STAT_WIDTH])
-        height = float(stats[label, cv2.CC_STAT_HEIGHT])
-        diag = float(np.hypot(width, height))
-        aspect = max(width, height) / max(min(width, height), 1.0)
-        fill = area / max(width * height, 1.0)
-        if (
-            area >= 2.0
-            and diag >= float(SIDE_EDGE_THIN_COMPONENT_DIAGONAL)
-            and (
-                fill <= float(SIDE_EDGE_THIN_COMPONENT_FILL)
-                or aspect >= float(SIDE_EDGE_THIN_COMPONENT_ASPECT)
-            )
-        ):
-            keep.append(label)
-    keep = np.asarray(keep, dtype=np.int32)
+    areas = np.bincount(labels.reshape(-1), minlength=n_labels)
+    keep = np.flatnonzero(areas >= float(min_area))
+    keep = keep[keep != 0]
     if keep.size == n_labels - 1:
         return barrier
     if keep.size == 0:

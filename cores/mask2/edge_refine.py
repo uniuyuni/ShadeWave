@@ -118,7 +118,10 @@ def refine_mask_edge_aware(
             )
             effective_edge_lock = strength
         else:
-            from cores.mask2 import draw_quick_select as _draw_quick_select
+            if os.environ.get("QS_DRAW_V2", "").strip().lower() in {"1", "true", "yes", "on"}:
+                from cores.mask2 import draw_quick_select_v2 as _draw_quick_select
+            else:
+                from cores.mask2 import draw_quick_select as _draw_quick_select
             _draw_result = _draw_quick_select.compute_draw_support(
                 guide,
                 mask_f,

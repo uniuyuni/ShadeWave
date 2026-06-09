@@ -1238,6 +1238,20 @@ if __name__ == '__main__':
                 effect = effect if isinstance(effect, list) else [effect]
                 for e in effect:
                     current_effects[lv][e].set2param(current_param, self)
+            # Remember Quick Select / edge-refine as a sticky tool setting so a
+            # freshly created draw mask inherits it (it is a tool mode, not a
+            # per-mask one). Only genuine user edits reach here; set2widget echoes
+            # are gated out above by run_set2widget_all, so this never captures a
+            # spinner reset. Read after set2param so it reflects the new value.
+            if lv == 3 and current_param is not None:
+                self._sticky_mask2_edge_refine = {
+                    k: effects.Mask2Effect.get_param(current_param, k)
+                    for k in (
+                        'mask2_edge_refine_mode',
+                        'mask2_edge_refine_radius',
+                        'mask2_edge_refine_strength',
+                    )
+                }
             if lv == 0:
                 self.sync_distortion_mode_sliders()
 

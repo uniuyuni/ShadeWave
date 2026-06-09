@@ -55,7 +55,7 @@ data = np.load(path, allow_pickle=True)
 | `mask` | `float32` | `(H, W)` | yes | solver に渡された FreeDraw mask。0..1 の濃度 mask。 |
 | `seed_mask` | `bool` または空配列 | `(H, W)` または `(0,)` | yes | 呼び出し時の seed mask。`None` の場合は空配列で保存される。 |
 | `radius` | `float32` scalar | `()` | yes | UI の Quick Radius 値。Draw QS では brush 半径への offset として扱われる。 |
-| `strength` | `float32` scalar | `()` | yes | UI の EdgeLock / strength 値。現在の実装では auto strength への offset として解釈される。 |
+| `strength` | `float32` scalar | `()` | yes | UI の Edge Lock / strength 値。solver 内部の 0..100 値として扱われる（0 = strict, 100 = loose）。 |
 | `pixel_scale` | `float32` scalar | `()` | yes | dump 時の draw pixel scale。full-view / scaled replay の補正に使う。 |
 | `strokes` | `object` | `(N,)` | yes | stroke dict の object 配列。各要素の仕様は下記。 |
 
@@ -147,8 +147,52 @@ debug_planes = dict(result.debug_planes)
 - 古い debug ファイルには `pixel_scale` が無い可能性がある。replay 時は `1.0` を既定にする。
 - `strokes` は object 配列なので、`np.load(..., allow_pickle=False)` では読めない。
 - ファイル名は通常 `.npz` だが、手動でリネームされたファイルでは拡張子が欠けていても zip/npz として読める場合がある。
-- `strength` は保存時の UI 値であり、`DrawSupportResult.edge_lock` に入る内部 effective EdgeLock とは一致しない場合がある。
+- `strength` は保存時の UI 値であり、現在の solver ではそのまま内部 Edge Lock として使われる。
 - `guide` は「元画像全体」ではなく、solver に渡された crop / scaled region の画像である。
+
+## 回帰ハーネスと capture ループ
+
+`qs_input_*.npz` は目視確認だけでなく、**ラベル不要のコーパス回帰テスト**の入力として使う。
+
+- メトリック計算: [cores/mask2/draw_qs_metrics.py](/Users/uniuyuni/PythonProjects/platypus/cores/mask2/draw_qs_metrics.py)
+  （`load_dump` / `solve` / `metrics_for_dump` / `compare` / `pair_metrics`）。
+- CLI: [scripts/draw_qs_corpus.py](/Users/uniuyuni/PythonProjects/platypus/scripts/draw_qs_corpus.py)。
+- golden baseline: `tests/fixtures/draw_qs_baseline.json`（dump 名→stable メトリック）。
+  この JSON のキーが「明示コーパス一覧」を兼ね、dump が黙って欠落しないようにする。
+- テスト: `tests/test_edge_refine.py` の corpus baseline クラス（`pixi run python -m unittest
+  discover -s tests -p test_edge_refine.py` で実行）。
+
+主なメトリック（dump 単体から算出・ラベル不要）:
+
+| metric | 意味 |
+| --- | --- |
+| `support_hint_ratio` | support/hint 面積比。崩壊/爆発の検出。 |
+| `edge_boundary_frac` | support 境界が強エッジ上に乗る割合（吸着できたか）。 |
+| `outside_px` / `outside_no_edge_px` | 描画足跡外への成長 / 無エッジ領域での膨張。 |
+| `outside_overgrowth_dist` | hint から最も離れた support 画素の距離。 |
+| `far_blob_px` | seed core に非連結な support（暴走 grab、≒0 であるべき）。 |
+| `deterministic` / `idempotence_iou` | solve の安定性と不動点性。 |
+
+### 失敗ケースを 1 コマンドで固定する
+
+新しく「出鱈目」になる場所を見つけたら、次の手順でコーパスに登録して回帰検出下に置く。
+
+```bash
+# 1. dump を有効化してアプリ実行（または PLATYPUS_DEBUG_EDGE_REFINE=1 に相乗り）
+QS_DUMP_INPUT=edge_refine_debug pixi run python main.py
+# 2. 失敗する stroke を再現 → edge_refine_debug/qs_input_NNN.npz が出る
+# 3. 説明的な名前で登録（最新の qs_input_*.npz を取り込み baseline 追記）
+pixi run python scripts/draw_qs_corpus.py add <name>
+```
+
+### つまみの影響を測る（sweep）
+
+```bash
+pixi run python scripts/draw_qs_corpus.py sweep QS_COLOR_W 0.4 3.0
+```
+
+既定値に対し各値でメトリックがどの dump で動くかを表示する。動かない knob は削除
+CANDIDATE、2 dump 以上動かす knob は CORE。`QS_*` は全て `_envf` 経由のためコード改変なしに sweep できる。
 
 ## debug plane との関係
 
@@ -171,4 +215,3 @@ NPZ には solver 入力だけが保存される。`result.debug_planes` は rep
 | `interior_fill` | hint 内 hole fill で追加された領域。 |
 | `edge_lock_effective` | replay 時の内部 EdgeLock。 |
 | `edge_lock_auto` | auto 推定された EdgeLock。 |
-
