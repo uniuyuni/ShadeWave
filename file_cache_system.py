@@ -30,6 +30,15 @@ def _task_callback(file_callbacks, shared_resources, future):
         else:
             # メインプロセス実行ならメモリから取得
             file_path, imgset, exif_data, param, stage = future
+            # 一部ワーカーは共有メモリタプルを返す (file_path, shm_name, shape, dtype, fidelity)
+            # その場合は ImageSet に復元する
+            try:
+                if isinstance(imgset, tuple) and len(imgset) >= 4:
+                    # imageset.shared_memory_to_imageset は (file_path, shm_name, shape, dtype, ...)
+                    imgset = imageset.shared_memory_to_imageset(*imgset)
+            except Exception:
+                # 復元失敗しても進めてエラーを記録する
+                logging.exception("FCS: failed to restore ImageSet from shared-memory tuple")
 
         # Memmap化 (キャッシュ投入前)
         # RAW プレビュー段階は短命（直後にフルデコードで置換される）なので
