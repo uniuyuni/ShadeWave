@@ -11,12 +11,12 @@ scripts = ["scripts/pixi_env_libraw.sh"]
 [tasks]
 # PyInstaller で macOS .app を生成（要: pip install pyinstaller）。現在の pixi 環境のパッケージを参照
 build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
-# external/LibRaw-master を autotools で third_party/libraw-install にビルド（pixi の autoconf/automake/libtool を使用）
+# GitHub から最新 LibRaw を取得して .pixi/libraw-install にビルドします
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
-# 拡張モジュールのみ再ビルド（LibRaw は既に third_party にある想定）
+# 拡張モジュールのみ再ビルド（ローカル LibRaw は .pixi/libraw-install を参照）
 install-libraw-enhanced = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip install -e libraw_enhanced --no-build-isolation" }
 install-sam3 = { cmd = "python -m pip install -e SAM3" }
-# 初回: LibRaw ビルド → editable インストール（毎回フルビルドしたい場合はこちら）
+# 初回: LibRaw を取得してビルド → editable インストール（毎回フルビルドしたい場合はこちら）
 setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip install -e libraw_enhanced --no-build-isolation'" }
 test-hls-color-adjust = { cmd = "python tests/test_hls_color_adjust.py" }
 check-exr-export-env = { cmd = "python scripts/check_exr_export_env.py" }

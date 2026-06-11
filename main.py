@@ -1206,7 +1206,7 @@ if __name__ == '__main__':
 
             return (composit_mask.effects, mask.effects_param, mask.mask_id)
         
-        def apply_effects_lv(self, lv, effect, sync=False, subname=None, defer_draw=False):
+        def apply_effects_lv(self, lv, effect, sync=False, subname=None, defer_draw=False, overlay_reason="param_change"):
             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and (
                 lv == 3 or subname == 'mask_geometry' or effect == 'mask_geometry'
             ):
@@ -1286,8 +1286,11 @@ if __name__ == '__main__':
                     self.ids['mask_editor2']._set_active_composit_matrix(redraw_mask=True)
                     self.ids['mask_editor2'].skip_next_mask_overlay_refresh(clear=False)
 
-            self.ids['mask_editor2'].set_draw_mask(
-                self._should_draw_mask_overlay(lv, subname),
+            self._apply_mask_overlay_policy(
+                lv,
+                effect,
+                subname=subname,
+                reason=overlay_reason,
                 refresh=not mask_geometry_update,
             )
             #self.apply_rotation_flip_for_wrapper()
@@ -1310,12 +1313,33 @@ if __name__ == '__main__':
 
             current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
-            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(lv, None))
+            self._apply_mask_overlay_policy(lv, effect)
             #self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
 
+        def _mask_overlay_policy(self, lv, effect=None, subname=None, reason="param_change"):
+            """Return 'show', 'hide', or 'preserve' for the active Mask2 overlay."""
+            if reason == "tab_sync":
+                return "preserve"
+
+            effect_list = effect if isinstance(effect, list) else [effect] if effect is not None else []
+            mask2_group = subname or (effect_list[0] if len(effect_list) == 1 else None)
+
+            if lv == 3 and mask2_group in ("mask2", "mask_geometry"):
+                return "show"
+            if lv == 3 and mask2_group == "mask2_draw_effects":
+                return "hide"
+            return "hide"
+
+        def _apply_mask_overlay_policy(self, lv, effect=None, subname=None, reason="param_change", refresh=True):
+            policy = self._mask_overlay_policy(lv, effect, subname=subname, reason=reason)
+            if policy == "preserve":
+                return
+            self.ids['mask_editor2'].set_draw_mask(policy == "show", refresh=refresh)
+
         def _should_draw_mask_overlay(self, lv, subname=None):
-            return lv == 3 and subname != 'mask2_draw_effects'
+            effect = (subname or "mask2") if lv == 3 else None
+            return self._mask_overlay_policy(lv, effect, subname=subname) == "show"
 
         def apply_rotation_flip_for_wrapper(self):
             # Calculate Rotation/Flip for Hardware
@@ -1466,7 +1490,7 @@ if __name__ == '__main__':
             if not self.begin_history_effect_ctrl(0, 'crop'):
                 return
             self.primary_effects[0]['crop'].apply_crop_button_action(self.primary_param, self, action)
-            self.ids['mask_editor2'].set_draw_mask(self._should_draw_mask_overlay(0, None))
+            self._apply_mask_overlay_policy(0, 'crop')
             self.start_draw_image_and_crop(self.imgset)
             self.end_history_effect_ctrl(0, 'crop')
             self.save_current_sidecar()
@@ -3174,9 +3198,9 @@ if __name__ == '__main__':
             if self.imgset is not None:
                 # apply_effects_lv(0, 'crop') 内の sync_crop_editor_mode_from_widget は
                 # Mask2 ON 時はクロップエディタを閉じるよう CropEffect 側で対応済み。
-                self.apply_effects_lv(0, "geometry")
-                self.apply_effects_lv(0, "crop")
-                self.apply_effects_lv(1, "distortion")
+                self.apply_effects_lv(0, "geometry", overlay_reason="tab_sync")
+                self.apply_effects_lv(0, "crop", overlay_reason="tab_sync")
+                self.apply_effects_lv(1, "distortion", overlay_reason="tab_sync")
 
 
 

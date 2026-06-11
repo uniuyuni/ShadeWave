@@ -1,6 +1,7 @@
 import os
 import pathlib
 import sys
+import tempfile
 import unittest
 
 import cv2
@@ -1379,6 +1380,15 @@ def _straight_edge_line(stroke_x=110, size=26, h=160):
     return line
 
 
+def _iou_bool(a, b):
+    a = np.asarray(a, dtype=bool)
+    b = np.asarray(b, dtype=bool)
+    union = int(np.count_nonzero(a | b))
+    if union == 0:
+        return 1.0
+    return float(np.count_nonzero(a & b) / union)
+
+
 def _two_edges_scene(h=160, w=240):
     image = np.zeros((h, w, 3), dtype=np.float32)
     image[:, :80] = (0.18, 0.18, 0.48)
@@ -1446,6 +1456,48 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertEqual(refined.shape, mask.shape)
         self.assertGreater(int(np.count_nonzero(support > 0.5)), 0)
 
+    def test_v2_is_default_draw_quick_select_path(self):
+        image = _straight_edge_scene(edge_x=120)
+        line = _straight_edge_line(stroke_x=110)
+        h, w = image.shape[:2]
+        mask = mask_rasters.draw_line_texture((w, h), [line])
+        old_v2 = os.environ.get("QS_DRAW_V2")
+        old_dump = os.environ.get("QS_DUMP_INPUT")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ.pop("QS_DRAW_V2", None)
+            os.environ["QS_DUMP_INPUT"] = tmp
+            try:
+                _refined, support = refine_mask_edge_aware(
+                    image,
+                    mask,
+                    mode="Quick Select",
+                    radius=12,
+                    strength=60,
+                    seed_mask=edge_refine.make_confident_seed(mask),
+                    selection_strategy=edge_refine.STRATEGY_DRAW,
+                    draw_strokes=[line],
+                    return_support=True,
+                )
+            finally:
+                if old_v2 is None:
+                    os.environ.pop("QS_DRAW_V2", None)
+                else:
+                    os.environ["QS_DRAW_V2"] = old_v2
+                if old_dump is None:
+                    os.environ.pop("QS_DUMP_INPUT", None)
+                else:
+                    os.environ["QS_DUMP_INPUT"] = old_dump
+
+            dumps = sorted(pathlib.Path(tmp).glob("qs_input_*.npz"))
+            self.assertEqual(len(dumps), 1)
+            with np.load(dumps[0], allow_pickle=True) as data:
+                dump_files = set(data.files)
+                strength_mode = str(data["strength_mode"])
+
+        self.assertGreater(int(np.count_nonzero(support > 0.5)), 0)
+        self.assertIn("strength_mode", dump_files)
+        self.assertIn(strength_mode, {"internal", "offset"})
+
     def test_v2_zoom_metric_reports_scaled_replay(self):
         from cores.mask2 import draw_qs_metrics as qs_metrics
 
@@ -1467,6 +1519,271 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
             dump, solver="v2", determinism=False, idempotence=False, zoom=True)
         self.assertIn("zoom_iou_2_0x", metrics)
         self.assertGreater(metrics["zoom_iou_2_0x"], 0.75)
+
+    def test_v2_pixel_scale_replays_at_canonical_scale(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        image = _straight_edge_scene(edge_x=120)
+        line = _straight_edge_line(stroke_x=110, size=30)
+        h, w = image.shape[:2]
+        mask = mask_rasters.draw_line_texture((w, h), [line])
+        base = draw_quick_select_v2.compute_draw_support(
+            image,
+            mask,
+            12,
+            60,
+            seed_mask=edge_refine.make_confident_seed(mask),
+            draw_strokes=[line],
+            pixel_scale=1.0,
+        )
+
+        scale = 2.0
+        big = cv2.resize(image, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+        big_line = mask_rasters.Line(False, 60, 100)
+        for x, y in np.asarray(line.points, dtype=np.float32):
+            big_line.add_point(float(x * scale), float(y * scale))
+        big_mask = mask_rasters.draw_line_texture((w * 2, h * 2), [big_line])
+        scaled = draw_quick_select_v2.compute_draw_support(
+            big,
+            big_mask,
+            24,
+            60,
+            seed_mask=edge_refine.make_confident_seed(big_mask),
+            draw_strokes=[big_line],
+            pixel_scale=scale,
+        )
+        back = cv2.resize(
+            scaled.support.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+        planes = {name: value for name, value in scaled.debug_planes}
+
+        self.assertIn("v2_canonical_scale", planes)
+        self.assertGreater(_iou_bool(base.support, back), 0.95)
+
+    def test_v2_pair_metric_keeps_opposite_edge_sides_connected(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        def dump_for(stroke_x, name):
+            image = _straight_edge_scene(edge_x=120)
+            line = _straight_edge_line(stroke_x=stroke_x, size=26)
+            h, w = image.shape[:2]
+            mask = mask_rasters.draw_line_texture((w, h), [line])
+            return {
+                "name": name,
+                "guide": image,
+                "mask": mask,
+                "seed_mask": edge_refine.make_confident_seed(mask),
+                "radius": 14.0,
+                "strength": 60.0,
+                "pixel_scale": 1.0,
+                "strokes": [line],
+            }
+
+        metrics = qs_metrics.pair_metrics(
+            dump_for(108, "straight_left"),
+            dump_for(132, "straight_right"),
+            solver="v2",
+            seam_radius=5.0,
+            alpha_threshold=0.5,
+        )
+
+        self.assertGreater(metrics["shared_seam_px"], 0)
+        self.assertLess(metrics["gap_ratio"], 0.16)
+        self.assertEqual(metrics["alpha_components"], 1)
+
+    def test_v2_local_tree2_pair_when_present(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        sky_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_tree2_sky.npz"
+        tree_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_tree2_tree.npz"
+        if not sky_path.exists() or not tree_path.exists():
+            self.skipTest("missing local tree2 opposite-side dumps")
+
+        metrics = qs_metrics.pair_metrics(
+            qs_metrics.load_dump(sky_path),
+            qs_metrics.load_dump(tree_path),
+            solver="v2",
+            seam_radius=5.0,
+            alpha_threshold=0.5,
+        )
+
+        self.assertGreater(metrics["shared_seam_px"], 0)
+        self.assertLess(metrics["gap_ratio"], 0.03)
+        self.assertEqual(metrics["alpha_components"], 1)
+
+    def test_v2_local_expected_labels_when_present(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        label_dir = PROJECT_ROOT / "edge_refine_debug" / "label_exports"
+        thresholds = {
+            "animal": 0.80,
+            "easy": 0.97,
+            "flower": 0.90,
+            "lowcontrast": 0.90,
+            "roof": 0.72,
+            "roof2": 0.86,
+            "simple": 0.65,
+            "simple2": 0.55,
+            "snow_edge": 0.78,
+            "tree": 0.90,
+            "tree2_sky": 0.92,
+            "tree2_tree": 0.98,
+        }
+        if not label_dir.exists():
+            self.skipTest(f"missing local label dir: {label_dir}")
+
+        checked = 0
+        for name, min_iou in thresholds.items():
+            dump_path = PROJECT_ROOT / "edge_refine_debug" / f"qs_input_{name}.npz"
+            expected_path = label_dir / f"{name}_expected.png"
+            if not dump_path.exists() or not expected_path.exists():
+                continue
+            roi_path = label_dir / f"{name}_eval_roi.png"
+            dump = qs_metrics.load_dump(dump_path)
+            metrics = qs_metrics.label_metrics_for_dump(
+                dump,
+                expected_path,
+                roi_path=roi_path if roi_path.exists() else None,
+                solver="v2",
+            )
+            self.assertGreaterEqual(
+                metrics["label_iou"],
+                min_iou,
+                f"{name} label IoU regressed: {metrics}",
+            )
+            checked += 1
+
+        if checked == 0:
+            self.skipTest(f"no local expected labels found in {label_dir}")
+
+    def test_v2_edge_lock_offset_resolves_around_auto(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        edge = np.zeros((40, 40), dtype=np.float32)
+        edge[:, 20] = 0.65
+        hint = np.zeros_like(edge, dtype=bool)
+        hint[:, 8:20] = True
+
+        old_mode = os.environ.get("QS_V2_STRENGTH_MODE")
+        old_flag = os.environ.get("QS_DRAW_V2_OFFSET")
+        os.environ["QS_V2_STRENGTH_MODE"] = "offset"
+        os.environ.pop("QS_DRAW_V2_OFFSET", None)
+        try:
+            base, auto, offset, mode = draw_quick_select_v2._resolve_edge_lock(0, edge, hint)
+            strict, auto2, offset2, mode2 = draw_quick_select_v2._resolve_edge_lock(20, edge, hint)
+            loose, auto3, offset3, mode3 = draw_quick_select_v2._resolve_edge_lock(-20, edge, hint)
+        finally:
+            if old_mode is None:
+                os.environ.pop("QS_V2_STRENGTH_MODE", None)
+            else:
+                os.environ["QS_V2_STRENGTH_MODE"] = old_mode
+            if old_flag is None:
+                os.environ.pop("QS_DRAW_V2_OFFSET", None)
+            else:
+                os.environ["QS_DRAW_V2_OFFSET"] = old_flag
+
+        self.assertEqual(mode, "offset")
+        self.assertEqual(mode2, "offset")
+        self.assertEqual(mode3, "offset")
+        self.assertAlmostEqual(auto, auto2)
+        self.assertAlmostEqual(auto, auto3)
+        self.assertEqual(offset, 0)
+        self.assertEqual(offset2, 20)
+        self.assertEqual(offset3, -20)
+        self.assertLess(strict, base)
+        self.assertGreater(loose, base)
+
+    def test_v2_same_side_gap_fill_restores_edge_near_color_gaps(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        support = np.zeros((40, 60), dtype=bool)
+        support[8:32, 8:30] = True
+        hint = support.copy()
+        hint[12:24, 30:36] = True
+        edge = np.zeros(hint.shape, dtype=np.float32)
+        edge[11:25, 29:37] = 0.45
+        color = np.zeros(hint.shape, dtype=np.float32)
+        color[12:24, 30:36] = 0.20
+        scales = draw_quick_select._Scales(20.0, 0.0, 28, 50.0)
+
+        restored, fill = draw_quick_select_v2._v2_fill_same_side_gaps(
+            support,
+            hint,
+            support,
+            np.zeros_like(hint),
+            edge,
+            color,
+            60.0,
+            scales,
+        )
+
+        self.assertGreater(int(fill.sum()), 0)
+        self.assertTrue(restored[18, 34])
+
+    def test_v2_same_side_gap_fill_reacts_to_edge_lock(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        support = np.zeros((40, 60), dtype=bool)
+        support[8:32, 8:30] = True
+        hint = support.copy()
+        hint[12:24, 30:36] = True
+        edge = np.zeros(hint.shape, dtype=np.float32)
+        edge[11:25, 29:37] = 0.30
+        color = np.zeros(hint.shape, dtype=np.float32)
+        color[12:24, 30:36] = 0.16
+        scales = draw_quick_select._Scales(20.0, 0.0, 28, 50.0)
+
+        strict, strict_fill = draw_quick_select_v2._v2_fill_same_side_gaps(
+            support,
+            hint,
+            support,
+            np.zeros_like(hint),
+            edge,
+            color,
+            0.0,
+            scales,
+        )
+        loose, loose_fill = draw_quick_select_v2._v2_fill_same_side_gaps(
+            support,
+            hint,
+            support,
+            np.zeros_like(hint),
+            edge,
+            color,
+            100.0,
+            scales,
+        )
+
+        self.assertEqual(int(strict_fill.sum()), 0)
+        self.assertFalse(strict[18, 34])
+        self.assertGreater(int(loose_fill.sum()), 0)
+        self.assertTrue(loose[18, 34])
+
+    def test_v2_same_side_gap_fill_rejects_broad_weak_regions(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        support = np.zeros((70, 90), dtype=bool)
+        support[10:60, 10:35] = True
+        hint = support.copy()
+        hint[15:55, 35:60] = True
+        edge = np.zeros(hint.shape, dtype=np.float32)
+        edge[14:56, 34:61] = 0.45
+        color = np.zeros(hint.shape, dtype=np.float32)
+        color[15:55, 35:60] = 0.11
+        scales = draw_quick_select._Scales(30.0, 0.0, 40, 60.0)
+
+        restored, fill = draw_quick_select_v2._v2_fill_same_side_gaps(
+            support,
+            hint,
+            support,
+            np.zeros_like(hint),
+            edge,
+            color,
+            100.0,
+            scales,
+        )
+
+        self.assertEqual(int(fill.sum()), 0)
+        np.testing.assert_array_equal(restored, support)
 
     def test_s_curve_boundary_follows_curve(self):
         image, edge_y = _s_curve_scene()
@@ -1690,6 +2007,26 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         dark_floor = draw_quick_select._edge_restore_color_min_for_unit(
             image, ~comp, np.logical_not(comp) & (np.indices(comp.shape)[1] < 12), ~comp, 12)
         self.assertEqual(dark_floor, draw_quick_select.EDGE_RESTORE_COLOR_MIN)
+
+    def test_bright_edge_restore_color_floor_tightens_with_edge_lock(self):
+        image = np.zeros((30, 40, 3), dtype=np.float32)
+        image[:, :20] = (0.12, 0.18, 0.36)
+        image[:, 20:] = (0.86, 0.86, 0.95)
+        comp = np.zeros((30, 40), dtype=bool)
+        comp[:, 20:32] = True
+        core = np.zeros_like(comp)
+        core[:, 27:30] = True
+
+        strict_edge = draw_quick_select._edge_restore_color_min_for_unit(
+            image, comp, core, comp, 12, strength=0)
+        loose_edge = draw_quick_select._edge_restore_color_min_for_unit(
+            image, comp, core, comp, 12, strength=100)
+
+        self.assertLess(strict_edge, loose_edge)
+        self.assertAlmostEqual(
+            loose_edge,
+            draw_quick_select.BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCKED,
+        )
 
     def test_bright_selected_side_uses_weaker_color_weight(self):
         image = np.zeros((30, 40, 3), dtype=np.float32)

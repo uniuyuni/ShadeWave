@@ -8,8 +8,11 @@ is rebuilt and compared against the corpus.
 from __future__ import annotations
 
 import logging
+import os
 import time
+from types import SimpleNamespace
 
+import cv2
 import numpy as np
 
 from cores.mask2 import draw_quick_select as _v1
@@ -49,11 +52,7 @@ def compute_draw_support(
         )
         return _tag_result(result, "v2_fallback_erase", t0)
 
-    # V2 add-only MVP: keep the current min-cut result as the baseline while the
-    # harness measures edge contact, zoom stability, and runtime. The next step is
-    # to replace this call with V2's canonical edge-field/boundary solver without
-    # touching UI or matte composition.
-    result = _v1.compute_draw_support(
+    result = _compute_add_only_support(
         guide,
         mask,
         radius,
@@ -62,7 +61,642 @@ def compute_draw_support(
         draw_strokes=draw_strokes,
         pixel_scale=pixel_scale,
     )
-    return _tag_result(result, "v2_add_mvp", t0)
+    return _tag_result(result, "v2_add_local_edge", t0)
+
+
+def _compute_add_only_support(
+        guide,
+        mask,
+        radius,
+        strength,
+        seed_mask=None,
+        draw_strokes=None,
+        pixel_scale=1.0,
+        _dump_input=True) -> DrawSupportResult:
+    """Run the add-only V2 path without mutating V1 global state."""
+    mask_f = _er._as_mask(mask)
+    hint = mask_f > 0.02
+    h, w = hint.shape[:2]
+    empty = np.zeros((h, w), dtype=bool)
+    if not np.any(hint) or _v1.maximum_flow is None:
+        return DrawSupportResult(empty, empty, empty.copy(), [])
+
+    guide = _er._prepare_guide_image(guide, (h, w))
+    if guide is None:
+        return DrawSupportResult(empty, empty, empty.copy(), [])
+
+    scale = _canonical_scale_factor(pixel_scale)
+    if scale < 0.999:
+        small = _downscale_problem(
+            guide, mask_f, seed_mask, draw_strokes, radius, scale)
+        small_result = _compute_add_only_support(
+            small["guide"],
+            small["mask"],
+            small["radius"],
+            strength,
+            seed_mask=small["seed_mask"],
+            draw_strokes=small["strokes"],
+            pixel_scale=1.0,
+            _dump_input=False,
+        )
+        if _dump_input:
+            _v1._maybe_dump_input(
+                guide,
+                mask_f,
+                radius,
+                strength,
+                seed_mask,
+                draw_strokes,
+                pixel_scale,
+                strength_mode=_debug_plane_mode(small_result),
+                edge_lock_auto=_debug_plane_percent(small_result, "edge_lock_auto"),
+                edge_lock_effective=_debug_plane_percent(small_result, "edge_lock_effective"),
+                edge_lock_offset=_debug_plane_percent(small_result, "edge_lock_offset"),
+            )
+        return _upscale_result(small_result, (h, w), scale)
+
+    scales = _v1._resolve_scales(radius, draw_strokes, hint)
+    raw_strength = strength
+
+    edge_strength = _er._draw_snap_edge_strength(guide)
+    if edge_strength is None:
+        edge_strength = np.zeros((h, w), dtype=np.float32)
+    stable_edge_strength = _stable_edge_strength(guide, edge_strength)
+    use_stable_edge = os.environ.get("QS_V2_STABLE_EDGE", "").strip().lower() in {"1", "true", "yes", "on"}
+    solve_edge_strength = stable_edge_strength if use_stable_edge else edge_strength
+    strength, auto_strength, offset_strength, strength_mode = _resolve_edge_lock(
+        raw_strength, solve_edge_strength, hint)
+    if _dump_input:
+        _v1._maybe_dump_input(
+            guide,
+            mask_f,
+            radius,
+            raw_strength,
+            seed_mask,
+            draw_strokes,
+            pixel_scale,
+            strength_mode=strength_mode,
+            edge_lock_auto=auto_strength,
+            edge_lock_effective=strength,
+            edge_lock_offset=offset_strength,
+        )
+    solver_edge_strength = _v1._solver_edge_strength(solve_edge_strength, pixel_scale)
+    edge_cost_all = _v1._edge_cost_map(solver_edge_strength, strength)
+    solver_edge_context_all = solver_edge_strength.copy()
+
+    fg_stroke, bg_stroke, has_strokes = _er._draw_random_walker_stroke_seeds(
+        hint.shape, draw_strokes, hint)
+
+    hard_fg_core = _v1._seed_core(mask_f, fg_stroke, hint)
+    erase_bg = bg_stroke & ~hard_fg_core
+
+    support_all = np.zeros((h, w), dtype=bool)
+    band_all = np.zeros((h, w), dtype=bool)
+    fg_seed_all = np.zeros((h, w), dtype=bool)
+    bg_seed_all = np.zeros((h, w), dtype=bool)
+    prior_all = np.zeros((h, w), dtype=np.float32)
+    cut_all = np.zeros((h, w), dtype=bool)
+    color_all = np.zeros((h, w), dtype=np.float32)
+    restore_color_min_all = np.full((h, w), float(_v1.EDGE_RESTORE_COLOR_MIN), dtype=np.float32)
+    restore_candidate_all = np.zeros((h, w), dtype=bool)
+    edge_restore_all = np.zeros((h, w), dtype=bool)
+    edge_bridge_all = np.zeros((h, w), dtype=bool)
+
+    solve_units = _stroke_local_solve_units(
+        mask_f, hint, hard_fg_core, draw_strokes, radius, has_strokes)
+    total_band = 0
+    total_flow = 0
+    for unit in solve_units:
+        component = unit.component
+        component_scales = unit.scales
+        y0, y1, x0, x1 = _er._expanded_bbox(component, component_scales.roi_pad)
+        if y1 <= y0 or x1 <= x0:
+            continue
+        sl = np.s_[y0:y1, x0:x1]
+        comp = component[sl]
+        core_roi = unit.core[sl]
+        color_roi = _v1._color_score(
+            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+            directional_bg=has_strokes)
+        selected_luma_delta = _v1._selected_luma_delta(
+            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+            directional_bg=has_strokes)
+        color_weight = _v1._color_weight_for_unit(
+            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+            directional_bg=has_strokes, strength=strength)
+        unit_edge_strength = _v1._contextual_edge_strength(
+            solver_edge_strength[sl], color_roi, strength)
+        g_roi = _v1._edge_cost_map(unit_edge_strength, strength)
+        restore_color_min = _v1._edge_restore_color_min_for_unit(
+            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+            directional_bg=has_strokes,
+            strength=strength)
+        side_edge_thresh = _v2_side_edge_thresh(strength, component_scales, selected_luma_delta)
+        out = _v1._solve_component(
+            comp,
+            hint[sl],
+            g_roi,
+            core_roi,
+            erase_bg[sl],
+            color_roi,
+            component_scales,
+            unit_edge_strength,
+            color_weight=color_weight,
+            side_edge_thresh=side_edge_thresh,
+            side_relax_weight=_v1._side_edge_relax_weight_for_strength(strength),
+            prior_floor_in=_v2_prior_floor_in(selected_luma_delta, component_scales),
+            strict_side_edge_thresh=side_edge_thresh,
+            side_dilate=_v2_side_dilate(selected_luma_delta, component_scales),
+        )
+        color_all[sl] = np.where(out.band | comp, color_roi, color_all[sl])
+        edge_cost_all[sl] = np.where(out.band | comp, g_roi, edge_cost_all[sl])
+        solver_edge_context_all[sl] = np.where(
+            out.band | comp, unit_edge_strength, solver_edge_context_all[sl])
+        restore_candidate_roi = out.band & comp
+        restore_candidate_all[sl] |= restore_candidate_roi
+        restore_color_min_all[sl] = np.where(
+            restore_candidate_roi,
+            np.minimum(restore_color_min_all[sl], restore_color_min),
+            restore_color_min_all[sl],
+        )
+        support_all[sl] |= out.support
+        band_all[sl] |= out.band
+        fg_seed_all[sl] |= out.hard_fg
+        bg_seed_all[sl] |= out.hard_bg
+        prior_all[sl] = np.where(out.band, out.prior, prior_all[sl])
+        cut_all[sl] |= out.cut_boundary
+        total_band += int(np.count_nonzero(out.band))
+        total_flow = max(total_flow, out.flow_value)
+
+    support_all = _v1._postprocess_support(support_all, hint, hard_fg_core, erase_bg)
+    support_all, edge_restore_all = _v1._restore_selected_edge_rim(
+        support_all,
+        restore_candidate_all,
+        solver_edge_context_all,
+        color_all,
+        hard_fg_core,
+        erase_bg,
+        color_min=restore_color_min_all,
+        edge_thresh=_v1._edge_restore_thresh_for_strength(strength),
+    )
+    support_all, edge_bridge_all = _v1._bridge_selected_edge_seams(
+        support_all,
+        restore_candidate_all,
+        solver_edge_context_all,
+        hard_fg_core,
+        erase_bg,
+    )
+    support_all = _v1._limit_smooth_outside_growth(
+        support_all, hint, solver_edge_context_all, hard_fg_core, erase_bg)
+    support_all, interior_fill_all = _v1._fill_selected_hint_holes(
+        support_all, hint, hard_fg_core, erase_bg)
+    support_all, same_side_gap_fill_all = _v2_fill_same_side_gaps(
+        support_all,
+        hint,
+        hard_fg_core,
+        erase_bg,
+        solver_edge_context_all,
+        color_all,
+        strength,
+        scales,
+    )
+    support_all = _er._preserve_draw_component_separation(hint, support_all)
+
+    debug_planes = [
+        ("image_edge", edge_strength),
+        ("stable_edge", stable_edge_strength),
+        ("stable_edge_enabled", np.full((h, w), 1.0 if use_stable_edge else 0.0, dtype=np.float32)),
+        ("context_edge", solver_edge_context_all),
+        ("edge_cost", edge_cost_all),
+        ("color_score", (color_all * 0.5 + 0.5).astype(np.float32)),
+        ("seed_fg", fg_seed_all),
+        ("seed_bg", bg_seed_all),
+        ("prior", (prior_all * 0.5 + 0.5).astype(np.float32)),
+        ("cut_boundary", cut_all),
+        ("edge_restore", edge_restore_all),
+        ("edge_bridge", edge_bridge_all),
+        ("interior_fill", interior_fill_all),
+        ("same_side_gap_fill", same_side_gap_fill_all),
+        ("v2_graph_nodes", np.full((h, w), float(total_band), dtype=np.float32)),
+        ("v2_flow_value", np.full((h, w), float(total_flow), dtype=np.float32)),
+        ("edge_lock_auto", np.full((h, w), float(auto_strength) / 100.0, dtype=np.float32)),
+        ("edge_lock_effective", np.full((h, w), float(strength) / 100.0, dtype=np.float32)),
+        ("edge_lock_offset", np.full((h, w), float(offset_strength) / 100.0, dtype=np.float32)),
+        ("edge_lock_mode_offset", np.full((h, w), 1.0 if strength_mode == "offset" else 0.0, dtype=np.float32)),
+    ]
+
+    hint_area = int(np.count_nonzero(hint))
+    support_area = int(np.count_nonzero(support_all))
+    logging.info(
+        "[DRAW_QS_V2] hint=%d band=%d support=%d ratio=%.3f comps=%d max_flow=%d radius=%.1f",
+        hint_area,
+        total_band,
+        support_area,
+        (support_area / hint_area) if hint_area else 0.0,
+        len(solve_units),
+        total_flow,
+        scales.band_half_width,
+    )
+    return DrawSupportResult(fg_seed_all, band_all, support_all, debug_planes)
+
+
+def _resolve_edge_lock(raw_strength, edge_strength, hint):
+    """Resolve V2 EdgeLock.
+
+    Default is old internal semantics for corpus/backward compatibility.
+    Set ``QS_V2_STRENGTH_MODE=offset`` (or ``QS_DRAW_V2_OFFSET=1``) for the new
+    UI semantics: 0 = auto, positive = stricter, negative = looser.
+    """
+    auto = _estimate_auto_edge_lock(edge_strength, hint)
+    try:
+        raw = float(raw_strength)
+    except Exception:
+        raw = 0.0
+    mode = os.environ.get("QS_V2_STRENGTH_MODE", "").strip().lower()
+    if not mode and os.environ.get("QS_DRAW_V2_OFFSET", "").strip().lower() in {"1", "true", "yes", "on"}:
+        mode = "offset"
+    if mode == "offset":
+        offset = raw
+        effective = float(np.clip(auto - offset, 0.0, 100.0))
+        return effective, auto, offset, "offset"
+    effective = float(np.clip(raw, 0.0, 100.0))
+    return effective, auto, effective - auto, "internal"
+
+
+def _stable_edge_strength(guide, edge_strength):
+    """Prefer edges that survive a 2x scale change.
+
+    Fine snowy/tree texture often produces high single-scale gradients. Real
+    object boundaries usually remain visible after downsampling. This gate keeps
+    strong single-scale edges available, but discounts edges that disappear at
+    half resolution.
+    """
+    edge = np.clip(np.asarray(edge_strength, dtype=np.float32), 0.0, 1.0)
+    h, w = edge.shape[:2]
+    if h < 16 or w < 16:
+        return edge
+    guide_arr = np.asarray(guide, dtype=np.float32)
+    small = cv2.resize(guide_arr, (max(1, w // 2), max(1, h // 2)), interpolation=cv2.INTER_AREA)
+    small_edge = _er._draw_snap_edge_strength(small)
+    if small_edge is None:
+        return edge
+    half = cv2.resize(np.asarray(small_edge, dtype=np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+    half = np.clip(half, 0.0, 1.0)
+    # Keep a floor so thin but meaningful branches are not erased completely;
+    # still let scale-stable boundaries dominate the min-cut.
+    gate = 0.45 + 0.55 * np.sqrt(half)
+    stable = edge * gate
+    return np.maximum(stable, edge * 0.55).astype(np.float32, copy=False)
+
+
+def _estimate_auto_edge_lock(edge_strength, hint):
+    vals = _hint_boundary_edge_values(edge_strength, hint)
+    if vals.size == 0:
+        return 55.0
+    p90 = float(np.percentile(vals, 90.0))
+    p75 = float(np.percentile(vals, 75.0))
+    strong_density = float(np.mean(vals >= 0.60))
+    mid_density = float(np.mean(vals >= 0.35))
+    auto = 55.0
+    if p90 >= 0.75 and strong_density >= 0.16:
+        auto = 34.0
+    elif p90 >= 0.60 or strong_density >= 0.08:
+        auto = 44.0
+    elif p75 < 0.25 and mid_density < 0.08:
+        auto = 78.0
+    elif p90 < 0.45:
+        auto = 66.0
+    return float(np.clip(auto, 0.0, 100.0))
+
+
+def _hint_boundary_edge_values(edge_strength, hint, width=8):
+    edge = np.asarray(edge_strength, dtype=np.float32)
+    hint = np.asarray(hint, dtype=bool)
+    if edge.shape != hint.shape or not np.any(hint):
+        return np.array([], dtype=np.float32)
+    width = int(max(1, round(float(width))))
+    dist_in = cv2.distanceTransform(hint.astype(np.uint8), cv2.DIST_L2, 3)
+    dist_out = cv2.distanceTransform((~hint).astype(np.uint8), cv2.DIST_L2, 3)
+    band = (hint & (dist_in <= width)) | ((~hint) & (dist_out <= width))
+    vals = edge[band]
+    if vals.size == 0:
+        return np.array([], dtype=np.float32)
+    return vals.astype(np.float32, copy=False)
+
+
+def _v2_prior_floor_in(selected_luma_delta, scales):
+    if float(selected_luma_delta) > 0.04:
+        stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
+        if stroke_hw >= 150.0:
+            return 0.0
+        if 45.0 <= stroke_hw <= 110.0:
+            return 0.02
+        return 0.05
+    return None
+
+
+def _v2_side_edge_thresh(strength, scales, selected_luma_delta):
+    base = _v1._side_edge_thresh_for_strength(strength)
+    stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
+    if float(selected_luma_delta) > 0.04 and 45.0 <= stroke_hw <= 110.0:
+        return min(base, 0.45)
+    return base
+
+
+def _v2_side_dilate(selected_luma_delta, scales):
+    stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
+    delta = float(selected_luma_delta)
+    if 0.02 < delta <= 0.04 and stroke_hw >= 120.0:
+        return 1
+    return None
+
+
+def _v2_fill_same_side_gaps(
+        support,
+        hint,
+        hard_fg_core,
+        erase_bg,
+        edge_strength,
+        color_score,
+        strength,
+        scales):
+    """Restore selected-side gaps without turning EdgeLock into blind dilation.
+
+    The min-cut is conservative around busy silhouettes: narrow sky/cloud gaps
+    between dark branches can be left as background because they stay connected
+    to the hint boundary. This post-process only restores pixels that are
+    connected to the existing support through FG-like colour, close to an image
+    edge, and pass a per-component confidence check. EdgeLock controls how weak
+    a same-side gap may be before we accept it.
+    """
+    support = np.asarray(support, dtype=bool)
+    hint = np.asarray(hint, dtype=bool)
+    erase = np.asarray(erase_bg, dtype=bool)
+    fill = np.zeros_like(support, dtype=bool)
+    gap = hint & ~support & ~erase
+    if not np.any(support) or not np.any(gap):
+        return support, fill
+
+    color = np.nan_to_num(
+        np.asarray(color_score, dtype=np.float32),
+        nan=0.0,
+        posinf=1.0,
+        neginf=-1.0,
+    )
+    if color.shape != support.shape:
+        return support, fill
+    if float(np.max(color[gap], initial=-1.0)) <= 0.0:
+        return support, fill
+
+    edge = np.clip(np.asarray(edge_strength, dtype=np.float32), 0.0, 1.0)
+    if edge.shape != support.shape:
+        edge = np.zeros_like(color, dtype=np.float32)
+
+    params = _v2_gap_fill_params(strength, scales)
+    dist_to_support = cv2.distanceTransform((~support).astype(np.uint8), cv2.DIST_L2, 3)
+    edge_near = edge >= params.edge_min
+    if np.any(edge_near):
+        edge_near = cv2.dilate(
+            edge_near.astype(np.uint8),
+            np.ones((3, 3), dtype=np.uint8),
+            iterations=params.edge_near,
+        ) > 0
+
+    candidate = (
+        gap
+        & (dist_to_support <= params.max_distance)
+        & (color >= params.pixel_min)
+        & edge_near
+    )
+    if not np.any(candidate):
+        return support, fill
+
+    connected = _er._connected_to_seed(support | candidate, support) & candidate
+    if not np.any(connected):
+        return support, fill
+
+    n_labels, labels = cv2.connectedComponents(connected.astype(np.uint8), connectivity=8)
+    if n_labels <= 1:
+        return support, fill
+
+    areas = np.bincount(labels.reshape(-1), minlength=n_labels)
+    kept = []
+    for label_id in range(1, n_labels):
+        area = int(areas[label_id])
+        if area <= 0:
+            continue
+        part = labels == label_id
+        vals = color[part]
+        if vals.size == 0:
+            continue
+        median = float(np.median(vals))
+        p90 = float(np.percentile(vals, 90.0))
+        edge_frac = float(np.mean(edge[part] >= params.edge_min))
+        keep = median >= params.component_median and area <= params.medium_area
+        if not keep and area > params.medium_area:
+            keep = median >= params.large_median and p90 >= params.large_p90
+        if not keep and area <= params.small_area:
+            keep = median >= params.small_median and p90 >= params.small_p90
+        if not keep and area <= params.medium_area:
+            keep = (
+                median >= params.small_median
+                and p90 >= params.small_p90
+                and edge_frac >= params.edge_fraction
+            )
+        if keep:
+            score = median + 0.35 * p90 + 0.10 * edge_frac
+            kept.append((float(score), area, label_id))
+
+    if not kept:
+        return support, fill
+
+    max_total = _v2_gap_fill_max_total(hint, support, params)
+    used = 0
+    for _score, area, label_id in sorted(kept, reverse=True):
+        if used > 0 and used + area > max_total:
+            continue
+        if used == 0 or used + area <= max_total:
+            fill |= labels == label_id
+            used += area
+
+    if not np.any(fill):
+        return support, fill
+
+    restored = support | fill
+    if np.any(hard_fg_core):
+        restored = _er._connected_to_seed(restored, hard_fg_core) | hard_fg_core
+        restored &= ~erase
+        fill &= restored
+    return restored, fill
+
+
+def _v2_gap_fill_params(strength, scales):
+    lock = float(np.clip(strength, 0.0, 100.0)) / 100.0
+    stroke_hw = float(max(1.0, getattr(scales, "stroke_half_width", 1.0)))
+    max_distance = float(np.clip(stroke_hw * (0.08 + 0.16 * lock), 5.0, 28.0))
+    small_area = int(round(np.clip(16.0 + stroke_hw * stroke_hw * 0.012, 24.0, 480.0)))
+    medium_area = int(round(np.clip(32.0 + stroke_hw * stroke_hw * 0.035, 64.0, 900.0)))
+    return SimpleNamespace(
+        pixel_min=float(np.clip(0.20 - 0.30 * lock, -0.08, 0.22)),
+        component_median=float(np.clip(0.22 - 0.14 * lock, 0.10, 0.24)),
+        large_median=float(np.clip(0.24 - 0.10 * lock, 0.14, 0.26)),
+        large_p90=float(np.clip(0.38 - 0.14 * lock, 0.24, 0.40)),
+        small_median=float(np.clip(0.12 - 0.10 * lock, 0.035, 0.14)),
+        small_p90=float(np.clip(0.34 - 0.16 * lock, 0.18, 0.36)),
+        edge_min=float(np.clip(0.28 - 0.16 * lock, 0.10, 0.30)),
+        edge_near=int(np.clip(round(1.0 + 2.0 * lock), 1, 3)),
+        edge_fraction=float(np.clip(0.82 - 0.32 * lock, 0.50, 0.86)),
+        max_distance=max_distance,
+        small_area=small_area,
+        medium_area=medium_area,
+    )
+
+
+def _v2_gap_fill_max_total(hint, support, params):
+    hint_area = int(np.count_nonzero(hint))
+    support_area = int(np.count_nonzero(support))
+    geometric_cap = int(round(float(params.small_area) * 4.0))
+    area_cap = int(round(min(
+        max(32.0, float(hint_area) * 0.035),
+        max(32.0, float(support_area) * 0.080),
+        max(64.0, float(geometric_cap)),
+    )))
+    return max(1, area_cap)
+
+
+def _canonical_scale_factor(pixel_scale):
+    if os.environ.get("QS_V2_CANONICAL_SCALE", "").strip().lower() in {"0", "false", "no", "off"}:
+        return 1.0
+    try:
+        scale = float(pixel_scale)
+    except Exception:
+        scale = 1.0
+    if scale <= 1.01:
+        return 1.0
+    return float(np.clip(1.0 / scale, 0.25, 1.0))
+
+
+def _downscale_problem(guide, mask, seed_mask, draw_strokes, radius, scale):
+    h, w = mask.shape[:2]
+    sw = max(1, int(round(w * float(scale))))
+    sh = max(1, int(round(h * float(scale))))
+    small_guide = cv2.resize(
+        np.asarray(guide, dtype=np.float32), (sw, sh), interpolation=cv2.INTER_AREA)
+    small_mask = cv2.resize(
+        np.asarray(mask, dtype=np.float32), (sw, sh), interpolation=cv2.INTER_AREA)
+    small_seed = None
+    if seed_mask is not None:
+        small_seed = cv2.resize(
+            np.asarray(seed_mask, dtype=np.uint8), (sw, sh), interpolation=cv2.INTER_NEAREST) > 0
+    return {
+        "guide": small_guide.astype(np.float32, copy=False),
+        "mask": small_mask.astype(np.float32, copy=False),
+        "seed_mask": small_seed,
+        "radius": float(radius) * float(scale),
+        "strokes": _scale_strokes(draw_strokes, scale),
+    }
+
+
+def _scale_strokes(draw_strokes, scale):
+    if not draw_strokes:
+        return draw_strokes
+    out = []
+    for stroke in draw_strokes:
+        points = np.asarray(getattr(stroke, "points", []), dtype=np.float32)
+        if points.size:
+            points = points * float(scale)
+            pts = [(float(x), float(y)) for x, y in points[:, :2]]
+        else:
+            pts = []
+        out.append(SimpleNamespace(
+            points=pts,
+            size=float(getattr(stroke, "size", 1.0)) * float(scale),
+            soft=float(getattr(stroke, "soft", 100.0)),
+            is_erasing=bool(getattr(stroke, "is_erasing", False)),
+        ))
+    return out
+
+
+def _upscale_result(result, shape, scale):
+    h, w = shape
+
+    def resize_bool(arr):
+        return cv2.resize(
+            np.asarray(arr, dtype=np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+
+    def resize_plane(arr):
+        a = np.asarray(arr)
+        interp = cv2.INTER_NEAREST if a.dtype == np.bool_ else cv2.INTER_LINEAR
+        out = cv2.resize(a.astype(np.float32), (w, h), interpolation=interp)
+        return out.astype(np.float32, copy=False)
+
+    planes = []
+    for name, plane in result.debug_planes:
+        arr = np.asarray(plane)
+        if arr.ndim == 2 and arr.shape[:2] != (h, w):
+            planes.append((name, resize_plane(arr)))
+        else:
+            planes.append((name, plane))
+    planes.append(("v2_canonical_scale", np.full((h, w), float(scale), dtype=np.float32)))
+    return DrawSupportResult(
+        resize_bool(result.seed),
+        resize_bool(result.candidate),
+        resize_bool(result.support),
+        planes,
+    )
+
+
+def _debug_plane_percent(result, name):
+    for plane_name, plane in getattr(result, "debug_planes", []) or []:
+        if plane_name == name:
+            arr = np.asarray(plane, dtype=np.float32)
+            if arr.size:
+                return float(np.nanmax(arr)) * 100.0
+    return None
+
+
+def _debug_plane_mode(result):
+    value = _debug_plane_percent(result, "edge_lock_mode_offset")
+    if value is None:
+        return None
+    return "offset" if value >= 50.0 else "internal"
+
+
+def _stroke_local_solve_units(mask_f, hint, hard_fg_core, draw_strokes, radius, has_strokes):
+    """V2 add-only solve units: local brush footprint, not whole component."""
+    hint = np.asarray(hint, dtype=bool)
+    units = []
+    covered = np.zeros_like(hint, dtype=bool)
+
+    if has_strokes and draw_strokes:
+        shape = hint.shape
+        for stroke in draw_strokes:
+            if bool(getattr(stroke, "is_erasing", False)):
+                continue
+            points = _er._stroke_points_array(stroke)
+            if points.shape[0] == 0:
+                continue
+            try:
+                size = float(max(1.0, getattr(stroke, "size", 1.0)))
+            except Exception:
+                size = 1.0
+            stroke_mask = _er._stroke_brush_mask(shape, points, size) & hint
+            if not np.any(stroke_mask):
+                continue
+            center = _er._stroke_center_mask(shape, points, size) & stroke_mask
+            stroke_core = _v1._seed_core(np.asarray(mask_f) * stroke_mask, center, stroke_mask)
+            stroke_scales = _v1._resolve_scales(radius, [stroke], stroke_mask)
+            covered |= stroke_mask
+            _v1._append_connected_units(units, stroke_mask, stroke_core, stroke_scales)
+
+    fallback = hint & ~covered if units else hint
+    if units:
+        fallback = _v1._drop_tiny_components(fallback, _v1.MIN_SOLVE_COMPONENT_AREA)
+    if np.any(fallback):
+        fallback_scales = _v1._resolve_scales(radius, draw_strokes, fallback)
+        _v1._append_connected_units(units, fallback, hard_fg_core & fallback, fallback_scales)
+
+    return units
 
 
 def _normalize_strokes(draw_strokes):
@@ -80,7 +714,7 @@ def _tag_result(result: DrawSupportResult, mode: str, started_at: float) -> Draw
         elapsed = max(0.0, (time.perf_counter() - started_at) * 1000.0)
         planes = list(result.debug_planes)
         planes.append(("v2_runtime_ms", np.full(shape, elapsed / 1000.0, dtype=np.float32)))
-        planes.append(("v2_mode", np.full(shape, 1.0 if mode == "v2_add_mvp" else 0.0, dtype=np.float32)))
+        planes.append(("v2_mode", np.full(shape, 1.0 if mode.startswith("v2_add") else 0.0, dtype=np.float32)))
         logging.info("[DRAW_QS_V2] mode=%s runtime_ms=%.1f", mode, elapsed)
         return DrawSupportResult(result.seed, result.candidate, result.support, planes)
     return result

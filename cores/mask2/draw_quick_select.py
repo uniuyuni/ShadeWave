@@ -82,7 +82,7 @@ REACH_FRAC = _envf("QS_REACH_FRAC", 0.85)
 # (e.g. a brush that overran a cloud edge into dark sky), which a purely
 # geometric cut cannot do without a shrinking bias.
 COLOR_W = _envf("QS_COLOR_W", 1.7)
-BRIGHT_COLOR_W = _envf("QS_BRIGHT_COLOR_W", 0.35)
+BRIGHT_COLOR_W = _envf("QS_BRIGHT_COLOR_W", 0.6)
 BRIGHT_COLOR_W_BASE = _envf("QS_BRIGHT_COLOR_W_BASE", 1.1)
 BRIGHT_COLOR_W_START = _envf("QS_BRIGHT_COLOR_W_START", 70.0)
 # Outside-the-mask FG-pull weight. 0 = conservative boundary snap (no explosion,
@@ -126,7 +126,9 @@ DIRECTIONAL_BG_MAX_SEP_RATIO = _envf("QS_DIRECTIONAL_BG_MAX_SEP_RATIO", 2.0)
 # exactly on the ridge but the visible foreground wants the ridge pixels included.
 EDGE_RESTORE_THRESH = _envf("QS_EDGE_RESTORE_THRESH", 0.40)
 EDGE_RESTORE_COLOR_MIN = _envf("QS_EDGE_RESTORE_COLOR_MIN", 0.05)
-BRIGHT_EDGE_RESTORE_COLOR_MIN = _envf("QS_BRIGHT_EDGE_RESTORE_COLOR_MIN", -0.70)
+BRIGHT_EDGE_RESTORE_COLOR_MIN = _envf("QS_BRIGHT_EDGE_RESTORE_COLOR_MIN", -0.10)
+BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCKED = _envf("QS_BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCKED", 0.0)
+BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCK_END = _envf("QS_BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCK_END", 60.0)
 BRIGHT_EDGE_RESTORE_LUMA_DELTA = _envf("QS_BRIGHT_EDGE_RESTORE_LUMA_DELTA", 0.025)
 EDGE_RESTORE_STEPS = int(max(1, round(_envf("QS_EDGE_RESTORE_STEPS", 4.0))))
 EDGE_RESTORE_EDGE_NEAR = int(max(0, round(_envf("QS_EDGE_RESTORE_EDGE_NEAR", 2.0))))
@@ -249,7 +251,8 @@ def compute_draw_support(
         g_roi = _edge_cost_map(unit_edge_strength, strength)
         restore_color_min = _edge_restore_color_min_for_unit(
             guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
-            directional_bg=has_strokes)
+            directional_bg=has_strokes,
+            strength=strength)
         out = _solve_component(
             comp,
             hint[sl],
@@ -346,7 +349,18 @@ def compute_draw_support(
 _DUMP_COUNTER = 0
 
 
-def _maybe_dump_input(guide, mask, radius, strength, seed_mask, draw_strokes, pixel_scale=1.0):
+def _maybe_dump_input(
+        guide,
+        mask,
+        radius,
+        strength,
+        seed_mask,
+        draw_strokes,
+        pixel_scale=1.0,
+        strength_mode=None,
+        edge_lock_auto=None,
+        edge_lock_effective=None,
+        edge_lock_offset=None):
     """When QS_DUMP_INPUT is set, save the *exact* inputs to an .npz so a
     production call (real resolution + colour space) can be reproduced offline.
     """
@@ -378,16 +392,24 @@ def _maybe_dump_input(guide, mask, radius, strength, seed_mask, draw_strokes, pi
                 "is_erasing": bool(getattr(s, "is_erasing", False)),
             })
         path = os.path.join(d, f"qs_input_{_DUMP_COUNTER:03d}.npz")
-        np.savez_compressed(
-            path,
-            guide=np.asarray(guide, dtype=np.float32),
-            mask=np.asarray(mask, dtype=np.float32),
-            seed_mask=(np.asarray(seed_mask) if seed_mask is not None else np.array([])),
-            radius=np.float32(radius),
-            strength=np.float32(strength),
-            pixel_scale=np.float32(pixel_scale),
-            strokes=np.array(strokes, dtype=object),
-        )
+        payload = {
+            "guide": np.asarray(guide, dtype=np.float32),
+            "mask": np.asarray(mask, dtype=np.float32),
+            "seed_mask": (np.asarray(seed_mask) if seed_mask is not None else np.array([])),
+            "radius": np.float32(radius),
+            "strength": np.float32(strength),
+            "pixel_scale": np.float32(pixel_scale),
+            "strokes": np.array(strokes, dtype=object),
+        }
+        if strength_mode is not None:
+            payload["strength_mode"] = np.array(str(strength_mode))
+        if edge_lock_auto is not None:
+            payload["edge_lock_auto"] = np.float32(edge_lock_auto)
+        if edge_lock_effective is not None:
+            payload["edge_lock_effective"] = np.float32(edge_lock_effective)
+        if edge_lock_offset is not None:
+            payload["edge_lock_offset"] = np.float32(edge_lock_offset)
+        np.savez_compressed(path, **payload)
         _DUMP_COUNTER += 1
         logging.warning("[QS_DUMP_INPUT] wrote %s (guide %s, radius=%.1f, strokes=%d)",
                         path, np.asarray(guide).shape, float(radius), len(strokes))
@@ -650,12 +672,28 @@ def _color_score(guide, comp, core, all_hint, R_out, directional_bg=False):
     return np.clip(score, -1.0, 1.0).astype(np.float32)
 
 
-def _edge_restore_color_min_for_unit(guide, comp, core, all_hint, R_out, directional_bg=False):
+def _edge_restore_color_min_for_unit(
+        guide,
+        comp,
+        core,
+        all_hint,
+        R_out,
+        directional_bg=False,
+        strength=0.0):
     delta = _selected_luma_delta(
         guide, comp, core, all_hint, R_out, directional_bg=directional_bg)
     if delta > float(BRIGHT_EDGE_RESTORE_LUMA_DELTA):
-        return float(BRIGHT_EDGE_RESTORE_COLOR_MIN)
+        return _bright_edge_restore_color_min_for_strength(strength)
     return float(EDGE_RESTORE_COLOR_MIN)
+
+
+def _bright_edge_restore_color_min_for_strength(strength):
+    lock = float(np.clip(strength, 0.0, 100.0))
+    end = float(max(1.0, BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCK_END))
+    t = float(np.clip(lock / end, 0.0, 1.0))
+    strict_edge = float(BRIGHT_EDGE_RESTORE_COLOR_MIN)
+    loose_edge = float(BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCKED)
+    return float(strict_edge * (1.0 - t) + loose_edge * t)
 
 
 def _color_weight_for_unit(guide, comp, core, all_hint, R_out, directional_bg=False, strength=100.0):
@@ -779,7 +817,10 @@ def _solve_component(
         side_edge_roi=None,
         color_weight=COLOR_W,
         side_edge_thresh=None,
-        side_relax_weight=1.0) -> _ComponentSolve:
+        side_relax_weight=1.0,
+        prior_floor_in=None,
+        strict_side_edge_thresh=None,
+        side_dilate=None) -> _ComponentSolve:
     zeros = np.zeros_like(comp, dtype=bool)
     fzeros = np.zeros(comp.shape, dtype=np.float32)
     if not np.any(comp):
@@ -827,17 +868,23 @@ def _solve_component(
     # not collapse toward the skeleton in smooth regions); outside it prevents
     # outward bulge / inflation. The colour term (added below) is what actually
     # clips a same-colour-as-nothing spill across an edge.
-    mag_in = np.clip(PRIOR_FLOOR_IN + (1.0 - PRIOR_FLOOR_IN) * dist_in / max(half_w, 1.0), 0.0, 1.0)
+    floor_in = float(PRIOR_FLOOR_IN if prior_floor_in is None else prior_floor_in)
+    mag_in = np.clip(floor_in + (1.0 - floor_in) * dist_in / max(half_w, 1.0), 0.0, 1.0)
     f_out = dist_out / max(R_out, 1.0)
     rim_ramp = np.clip((f_out - REACH_FRAC) / max(1.0 - REACH_FRAC, 1e-3), 0.0, 1.0)
     mag_out = np.clip(PRIOR_FLOOR_OUT + (1.0 - PRIOR_FLOOR_OUT) * rim_ramp, 0.0, 1.0)
     prior[inside] = mag_in[inside]
     prior[outside] = -mag_out[outside]
     strict_seed_side = _seed_side_through_smooth_interior(
-        comp, core, side_edge_roi, edge_thresh=SIDE_EDGE_THRESH)
+        comp,
+        core,
+        side_edge_roi,
+        edge_thresh=SIDE_EDGE_THRESH if strict_side_edge_thresh is None else strict_side_edge_thresh,
+        side_dilate=side_dilate,
+    )
     strict_opposite = inside & ~strict_seed_side
     if np.any(strict_opposite):
-        prior[strict_opposite] = -np.maximum(mag_in[strict_opposite], PRIOR_FLOOR_IN)
+        prior[strict_opposite] = -np.maximum(mag_in[strict_opposite], floor_in)
     if side_edge_thresh is not None and float(side_edge_thresh) < float(SIDE_EDGE_THRESH):
         w = float(np.clip(side_relax_weight, 0.0, 1.0))
         side_thresh = float(side_edge_thresh)
@@ -846,29 +893,29 @@ def _solve_component(
             high_thresh = float(min(SIDE_EDGE_THRESH, side_thresh + window))
             low_thresh = float(max(SIDE_EDGE_LOOSE_THRESH, side_thresh - window))
             high_seed_side = _seed_side_through_smooth_interior(
-                comp, core, side_edge_roi, edge_thresh=high_thresh)
+                comp, core, side_edge_roi, edge_thresh=high_thresh, side_dilate=side_dilate)
             low_seed_side = _seed_side_through_smooth_interior(
-                comp, core, side_edge_roi, edge_thresh=low_thresh)
+                comp, core, side_edge_roi, edge_thresh=low_thresh, side_dilate=side_dilate)
             firm_opposite = inside & strict_seed_side & ~high_seed_side
             soft_opposite = inside & strict_seed_side & high_seed_side & ~low_seed_side
             if np.any(firm_opposite):
                 firm_w = w * w
-                bg_prior = -np.maximum(mag_in[firm_opposite], PRIOR_FLOOR_IN)
+                bg_prior = -np.maximum(mag_in[firm_opposite], floor_in)
                 prior[firm_opposite] = (
                     prior[firm_opposite] * (1.0 - firm_w) + bg_prior * firm_w
                 )
             if np.any(soft_opposite):
                 soft_w = w * w
-                bg_prior = -np.maximum(mag_in[soft_opposite], PRIOR_FLOOR_IN)
+                bg_prior = -np.maximum(mag_in[soft_opposite], floor_in)
                 prior[soft_opposite] = (
                     prior[soft_opposite] * (1.0 - soft_w) + bg_prior * soft_w
                 )
         else:
             loose_seed_side = _seed_side_through_smooth_interior(
-                comp, core, side_edge_roi, edge_thresh=side_thresh)
+                comp, core, side_edge_roi, edge_thresh=side_thresh, side_dilate=side_dilate)
             weak_opposite = inside & strict_seed_side & ~loose_seed_side
             if np.any(weak_opposite):
-                bg_prior = -np.maximum(mag_in[weak_opposite], PRIOR_FLOOR_IN)
+                bg_prior = -np.maximum(mag_in[weak_opposite], floor_in)
                 prior[weak_opposite] = prior[weak_opposite] * (1.0 - w) + bg_prior * w
 
     # Colour data term. Inside the mask it may pull either way (a same-geometry
@@ -925,7 +972,7 @@ def _side_edge_relax_weight_for_strength(strength):
     return float(np.clip((lock - start) / max(100.0 - start, 1e-3), 0.0, 1.0))
 
 
-def _seed_side_through_smooth_interior(comp, core, edge_roi, edge_thresh=None):
+def _seed_side_through_smooth_interior(comp, core, edge_roi, edge_thresh=None, side_dilate=None):
     comp = np.asarray(comp, dtype=bool)
     core = np.asarray(core, dtype=bool) & comp
     if not np.any(comp) or not np.any(core):
@@ -942,11 +989,12 @@ def _seed_side_through_smooth_interior(comp, core, edge_roi, edge_thresh=None):
     barrier = _filter_side_edge_barrier_components(barrier, comp)
     if not np.any(barrier):
         return comp.copy()
-    if SIDE_DILATE > 0:
+    dilate_steps = SIDE_DILATE if side_dilate is None else int(max(0, round(float(side_dilate))))
+    if dilate_steps > 0:
         barrier = comp & (cv2.dilate(
             barrier.astype(np.uint8),
             np.ones((3, 3), dtype=np.uint8),
-            iterations=SIDE_DILATE,
+            iterations=dilate_steps,
         ) > 0)
     walkable = comp & ~barrier
     seed = core & walkable

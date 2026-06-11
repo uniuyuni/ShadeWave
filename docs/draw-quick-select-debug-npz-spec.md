@@ -55,9 +55,13 @@ data = np.load(path, allow_pickle=True)
 | `mask` | `float32` | `(H, W)` | yes | solver に渡された FreeDraw mask。0..1 の濃度 mask。 |
 | `seed_mask` | `bool` または空配列 | `(H, W)` または `(0,)` | yes | 呼び出し時の seed mask。`None` の場合は空配列で保存される。 |
 | `radius` | `float32` scalar | `()` | yes | UI の Quick Radius 値。Draw QS では brush 半径への offset として扱われる。 |
-| `strength` | `float32` scalar | `()` | yes | UI の Edge Lock / strength 値。solver 内部の 0..100 値として扱われる（0 = strict, 100 = loose）。 |
+| `strength` | `float32` scalar | `()` | yes | UI の Edge Lock / strength 値。`strength_mode` が無い旧 dump では solver 内部の 0..100 値として扱う。 |
 | `pixel_scale` | `float32` scalar | `()` | yes | dump 時の draw pixel scale。full-view / scaled replay の補正に使う。 |
 | `strokes` | `object` | `(N,)` | yes | stroke dict の object 配列。各要素の仕様は下記。 |
+| `strength_mode` | string scalar | `()` | no | `"internal"` または `"offset"`。無い場合は `"internal"` として読む。 |
+| `edge_lock_auto` | `float32` scalar | `()` | no | V2 が推定した auto EdgeLock。 |
+| `edge_lock_effective` | `float32` scalar | `()` | no | V2 が実際に solver / matte に渡した内部 EdgeLock。 |
+| `edge_lock_offset` | `float32` scalar | `()` | no | offset mode 時の UI offset。0 = auto、+ = strict、- = loose。 |
 
 ## `strokes` 要素
 
@@ -185,6 +189,15 @@ QS_DUMP_INPUT=edge_refine_debug pixi run python main.py
 pixi run python scripts/draw_qs_corpus.py add <name>
 ```
 
+### edited expected PNG を確認する
+
+```bash
+pixi run python scripts/draw_qs_corpus.py label-report --names <name> --solver v2 --label-dir edge_refine_debug/label_exports
+pixi run python scripts/draw_qs_corpus.py label-diff --names <name> --solver v2 --label-dir edge_refine_debug/label_exports --out edge_refine_debug/label_eval
+```
+
+`label-diff` は緑=一致、赤=余分、青=不足、黄=予測境界、白=expected 境界の確認画像を出力する。
+
 ### つまみの影響を測る（sweep）
 
 ```bash
@@ -213,5 +226,8 @@ NPZ には solver 入力だけが保存される。`result.debug_planes` は rep
 | `edge_restore` | selected-side edge rim restore で追加された領域。 |
 | `edge_bridge` | edge seam bridge で追加された領域。 |
 | `interior_fill` | hint 内 hole fill で追加された領域。 |
+| `same_side_gap_fill` | V2 の同側ギャップ補完で追加された領域。 |
 | `edge_lock_effective` | replay 時の内部 EdgeLock。 |
 | `edge_lock_auto` | auto 推定された EdgeLock。 |
+| `edge_lock_offset` | auto からの UI offset。 |
+| `edge_lock_mode_offset` | offset mode なら 1、internal mode なら 0。 |

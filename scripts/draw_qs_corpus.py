@@ -27,6 +27,18 @@ Subcommands::
     contact-v2 [--glob G] [--names ...] [--out DIR]
         Write V1/V2/zoom contact sheets for visual QA.
 
+    pair <A> <B> [--solver v1|v2]
+        Report seam/alpha gap metrics for two opposite-side dumps.
+
+    export-labels [--names ...] [--solver v1|v2] [--out DIR]
+        Export npz dumps to PNGs that can be edited into golden masks.
+
+    label-report [--names ...] [--solver v1|v2] [--label-dir DIR]
+        Compare solver output to edited ``*_expected.png`` masks.
+
+    label-diff [--names ...] [--solver v1|v2] [--label-dir DIR] [--out DIR]
+        Write visual label diffs for edited ``*_expected.png`` masks.
+
 Capture loop (to grow the corpus):
     1. Run the app with QS_DUMP_INPUT=edge_refine_debug (or PLATYPUS_DEBUG_EDGE_REFINE=1).
     2. Reproduce the bad stroke; a new qs_input_NNN.npz appears.
@@ -43,6 +55,7 @@ import sys
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -96,9 +109,22 @@ _TABLE_COLS = (
     ("overgrow", "outside_overgrowth_dist", "{:.1f}"),
     ("far", "far_blob_px", "{:d}"),
     ("comp", "comp_count", "{:d}"),
+    ("nodes", "graph_nodes", "{:d}"),
+    ("lock", "edge_lock_effective", "{:.1f}"),
     ("det", "deterministic", "{}"),
     ("idem", "idempotence_iou", "{:.3f}"),
     ("ms", "runtime_ms", "{:.0f}"),
+)
+
+_LABEL_COLS = (
+    ("iou", "label_iou", "{:.3f}"),
+    ("b_f1", "label_boundary_f1", "{:.3f}"),
+    ("prec", "label_precision", "{:.3f}"),
+    ("recall", "label_recall", "{:.3f}"),
+    ("fp", "label_fp_px", "{:d}"),
+    ("fn", "label_fn_px", "{:d}"),
+    ("pred", "label_pred_px", "{:d}"),
+    ("truth", "label_truth_px", "{:d}"),
 )
 
 
@@ -109,6 +135,18 @@ def _print_table(rep: dict) -> None:
         met = rep[name]
         cells = []
         for _, key, fmt in _TABLE_COLS:
+            val = met.get(key)
+            cells.append(fmt.format(val) if val is not None else "-")
+        print(f"{name:14s} " + " ".join(f"{c:>10s}" for c in cells))
+
+
+def _print_label_table(rep: dict) -> None:
+    header = f"{'dump':14s} " + " ".join(f"{label:>10s}" for label, _, _ in _LABEL_COLS)
+    print(header)
+    for name in sorted(rep):
+        met = rep[name]
+        cells = []
+        for _, key, fmt in _LABEL_COLS:
             val = met.get(key)
             cells.append(fmt.format(val) if val is not None else "-")
         print(f"{name:14s} " + " ".join(f"{c:>10s}" for c in cells))
@@ -228,6 +266,176 @@ def cmd_contact_v2(args) -> int:
     return 0
 
 
+def cmd_pair(args) -> int:
+    a = M.load_dump(M.CORPUS_DIR / f"qs_input_{args.a}.npz")
+    b = M.load_dump(M.CORPUS_DIR / f"qs_input_{args.b}.npz")
+    met = M.pair_metrics(
+        a,
+        b,
+        solver=args.solver,
+        alpha_threshold=args.alpha_threshold,
+        seam_radius=args.seam_radius,
+    )
+    if args.json:
+        print(json.dumps(met, indent=2, sort_keys=True))
+    else:
+        for key, value in met.items():
+            print(f"{key}: {value}")
+    if args.out:
+        out_path = Path(args.out)
+        if not out_path.is_absolute():
+            out_path = PROJECT_ROOT / out_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        sheet = M.pair_contact_sheet(
+            a,
+            b,
+            solver=args.solver,
+            alpha_threshold=args.alpha_threshold,
+            seam_radius=args.seam_radius,
+        )
+        cv2.imwrite(str(out_path), cv2.cvtColor(sheet, cv2.COLOR_RGB2BGR))
+        print(f"wrote: {out_path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
+def _write_png(path: Path, image: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arr = np.asarray(image)
+    if arr.ndim == 3 and arr.shape[-1] >= 3:
+        arr = cv2.cvtColor(arr[..., :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+    else:
+        arr = np.asarray(arr, dtype=np.uint8)
+    cv2.imwrite(str(path), arr)
+
+
+def _support_overlay(dump, solver: str) -> tuple[np.ndarray, np.ndarray]:
+    guide = M._normalize_guide_for_display(dump["guide"])
+    hint = np.asarray(dump["mask"], dtype=np.float32) > M.HINT_THRESH
+    solved = M.solve(dump, solver=solver)
+    support = np.asarray(solved["support"], dtype=bool)
+
+    tint = np.zeros_like(guide)
+    tint[hint & support] = (0, 220, 80)
+    tint[hint & ~support] = (255, 45, 45)
+    tint[~hint & support] = (70, 130, 255)
+    overlay = (guide.astype(np.float32) * 0.55 + tint.astype(np.float32) * 0.45).astype(np.uint8)
+    boundary = M._boundary(support)
+    overlay[boundary] = (255, 255, 0)
+    return support, overlay
+
+
+def _label_diff_overlay(dump, expected_path: Path, roi_path: Path | None, solver: str) -> np.ndarray:
+    guide = M._normalize_guide_for_display(dump["guide"])
+    solved = M.solve(dump, solver=solver)
+    support = np.asarray(solved["support"], dtype=bool)
+    expected = M.load_label_mask(expected_path, support.shape)
+    if roi_path is not None and roi_path.exists():
+        roi = M.load_label_mask(roi_path, support.shape)
+    else:
+        roi = np.ones(support.shape, dtype=bool)
+
+    pred = support & roi
+    truth = expected & roi
+    tint = np.zeros_like(guide)
+    tint[pred & truth] = (0, 220, 80)
+    tint[pred & ~truth] = (255, 45, 45)
+    tint[~pred & truth] = (45, 110, 255)
+    overlay = (guide.astype(np.float32) * 0.45 + tint.astype(np.float32) * 0.55).astype(np.uint8)
+    pred_boundary = M._boundary(pred)
+    truth_boundary = M._boundary(truth)
+    overlay[truth_boundary] = (255, 255, 255)
+    overlay[pred_boundary] = (255, 255, 0)
+    return overlay
+
+
+def cmd_export_labels(args) -> int:
+    paths = _select_paths(args.glob, args.names)
+    out_dir = Path(args.out)
+    if not out_dir.is_absolute():
+        out_dir = PROJECT_ROOT / out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in paths:
+        dump = M.load_dump(path)
+        name = dump["name"]
+        guide = M._normalize_guide_for_display(dump["guide"])
+        hint = np.clip(np.asarray(dump["mask"], dtype=np.float32), 0.0, 1.0)
+        support, overlay = _support_overlay(dump, args.solver)
+
+        _write_png(out_dir / f"{name}_guide.png", guide)
+        _write_png(out_dir / f"{name}_hint.png", (hint * 255.0).astype(np.uint8))
+        _write_png(out_dir / f"{name}_{args.solver}_support.png", support.astype(np.uint8) * 255)
+        _write_png(out_dir / f"{name}_overlay.png", overlay)
+
+        expected_path = out_dir / f"{name}_expected.png"
+        if args.overwrite_expected or not expected_path.exists():
+            _write_png(expected_path, support.astype(np.uint8) * 255)
+        if args.roi:
+            roi_path = out_dir / f"{name}_eval_roi.png"
+            if args.overwrite_expected or not roi_path.exists():
+                _write_png(roi_path, np.full(support.shape, 255, dtype=np.uint8))
+        print(out_dir.relative_to(PROJECT_ROOT) / f"{name}_expected.png")
+    return 0
+
+
+def cmd_label_report(args) -> int:
+    paths = _select_paths(args.glob, args.names)
+    label_dir = Path(args.label_dir)
+    if not label_dir.is_absolute():
+        label_dir = PROJECT_ROOT / label_dir
+    rep = {}
+    for path in paths:
+        dump = M.load_dump(path)
+        expected = label_dir / f"{dump['name']}_expected.png"
+        if not expected.exists():
+            if args.require_all:
+                raise SystemExit(f"missing expected label: {expected}")
+            continue
+        roi = label_dir / f"{dump['name']}_eval_roi.png"
+        rep[dump["name"]] = M.label_metrics_for_dump(
+            dump,
+            expected,
+            roi_path=roi if roi.exists() else None,
+            solver=args.solver,
+            boundary_tolerance=args.boundary_tolerance,
+        )
+    if args.json:
+        print(json.dumps(rep, indent=2, sort_keys=True))
+    else:
+        _print_label_table(rep)
+    return 0
+
+
+def cmd_label_diff(args) -> int:
+    paths = _select_paths(args.glob, args.names)
+    label_dir = Path(args.label_dir)
+    if not label_dir.is_absolute():
+        label_dir = PROJECT_ROOT / label_dir
+    out_dir = Path(args.out)
+    if not out_dir.is_absolute():
+        out_dir = PROJECT_ROOT / out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in paths:
+        dump = M.load_dump(path)
+        expected = label_dir / f"{dump['name']}_expected.png"
+        if not expected.exists():
+            if args.require_all:
+                raise SystemExit(f"missing expected label: {expected}")
+            continue
+        roi = label_dir / f"{dump['name']}_eval_roi.png"
+        overlay = _label_diff_overlay(
+            dump,
+            expected,
+            roi if roi.exists() else None,
+            args.solver,
+        )
+        out_path = out_dir / f"{dump['name']}_label_diff.png"
+        _write_png(out_path, overlay)
+        print(out_path.relative_to(PROJECT_ROOT))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -266,6 +474,45 @@ def main(argv=None) -> int:
     p_contact.add_argument("--names", nargs="*")
     p_contact.add_argument("--out", default="edge_refine_debug/v2_contact")
     p_contact.set_defaults(func=cmd_contact_v2)
+
+    p_pair = sub.add_parser("pair", help="measure opposite-side seam gap")
+    p_pair.add_argument("a")
+    p_pair.add_argument("b")
+    p_pair.add_argument("--solver", choices=("v1", "v2"), default=None)
+    p_pair.add_argument("--alpha-threshold", type=float, default=0.5)
+    p_pair.add_argument("--seam-radius", type=float, default=4.0)
+    p_pair.add_argument("--out", default=None)
+    p_pair.add_argument("--json", action="store_true")
+    p_pair.set_defaults(func=cmd_pair)
+
+    p_export = sub.add_parser("export-labels", help="write editable golden-mask PNGs")
+    p_export.add_argument("--glob", default=DEFAULT_GLOB)
+    p_export.add_argument("--names", nargs="*")
+    p_export.add_argument("--solver", choices=("v1", "v2"), default="v2")
+    p_export.add_argument("--out", default="edge_refine_debug/label_exports")
+    p_export.add_argument("--overwrite-expected", action="store_true")
+    p_export.add_argument("--roi", action="store_true",
+                          help="also create an all-white <name>_eval_roi.png")
+    p_export.set_defaults(func=cmd_export_labels)
+
+    p_label = sub.add_parser("label-report", help="compare against edited expected PNGs")
+    p_label.add_argument("--glob", default=DEFAULT_GLOB)
+    p_label.add_argument("--names", nargs="*")
+    p_label.add_argument("--solver", choices=("v1", "v2"), default="v2")
+    p_label.add_argument("--label-dir", default="edge_refine_debug/label_exports")
+    p_label.add_argument("--boundary-tolerance", type=float, default=2.0)
+    p_label.add_argument("--require-all", action="store_true")
+    p_label.add_argument("--json", action="store_true")
+    p_label.set_defaults(func=cmd_label_report)
+
+    p_diff = sub.add_parser("label-diff", help="write visual diffs against edited expected PNGs")
+    p_diff.add_argument("--glob", default=DEFAULT_GLOB)
+    p_diff.add_argument("--names", nargs="*")
+    p_diff.add_argument("--solver", choices=("v1", "v2"), default="v2")
+    p_diff.add_argument("--label-dir", default="edge_refine_debug/label_exports")
+    p_diff.add_argument("--out", default="edge_refine_debug/label_eval")
+    p_diff.add_argument("--require-all", action="store_true")
+    p_diff.set_defaults(func=cmd_label_diff)
 
     args = parser.parse_args(argv)
     return args.func(args)

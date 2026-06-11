@@ -119,6 +119,10 @@ def load_dump(path) -> dict:
         "seed_mask": seed_mask,
         "radius": float(data["radius"]),
         "strength": float(data["strength"]),
+        "strength_mode": str(data["strength_mode"]) if "strength_mode" in files else "internal",
+        "edge_lock_auto": float(data["edge_lock_auto"]) if "edge_lock_auto" in files else None,
+        "edge_lock_effective": float(data["edge_lock_effective"]) if "edge_lock_effective" in files else None,
+        "edge_lock_offset": float(data["edge_lock_offset"]) if "edge_lock_offset" in files else None,
         "pixel_scale": float(data["pixel_scale"]) if "pixel_scale" in files else 1.0,
         "strokes": strokes,
     }
@@ -142,27 +146,40 @@ def _solver_module(solver: Optional[str] = None):
 # --- solve -------------------------------------------------------------------
 def _solve_support(dump, *, solver: Optional[str] = None):
     module = _solver_module(solver)
-    return module.compute_draw_support(
-        dump["guide"],
-        dump["mask"],
-        dump["radius"],
-        dump["strength"],
-        seed_mask=dump.get("seed_mask"),
-        draw_strokes=dump.get("strokes"),
-        pixel_scale=dump.get("pixel_scale", 1.0),
-    )
+    old_mode = os.environ.get("QS_V2_STRENGTH_MODE")
+    mode = dump.get("strength_mode")
+    use_dump_mode = module.__name__.endswith("draw_quick_select_v2") and mode in {"internal", "offset"}
+    if use_dump_mode:
+        os.environ["QS_V2_STRENGTH_MODE"] = mode
+    try:
+        return module.compute_draw_support(
+            dump["guide"],
+            dump["mask"],
+            dump["radius"],
+            dump["strength"],
+            seed_mask=dump.get("seed_mask"),
+            draw_strokes=dump.get("strokes"),
+            pixel_scale=dump.get("pixel_scale", 1.0),
+        )
+    finally:
+        if use_dump_mode:
+            if old_mode is None:
+                os.environ.pop("QS_V2_STRENGTH_MODE", None)
+            else:
+                os.environ["QS_V2_STRENGTH_MODE"] = old_mode
 
 
 def solve(dump, *, solver: Optional[str] = None) -> dict:
     """Run the production solve + matte and return arrays the metrics consume."""
     res = _solve_support(dump, solver=solver)
+    edge_lock = _effective_edge_lock(res, dump)
     refined = edge_refine._compose_refined_mask(
         dump["mask"],
         res.support,
         True,
         guide=dump["guide"],
         natural_edge=True,
-        edge_lock=float(dump["strength"]),
+        edge_lock=edge_lock,
     )
     return {
         "support": np.asarray(res.support, dtype=bool),
@@ -170,8 +187,20 @@ def solve(dump, *, solver: Optional[str] = None) -> dict:
         "seed": np.asarray(res.seed, dtype=bool),
         "refined": np.asarray(refined, dtype=np.float32),
         "planes": {name: value for name, value in res.debug_planes},
-        "edge_lock": float(getattr(res, "edge_lock", dump.get("strength", 60.0))),
+        "edge_lock": edge_lock,
     }
+
+
+def _effective_edge_lock(res, dump) -> float:
+    value = getattr(res, "edge_lock", None)
+    if value is not None:
+        return float(value)
+    planes = {name: value for name, value in getattr(res, "debug_planes", [])}
+    if "edge_lock_effective" in planes:
+        arr = np.asarray(planes["edge_lock_effective"], dtype=np.float32)
+        if arr.size:
+            return float(np.nanmax(arr)) * 100.0
+    return float(dump.get("strength", 60.0))
 
 
 # --- metric helpers ----------------------------------------------------------
@@ -234,6 +263,98 @@ def _component_count(mask: np.ndarray) -> int:
         return 0
     n_labels, _ = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
     return int(n_labels - 1)
+
+
+def load_label_mask(path, shape=None, threshold=0.5) -> np.ndarray:
+    """Load an edited PNG label as a binary mask.
+
+    White means selected. If the image has transparency, alpha is treated as the
+    label only when it is not a fully opaque ordinary RGB PNG.
+    """
+    path = Path(path)
+    img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise FileNotFoundError(path)
+    arr = np.asarray(img)
+    if arr.ndim == 3 and arr.shape[-1] == 4 and np.any(arr[..., 3] != 255):
+        gray = arr[..., 3]
+    elif arr.ndim == 3:
+        gray = cv2.cvtColor(arr[..., :3], cv2.COLOR_BGR2GRAY)
+    else:
+        gray = arr
+    if shape is not None and gray.shape[:2] != tuple(shape):
+        gray = cv2.resize(gray.astype(np.uint8), tuple(shape[::-1]), interpolation=cv2.INTER_NEAREST)
+    return (gray.astype(np.float32) / 255.0) >= float(threshold)
+
+
+def label_metrics_for_dump(
+        dump,
+        expected_path,
+        *,
+        roi_path=None,
+        solver: Optional[str] = None,
+        boundary_tolerance: float = 2.0) -> dict:
+    """Compare solver support with an edited expected support PNG."""
+    solved = solve(dump, solver=solver)
+    support = np.asarray(solved["support"], dtype=bool)
+    expected = load_label_mask(expected_path, support.shape)
+    if roi_path is not None and Path(roi_path).exists():
+        roi = load_label_mask(roi_path, support.shape)
+    else:
+        roi = np.ones(support.shape, dtype=bool)
+
+    pred = support & roi
+    truth = expected & roi
+    pred_px = int(np.count_nonzero(pred))
+    truth_px = int(np.count_nonzero(truth))
+    tp = int(np.count_nonzero(pred & truth))
+    fp = int(np.count_nonzero(pred & ~truth))
+    fn = int(np.count_nonzero(~pred & truth))
+    denom = int(np.count_nonzero(pred | truth))
+    iou = float(tp / max(1, denom))
+    precision = float(tp / max(1, pred_px))
+    recall = float(tp / max(1, truth_px))
+
+    b_pred = _boundary(pred) & roi
+    b_truth = _boundary(truth) & roi
+    b_precision, b_recall, b_f1 = _boundary_prf(
+        b_pred, b_truth, roi, tolerance=boundary_tolerance)
+
+    return {
+        "label_iou": round(iou, 6),
+        "label_precision": round(precision, 6),
+        "label_recall": round(recall, 6),
+        "label_fp_px": fp,
+        "label_fn_px": fn,
+        "label_pred_px": pred_px,
+        "label_truth_px": truth_px,
+        "label_boundary_precision": round(b_precision, 6),
+        "label_boundary_recall": round(b_recall, 6),
+        "label_boundary_f1": round(b_f1, 6),
+    }
+
+
+def _boundary_prf(pred_boundary, truth_boundary, roi, tolerance=2.0):
+    pred_boundary = np.asarray(pred_boundary, dtype=bool) & roi
+    truth_boundary = np.asarray(truth_boundary, dtype=bool) & roi
+    pred_px = int(np.count_nonzero(pred_boundary))
+    truth_px = int(np.count_nonzero(truth_boundary))
+    if pred_px == 0 and truth_px == 0:
+        return 1.0, 1.0, 1.0
+    if pred_px == 0 or truth_px == 0:
+        return 0.0, 0.0, 0.0
+    if distance_transform_edt is None:
+        matched = pred_boundary & truth_boundary
+        precision = float(np.count_nonzero(matched) / max(1, pred_px))
+        recall = float(np.count_nonzero(matched) / max(1, truth_px))
+    else:
+        tol = float(max(0.0, tolerance))
+        dist_to_truth = distance_transform_edt(~truth_boundary)
+        dist_to_pred = distance_transform_edt(~pred_boundary)
+        precision = float(np.count_nonzero(pred_boundary & (dist_to_truth <= tol)) / max(1, pred_px))
+        recall = float(np.count_nonzero(truth_boundary & (dist_to_pred <= tol)) / max(1, truth_px))
+    f1 = 0.0 if precision + recall <= 0.0 else float(2.0 * precision * recall / (precision + recall))
+    return precision, recall, f1
 
 
 # --- zoom/scaling -------------------------------------------------------------
@@ -309,6 +430,7 @@ def metrics_for_dump(
     support = np.asarray(res.support, dtype=bool)
     candidate = np.asarray(res.candidate, dtype=bool)
     seed = np.asarray(res.seed, dtype=bool)
+    planes = {name: value for name, value in res.debug_planes}
     hint = np.asarray(dump["mask"], dtype=np.float32) > HINT_THRESH
     shape = support.shape
 
@@ -367,6 +489,12 @@ def metrics_for_dump(
         "runtime_ms": round(runtime_ms, 1),
         "solver": (solver or os.environ.get("QS_DRAW_SOLVER") or ("v2" if os.environ.get("QS_DRAW_V2") else "v1")),
     }
+    if "v2_graph_nodes" in planes:
+        metrics["graph_nodes"] = int(round(float(np.asarray(planes["v2_graph_nodes"]).max(initial=0.0))))
+    if "edge_lock_effective" in planes:
+        metrics["edge_lock_effective"] = round(float(np.asarray(planes["edge_lock_effective"]).max(initial=0.0)) * 100.0, 3)
+    if "edge_lock_auto" in planes:
+        metrics["edge_lock_auto"] = round(float(np.asarray(planes["edge_lock_auto"]).max(initial=0.0)) * 100.0, 3)
     if zoom:
         metrics.update(zoom_metrics_for_dump(dump, solver=solver))
     return metrics
@@ -497,6 +625,63 @@ def pair_metrics(
         "gap_ratio": round(float(np.count_nonzero(gap) / max(1, shared_px)), 6),
         "alpha_components": _component_count(alpha_mask),
     }
+
+
+def pair_contact_sheet(
+        dump_a,
+        dump_b,
+        *,
+        solver: Optional[str] = None,
+        alpha_threshold: float = 0.5,
+        seam_radius: float = 4.0,
+        thumb_size: int = 320) -> np.ndarray:
+    """Visualize how two opposite-side masks meet along their shared seam."""
+    sa = solve(dump_a, solver=solver)
+    sb = solve(dump_b, solver=solver)
+    support_a = sa["support"]
+    support_b = sb["support"]
+    refined_a = sa["refined"]
+    refined_b = sb["refined"]
+    candidate = sa["candidate"] | sb["candidate"]
+    guide = _normalize_guide_for_display(dump_a["guide"])
+    edge = _edge_strength(dump_a["guide"], support_a.shape)
+    near_edge = _near_edge(edge)
+
+    if distance_transform_edt is None:
+        dist_a = np.where(support_a, 0.0, np.inf)
+        dist_b = np.where(support_b, 0.0, np.inf)
+    else:
+        dist_a = distance_transform_edt(~support_a)
+        dist_b = distance_transform_edt(~support_b)
+    shared = (
+        (dist_a <= float(seam_radius))
+        & (dist_b <= float(seam_radius))
+        & candidate
+        & near_edge
+    )
+    alpha_sum = np.clip(refined_a + refined_b, 0.0, 1.0)
+    gap = shared & (alpha_sum < float(alpha_threshold))
+
+    panels = [_label_panel(guide, f"{dump_a.get('name')} + {dump_b.get('name')} guide")]
+
+    sup = guide.copy()
+    tint = np.zeros_like(sup)
+    tint[support_a & ~support_b] = (60, 180, 255)
+    tint[support_b & ~support_a] = (255, 180, 60)
+    tint[support_a & support_b] = (80, 230, 80)
+    sup = (sup.astype(np.float32) * 0.45 + tint.astype(np.float32) * 0.55).astype(np.uint8)
+    panels.append(_label_panel(sup, "blue A / orange B / green overlap"))
+
+    heat = cv2.applyColorMap((alpha_sum * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
+    panels.append(_label_panel(cv2.cvtColor(heat, cv2.COLOR_BGR2RGB), "alpha sum"))
+
+    gap_rgb = guide.copy()
+    gap_rgb[shared] = (80, 220, 80)
+    gap_rgb[gap] = (255, 40, 40)
+    panels.append(_label_panel(gap_rgb, f"shared seam green / gap red ({int(gap.sum())} px)"))
+
+    thumbs = [cv2.resize(panel, (thumb_size, thumb_size), interpolation=cv2.INTER_AREA) for panel in panels]
+    return np.concatenate(thumbs, axis=1)
 
 
 # --- contact sheets ----------------------------------------------------------

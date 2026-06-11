@@ -55,6 +55,18 @@ def is_enabled(mode):
     return normalize_mode(mode) != MODE_OFF
 
 
+def _draw_result_edge_lock(result, fallback):
+    value = getattr(result, "edge_lock", None)
+    if value is not None:
+        return float(value)
+    for name, plane in getattr(result, "debug_planes", []) or []:
+        if name == "edge_lock_effective":
+            arr = np.asarray(plane, dtype=np.float32)
+            if arr.size:
+                return float(np.nanmax(arr)) * 100.0
+    return float(fallback)
+
+
 def make_confident_seed(mask, threshold=0.05, shrink_ratio=0.55, min_shrink=1.5):
     seed = _as_mask(mask) > float(threshold)
     if not np.any(seed):
@@ -118,7 +130,9 @@ def refine_mask_edge_aware(
             )
             effective_edge_lock = strength
         else:
-            if os.environ.get("QS_DRAW_V2", "").strip().lower() in {"1", "true", "yes", "on"}:
+            draw_v2_flag = os.environ.get("QS_DRAW_V2")
+            use_draw_v2 = draw_v2_flag is None or draw_v2_flag.strip().lower() not in {"0", "false", "no", "off"}
+            if use_draw_v2:
                 from cores.mask2 import draw_quick_select_v2 as _draw_quick_select
             else:
                 from cores.mask2 import draw_quick_select as _draw_quick_select
@@ -135,7 +149,7 @@ def refine_mask_edge_aware(
             candidate = _draw_result.candidate
             support = _draw_result.support
             extra_debug_planes = _draw_result.debug_planes
-            effective_edge_lock = float(getattr(_draw_result, "edge_lock", strength))
+            effective_edge_lock = _draw_result_edge_lock(_draw_result, strength)
         if support is None:
             support = _fallback_support(mask_f, seed, candidate)
         refined = _compose_refined_mask(

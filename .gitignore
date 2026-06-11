@@ -8,7 +8,7 @@ dcp/
 
 libraw_enhanced/
 metal/
-third_party/libraw-install/
+.pixi/libraw-install/
 SAM3/
 SCUNet/
 demosaicnet_torch/
