@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, NamedTuple, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -132,10 +132,18 @@ BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCK_END = _envf("QS_BRIGHT_EDGE_RESTORE_COLOR_MIN
 BRIGHT_EDGE_RESTORE_LUMA_DELTA = _envf("QS_BRIGHT_EDGE_RESTORE_LUMA_DELTA", 0.025)
 EDGE_RESTORE_STEPS = int(max(1, round(_envf("QS_EDGE_RESTORE_STEPS", 4.0))))
 EDGE_RESTORE_EDGE_NEAR = int(max(0, round(_envf("QS_EDGE_RESTORE_EDGE_NEAR", 2.0))))
+EDGE_BIAS_NEUTRAL_LUMA_MAX = _envf("QS_EDGE_BIAS_NEUTRAL_LUMA_MAX", 0.045)
+EDGE_BIAS_NEUTRAL_AUTO_PX = _envf("QS_EDGE_BIAS_NEUTRAL_AUTO_PX", 1.0)
+EDGE_BIAS_MAX_STEPS = int(max(1, round(_envf("QS_EDGE_BIAS_MAX_STEPS", 8.0))))
+# Edge Bias is a boundary-position/alpha control. Keep colour membership out of
+# its default path so positive bias cannot turn into broad same-colour growth.
+EDGE_BIAS_COLOR_RELAX = _envf("QS_EDGE_BIAS_COLOR_RELAX", 0.0)
+EDGE_BIAS_COLOR_MIN = _envf("QS_EDGE_BIAS_COLOR_MIN", -0.18)
 EDGE_BRIDGE_THRESH = _envf("QS_EDGE_BRIDGE_THRESH", 0.35)
 EDGE_BRIDGE_MIN_NEIGHBORS = int(max(4, round(_envf("QS_EDGE_BRIDGE_MIN_NEIGHBORS", 4.0))))
 OUTSIDE_KEEP_EDGE_THRESH = _envf("QS_OUTSIDE_KEEP_EDGE_THRESH", 0.60)
 OUTSIDE_KEEP_EDGE_NEAR = int(max(0, round(_envf("QS_OUTSIDE_KEEP_EDGE_NEAR", 2.0))))
+OUTSIDE_KEEP_EDGE_RELAX_DIST = _envf("QS_OUTSIDE_KEEP_EDGE_RELAX_DIST", 24.0)
 # Shrink ratio for the hard-FG core. A thin core (skeleton-like) lets an edge
 # that runs *through* the brush body clip it, while the prior floor keeps the
 # body filled where there is no edge and preserves solid interiors.
@@ -173,6 +181,27 @@ class _SolveUnit(NamedTuple):
     scales: _Scales             # resolved from this unit's stroke size
 
 
+class _EdgePolicy(NamedTuple):
+    # Effective EdgeLock after auto/offset resolution. Semantics: higher accepts
+    # weaker/diffuse human-visible edges as valid cut locations.
+    sensitivity: float
+    # Threshold used to thin raw edge confidence into a 1px cut ridge.
+    ridge_threshold: float
+    # Width of the ridge falloff used after thinning.
+    ridge_falloff_sigma: float
+    # Graph edge-cost sigma; lower makes accepted ridges cheaper to cut.
+    cut_sigma: float
+    # Edge threshold for splitting a wide brush into seed-side / opposite-side.
+    side_threshold: float
+    side_relax_weight: float
+    # Outside support can survive only near edges at this confidence.
+    outside_keep_threshold: float
+    # Post-cut selected-side rim restore threshold.
+    restore_threshold: float
+    # UI edge-bias offset in pixels. This must not affect edge sensitivity.
+    boundary_bias_px: float
+
+
 # --- public entry ------------------------------------------------------------
 def compute_draw_support(
         guide,
@@ -181,14 +210,24 @@ def compute_draw_support(
         strength,
         seed_mask=None,
         draw_strokes=None,
-        pixel_scale=1.0) -> DrawSupportResult:
+        pixel_scale=1.0,
+        edge_bias=0.0) -> DrawSupportResult:
     """Compute the snapped foreground ``support`` for a drawn mask.
 
     Returns a :class:`DrawSupportResult`. ``support`` is a binary mask that the
     caller blends/mattes via ``edge_refine._compose_refined_mask``.
     """
     mask_f = _er._as_mask(mask)
-    _maybe_dump_input(guide, mask_f, radius, strength, seed_mask, draw_strokes, pixel_scale)
+    _maybe_dump_input(
+        guide,
+        mask_f,
+        radius,
+        strength,
+        seed_mask,
+        draw_strokes,
+        pixel_scale,
+        edge_bias=edge_bias,
+    )
     hint = mask_f > 0.02
     h, w = hint.shape[:2]
     empty = np.zeros((h, w), dtype=bool)
@@ -198,12 +237,13 @@ def compute_draw_support(
     guide = _er._prepare_guide_image(guide, (h, w))
     scales = _resolve_scales(radius, draw_strokes, hint)
     strength = float(np.clip(strength, 0.0, 100.0))
+    policy = _edge_policy(strength, edge_bias=edge_bias)
 
     edge_strength = _er._draw_snap_edge_strength(guide)
     if edge_strength is None:
         edge_strength = np.zeros((h, w), dtype=np.float32)
     solver_edge_strength = _solver_edge_strength(edge_strength, pixel_scale)
-    edge_cost_all = _edge_cost_map(solver_edge_strength, strength)
+    edge_cost_all = _edge_cost_map(solver_edge_strength, policy=policy)
     solver_edge_context_all = solver_edge_strength.copy()
 
     fg_stroke, bg_stroke, has_strokes = _er._draw_random_walker_stroke_seeds(
@@ -221,8 +261,13 @@ def compute_draw_support(
     cut_all = np.zeros((h, w), dtype=bool)
     color_all = np.zeros((h, w), dtype=np.float32)
     restore_color_min_all = np.full((h, w), float(EDGE_RESTORE_COLOR_MIN), dtype=np.float32)
+    restore_steps_all = np.zeros((h, w), dtype=np.float32)
+    edge_bias_auto_all = np.zeros((h, w), dtype=np.float32)
+    edge_bias_effective_all = np.full((h, w), float(edge_bias), dtype=np.float32)
     restore_candidate_all = np.zeros((h, w), dtype=bool)
+    neutral_edge_bias_candidate_all = np.zeros((h, w), dtype=bool)
     edge_restore_all = np.zeros((h, w), dtype=bool)
+    neutral_edge_bias_all = np.zeros((h, w), dtype=bool)
     edge_bridge_all = np.zeros((h, w), dtype=bool)
 
     solve_units = _draw_solve_units(mask_f, hint, hard_fg_core, draw_strokes, radius, has_strokes)
@@ -246,9 +291,15 @@ def compute_draw_support(
         color_weight = _color_weight_for_unit(
             guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
             directional_bg=has_strokes, strength=strength)
+        selected_luma_delta = _selected_luma_delta(
+            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+            directional_bg=has_strokes)
+        auto_edge_bias = _auto_edge_bias_for_unit(selected_luma_delta, component_scales)
+        effective_edge_bias = float(auto_edge_bias) + float(edge_bias)
         unit_edge_strength = _contextual_edge_strength(
             solver_edge_strength[sl], color_roi, strength)
-        g_roi = _edge_cost_map(unit_edge_strength, strength)
+        unit_policy = _edge_policy(strength, edge_bias=edge_bias)
+        g_roi = _edge_cost_map(unit_edge_strength, policy=unit_policy)
         restore_color_min = _edge_restore_color_min_for_unit(
             guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
             directional_bg=has_strokes,
@@ -263,8 +314,8 @@ def compute_draw_support(
             component_scales,
             unit_edge_strength,
             color_weight=color_weight,
-            side_edge_thresh=_side_edge_thresh_for_strength(strength),
-            side_relax_weight=_side_edge_relax_weight_for_strength(strength),
+            side_edge_thresh=unit_policy.side_threshold,
+            side_relax_weight=unit_policy.side_relax_weight,
         )
         color_all[sl] = np.where(out.band | comp, color_roi, color_all[sl])
         edge_cost_all[sl] = np.where(out.band | comp, g_roi, edge_cost_all[sl])
@@ -275,10 +326,29 @@ def compute_draw_support(
         # invent brush-shaped growth there when no image edge was selected.
         restore_candidate_roi = out.band & comp
         restore_candidate_all[sl] |= restore_candidate_roi
+        if _is_neutral_edge_bias_unit(selected_luma_delta):
+            neutral_edge_bias_candidate_all[sl] |= restore_candidate_roi
         restore_color_min_all[sl] = np.where(
             restore_candidate_roi,
             np.minimum(restore_color_min_all[sl], restore_color_min),
             restore_color_min_all[sl],
+        )
+        restore_steps = _edge_restore_steps_for_luma(
+            selected_luma_delta, effective_edge_bias)
+        restore_steps_all[sl] = np.where(
+            restore_candidate_roi,
+            np.maximum(restore_steps_all[sl], restore_steps),
+            restore_steps_all[sl],
+        )
+        edge_bias_auto_all[sl] = np.where(
+            restore_candidate_roi,
+            auto_edge_bias,
+            edge_bias_auto_all[sl],
+        )
+        edge_bias_effective_all[sl] = np.where(
+            restore_candidate_roi,
+            effective_edge_bias,
+            edge_bias_effective_all[sl],
         )
         support_all[sl] |= out.support
         band_all[sl] |= out.band
@@ -298,7 +368,19 @@ def compute_draw_support(
         hard_fg_core,
         erase_bg,
         color_min=restore_color_min_all,
-        edge_thresh=_edge_restore_thresh_for_strength(strength),
+        edge_thresh=policy.restore_threshold,
+        steps=restore_steps_all,
+        edge_bias=edge_bias,
+    )
+    support_all, neutral_edge_bias_all = _restore_neutral_edge_bias_rim(
+        support_all,
+        neutral_edge_bias_candidate_all,
+        solver_edge_context_all,
+        color_all,
+        hard_fg_core,
+        erase_bg,
+        edge_bias=edge_bias,
+        edge_thresh=policy.restore_threshold,
     )
     support_all, edge_bridge_all = _bridge_selected_edge_seams(
         support_all,
@@ -308,7 +390,7 @@ def compute_draw_support(
         erase_bg,
     )
     support_all = _limit_smooth_outside_growth(
-        support_all, hint, solver_edge_context_all, hard_fg_core, erase_bg)
+        support_all, hint, solver_edge_context_all, hard_fg_core, erase_bg, strength=strength)
     support_all, interior_fill_all = _fill_selected_hint_holes(
         support_all, hint, hard_fg_core, erase_bg)
     support_all = _er._preserve_draw_component_separation(hint, support_all)
@@ -323,8 +405,17 @@ def compute_draw_support(
         ("prior", (prior_all * 0.5 + 0.5).astype(np.float32)),
         ("cut_boundary", cut_all),
         ("edge_restore", edge_restore_all),
+        ("neutral_edge_bias", neutral_edge_bias_all),
         ("edge_bridge", edge_bridge_all),
         ("interior_fill", interior_fill_all),
+        ("edge_bias_auto", edge_bias_auto_all),
+        ("edge_bias_effective", edge_bias_effective_all),
+        ("edge_bias_offset", np.full((h, w), float(edge_bias), dtype=np.float32)),
+        ("edge_policy_ridge_threshold", np.full((h, w), policy.ridge_threshold, dtype=np.float32)),
+        ("edge_policy_restore_threshold", np.full((h, w), policy.restore_threshold, dtype=np.float32)),
+        ("edge_policy_side_threshold", np.full((h, w), policy.side_threshold, dtype=np.float32)),
+        ("edge_policy_outside_keep_threshold", np.full((h, w), policy.outside_keep_threshold, dtype=np.float32)),
+        ("boundary_bias_px", np.full((h, w), policy.boundary_bias_px, dtype=np.float32)),
     ]
 
     hint_area = int(np.count_nonzero(hint))
@@ -360,7 +451,8 @@ def _maybe_dump_input(
         strength_mode=None,
         edge_lock_auto=None,
         edge_lock_effective=None,
-        edge_lock_offset=None):
+        edge_lock_offset=None,
+        edge_bias=None):
     """When QS_DUMP_INPUT is set, save the *exact* inputs to an .npz so a
     production call (real resolution + colour space) can be reproduced offline.
     """
@@ -409,6 +501,8 @@ def _maybe_dump_input(
             payload["edge_lock_effective"] = np.float32(edge_lock_effective)
         if edge_lock_offset is not None:
             payload["edge_lock_offset"] = np.float32(edge_lock_offset)
+        if edge_bias is not None:
+            payload["edge_bias"] = np.float32(edge_bias)
         np.savez_compressed(path, **payload)
         _DUMP_COUNTER += 1
         logging.warning("[QS_DUMP_INPUT] wrote %s (guide %s, radius=%.1f, strokes=%d)",
@@ -554,24 +648,46 @@ def _solver_edge_strength(edge_strength, pixel_scale=1.0):
     return (edge * factor).astype(np.float32, copy=False)
 
 
-def _edge_cost_map(edge_strength, strength):
+def _edge_policy(strength, edge_bias=0.0) -> _EdgePolicy:
+    """Resolve the Draw QS control policy.
+
+    Keep the public controls semantically separate:
+      * EdgeLock/strength changes which image ridges count as boundaries.
+      * Edge Bias changes the chosen side of an already accepted boundary.
+      * Radius is resolved separately in _resolve_scales and only bounds search.
+    """
+    sensitivity = float(np.clip(strength, 0.0, 100.0))
+    lock = sensitivity / 100.0
+    return _EdgePolicy(
+        sensitivity=sensitivity,
+        ridge_threshold=float(0.58 - 0.30 * lock),
+        ridge_falloff_sigma=float(0.48 + 0.42 * lock),
+        cut_sigma=float(0.70 - 0.50 * lock),
+        side_threshold=_side_edge_thresh_for_strength(strength),
+        side_relax_weight=_side_edge_relax_weight_for_strength(strength),
+        outside_keep_threshold=_outside_keep_edge_thresh_for_strength(strength),
+        restore_threshold=_edge_restore_thresh_for_strength(strength),
+        boundary_bias_px=float(edge_bias),
+    )
+
+
+def _edge_cost_map(edge_strength, strength=None, *, policy: Optional[_EdgePolicy] = None):
     # EdgeLock is used as edge sensitivity for Draw Quick Select:
     #   0   = strict; only strong ridges are attractive cut locations.
     #   100 = loose; weaker/diffuse ridges also become cheap to cut.
-    # The previous range made strength=0 already permissive enough that moving
-    # the slider barely changed snow/sky strokes. Widen both ridge threshold and
-    # smoothness response so the UI has a visible range.
-    lock = float(np.clip(strength, 0.0, 100.0)) / 100.0
-    ridge_thr = 0.58 - 0.30 * lock
-    falloff_sigma = 0.48 + 0.42 * lock
-    sigma = 0.70 - 0.50 * lock
+    if policy is None:
+        policy = _edge_policy(0.0 if strength is None else strength)
     edge = np.clip(edge_strength.astype(np.float32, copy=False), 0.0, 1.0)
     # The raw edge map is blurred (a few px wide), so the cheap-to-cut band is
     # wide and the boundary stops on its inner ramp ~2-3px short of the true
     # peak when reaching outward. Thin it to a 1px ridge so the only cheap cut is
     # at the edge peak -> the boundary snaps precisely onto the edge.
-    edge = _thin_edge_to_ridge(edge, thr=ridge_thr, falloff_sigma=falloff_sigma)
-    g = np.exp(-(edge * edge) / (sigma * sigma))
+    edge = _thin_edge_to_ridge(
+        edge,
+        thr=policy.ridge_threshold,
+        falloff_sigma=policy.ridge_falloff_sigma,
+    )
+    g = np.exp(-(edge * edge) / (policy.cut_sigma * policy.cut_sigma))
     return g.astype(np.float32, copy=False)
 
 
@@ -639,12 +755,23 @@ def _color_score(guide, comp, core, all_hint, R_out, directional_bg=False):
     stroke's FG colour, -1 looks like its local background. 0 when indistinct.
     The BG shell excludes *all* strokes (``all_hint``) so other components are
     not sampled as background."""
+    score, _delta = _color_score_and_luma_delta(
+        guide, comp, core, all_hint, R_out, directional_bg=directional_bg)
+    return score
+
+
+def _color_score_and_luma_delta(guide, comp, core, all_hint, R_out, directional_bg=False):
+    """Return colour membership and FG-vs-BG luma relation from one shell sample."""
     score = np.zeros(comp.shape, dtype=np.float32)
     if guide is None or not np.any(core):
-        return score
-    lab = _er._guide_to_lab(guide)
+        return score, 0.0
+    rgb = np.asarray(guide, dtype=np.float32)
+    if rgb.ndim != 3 or rgb.shape[-1] < 3:
+        return score, 0.0
+    rgb = rgb[..., :3]
+    lab = _er._guide_to_lab(rgb)
     if lab.ndim != 3:
-        return score
+        return score, 0.0
     fg = core
     dist_out = _er._distance_from(comp)
     free = ~np.asarray(all_hint, dtype=bool)
@@ -652,11 +779,16 @@ def _color_score(guide, comp, core, all_hint, R_out, directional_bg=False):
     if not np.any(shell):
         shell = free & (dist_out <= max(R_out, 12.0) + 12.0)
     if not np.any(shell):
-        return score
+        return score, 0.0
+    fg_rgb_med = np.median(rgb[fg].reshape(-1, 3), axis=0)
+    bg_rgb_med = np.median(rgb[shell].reshape(-1, 3), axis=0)
     fg_med = np.median(lab[fg].reshape(-1, 3), axis=0)
     bg_med = np.median(lab[shell].reshape(-1, 3), axis=0)
     if directional_bg:
+        bg_rgb_med = _directional_shell_median(rgb, shell, fg_rgb_med, bg_rgb_med)
         bg_med = _directional_shell_median(lab, shell, fg_med, bg_med)
+    luma = np.asarray([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    selected_luma_delta = float(np.dot(fg_rgb_med[:3] - bg_rgb_med[:3], luma))
     # Scale the colour term by how separable FG/BG are, instead of a hard cutoff.
     # Low-contrast scenes (snow: cloud vs blue sky differ by only ~6 LAB) used to
     # fall under the cutoff and get NO colour help, leaving the boundary to a
@@ -665,11 +797,11 @@ def _color_score(guide, comp, core, all_hint, R_out, directional_bg=False):
     sep = float(np.linalg.norm(fg_med - bg_med))
     conf = float(np.clip((sep - COLOR_MIN_SEP) / COLOR_SEP_SCALE, 0.0, 1.0))
     if conf <= 0.0:
-        return score  # FG/BG colours genuinely indistinct
+        return score, selected_luma_delta  # FG/BG colours genuinely indistinct
     d_fg = np.linalg.norm(lab - fg_med, axis=2)
     d_bg = np.linalg.norm(lab - bg_med, axis=2)
     score = conf * (d_bg - d_fg) / (d_bg + d_fg + 1e-3)
-    return np.clip(score, -1.0, 1.0).astype(np.float32)
+    return np.clip(score, -1.0, 1.0).astype(np.float32), selected_luma_delta
 
 
 def _edge_restore_color_min_for_unit(
@@ -687,6 +819,12 @@ def _edge_restore_color_min_for_unit(
     return float(EDGE_RESTORE_COLOR_MIN)
 
 
+def _edge_restore_color_min_for_luma_delta(selected_luma_delta, strength=0.0):
+    if float(selected_luma_delta) > float(BRIGHT_EDGE_RESTORE_LUMA_DELTA):
+        return _bright_edge_restore_color_min_for_strength(strength)
+    return float(EDGE_RESTORE_COLOR_MIN)
+
+
 def _bright_edge_restore_color_min_for_strength(strength):
     lock = float(np.clip(strength, 0.0, 100.0))
     end = float(max(1.0, BRIGHT_EDGE_RESTORE_COLOR_MIN_LOCK_END))
@@ -696,9 +834,52 @@ def _bright_edge_restore_color_min_for_strength(strength):
     return float(strict_edge * (1.0 - t) + loose_edge * t)
 
 
+def _is_neutral_edge_bias_unit(selected_luma_delta):
+    return abs(float(selected_luma_delta)) <= float(EDGE_BIAS_NEUTRAL_LUMA_MAX)
+
+
+def _auto_edge_bias_for_unit(selected_luma_delta, scales):
+    delta = float(selected_luma_delta)
+    stroke_hw = float(max(1.0, getattr(scales, "stroke_half_width", 1.0)))
+    if _is_neutral_edge_bias_unit(delta):
+        return 0.0
+    if delta > 0.75 and stroke_hw >= 120.0:
+        return -2.0
+    if 0.30 <= delta <= 0.75 and stroke_hw >= 120.0:
+        return 2.0
+    if delta < -0.50 and stroke_hw >= 80.0:
+        return -1.0
+    return 0.0
+
+
+def _edge_restore_steps_for_luma(selected_luma_delta, edge_bias=0.0):
+    try:
+        bias = float(edge_bias)
+    except Exception:
+        bias = 0.0
+    if 0.0 < float(selected_luma_delta) <= float(EDGE_BIAS_NEUTRAL_LUMA_MAX):
+        base = float(EDGE_BIAS_NEUTRAL_AUTO_PX)
+    else:
+        base = float(EDGE_RESTORE_STEPS)
+    return float(np.clip(round(base + bias), 0, EDGE_BIAS_MAX_STEPS))
+
+
+def _neutral_edge_bias_steps(edge_bias=0.0):
+    try:
+        bias = float(edge_bias)
+    except Exception:
+        bias = 0.0
+    return int(np.clip(round(float(EDGE_BIAS_NEUTRAL_AUTO_PX) + bias), 0, EDGE_BIAS_MAX_STEPS))
+
+
 def _color_weight_for_unit(guide, comp, core, all_hint, R_out, directional_bg=False, strength=100.0):
     delta = _selected_luma_delta(
         guide, comp, core, all_hint, R_out, directional_bg=directional_bg)
+    return _color_weight_for_luma_delta(delta, strength=strength)
+
+
+def _color_weight_for_luma_delta(selected_luma_delta, strength=100.0):
+    delta = float(selected_luma_delta)
     if delta > float(BRIGHT_EDGE_RESTORE_LUMA_DELTA):
         start = float(np.clip(BRIGHT_COLOR_W_START, 0.0, 99.0))
         lock = float(np.clip(strength, 0.0, 100.0))
@@ -820,7 +1001,9 @@ def _solve_component(
         side_relax_weight=1.0,
         prior_floor_in=None,
         strict_side_edge_thresh=None,
-        side_dilate=None) -> _ComponentSolve:
+        side_dilate=None,
+        inside_color_bg_thresh=None,
+        inside_color_bg_weight=1.0) -> _ComponentSolve:
     zeros = np.zeros_like(comp, dtype=bool)
     fzeros = np.zeros(comp.shape, dtype=np.float32)
     if not np.any(comp):
@@ -917,6 +1100,18 @@ def _solve_component(
             if np.any(weak_opposite):
                 bg_prior = -np.maximum(mag_in[weak_opposite], floor_in)
                 prior[weak_opposite] = prior[weak_opposite] * (1.0 - w) + bg_prior * w
+
+    if inside_color_bg_thresh is not None:
+        try:
+            color_thresh = float(inside_color_bg_thresh)
+        except Exception:
+            color_thresh = None
+        if color_thresh is not None:
+            color_opposite = inside & (np.asarray(color_roi, dtype=np.float32) < color_thresh) & ~core
+            if np.any(color_opposite):
+                w = float(np.clip(inside_color_bg_weight, 0.0, 1.0))
+                bg_prior = -np.maximum(mag_in[color_opposite], floor_in)
+                prior[color_opposite] = prior[color_opposite] * (1.0 - w) + bg_prior * w
 
     # Colour data term. Inside the mask it may pull either way (a same-geometry
     # spill of a *different* colour is pushed to BG and clipped). Outside the mask
@@ -1116,7 +1311,13 @@ def _postprocess_support(support, hint, hard_fg_core, erase_bg):
     return support
 
 
-def _limit_smooth_outside_growth(support, hint, edge_strength, hard_fg_core, erase_bg):
+def _limit_smooth_outside_growth(
+        support,
+        hint,
+        edge_strength,
+        hard_fg_core,
+        erase_bg,
+        strength=0.0):
     support = np.asarray(support, dtype=bool)
     hint = np.asarray(hint, dtype=bool)
     outside = support & ~hint
@@ -1124,7 +1325,11 @@ def _limit_smooth_outside_growth(support, hint, edge_strength, hard_fg_core, era
         return support
 
     edge = np.asarray(edge_strength, dtype=np.float32)
-    edge_near = edge >= float(OUTSIDE_KEEP_EDGE_THRESH)
+    strict_thresh = _outside_keep_edge_strict_thresh()
+    relaxed_thresh = _outside_keep_edge_thresh_for_strength(strength)
+    dist_from_hint = _er._distance_from(hint)
+    near_hint = dist_from_hint <= float(max(1.0, OUTSIDE_KEEP_EDGE_RELAX_DIST))
+    edge_near = (edge >= strict_thresh) | (near_hint & (edge >= relaxed_thresh))
     if OUTSIDE_KEEP_EDGE_NEAR > 0 and np.any(edge_near):
         edge_near = cv2.dilate(
             edge_near.astype(np.uint8),
@@ -1137,6 +1342,17 @@ def _limit_smooth_outside_growth(support, hint, edge_strength, hard_fg_core, era
         limited = _er._connected_to_seed(limited, hard_fg_core) | hard_fg_core
         limited &= ~np.asarray(erase_bg, dtype=bool)
     return limited
+
+
+def _outside_keep_edge_thresh_for_strength(strength):
+    lock = float(np.clip(strength, 0.0, 100.0)) / 100.0
+    strict = _outside_keep_edge_strict_thresh()
+    loose = float(max(0.24, min(OUTSIDE_KEEP_EDGE_THRESH, 0.34)))
+    return float(strict * (1.0 - lock) + loose * lock)
+
+
+def _outside_keep_edge_strict_thresh():
+    return float(min(0.72, max(OUTSIDE_KEEP_EDGE_THRESH, 0.66)))
 
 
 def _fill_selected_hint_holes(support, hint, hard_fg_core, erase_bg):
@@ -1179,7 +1395,9 @@ def _restore_selected_edge_rim(
         hard_fg_core,
         erase_bg,
         color_min=EDGE_RESTORE_COLOR_MIN,
-        edge_thresh=EDGE_RESTORE_THRESH):
+        edge_thresh=EDGE_RESTORE_THRESH,
+        steps=EDGE_RESTORE_STEPS,
+        edge_bias=0.0):
     support = np.asarray(support, dtype=bool)
     candidate = np.asarray(candidate, dtype=bool)
     if not np.any(support) or not np.any(candidate):
@@ -1190,24 +1408,110 @@ def _restore_selected_edge_rim(
     restored = support.copy()
     restore = np.zeros_like(support, dtype=bool)
     erase = np.asarray(erase_bg, dtype=bool)
-    edge_near = edge >= float(edge_thresh)
-    if EDGE_RESTORE_EDGE_NEAR > 0 and np.any(edge_near):
-        edge_near = cv2.dilate(
-            edge_near.astype(np.uint8),
-            np.ones((3, 3), dtype=np.uint8),
-            iterations=EDGE_RESTORE_EDGE_NEAR,
-        ) > 0
+    steps_arr = np.asarray(steps, dtype=np.float32)
+    if steps_arr.shape:
+        max_steps = int(np.clip(np.max(np.rint(steps_arr), initial=0), 0, EDGE_BIAS_MAX_STEPS))
+    else:
+        max_steps = int(np.clip(round(float(steps_arr)), 0, EDGE_BIAS_MAX_STEPS))
+    if max_steps <= 0:
+        return support, restore
+    edge_near = _edge_near_for_restore(edge, edge_thresh, max_steps)
     edge_band = (
         candidate
         & edge_near
         & ~erase
     )
     color_min_arr = np.asarray(color_min, dtype=np.float32)
+    color_min_arr = _edge_bias_adjusted_color_min(color_min_arr, edge_bias)
     if color_min_arr.shape:
         edge_band &= color >= color_min_arr
     else:
         edge_band &= color >= float(color_min_arr)
-    steps = int(max(1, EDGE_RESTORE_STEPS))
+    if not np.any(edge_band):
+        return support, restore
+
+    step_limit = None
+    if steps_arr.shape:
+        step_limit = np.rint(steps_arr).astype(np.int16, copy=False)
+        max_steps = int(np.clip(np.max(step_limit[edge_band], initial=0), 0, EDGE_BIAS_MAX_STEPS))
+
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    for step_index in range(max_steps):
+        near_support = (cv2.dilate(restored.astype(np.uint8), kernel, iterations=1) > 0) & ~restored
+        add = edge_band & near_support
+        if step_limit is not None:
+            add &= step_limit > step_index
+        if not np.any(add):
+            break
+        restore |= add
+        restored |= add
+    if not np.any(restore):
+        return support, restore
+
+    if np.any(hard_fg_core):
+        restored = _er._connected_to_seed(restored, hard_fg_core) | hard_fg_core
+        restored &= ~erase
+        restore &= restored
+    return restored, restore
+
+
+def _edge_bias_adjusted_color_min(color_min, edge_bias):
+    """Positive UI Edge Bias may cross a faint edge-side colour ramp.
+
+    Auto bias changes the default edge inclusion width, but the explicit UI
+    offset should feel directional. Keep bias=0 exactly as before; only relax the
+    colour gate when the user pushes the boundary outward.
+    """
+    try:
+        bias = float(edge_bias)
+    except Exception:
+        bias = 0.0
+    if bias <= 0.0:
+        return color_min
+    relax = float(EDGE_BIAS_COLOR_RELAX) * bias
+    min_allowed = float(EDGE_BIAS_COLOR_MIN)
+    return np.maximum(np.asarray(color_min, dtype=np.float32) - relax, min_allowed)
+
+
+def _edge_near_for_restore(edge, edge_thresh, steps):
+    edge_near = np.asarray(edge, dtype=np.float32) >= float(edge_thresh)
+    near = int(max(0, round(max(float(EDGE_RESTORE_EDGE_NEAR), float(steps)))))
+    if near > 0 and np.any(edge_near):
+        edge_near = cv2.dilate(
+            edge_near.astype(np.uint8),
+            np.ones((3, 3), dtype=np.uint8),
+            iterations=near,
+        ) > 0
+    return edge_near
+
+
+def _restore_neutral_edge_bias_rim(
+        support,
+        candidate,
+        edge_strength,
+        color_score,
+        hard_fg_core,
+        erase_bg,
+        edge_bias=0.0,
+        edge_thresh=EDGE_RESTORE_THRESH):
+    steps = _neutral_edge_bias_steps(edge_bias)
+    if steps <= 0:
+        return np.asarray(support, dtype=bool), np.zeros_like(support, dtype=bool)
+    support = np.asarray(support, dtype=bool)
+    candidate = np.asarray(candidate, dtype=bool)
+    if not np.any(support) or not np.any(candidate):
+        return support, np.zeros_like(support, dtype=bool)
+
+    edge = np.asarray(edge_strength, dtype=np.float32)
+    color = np.asarray(color_score, dtype=np.float32)
+    erase = np.asarray(erase_bg, dtype=bool)
+    edge_near = _edge_near_for_restore(edge, edge_thresh, steps)
+    edge_band = candidate & edge_near & ~erase & (color >= 0.0)
+    if not np.any(edge_band):
+        return support, np.zeros_like(support, dtype=bool)
+
+    restored = support.copy()
+    restore = np.zeros_like(support, dtype=bool)
     kernel = np.ones((3, 3), dtype=np.uint8)
     for _ in range(steps):
         near_support = (cv2.dilate(restored.astype(np.uint8), kernel, iterations=1) > 0) & ~restored
@@ -1216,9 +1520,9 @@ def _restore_selected_edge_rim(
             break
         restore |= add
         restored |= add
+
     if not np.any(restore):
         return support, restore
-
     if np.any(hard_fg_core):
         restored = _er._connected_to_seed(restored, hard_fg_core) | hard_fg_core
         restored &= ~erase

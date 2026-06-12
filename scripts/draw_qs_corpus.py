@@ -6,11 +6,11 @@ Turns the eyeball loop into objective, reproducible metrics over the whole
 
 Subcommands::
 
-    report  [--glob G] [--names ...] [--solver v1|v2] [--zoom]
+    report  [--glob G] [--names ...] [--solver v1|v2|v3] [--zoom]
             [--json] [--no-determinism] [--no-idempotence]
         Print the metric table (or JSON) for the selected dumps.
 
-    baseline [--glob G] [--names ...] [--solver v1|v2]
+    baseline [--glob G] [--names ...] [--solver v1|v2|v3]
         Write/update tests/fixtures/draw_qs_baseline.json. With --names it merges
         only those entries; otherwise it rewrites the whole baseline.
 
@@ -27,16 +27,16 @@ Subcommands::
     contact-v2 [--glob G] [--names ...] [--out DIR]
         Write V1/V2/zoom contact sheets for visual QA.
 
-    pair <A> <B> [--solver v1|v2]
+    pair <A> <B> [--solver v1|v2|v3]
         Report seam/alpha gap metrics for two opposite-side dumps.
 
-    export-labels [--names ...] [--solver v1|v2] [--out DIR]
+    export-labels [--names ...] [--solver v1|v2|v3] [--out DIR]
         Export npz dumps to PNGs that can be edited into golden masks.
 
-    label-report [--names ...] [--solver v1|v2] [--label-dir DIR]
+    label-report [--names ...] [--solver v1|v2|v3] [--label-dir DIR]
         Compare solver output to edited ``*_expected.png`` masks.
 
-    label-diff [--names ...] [--solver v1|v2] [--label-dir DIR] [--out DIR]
+    label-diff [--names ...] [--solver v1|v2|v3] [--label-dir DIR] [--out DIR]
         Write visual label diffs for edited ``*_expected.png`` masks.
 
 Capture loop (to grow the corpus):
@@ -444,7 +444,7 @@ def main(argv=None) -> int:
     p_report = sub.add_parser("report", help="print metric table / JSON")
     p_report.add_argument("--glob", default=DEFAULT_GLOB)
     p_report.add_argument("--names", nargs="*")
-    p_report.add_argument("--solver", choices=("v1", "v2"), default=None)
+    p_report.add_argument("--solver", choices=("v1", "v2", "v3"), default=None)
     p_report.add_argument("--zoom", action="store_true")
     p_report.add_argument("--json", action="store_true")
     p_report.add_argument("--no-determinism", action="store_true")
@@ -454,7 +454,7 @@ def main(argv=None) -> int:
     p_base = sub.add_parser("baseline", help="write/update the golden baseline JSON")
     p_base.add_argument("--glob", default=DEFAULT_GLOB)
     p_base.add_argument("--names", nargs="*")
-    p_base.add_argument("--solver", choices=("v1", "v2"), default=None)
+    p_base.add_argument("--solver", choices=("v1", "v2", "v3"), default=None)
     p_base.set_defaults(func=cmd_baseline)
 
     p_add = sub.add_parser("add", help="enroll a captured npz and baseline it")
@@ -466,7 +466,7 @@ def main(argv=None) -> int:
     p_sweep.add_argument("knob")
     p_sweep.add_argument("values", nargs="+")
     p_sweep.add_argument("--glob", default=DEFAULT_GLOB)
-    p_sweep.add_argument("--solver", choices=("v1", "v2"), default=None)
+    p_sweep.add_argument("--solver", choices=("v1", "v2", "v3"), default=None)
     p_sweep.set_defaults(func=cmd_sweep)
 
     p_contact = sub.add_parser("contact-v2", help="write V1/V2 contact sheets")
@@ -478,7 +478,7 @@ def main(argv=None) -> int:
     p_pair = sub.add_parser("pair", help="measure opposite-side seam gap")
     p_pair.add_argument("a")
     p_pair.add_argument("b")
-    p_pair.add_argument("--solver", choices=("v1", "v2"), default=None)
+    p_pair.add_argument("--solver", choices=("v1", "v2", "v3"), default=None)
     p_pair.add_argument("--alpha-threshold", type=float, default=0.5)
     p_pair.add_argument("--seam-radius", type=float, default=4.0)
     p_pair.add_argument("--out", default=None)
@@ -488,7 +488,7 @@ def main(argv=None) -> int:
     p_export = sub.add_parser("export-labels", help="write editable golden-mask PNGs")
     p_export.add_argument("--glob", default=DEFAULT_GLOB)
     p_export.add_argument("--names", nargs="*")
-    p_export.add_argument("--solver", choices=("v1", "v2"), default="v2")
+    p_export.add_argument("--solver", choices=("v1", "v2", "v3"), default="v2")
     p_export.add_argument("--out", default="edge_refine_debug/label_exports")
     p_export.add_argument("--overwrite-expected", action="store_true")
     p_export.add_argument("--roi", action="store_true",
@@ -498,7 +498,7 @@ def main(argv=None) -> int:
     p_label = sub.add_parser("label-report", help="compare against edited expected PNGs")
     p_label.add_argument("--glob", default=DEFAULT_GLOB)
     p_label.add_argument("--names", nargs="*")
-    p_label.add_argument("--solver", choices=("v1", "v2"), default="v2")
+    p_label.add_argument("--solver", choices=("v1", "v2", "v3"), default="v2")
     p_label.add_argument("--label-dir", default="edge_refine_debug/label_exports")
     p_label.add_argument("--boundary-tolerance", type=float, default=2.0)
     p_label.add_argument("--require-all", action="store_true")
@@ -508,7 +508,7 @@ def main(argv=None) -> int:
     p_diff = sub.add_parser("label-diff", help="write visual diffs against edited expected PNGs")
     p_diff.add_argument("--glob", default=DEFAULT_GLOB)
     p_diff.add_argument("--names", nargs="*")
-    p_diff.add_argument("--solver", choices=("v1", "v2"), default="v2")
+    p_diff.add_argument("--solver", choices=("v1", "v2", "v3"), default="v2")
     p_diff.add_argument("--label-dir", default="edge_refine_debug/label_exports")
     p_diff.add_argument("--out", default="edge_refine_debug/label_eval")
     p_diff.add_argument("--require-all", action="store_true")

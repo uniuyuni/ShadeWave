@@ -67,6 +67,13 @@ def _draw_result_edge_lock(result, fallback):
     return float(fallback)
 
 
+def _draw_result_support_alpha(result):
+    for name, plane in getattr(result, "debug_planes", []) or []:
+        if name == "support_alpha":
+            return np.asarray(plane, dtype=np.float32)
+    return None
+
+
 def make_confident_seed(mask, threshold=0.05, shrink_ratio=0.55, min_shrink=1.5):
     seed = _as_mask(mask) > float(threshold)
     if not np.any(seed):
@@ -100,6 +107,7 @@ def refine_mask_edge_aware(
         selection_strategy=STRATEGY_REFINE,
         draw_strokes=None,
         draw_pixel_scale=1.0,
+        edge_bias=0.0,
         return_support=False):
     mode = normalize_mode(mode)
     mask_f = _as_mask(mask)
@@ -117,6 +125,7 @@ def refine_mask_edge_aware(
     strength = float(np.clip(raw_strength, 0, 100))
     if selection_strategy == STRATEGY_DRAW:
         draw_strength = raw_strength
+        support_alpha = None
         if os.environ.get("PLATYPUS_DRAW_QS_LEGACY"):
             # Legacy grabCut/target-edge path kept for one release as a fallback.
             seed, candidate, support, extra_debug_planes = _draw_grabcut_band_support(
@@ -130,9 +139,13 @@ def refine_mask_edge_aware(
             )
             effective_edge_lock = strength
         else:
+            draw_v3_flag = os.environ.get("QS_DRAW_V3")
             draw_v2_flag = os.environ.get("QS_DRAW_V2")
+            use_draw_v3 = draw_v3_flag is None or draw_v3_flag.strip().lower() not in {"0", "false", "no", "off"}
             use_draw_v2 = draw_v2_flag is None or draw_v2_flag.strip().lower() not in {"0", "false", "no", "off"}
-            if use_draw_v2:
+            if use_draw_v3:
+                from cores.mask2 import draw_quick_select_v3 as _draw_quick_select
+            elif use_draw_v2:
                 from cores.mask2 import draw_quick_select_v2 as _draw_quick_select
             else:
                 from cores.mask2 import draw_quick_select as _draw_quick_select
@@ -144,14 +157,17 @@ def refine_mask_edge_aware(
                 seed_mask=seed_mask,
                 draw_strokes=draw_strokes,
                 pixel_scale=draw_pixel_scale,
+                edge_bias=edge_bias,
             )
             seed = _draw_result.seed
             candidate = _draw_result.candidate
             support = _draw_result.support
             extra_debug_planes = _draw_result.debug_planes
             effective_edge_lock = _draw_result_edge_lock(_draw_result, strength)
+            support_alpha = _draw_result_support_alpha(_draw_result)
         if support is None:
             support = _fallback_support(mask_f, seed, candidate)
+            support_alpha = None
         refined = _compose_refined_mask(
             mask_f,
             support,
@@ -160,6 +176,7 @@ def refine_mask_edge_aware(
             guide=guide,
             natural_edge=True,
             edge_lock=effective_edge_lock,
+            support_alpha=support_alpha,
         )
         _debug_dump_refine_state(
             guide,
@@ -2802,7 +2819,8 @@ def _compose_refined_mask(
         support_softness=0.0,
         guide=None,
         natural_edge=False,
-        edge_lock=0.0):
+        edge_lock=0.0,
+        support_alpha=None):
     support = np.asarray(support, dtype=bool)
     if not np.any(support):
         return np.zeros_like(mask, dtype=np.float32)
@@ -2810,6 +2828,10 @@ def _compose_refined_mask(
         result = support.astype(np.float32)
     else:
         result = np.where(support, mask, 0.0).astype(np.float32, copy=False)
+    if support_alpha is not None:
+        alpha = _as_mask(support_alpha)
+        if alpha.shape[:2] == result.shape[:2]:
+            result = np.minimum(result, np.clip(alpha, 0.0, 1.0))
     if natural_edge:
         result = _apply_natural_edge_matte(guide, result, support, edge_lock=edge_lock)
     support_softness = float(max(0.0, support_softness))

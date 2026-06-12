@@ -49,6 +49,7 @@ def get_mask_hash_tuple(effects_param):
         effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode"),
         effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_radius"),
         effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_strength"),
+        effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_bias"),
         # mask Mesh warp 関連 (Composit のみ実効、子マスクは placeholder default)
         tuple(effects.Mask2Effect.get_param(effects_param, "mask_mesh_size") or ()),
         _mesh_cps_hash_key(effects.Mask2Effect.get_param(effects_param, "mask_mesh_control_points")),
@@ -113,7 +114,8 @@ def render_freedraw_edge_refine_full_view(
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):
         return None
-    if os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower() not in {"1", "true", "yes", "on"}:
+    full_view_flag = os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower()
+    if full_view_flag in {"0", "false", "no", "off"}:
         return None
     original = ctx.get_original_image_rgb()
     if original is None or getattr(original, "size", 0) == 0:
@@ -176,6 +178,10 @@ def render_freedraw_edge_refine_full_view(
             effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_radius"),
         ),
         strength=effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_strength"),
+        edge_bias=_edge_refine_edge_bias_to_texture(
+            render_ctx,
+            effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_bias"),
+        ),
         fill_grown_region=True,
         seed_from_guide=False,
         seed_mask=edge_refine.make_confident_seed(render_mask),
@@ -295,10 +301,13 @@ def _freedraw_refine_render_rect(ctx, original, disp_info, effects_param, source
         min(float(coord_h), dy + dh),
     )
     expanded_base = _expand_rect(base, margin, coord_w, coord_h)
-    render_base = expanded_base
+    render_base = None
     for line_rect in _freedraw_line_full_image_rects(ctx, source_lines, coord_w, coord_h):
         if _rects_intersect(line_rect, expanded_base):
-            render_base = _union_rect(render_base, _expand_rect(line_rect, margin, coord_w, coord_h))
+            expanded_line = _expand_rect(line_rect, margin, coord_w, coord_h)
+            render_base = expanded_line if render_base is None else _union_rect(render_base, expanded_line)
+    if render_base is None:
+        render_base = expanded_base
 
     x0 = max(0, int(np.floor(render_base[0])))
     y0 = max(0, int(np.floor(render_base[1])))
@@ -693,6 +702,10 @@ def _apply_edge_refine(
             effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_radius"),
         ),
         strength=effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_strength"),
+        edge_bias=_edge_refine_edge_bias_to_texture(
+            ctx,
+            effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_bias"),
+        ),
         fill_grown_region=fill_grown_region,
         seed_from_guide=seed_from_guide,
         seed_mask=seed_mask,
@@ -710,6 +723,14 @@ def _edge_refine_radius_to_texture(ctx, radius):
     except Exception:
         disp_scale = 1.0
     return float(radius) * disp_scale
+
+
+def _edge_refine_edge_bias_to_texture(ctx, edge_bias):
+    try:
+        disp_scale = float(params.get_disp_info(ctx.tcg_info)[4])
+    except Exception:
+        disp_scale = 1.0
+    return float(edge_bias) * disp_scale
 
 
 def _get_edge_refine_guide_image(ctx, mask_shape):

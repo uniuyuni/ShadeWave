@@ -55,7 +55,8 @@ data = np.load(path, allow_pickle=True)
 | `mask` | `float32` | `(H, W)` | yes | solver に渡された FreeDraw mask。0..1 の濃度 mask。 |
 | `seed_mask` | `bool` または空配列 | `(H, W)` または `(0,)` | yes | 呼び出し時の seed mask。`None` の場合は空配列で保存される。 |
 | `radius` | `float32` scalar | `()` | yes | UI の Quick Radius 値。Draw QS では brush 半径への offset として扱われる。 |
-| `strength` | `float32` scalar | `()` | yes | UI の Edge Lock / strength 値。`strength_mode` が無い旧 dump では solver 内部の 0..100 値として扱う。 |
+| `strength` | `float32` scalar | `()` | yes | UI の Edge Lock 値。新規 V2 dump では auto からの offset、`strength_mode` が無い旧 dump では solver 内部の 0..100 値として扱う。 |
+| `edge_bias` | `float32` scalar | `()` | no | Edge Bias offset。0 は auto のまま、+ は選択側へ寄せる、- は控えめにする。無い旧 dump では `0.0`。 |
 | `pixel_scale` | `float32` scalar | `()` | yes | dump 時の draw pixel scale。full-view / scaled replay の補正に使う。 |
 | `strokes` | `object` | `(N,)` | yes | stroke dict の object 配列。各要素の仕様は下記。 |
 | `strength_mode` | string scalar | `()` | no | `"internal"` または `"offset"`。無い場合は `"internal"` として読む。 |
@@ -98,7 +99,7 @@ seed_mask = data["seed_mask"] if data["seed_mask"].size else None
 from types import SimpleNamespace
 import numpy as np
 
-from cores.mask2 import draw_quick_select, edge_refine
+from cores.mask2 import draw_quick_select_v3, edge_refine
 
 data = np.load("edge_refine_debug/qs_input_easy.npz", allow_pickle=True)
 
@@ -117,7 +118,7 @@ for raw in data["strokes"]:
 mask = data["mask"].astype(np.float32)
 seed_mask = data["seed_mask"] if data["seed_mask"].size else edge_refine.make_confident_seed(mask)
 
-result = draw_quick_select.compute_draw_support(
+result = draw_quick_select_v3.compute_draw_support(
     data["guide"].astype(np.float32),
     mask,
     float(data["radius"]),
@@ -151,7 +152,7 @@ debug_planes = dict(result.debug_planes)
 - 古い debug ファイルには `pixel_scale` が無い可能性がある。replay 時は `1.0` を既定にする。
 - `strokes` は object 配列なので、`np.load(..., allow_pickle=False)` では読めない。
 - ファイル名は通常 `.npz` だが、手動でリネームされたファイルでは拡張子が欠けていても zip/npz として読める場合がある。
-- `strength` は保存時の UI 値であり、現在の solver ではそのまま内部 Edge Lock として使われる。
+- `strength_mode` が無い旧 dump の `strength` は内部 Edge Lock として読む。新規 V2 dump では `strength_mode="offset"` として、0 = auto、+ = strict、- = loose と読む。
 - `guide` は「元画像全体」ではなく、solver に渡された crop / scaled region の画像である。
 
 ## 回帰ハーネスと capture ループ
@@ -192,8 +193,8 @@ pixi run python scripts/draw_qs_corpus.py add <name>
 ### edited expected PNG を確認する
 
 ```bash
-pixi run python scripts/draw_qs_corpus.py label-report --names <name> --solver v2 --label-dir edge_refine_debug/label_exports
-pixi run python scripts/draw_qs_corpus.py label-diff --names <name> --solver v2 --label-dir edge_refine_debug/label_exports --out edge_refine_debug/label_eval
+pixi run python scripts/draw_qs_corpus.py label-report --names <name> --solver v3 --label-dir edge_refine_debug/label_exports
+pixi run python scripts/draw_qs_corpus.py label-diff --names <name> --solver v3 --label-dir edge_refine_debug/label_exports --out edge_refine_debug/label_eval
 ```
 
 `label-diff` は緑=一致、赤=余分、青=不足、黄=予測境界、白=expected 境界の確認画像を出力する。
@@ -224,10 +225,20 @@ NPZ には solver 入力だけが保存される。`result.debug_planes` は rep
 | `prior` | geometric prior を 0..1 表示に変換したもの。0.5 が中立。 |
 | `cut_boundary` | min-cut support 境界。 |
 | `edge_restore` | selected-side edge rim restore で追加された領域。 |
+| `neutral_edge_bias` | Edge Bias auto/offset による neutral edge rim restore 領域。 |
 | `edge_bridge` | edge seam bridge で追加された領域。 |
 | `interior_fill` | hint 内 hole fill で追加された領域。 |
 | `same_side_gap_fill` | V2 の同側ギャップ補完で追加された領域。 |
+| `v3_boundary_bias_delta` | V3 Boundary Bias の px シフトで追加/削除された領域。 |
 | `edge_lock_effective` | replay 時の内部 EdgeLock。 |
 | `edge_lock_auto` | auto 推定された EdgeLock。 |
 | `edge_lock_offset` | auto からの UI offset。 |
 | `edge_lock_mode_offset` | offset mode なら 1、internal mode なら 0。 |
+| `edge_bias_auto` | unit feature から推定された Edge Bias auto 値。 |
+| `edge_bias_effective` | auto と UI offset を合成した Edge Bias 値。 |
+| `edge_bias_offset` | UI から渡された Edge Bias offset。 |
+| `edge_policy_ridge_threshold` | EdgeLock から解決された ridge thinning threshold。 |
+| `edge_policy_restore_threshold` | selected-side rim restore の edge threshold。 |
+| `edge_policy_side_threshold` | brush 内部を seed-side / opposite-side に分ける edge threshold。 |
+| `edge_policy_outside_keep_threshold` | hint 外 support を残すための edge threshold。 |
+| `boundary_bias_px` | Edge Bias の px offset。EdgeLock や色 membership とは分離する。 |

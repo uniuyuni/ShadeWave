@@ -123,6 +123,7 @@ def load_dump(path) -> dict:
         "edge_lock_auto": float(data["edge_lock_auto"]) if "edge_lock_auto" in files else None,
         "edge_lock_effective": float(data["edge_lock_effective"]) if "edge_lock_effective" in files else None,
         "edge_lock_offset": float(data["edge_lock_offset"]) if "edge_lock_offset" in files else None,
+        "edge_bias": float(data["edge_bias"]) if "edge_bias" in files else 0.0,
         "pixel_scale": float(data["pixel_scale"]) if "pixel_scale" in files else 1.0,
         "strokes": strokes,
     }
@@ -136,6 +137,10 @@ def _solver_module(solver: Optional[str] = None):
     value = (solver or os.environ.get("QS_DRAW_SOLVER") or "").strip().lower()
     if not value and os.environ.get("QS_DRAW_V2", "").strip().lower() in {"1", "true", "yes", "on"}:
         value = "v2"
+    if value in {"v3", "3"}:
+        from cores.mask2 import draw_quick_select_v3
+
+        return draw_quick_select_v3
     if value in {"v2", "2"}:
         from cores.mask2 import draw_quick_select_v2
 
@@ -148,7 +153,9 @@ def _solve_support(dump, *, solver: Optional[str] = None):
     module = _solver_module(solver)
     old_mode = os.environ.get("QS_V2_STRENGTH_MODE")
     mode = dump.get("strength_mode")
-    use_dump_mode = module.__name__.endswith("draw_quick_select_v2") and mode in {"internal", "offset"}
+    use_dump_mode = module.__name__.endswith(
+        ("draw_quick_select_v2", "draw_quick_select_v3")
+    ) and mode in {"internal", "offset"}
     if use_dump_mode:
         os.environ["QS_V2_STRENGTH_MODE"] = mode
     try:
@@ -160,6 +167,7 @@ def _solve_support(dump, *, solver: Optional[str] = None):
             seed_mask=dump.get("seed_mask"),
             draw_strokes=dump.get("strokes"),
             pixel_scale=dump.get("pixel_scale", 1.0),
+            edge_bias=dump.get("edge_bias", 0.0),
         )
     finally:
         if use_dump_mode:
@@ -173,6 +181,7 @@ def solve(dump, *, solver: Optional[str] = None) -> dict:
     """Run the production solve + matte and return arrays the metrics consume."""
     res = _solve_support(dump, solver=solver)
     edge_lock = _effective_edge_lock(res, dump)
+    planes = {name: value for name, value in res.debug_planes}
     refined = edge_refine._compose_refined_mask(
         dump["mask"],
         res.support,
@@ -180,13 +189,14 @@ def solve(dump, *, solver: Optional[str] = None) -> dict:
         guide=dump["guide"],
         natural_edge=True,
         edge_lock=edge_lock,
+        support_alpha=planes.get("support_alpha"),
     )
     return {
         "support": np.asarray(res.support, dtype=bool),
         "candidate": np.asarray(res.candidate, dtype=bool),
         "seed": np.asarray(res.seed, dtype=bool),
         "refined": np.asarray(refined, dtype=np.float32),
-        "planes": {name: value for name, value in res.debug_planes},
+        "planes": planes,
         "edge_lock": edge_lock,
     }
 
@@ -389,6 +399,7 @@ def scaled_dump(dump, scale: float) -> dict:
         "mask": mask.astype(np.float32, copy=False),
         "seed_mask": seed,
         "radius": float(dump["radius"]) * scale,
+        "edge_bias": float(dump.get("edge_bias", 0.0)) * scale,
         "pixel_scale": float(dump.get("pixel_scale", 1.0)) * scale,
         "strokes": _scale_strokes(dump.get("strokes"), scale),
     })

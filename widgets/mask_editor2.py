@@ -783,6 +783,7 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_bias'),
                 # mask Mesh warp 関連 (Composit のみ実際に効くが、子マスクでも
                 # placeholder default ({} と [4,4]) で hash が安定するので一律含める)
                 tuple(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_size') or ()),
@@ -822,6 +823,8 @@ class BaseMask(KVWidget):
             radius=self._edge_refine_radius_to_texture(
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius')),
             strength=effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
+            edge_bias=self._edge_refine_edge_bias_to_texture(
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_bias')),
             fill_grown_region=self._edge_refine_fill_grown_region(),
             seed_from_guide=self._edge_refine_seed_from_guide(),
             seed_mask=seed_mask,
@@ -848,6 +851,13 @@ class BaseMask(KVWidget):
         except Exception:
             disp_scale = 1.0
         return float(radius) * disp_scale
+
+    def _edge_refine_edge_bias_to_texture(self, edge_bias):
+        try:
+            disp_scale = float(params.get_disp_info(self.editor.tcg_info)[4])
+        except Exception:
+            disp_scale = 1.0
+        return float(edge_bias) * disp_scale
 
     def _get_edge_refine_guide_image(self, mask_shape):
         crop = getattr(self.editor, 'crop_image_rgb', None)

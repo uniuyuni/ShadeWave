@@ -1250,6 +1250,7 @@ if __name__ == '__main__':
                         'mask2_edge_refine_mode',
                         'mask2_edge_refine_radius',
                         'mask2_edge_refine_strength',
+                        'mask2_edge_refine_bias',
                     )
                 }
             if lv == 0:
@@ -1306,6 +1307,25 @@ if __name__ == '__main__':
                 )
             else:
                 self.sync_draw_image()
+
+        def apply_mask2_edge_refine_slider(self, settle=False):
+            """Debounce expensive Quick Select slider redraws while dragging."""
+            event = getattr(self, "_mask2_edge_refine_slider_event", None)
+            if event is not None:
+                event.cancel()
+                self._mask2_edge_refine_slider_event = None
+
+            if settle:
+                self.apply_effects_lv(3, "mask2")
+                return
+
+            self.apply_effects_lv(3, "mask2", defer_draw=True)
+
+            def _draw(_dt):
+                self._mask2_edge_refine_slider_event = None
+                self.apply_effects_lv(3, "mask2")
+
+            self._mask2_edge_refine_slider_event = KVClock.schedule_once(_draw, 0.18)
 
         def set_effect_param(self, lv, effect, arg):
             if self.run_set2widget_all == True:
@@ -2629,6 +2649,7 @@ if __name__ == '__main__':
                     'spinner_mask2_edge_refine_mode',
                     'slider_mask2_edge_refine_radius',
                     'slider_mask2_edge_refine_strength',
+                    'slider_mask2_edge_refine_bias',
                 ),
                 not mask_specific_enabled,
             )

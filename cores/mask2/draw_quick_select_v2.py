@@ -29,7 +29,8 @@ def compute_draw_support(
         strength,
         seed_mask=None,
         draw_strokes=None,
-        pixel_scale=1.0) -> DrawSupportResult:
+        pixel_scale=1.0,
+        edge_bias=0.0) -> DrawSupportResult:
     """Compute Draw Quick Select support with the V2 path.
 
     The first V2 milestone is a safe switchable entry point plus harness. Add-only
@@ -49,6 +50,7 @@ def compute_draw_support(
             seed_mask=seed_mask,
             draw_strokes=draw_strokes,
             pixel_scale=pixel_scale,
+            edge_bias=edge_bias,
         )
         return _tag_result(result, "v2_fallback_erase", t0)
 
@@ -60,6 +62,7 @@ def compute_draw_support(
         seed_mask=seed_mask,
         draw_strokes=draw_strokes,
         pixel_scale=pixel_scale,
+        edge_bias=edge_bias,
     )
     return _tag_result(result, "v2_add_local_edge", t0)
 
@@ -72,6 +75,7 @@ def _compute_add_only_support(
         seed_mask=None,
         draw_strokes=None,
         pixel_scale=1.0,
+        edge_bias=0.0,
         _dump_input=True) -> DrawSupportResult:
     """Run the add-only V2 path without mutating V1 global state."""
     mask_f = _er._as_mask(mask)
@@ -88,7 +92,7 @@ def _compute_add_only_support(
     scale = _canonical_scale_factor(pixel_scale)
     if scale < 0.999:
         small = _downscale_problem(
-            guide, mask_f, seed_mask, draw_strokes, radius, scale)
+            guide, mask_f, seed_mask, draw_strokes, radius, scale, edge_bias=edge_bias)
         small_result = _compute_add_only_support(
             small["guide"],
             small["mask"],
@@ -97,6 +101,7 @@ def _compute_add_only_support(
             seed_mask=small["seed_mask"],
             draw_strokes=small["strokes"],
             pixel_scale=1.0,
+            edge_bias=small["edge_bias"],
             _dump_input=False,
         )
         if _dump_input:
@@ -112,6 +117,7 @@ def _compute_add_only_support(
                 edge_lock_auto=_debug_plane_percent(small_result, "edge_lock_auto"),
                 edge_lock_effective=_debug_plane_percent(small_result, "edge_lock_effective"),
                 edge_lock_offset=_debug_plane_percent(small_result, "edge_lock_offset"),
+                edge_bias=edge_bias,
             )
         return _upscale_result(small_result, (h, w), scale)
 
@@ -139,9 +145,11 @@ def _compute_add_only_support(
             edge_lock_auto=auto_strength,
             edge_lock_effective=strength,
             edge_lock_offset=offset_strength,
+            edge_bias=edge_bias,
         )
     solver_edge_strength = _v1._solver_edge_strength(solve_edge_strength, pixel_scale)
-    edge_cost_all = _v1._edge_cost_map(solver_edge_strength, strength)
+    resolved_policy = _v1._edge_policy(strength, edge_bias=edge_bias)
+    edge_cost_all = _v1._edge_cost_map(solver_edge_strength, policy=resolved_policy)
     solver_edge_context_all = solver_edge_strength.copy()
 
     fg_stroke, bg_stroke, has_strokes = _er._draw_random_walker_stroke_seeds(
@@ -158,9 +166,21 @@ def _compute_add_only_support(
     cut_all = np.zeros((h, w), dtype=bool)
     color_all = np.zeros((h, w), dtype=np.float32)
     restore_color_min_all = np.full((h, w), float(_v1.EDGE_RESTORE_COLOR_MIN), dtype=np.float32)
+    restore_steps_all = np.zeros((h, w), dtype=np.float32)
+    edge_bias_auto_all = np.zeros((h, w), dtype=np.float32)
+    edge_bias_effective_all = np.full((h, w), float(edge_bias), dtype=np.float32)
     restore_candidate_all = np.zeros((h, w), dtype=bool)
+    neutral_edge_bias_candidate_all = np.zeros((h, w), dtype=bool)
     edge_restore_all = np.zeros((h, w), dtype=bool)
+    neutral_edge_bias_all = np.zeros((h, w), dtype=bool)
     edge_bridge_all = np.zeros((h, w), dtype=bool)
+    ridge_threshold_all = np.full((h, w), resolved_policy.ridge_threshold, dtype=np.float32)
+    restore_threshold_all = np.full((h, w), resolved_policy.restore_threshold, dtype=np.float32)
+    side_threshold_all = np.full((h, w), resolved_policy.side_threshold, dtype=np.float32)
+    outside_threshold_all = np.full((h, w), resolved_policy.outside_keep_threshold, dtype=np.float32)
+    boundary_bias_all = np.full((h, w), resolved_policy.boundary_bias_px, dtype=np.float32)
+    resolved_auto_strength = float(auto_strength)
+    resolved_effective_strength = float(strength)
 
     solve_units = _stroke_local_solve_units(
         mask_f, hint, hard_fg_core, draw_strokes, radius, has_strokes)
@@ -175,23 +195,30 @@ def _compute_add_only_support(
         sl = np.s_[y0:y1, x0:x1]
         comp = component[sl]
         core_roi = unit.core[sl]
-        color_roi = _v1._color_score(
+        color_roi, selected_luma_delta = _v1._color_score_and_luma_delta(
             guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
             directional_bg=has_strokes)
-        selected_luma_delta = _v1._selected_luma_delta(
-            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
-            directional_bg=has_strokes)
-        color_weight = _v1._color_weight_for_unit(
-            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
-            directional_bg=has_strokes, strength=strength)
+        unit_strength, unit_auto_strength = _v2_unit_edge_lock(
+            strength,
+            auto_strength,
+            offset_strength,
+            strength_mode,
+            selected_luma_delta,
+            component_scales,
+        )
+        resolved_auto_strength = max(resolved_auto_strength, unit_auto_strength)
+        resolved_effective_strength = max(resolved_effective_strength, unit_strength)
+        color_weight = _v1._color_weight_for_luma_delta(
+            selected_luma_delta, strength=unit_strength)
         unit_edge_strength = _v1._contextual_edge_strength(
-            solver_edge_strength[sl], color_roi, strength)
-        g_roi = _v1._edge_cost_map(unit_edge_strength, strength)
-        restore_color_min = _v1._edge_restore_color_min_for_unit(
-            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
-            directional_bg=has_strokes,
-            strength=strength)
-        side_edge_thresh = _v2_side_edge_thresh(strength, component_scales, selected_luma_delta)
+            solver_edge_strength[sl], color_roi, unit_strength)
+        unit_policy = _v1._edge_policy(unit_strength, edge_bias=edge_bias)
+        g_roi = _v1._edge_cost_map(unit_edge_strength, policy=unit_policy)
+        restore_color_min = _v1._edge_restore_color_min_for_luma_delta(
+            selected_luma_delta, strength=unit_strength)
+        side_edge_thresh = _v2_side_edge_thresh(unit_strength, component_scales, selected_luma_delta)
+        if _v2_is_thin_elongated_unit(comp, component_scales, unit_strength):
+            side_edge_thresh = min(side_edge_thresh, _v2_thin_elongated_side_edge_thresh(unit_strength))
         out = _v1._solve_component(
             comp,
             hint[sl],
@@ -203,21 +230,55 @@ def _compute_add_only_support(
             unit_edge_strength,
             color_weight=color_weight,
             side_edge_thresh=side_edge_thresh,
-            side_relax_weight=_v1._side_edge_relax_weight_for_strength(strength),
+            side_relax_weight=_v1._side_edge_relax_weight_for_strength(unit_strength),
             prior_floor_in=_v2_prior_floor_in(selected_luma_delta, component_scales),
             strict_side_edge_thresh=side_edge_thresh,
             side_dilate=_v2_side_dilate(selected_luma_delta, component_scales),
+            inside_color_bg_thresh=_v2_inside_color_bg_thresh(selected_luma_delta, component_scales),
+            inside_color_bg_weight=_v2_inside_color_bg_weight(selected_luma_delta, component_scales),
         )
         color_all[sl] = np.where(out.band | comp, color_roi, color_all[sl])
         edge_cost_all[sl] = np.where(out.band | comp, g_roi, edge_cost_all[sl])
         solver_edge_context_all[sl] = np.where(
             out.band | comp, unit_edge_strength, solver_edge_context_all[sl])
+        policy_scope = out.band | comp
+        ridge_threshold_all[sl] = np.where(
+            policy_scope, unit_policy.ridge_threshold, ridge_threshold_all[sl])
+        restore_threshold_all[sl] = np.where(
+            policy_scope, unit_policy.restore_threshold, restore_threshold_all[sl])
+        side_threshold_all[sl] = np.where(
+            policy_scope, side_edge_thresh, side_threshold_all[sl])
+        outside_threshold_all[sl] = np.where(
+            policy_scope, unit_policy.outside_keep_threshold, outside_threshold_all[sl])
+        boundary_bias_all[sl] = np.where(
+            policy_scope, unit_policy.boundary_bias_px, boundary_bias_all[sl])
         restore_candidate_roi = out.band & comp
         restore_candidate_all[sl] |= restore_candidate_roi
+        if _v1._is_neutral_edge_bias_unit(selected_luma_delta):
+            neutral_edge_bias_candidate_all[sl] |= restore_candidate_roi
         restore_color_min_all[sl] = np.where(
             restore_candidate_roi,
             np.minimum(restore_color_min_all[sl], restore_color_min),
             restore_color_min_all[sl],
+        )
+        auto_edge_bias = _v1._auto_edge_bias_for_unit(selected_luma_delta, component_scales)
+        effective_edge_bias = float(auto_edge_bias) + float(edge_bias)
+        restore_steps = _v1._edge_restore_steps_for_luma(
+            selected_luma_delta, effective_edge_bias)
+        restore_steps_all[sl] = np.where(
+            restore_candidate_roi,
+            np.maximum(restore_steps_all[sl], restore_steps),
+            restore_steps_all[sl],
+        )
+        edge_bias_auto_all[sl] = np.where(
+            restore_candidate_roi,
+            auto_edge_bias,
+            edge_bias_auto_all[sl],
+        )
+        edge_bias_effective_all[sl] = np.where(
+            restore_candidate_roi,
+            effective_edge_bias,
+            edge_bias_effective_all[sl],
         )
         support_all[sl] |= out.support
         band_all[sl] |= out.band
@@ -237,7 +298,19 @@ def _compute_add_only_support(
         hard_fg_core,
         erase_bg,
         color_min=restore_color_min_all,
-        edge_thresh=_v1._edge_restore_thresh_for_strength(strength),
+        edge_thresh=_v1._edge_policy(resolved_effective_strength, edge_bias=edge_bias).restore_threshold,
+        steps=restore_steps_all,
+        edge_bias=edge_bias,
+    )
+    support_all, neutral_edge_bias_all = _v1._restore_neutral_edge_bias_rim(
+        support_all,
+        neutral_edge_bias_candidate_all,
+        solver_edge_context_all,
+        color_all,
+        hard_fg_core,
+        erase_bg,
+        edge_bias=edge_bias,
+        edge_thresh=_v1._edge_policy(resolved_effective_strength, edge_bias=edge_bias).restore_threshold,
     )
     support_all, edge_bridge_all = _v1._bridge_selected_edge_seams(
         support_all,
@@ -247,7 +320,8 @@ def _compute_add_only_support(
         erase_bg,
     )
     support_all = _v1._limit_smooth_outside_growth(
-        support_all, hint, solver_edge_context_all, hard_fg_core, erase_bg)
+        support_all, hint, solver_edge_context_all, hard_fg_core, erase_bg,
+        strength=resolved_effective_strength)
     support_all, interior_fill_all = _v1._fill_selected_hint_holes(
         support_all, hint, hard_fg_core, erase_bg)
     support_all, same_side_gap_fill_all = _v2_fill_same_side_gaps(
@@ -257,7 +331,7 @@ def _compute_add_only_support(
         erase_bg,
         solver_edge_context_all,
         color_all,
-        strength,
+        resolved_effective_strength,
         scales,
     )
     support_all = _er._preserve_draw_component_separation(hint, support_all)
@@ -274,15 +348,24 @@ def _compute_add_only_support(
         ("prior", (prior_all * 0.5 + 0.5).astype(np.float32)),
         ("cut_boundary", cut_all),
         ("edge_restore", edge_restore_all),
+        ("neutral_edge_bias", neutral_edge_bias_all),
         ("edge_bridge", edge_bridge_all),
         ("interior_fill", interior_fill_all),
         ("same_side_gap_fill", same_side_gap_fill_all),
         ("v2_graph_nodes", np.full((h, w), float(total_band), dtype=np.float32)),
         ("v2_flow_value", np.full((h, w), float(total_flow), dtype=np.float32)),
-        ("edge_lock_auto", np.full((h, w), float(auto_strength) / 100.0, dtype=np.float32)),
-        ("edge_lock_effective", np.full((h, w), float(strength) / 100.0, dtype=np.float32)),
+        ("edge_lock_auto", np.full((h, w), float(resolved_auto_strength) / 100.0, dtype=np.float32)),
+        ("edge_lock_effective", np.full((h, w), float(resolved_effective_strength) / 100.0, dtype=np.float32)),
         ("edge_lock_offset", np.full((h, w), float(offset_strength) / 100.0, dtype=np.float32)),
         ("edge_lock_mode_offset", np.full((h, w), 1.0 if strength_mode == "offset" else 0.0, dtype=np.float32)),
+        ("edge_bias_auto", edge_bias_auto_all),
+        ("edge_bias_effective", edge_bias_effective_all),
+        ("edge_bias_offset", np.full((h, w), float(edge_bias), dtype=np.float32)),
+        ("edge_policy_ridge_threshold", ridge_threshold_all),
+        ("edge_policy_restore_threshold", restore_threshold_all),
+        ("edge_policy_side_threshold", side_threshold_all),
+        ("edge_policy_outside_keep_threshold", outside_threshold_all),
+        ("boundary_bias_px", boundary_bias_all),
     ]
 
     hint_area = int(np.count_nonzero(hint))
@@ -303,9 +386,9 @@ def _compute_add_only_support(
 def _resolve_edge_lock(raw_strength, edge_strength, hint):
     """Resolve V2 EdgeLock.
 
-    Default is old internal semantics for corpus/backward compatibility.
-    Set ``QS_V2_STRENGTH_MODE=offset`` (or ``QS_DRAW_V2_OFFSET=1``) for the new
-    UI semantics: 0 = auto, positive = stricter, negative = looser.
+    Default UI semantics are offset-based: 0 = auto, positive = stricter,
+    negative = looser. Corpus replay preserves old dumps by setting
+    ``QS_V2_STRENGTH_MODE=internal`` from the dump metadata.
     """
     auto = _estimate_auto_edge_lock(edge_strength, hint)
     try:
@@ -315,12 +398,61 @@ def _resolve_edge_lock(raw_strength, edge_strength, hint):
     mode = os.environ.get("QS_V2_STRENGTH_MODE", "").strip().lower()
     if not mode and os.environ.get("QS_DRAW_V2_OFFSET", "").strip().lower() in {"1", "true", "yes", "on"}:
         mode = "offset"
+    if not mode:
+        mode = "offset"
     if mode == "offset":
         offset = raw
-        effective = float(np.clip(auto - offset, 0.0, 100.0))
+        effective = _apply_edge_lock_offset(auto, offset)
         return effective, auto, offset, "offset"
     effective = float(np.clip(raw, 0.0, 100.0))
     return effective, auto, effective - auto, "internal"
+
+
+def _v2_unit_edge_lock(
+        base_strength,
+        auto_strength,
+        offset_strength,
+        strength_mode,
+        selected_luma_delta,
+        scales):
+    """Per-stroke auto correction for broad bright-side tree/cloud strokes."""
+    base = float(np.clip(base_strength, 0.0, 100.0))
+    auto = float(np.clip(auto_strength, 0.0, 100.0))
+    if strength_mode != "offset":
+        return base, auto
+
+    delta = float(selected_luma_delta)
+    stroke_hw = float(max(1.0, getattr(scales, "stroke_half_width", 1.0)))
+    unit_auto = auto
+    if 0.04 < delta <= 0.20 and stroke_hw >= 140.0:
+        unit_auto = min(unit_auto, 45.0)
+    if delta >= 0.75 and stroke_hw >= 120.0:
+        unit_auto = max(unit_auto, 90.0)
+
+    effective = _apply_edge_lock_offset(unit_auto, offset_strength)
+    return effective, unit_auto
+
+
+def _apply_edge_lock_offset(auto_strength, offset_strength):
+    """Map UI EdgeLock offset around auto without jumping across regimes.
+
+    V2 internally still uses the old 0..100 "edge sensitivity" scale where larger
+    accepts weaker edges. The UI is offset based: 0 = auto, + = stricter, - =
+    looser. A direct one-to-one subtraction makes high-auto low-contrast strokes
+    collapse with tiny positive moves and low-auto strong-edge strokes explode
+    with large negative moves. Scale the offset by the amount of useful room on
+    that side so +/- remains directional but more controllable near the extremes.
+    """
+    auto = float(np.clip(auto_strength, 0.0, 100.0))
+    offset = float(offset_strength)
+    if abs(offset) <= 1e-6:
+        return auto
+    if offset > 0.0:
+        room = (100.0 - auto) / 100.0
+    else:
+        room = auto / 100.0
+    scale = 0.25 + 0.75 * (float(np.clip(room, 0.0, 1.0)) ** 0.75)
+    return float(np.clip(auto - offset * scale, 0.0, 100.0))
 
 
 def _stable_edge_strength(guide, edge_strength):
@@ -362,10 +494,16 @@ def _estimate_auto_edge_lock(edge_strength, hint):
         auto = 34.0
     elif p90 >= 0.60 or strong_density >= 0.08:
         auto = 44.0
+    elif p90 < 0.08 and mid_density < 0.02:
+        auto = 100.0
+    elif 0.45 <= p90 < 0.55 and 0.04 <= strong_density < 0.08 and mid_density < 0.20:
+        auto = 96.0
+    elif 0.45 <= p90 < 0.55 and strong_density < 0.06 and mid_density >= 0.20:
+        auto = 20.0
     elif p75 < 0.25 and mid_density < 0.08:
         auto = 78.0
     elif p90 < 0.45:
-        auto = 66.0
+        auto = 60.0
     return float(np.clip(auto, 0.0, 100.0))
 
 
@@ -395,12 +533,54 @@ def _v2_prior_floor_in(selected_luma_delta, scales):
     return None
 
 
+def _v2_inside_color_bg_thresh(selected_luma_delta, scales):
+    stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
+    delta = float(selected_luma_delta)
+    if 0.04 < delta <= 0.20 and stroke_hw >= 140.0:
+        return -0.02
+    return None
+
+
+def _v2_inside_color_bg_weight(selected_luma_delta, scales):
+    stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
+    delta = float(selected_luma_delta)
+    if 0.04 < delta <= 0.20 and stroke_hw >= 180.0:
+        return 0.85
+    if 0.04 < delta <= 0.20 and stroke_hw >= 140.0:
+        return 0.65
+    return 0.0
+
+
 def _v2_side_edge_thresh(strength, scales, selected_luma_delta):
     base = _v1._side_edge_thresh_for_strength(strength)
     stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
     if float(selected_luma_delta) > 0.04 and 45.0 <= stroke_hw <= 110.0:
         return min(base, 0.45)
     return base
+
+
+def _v2_is_thin_elongated_unit(comp, scales, strength):
+    if float(strength) < 40.0:
+        return False
+    stroke_hw = float(getattr(scales, "stroke_half_width", 0.0))
+    if stroke_hw > 40.0:
+        return False
+    comp = np.asarray(comp, dtype=bool)
+    if not np.any(comp):
+        return False
+    ys, xs = np.where(comp)
+    height = float(ys.max() - ys.min() + 1)
+    width = float(xs.max() - xs.min() + 1)
+    short = max(1.0, min(width, height))
+    long = max(width, height)
+    if long / short < 7.0:
+        return False
+    return True
+
+
+def _v2_thin_elongated_side_edge_thresh(strength):
+    lock = float(np.clip(strength, 0.0, 100.0)) / 100.0
+    return float(np.clip(0.34 - 0.27 * lock, 0.12, 0.34))
 
 
 def _v2_side_dilate(selected_luma_delta, scales):
@@ -576,7 +756,7 @@ def _canonical_scale_factor(pixel_scale):
     return float(np.clip(1.0 / scale, 0.25, 1.0))
 
 
-def _downscale_problem(guide, mask, seed_mask, draw_strokes, radius, scale):
+def _downscale_problem(guide, mask, seed_mask, draw_strokes, radius, scale, edge_bias=0.0):
     h, w = mask.shape[:2]
     sw = max(1, int(round(w * float(scale))))
     sh = max(1, int(round(h * float(scale))))
@@ -593,6 +773,7 @@ def _downscale_problem(guide, mask, seed_mask, draw_strokes, radius, scale):
         "mask": small_mask.astype(np.float32, copy=False),
         "seed_mask": small_seed,
         "radius": float(radius) * float(scale),
+        "edge_bias": float(edge_bias) * float(scale),
         "strokes": _scale_strokes(draw_strokes, scale),
     }
 

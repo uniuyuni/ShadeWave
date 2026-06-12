@@ -183,6 +183,10 @@ class EdgeRefineTest(unittest.TestCase):
             effects.Mask2Effect.get_param({}, "mask2_edge_refine_radius"),
             0,
         )
+        self.assertEqual(
+            effects.Mask2Effect.get_param({}, "mask2_edge_refine_strength"),
+            0,
+        )
 
     def test_legacy_modes_normalize_to_quick_select(self):
         self.assertEqual(edge_refine.normalize_mode("Grow"), "Quick Select")
@@ -428,7 +432,7 @@ class EdgeRefineTest(unittest.TestCase):
             smoothness=1.5,
         )
 
-        refined, support = refine_mask_edge_aware(
+        refined, support = _refine_mask_edge_aware_internal_strength(
             image,
             mask,
             guide_point=(50, 80),
@@ -675,7 +679,7 @@ class EdgeRefineTest(unittest.TestCase):
         image, mask, edge_y = _snow_like_scene_and_u_stroke()
         sky_side = _curve_side_mask(edge_y, mask.shape, "below", 7)
 
-        refined, support = refine_mask_edge_aware(
+        refined, support = _refine_mask_edge_aware_internal_strength(
             image,
             mask,
             guide_point=(120, 92),
@@ -722,7 +726,7 @@ class EdgeRefineTest(unittest.TestCase):
         sky_side = _curve_side_mask(edge_y, mask.shape, "below", 7)
         far_sky_side = _curve_side_mask(edge_y, mask.shape, "below", 20)
 
-        refined, support = refine_mask_edge_aware(
+        refined, support = _refine_mask_edge_aware_internal_strength(
             image,
             mask,
             guide_point=(120, 92),
@@ -1234,6 +1238,40 @@ class EdgeRefineTest(unittest.TestCase):
         self.assertEqual(top_pad.shape, (20, 100, 3))
         self.assertLess(float(np.max(top_pad)), 0.001)
 
+    def test_freedraw_full_view_roi_does_not_follow_pan_inside_same_stroke(self):
+        original = np.zeros((100, 100, 3), dtype=np.float32)
+        line = mask_rasters.Line(False, 16, 100)
+        line.add_point(-20, 0)
+        line.add_point(20, 0)
+        effects_param = {
+            "switch_mask2_options": True,
+            "mask2_edge_refine_mode": "Quick Select",
+            "mask2_edge_refine_radius": 24,
+            "mask2_edge_refine_strength": 0,
+        }
+
+        def rect_for(disp_info):
+            ctx = Mask2CoordinateContext()
+            ctx.set_texture_size(100, 100)
+            primary = {
+                "original_img_size": (100, 100),
+                "img_size": (100, 100),
+                "disp_info": disp_info,
+                "rotation": 0,
+                "rotation2": 0,
+                "flip_mode": 0,
+                "matrix": np.eye(3),
+            }
+            ctx.set_primary_param(primary, disp_info)
+            ctx.set_ref_image(original, original)
+            return extended_params._freedraw_refine_render_rect(
+                ctx, original, disp_info, effects_param, [line])
+
+        self.assertEqual(
+            rect_for((20, 20, 50, 50, 2.0)),
+            rect_for((25, 25, 50, 50, 2.0)),
+        )
+
     def test_freedraw_full_view_matches_local_preview_scale_for_full_display(self):
         original = np.zeros((100, 160, 3), dtype=np.float32)
         original[:, :80] = (0.2, 0.7, 0.2)
@@ -1280,7 +1318,7 @@ class EdgeRefineTest(unittest.TestCase):
             edge_refine_draw_strokes=[texture_line],
         )
         old_full_view = os.environ.get("PLATYPUS_DRAW_QS_FULL_VIEW")
-        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "1"
+        os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)
         try:
             full = extended_params.render_freedraw_edge_refine_full_view(
                 ctx,
@@ -1297,6 +1335,23 @@ class EdgeRefineTest(unittest.TestCase):
 
         self.assertIsNotNone(full)
         self.assertLess(float(np.abs(local - full).mean()), 0.020)
+
+        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "0"
+        try:
+            disabled = extended_params.render_freedraw_edge_refine_full_view(
+                ctx,
+                effects_param,
+                [line],
+                line.points[1],
+                mask.shape,
+            )
+        finally:
+            if old_full_view is None:
+                os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)
+            else:
+                os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = old_full_view
+
+        self.assertIsNone(disabled)
 
     def test_headless_parametric_masks_ignore_quick_select(self):
         image = np.zeros((100, 100, 3), dtype=np.float32)
@@ -1364,6 +1419,18 @@ def _dqs_support(image, lines, radius, strength=0):
         image, mask, radius, strength, seed_mask=seed, draw_strokes=lines)
     hint = mask > 0.02
     return res, mask, hint
+
+
+def _refine_mask_edge_aware_internal_strength(*args, **kwargs):
+    old_mode = os.environ.get("QS_V2_STRENGTH_MODE")
+    os.environ["QS_V2_STRENGTH_MODE"] = "internal"
+    try:
+        return refine_mask_edge_aware(*args, **kwargs)
+    finally:
+        if old_mode is None:
+            os.environ.pop("QS_V2_STRENGTH_MODE", None)
+        else:
+            os.environ["QS_V2_STRENGTH_MODE"] = old_mode
 
 
 def _straight_edge_scene(edge_x=120, h=160, w=200):
@@ -1456,7 +1523,7 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertEqual(refined.shape, mask.shape)
         self.assertGreater(int(np.count_nonzero(support > 0.5)), 0)
 
-    def test_v2_is_default_draw_quick_select_path(self):
+    def test_v3_is_default_draw_quick_select_path_and_dumps_replay_metadata(self):
         image = _straight_edge_scene(edge_x=120)
         line = _straight_edge_line(stroke_x=110)
         h, w = image.shape[:2]
@@ -1691,6 +1758,336 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertEqual(offset3, -20)
         self.assertLess(strict, base)
         self.assertGreater(loose, base)
+
+    def test_v2_edge_lock_offset_is_damped_near_auto_extremes(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        self.assertGreater(
+            draw_quick_select_v2._apply_edge_lock_offset(96.0, 20.0),
+            88.0,
+        )
+        self.assertLess(
+            draw_quick_select_v2._apply_edge_lock_offset(20.0, -80.0),
+            65.0,
+        )
+        self.assertLess(
+            draw_quick_select_v2._apply_edge_lock_offset(60.0, 20.0),
+            60.0,
+        )
+        self.assertGreater(
+            draw_quick_select_v2._apply_edge_lock_offset(60.0, -20.0),
+            60.0,
+        )
+
+    def test_v2_edge_lock_defaults_to_offset_mode(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        edge = np.zeros((40, 40), dtype=np.float32)
+        edge[:, 20] = 0.65
+        hint = np.zeros_like(edge, dtype=bool)
+        hint[:, 8:20] = True
+
+        old_mode = os.environ.get("QS_V2_STRENGTH_MODE")
+        old_flag = os.environ.get("QS_DRAW_V2_OFFSET")
+        os.environ.pop("QS_V2_STRENGTH_MODE", None)
+        os.environ.pop("QS_DRAW_V2_OFFSET", None)
+        try:
+            base, auto, offset, mode = draw_quick_select_v2._resolve_edge_lock(0, edge, hint)
+        finally:
+            if old_mode is None:
+                os.environ.pop("QS_V2_STRENGTH_MODE", None)
+            else:
+                os.environ["QS_V2_STRENGTH_MODE"] = old_mode
+            if old_flag is None:
+                os.environ.pop("QS_DRAW_V2_OFFSET", None)
+            else:
+                os.environ["QS_DRAW_V2_OFFSET"] = old_flag
+
+        self.assertEqual(mode, "offset")
+        self.assertAlmostEqual(base, auto)
+        self.assertEqual(offset, 0)
+
+    def test_v2_auto_edge_lock_profiles_weak_and_textured_boundaries(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        hint = np.zeros((40, 80), dtype=bool)
+        hint[:, 20:60] = True
+
+        weak = np.zeros_like(hint, dtype=np.float32)
+        weak[:, 40] = 0.04
+        self.assertEqual(
+            draw_quick_select_v2._estimate_auto_edge_lock(weak, hint),
+            100.0,
+        )
+
+        def edge_with_band_values(strong_frac, mid_frac):
+            edge = np.zeros_like(hint, dtype=np.float32)
+            vals = draw_quick_select_v2._hint_boundary_edge_values(edge, hint)
+            band = np.zeros_like(hint, dtype=bool)
+            dist_in = cv2.distanceTransform(hint.astype(np.uint8), cv2.DIST_L2, 3)
+            dist_out = cv2.distanceTransform((~hint).astype(np.uint8), cv2.DIST_L2, 3)
+            band |= (hint & (dist_in <= 8)) | ((~hint) & (dist_out <= 8))
+            ys, xs = np.where(band)
+            n = int(vals.size)
+            strong_n = int(round(n * strong_frac))
+            mid_n = int(round(n * mid_frac))
+            edge[ys[:strong_n], xs[:strong_n]] = 0.65
+            edge[ys[strong_n:strong_n + mid_n], xs[strong_n:strong_n + mid_n]] = 0.48
+            return edge
+
+        lowcontrast = np.zeros_like(hint, dtype=np.float32)
+        lowcontrast = edge_with_band_values(0.05, 0.11)
+        self.assertGreaterEqual(
+            draw_quick_select_v2._estimate_auto_edge_lock(lowcontrast, hint),
+            90.0,
+        )
+
+        textured = edge_with_band_values(0.03, 0.22)
+        self.assertLessEqual(
+            draw_quick_select_v2._estimate_auto_edge_lock(textured, hint),
+            30.0,
+        )
+
+    def test_v2_unit_edge_lock_relaxes_bright_broad_strokes_in_offset_mode(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        broad = draw_quick_select._Scales(
+            band_half_width=150.0,
+            grow_radius=0.0,
+            roi_pad=160,
+            stroke_half_width=150.0,
+        )
+        narrow = draw_quick_select._Scales(
+            band_half_width=80.0,
+            grow_radius=0.0,
+            roi_pad=90,
+            stroke_half_width=80.0,
+        )
+
+        relaxed, relaxed_auto = draw_quick_select_v2._v2_unit_edge_lock(
+            60, 60, 0, "offset", 0.9, broad)
+        unchanged, unchanged_auto = draw_quick_select_v2._v2_unit_edge_lock(
+            60, 60, 0, "offset", 0.9, narrow)
+        internal, internal_auto = draw_quick_select_v2._v2_unit_edge_lock(
+            60, 60, 0, "internal", 0.9, broad)
+
+        self.assertEqual(relaxed_auto, 90.0)
+        self.assertEqual(relaxed, 90.0)
+        self.assertEqual(unchanged_auto, 60.0)
+        self.assertEqual(unchanged, 60.0)
+        self.assertEqual(internal_auto, 60.0)
+        self.assertEqual(internal, 60.0)
+
+    def test_v2_unit_edge_lock_tightens_subtle_broad_bright_dabs_in_offset_mode(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        broad = draw_quick_select._Scales(
+            band_half_width=180.0,
+            grow_radius=0.0,
+            roi_pad=190,
+            stroke_half_width=180.0,
+        )
+        effective, unit_auto = draw_quick_select_v2._v2_unit_edge_lock(
+            60, 60, 0, "offset", 0.08, broad)
+
+        self.assertEqual(unit_auto, 45.0)
+        self.assertEqual(effective, 45.0)
+
+    def test_v2_thin_elongated_unit_uses_looser_side_split_only_for_lines(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        scales = draw_quick_select._Scales(
+            band_half_width=30.0,
+            grow_radius=0.0,
+            roi_pad=40,
+            stroke_half_width=30.0,
+        )
+        line = np.zeros((80, 240), dtype=bool)
+        line[34:46, 8:232] = True
+        blob = np.zeros((80, 240), dtype=bool)
+        blob[20:60, 90:130] = True
+
+        self.assertTrue(draw_quick_select_v2._v2_is_thin_elongated_unit(line, scales, 60))
+        self.assertFalse(draw_quick_select_v2._v2_is_thin_elongated_unit(blob, scales, 60))
+        self.assertLess(draw_quick_select_v2._v2_thin_elongated_side_edge_thresh(60), 0.20)
+
+    def test_v2_inside_color_bg_gate_is_limited_to_subtle_broad_dabs(self):
+        from cores.mask2 import draw_quick_select_v2
+
+        broad = draw_quick_select._Scales(
+            band_half_width=180.0,
+            grow_radius=0.0,
+            roi_pad=190,
+            stroke_half_width=180.0,
+        )
+        narrow = draw_quick_select._Scales(
+            band_half_width=80.0,
+            grow_radius=0.0,
+            roi_pad=90,
+            stroke_half_width=80.0,
+        )
+
+        self.assertEqual(draw_quick_select_v2._v2_inside_color_bg_thresh(0.08, broad), -0.02)
+        self.assertIsNone(draw_quick_select_v2._v2_inside_color_bg_thresh(0.50, broad))
+        self.assertIsNone(draw_quick_select_v2._v2_inside_color_bg_thresh(0.08, narrow))
+
+    def test_v3_solves_stroke_profiles_independently(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        h, w = 90, 180
+        image = np.zeros((h, w, 3), dtype=np.float32)
+        image[:, :45] = (0.84, 0.84, 0.94)
+        image[:, 45:90] = (0.12, 0.10, 0.28)
+        image[:, 90:132] = (0.20, 0.62, 0.22)
+        image[:, 132:] = (0.10, 0.18, 0.10)
+
+        line_a = mask_rasters.Line(False, 24, 100)
+        line_a.add_point(22, 45)
+        line_a.add_point(68, 45)
+        line_b = mask_rasters.Line(False, 16, 100)
+        line_b.add_point(110, 45)
+        line_b.add_point(156, 45)
+
+        mask_a = mask_rasters.draw_line_texture((w, h), [line_a])
+        mask_ab = mask_rasters.draw_line_texture((w, h), [line_a, line_b])
+
+        only_a = draw_quick_select_v3.compute_draw_support(
+            image, mask_a, 8, 0, draw_strokes=[line_a])
+        both = draw_quick_select_v3.compute_draw_support(
+            image, mask_ab, 8, 0, draw_strokes=[line_a, line_b])
+
+        roi_a = np.zeros((h, w), dtype=bool)
+        roi_a[:, :90] = True
+        np.testing.assert_array_equal(only_a.support[roi_a], both.support[roi_a])
+
+    def test_v3_edge_bias_can_soften_weak_edge_alpha(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        support = np.zeros((40, 60), dtype=bool)
+        support[:, :30] = True
+        edge = np.zeros_like(support, dtype=np.float32)
+        edge[:, 28:33] = 0.22
+        edge = cv2.GaussianBlur(edge, (0, 0), 1.4)
+        planes = {"context_edge": edge}
+
+        neutral = draw_quick_select_v3._support_alpha_from_edge_softness(
+            None, support, planes, edge_bias=0)
+        softer = draw_quick_select_v3._support_alpha_from_edge_softness(
+            None, support, planes, edge_bias=2)
+
+        band = support & (cv2.distanceTransform(support.astype(np.uint8), cv2.DIST_L2, 3) <= 2)
+        self.assertLess(float(softer[band].mean()), float(neutral[band].mean()))
+        self.assertGreater(int(np.count_nonzero((softer > 1e-4) & (softer < 0.999))), 0)
+
+    def test_edge_bias_does_not_relax_color_membership_by_default(self):
+        base = np.array([0.20, 0.05, -0.10], dtype=np.float32)
+
+        adjusted = draw_quick_select._edge_bias_adjusted_color_min(base, edge_bias=4)
+
+        np.testing.assert_array_equal(adjusted, base)
+
+    def test_v3_exposes_edge_policy_debug_planes(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        h, w = 48, 72
+        image = np.zeros((h, w, 3), dtype=np.float32)
+        image[:, :36] = (0.80, 0.82, 0.90)
+        image[:, 36:] = (0.10, 0.12, 0.25)
+        line = mask_rasters.Line(False, 18, 100)
+        line.add_point(18, 24)
+        line.add_point(50, 24)
+        mask = mask_rasters.draw_line_texture((w, h), [line])
+
+        res = draw_quick_select_v3.compute_draw_support(
+            image, mask, 6, 0, draw_strokes=[line], edge_bias=1.5)
+        planes = {name: plane for name, plane in res.debug_planes}
+
+        for name in (
+                "edge_policy_ridge_threshold",
+                "edge_policy_restore_threshold",
+                "edge_policy_side_threshold",
+                "edge_policy_outside_keep_threshold",
+                "boundary_bias_px"):
+            self.assertIn(name, planes)
+            self.assertEqual(np.asarray(planes[name]).shape, (h, w))
+        self.assertAlmostEqual(float(np.max(planes["boundary_bias_px"])), 1.5)
+
+    def test_v3_mixed_erase_keeps_v2_fallback_path(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        h, w = 48, 72
+        image = np.zeros((h, w, 3), dtype=np.float32)
+        image[:, :36] = (0.80, 0.82, 0.90)
+        image[:, 36:] = (0.10, 0.12, 0.25)
+        add = mask_rasters.Line(False, 18, 100)
+        add.add_point(18, 24)
+        add.add_point(50, 24)
+        erase = mask_rasters.Line(True, 8, 100)
+        erase.add_point(36, 24)
+        erase.add_point(50, 24)
+        mask = mask_rasters.draw_line_texture((w, h), [add, erase])
+
+        res = draw_quick_select_v3.compute_draw_support(
+            image, mask, 6, 0, draw_strokes=[add, erase])
+        planes = {name: plane for name, plane in res.debug_planes}
+
+        self.assertIn("v2_mode", planes)
+        self.assertEqual(float(np.max(planes["v2_mode"])), 0.0)
+        self.assertIn("v3_stroke_count", planes)
+        self.assertEqual(float(np.max(planes["v3_stroke_count"])), 0.0)
+
+    def test_v3_boundary_bias_moves_near_edge_without_color_gate(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        support = np.zeros((24, 32), dtype=bool)
+        support[:, :14] = True
+        candidate = np.zeros_like(support)
+        candidate[:, 14:17] = True
+        seed = np.zeros_like(support)
+        seed[:, 5] = True
+        erase = np.zeros_like(support)
+        edge = np.zeros(support.shape, dtype=np.float32)
+        edge[:, 14:17] = 0.85
+        color = np.full(support.shape, 0.5, dtype=np.float32)
+        color[:, 14:17] = 0.10
+        planes = {
+            "context_edge": edge,
+            "color_score": color,
+            "edge_policy_restore_threshold": np.full(support.shape, 0.70, dtype=np.float32),
+        }
+
+        shifted, delta = draw_quick_select_v3._apply_boundary_bias(
+            support, candidate, seed, erase, planes, edge_bias=2)
+
+        self.assertGreater(int(np.count_nonzero(delta[:, 14])), 0)
+        self.assertGreater(int(np.count_nonzero(shifted[:, 14])), 0)
+
+    def test_v3_same_color_void_fill_can_include_tree_sky_gaps(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        support = np.zeros((40, 70), dtype=bool)
+        support[8:32, 8:28] = True
+        support[8:32, 38:58] = True
+        hint = support.copy()
+        hint[12:28, 28:38] = True
+        seed = np.zeros_like(support)
+        seed[18:22, 12:18] = True
+        erase = np.zeros_like(support)
+        color = np.full(support.shape, 0.5, dtype=np.float32)
+        color[12:28, 28:38] = 0.78
+        edge = np.zeros_like(color)
+        edge[12:28, 28:38] = 0.24
+        planes = {
+            "color_score": color,
+            "context_edge": edge,
+            "edge_lock_effective": np.full(support.shape, 0.9, dtype=np.float32),
+        }
+
+        restored, fill = draw_quick_select_v3._fill_selected_color_voids(
+            support, hint, seed, erase, planes)
+
+        self.assertGreater(int(np.count_nonzero(fill[12:28, 28:38])), 0)
+        self.assertTrue(np.all(restored[18:22, 30:36]))
 
     def test_v2_same_side_gap_fill_restores_edge_near_color_gaps(self):
         from cores.mask2 import draw_quick_select_v2
@@ -1940,6 +2337,40 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         self.assertGreater(strict, 0.60)
         self.assertLess(loose, 0.30)
 
+    def test_edge_bias_auto_uses_one_pixel_neutral_rim(self):
+        self.assertEqual(
+            draw_quick_select._edge_restore_steps_for_luma(0.0, 0),
+            draw_quick_select.EDGE_RESTORE_STEPS,
+        )
+        self.assertEqual(draw_quick_select._edge_restore_steps_for_luma(0.03, 0), 1)
+        self.assertEqual(draw_quick_select._edge_restore_steps_for_luma(0.03, 2), 3)
+
+    def test_neutral_edge_bias_can_be_offset(self):
+        support = np.zeros((20, 24), dtype=bool)
+        support[:, :10] = True
+        candidate = np.zeros_like(support)
+        candidate[:, 10:14] = True
+        edge = np.zeros((20, 24), dtype=np.float32)
+        edge[:, 10:14] = 0.85
+        color = np.zeros((20, 24), dtype=np.float32)
+        core = np.zeros_like(support)
+        core[:, 4] = True
+        erase = np.zeros_like(support)
+
+        disabled, disabled_rim = draw_quick_select._restore_neutral_edge_bias_rim(
+            support, candidate, edge, color, core, erase, edge_bias=-1)
+        default, default_rim = draw_quick_select._restore_neutral_edge_bias_rim(
+            support, candidate, edge, color, core, erase, edge_bias=0)
+        stronger, stronger_rim = draw_quick_select._restore_neutral_edge_bias_rim(
+            support, candidate, edge, color, core, erase, edge_bias=2)
+
+        np.testing.assert_array_equal(disabled, support)
+        self.assertEqual(int(disabled_rim.sum()), 0)
+        self.assertGreater(int(default_rim.sum()), 0)
+        self.assertGreater(int(stronger_rim.sum()), int(default_rim.sum()))
+        self.assertTrue(np.all(default[:, 10]))
+        self.assertTrue(np.all(stronger[:, 12]))
+
     def test_selected_edge_rim_restores_only_selected_color_side(self):
         support = np.zeros((20, 20), dtype=bool)
         support[:, :10] = True
@@ -1963,6 +2394,47 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
             support, candidate, edge, color, core, erase)
         self.assertEqual(int(rim_neg.sum()), 0)
         np.testing.assert_array_equal(restored_neg, support)
+
+    def test_positive_edge_bias_does_not_relax_selected_rim_color_gate(self):
+        support = np.zeros((20, 20), dtype=bool)
+        support[:, :10] = True
+        candidate = np.zeros_like(support)
+        candidate[:, 10:12] = True
+        edge = np.zeros((20, 20), dtype=np.float32)
+        edge[:, 10:12] = 0.85
+        color = np.zeros((20, 20), dtype=np.float32)
+        color[:, 10] = -0.06
+        core = np.zeros_like(support)
+        core[:, 4] = True
+        erase = np.zeros_like(support)
+
+        default, default_rim = draw_quick_select._restore_selected_edge_rim(
+            support,
+            candidate,
+            edge,
+            color,
+            core,
+            erase,
+            color_min=0.0,
+            steps=2,
+            edge_bias=0,
+        )
+        biased, biased_rim = draw_quick_select._restore_selected_edge_rim(
+            support,
+            candidate,
+            edge,
+            color,
+            core,
+            erase,
+            color_min=0.0,
+            steps=2,
+            edge_bias=2,
+        )
+
+        self.assertEqual(int(default_rim.sum()), 0)
+        np.testing.assert_array_equal(default, support)
+        self.assertEqual(int(biased_rim.sum()), 0)
+        np.testing.assert_array_equal(biased, support)
 
     def test_selected_edge_bridge_fills_only_bracketed_seams(self):
         support = np.zeros((20, 20), dtype=bool)
@@ -2064,6 +2536,13 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
 
         self.assertFalse(np.any(limited[6:8, 17:21]))
         self.assertGreater(int(np.count_nonzero(limited[:, 14])), 0)
+
+    def test_outside_growth_edge_threshold_relaxes_with_edge_lock(self):
+        strict = draw_quick_select._outside_keep_edge_thresh_for_strength(0)
+        loose = draw_quick_select._outside_keep_edge_thresh_for_strength(100)
+
+        self.assertGreater(strict, draw_quick_select.OUTSIDE_KEEP_EDGE_THRESH)
+        self.assertLess(loose, draw_quick_select.OUTSIDE_KEEP_EDGE_THRESH)
 
     def test_selected_hint_holes_fill_without_restoring_boundary_side(self):
         hint = np.zeros((24, 32), dtype=bool)

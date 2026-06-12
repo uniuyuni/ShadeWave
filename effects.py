@@ -3944,7 +3944,8 @@ class Mask2Effect(Effect):
             'mask2_polyline_fill': True,
             'mask2_edge_refine_mode': 'Off',
             'mask2_edge_refine_radius': 0,
-            'mask2_edge_refine_strength': 60,
+            'mask2_edge_refine_strength': 0,
+            'mask2_edge_refine_bias': 0,
             'switch_mask2_draw_effects': True,
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,
@@ -4048,6 +4049,7 @@ class Mask2Effect(Effect):
                     'mask2_edge_refine_mode',
                     'mask2_edge_refine_radius',
                     'mask2_edge_refine_strength',
+                    'mask2_edge_refine_bias',
                 )
             }
         if subname == 'mask_geometry':
@@ -4113,6 +4115,7 @@ class Mask2Effect(Effect):
         widget.ids["spinner_mask2_edge_refine_mode"].set_text(edge_refine_mode)
         widget.ids["slider_mask2_edge_refine_radius"].set_slider_value(self._get_param(param, 'mask2_edge_refine_radius'))
         widget.ids["slider_mask2_edge_refine_strength"].set_slider_value(self._get_param(param, 'mask2_edge_refine_strength'))
+        widget.ids["slider_mask2_edge_refine_bias"].set_slider_value(self._get_param(param, 'mask2_edge_refine_bias'))
         widget.ids["switch_mask2_draw_effects"].active = self._get_param(param, 'switch_mask2_draw_effects')
         widget.ids["slider_mask2_color_dodge"].set_slider_value(self._get_param(param, 'mask2_color_dodge'))
         widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
@@ -4158,6 +4161,7 @@ class Mask2Effect(Effect):
         param['mask2_edge_refine_mode'] = widget.ids["spinner_mask2_edge_refine_mode"].text
         param['mask2_edge_refine_radius'] = widget.ids["slider_mask2_edge_refine_radius"].value
         param['mask2_edge_refine_strength'] = widget.ids["slider_mask2_edge_refine_strength"].value
+        param['mask2_edge_refine_bias'] = widget.ids["slider_mask2_edge_refine_bias"].value
         param['switch_mask2_draw_effects'] = widget.ids["switch_mask2_draw_effects"].active
         param['mask2_color_dodge'] = widget.ids["slider_mask2_color_dodge"].value
         param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value
