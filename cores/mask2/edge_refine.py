@@ -3048,12 +3048,17 @@ def _restore_edge_pixels(candidate, selected, stop):
     return candidate & stop & near_selected
 
 
-def _make_edge_stop_mask(guide, strength):
+def _make_edge_stop_mask(guide, strength, perceptual=False):
     if guide is None:
         return None
     guide = _prepare_guide_image(guide, guide.shape[:2])
     if guide is None:
         return None
+    if perceptual:
+        # Same rationale as the draw trace: on a linear deep-shadow guide the raw
+        # Sobel/Lab barrier only fires on highlights, so the erase boundary finds
+        # no edge to snap to and keeps the brush-circle shape. Re-encode first.
+        guide = _to_perceptual_guide(guide)
     strength = float(np.clip(strength, 0, 100))
     if strength <= 0.5:
         return np.zeros(guide.shape[:2], dtype=bool)

@@ -465,7 +465,8 @@ def _snap_kept_boundary_to_edges(guide, support, erase, strength, brush_size):
     guide_img = _er._prepare_guide_image(guide, support.shape)
     if guide_img is None:
         return support
-    barrier = _er._make_edge_stop_mask(guide_img, _er._draw_barrier_strength(strength))
+    barrier = _er._make_edge_stop_mask(
+        guide_img, _er._draw_barrier_strength(strength), perceptual=True)
     if barrier is None or not np.any(barrier):
         return support
 
