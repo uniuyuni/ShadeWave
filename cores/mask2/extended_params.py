@@ -114,16 +114,14 @@ def render_freedraw_edge_refine_full_view(
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):
         return None
-    # Default OFF (opt-in via PLATYPUS_DRAW_QS_FULL_VIEW=1). This path crops its
-    # guide from the *pre-rotation* original (get_original_image_rgb) but positions
-    # strokes / render rect via ctx.tcg_to_full_image(), which applies the image
-    # rotation (center_rotate). So under any straighten/rotation the guide edges sit
-    # at the wrong angle relative to the strokes -- the selection ignores the
-    # geometry. The regular crop path (_apply_edge_refine -> _get_edge_refine_guide_image
-    # -> crop_image_rgb, the already-rotated crop, with the equally-rotated
-    # tcg_to_texture) is geometry-consistent, so fall through to it.
+    # Default ON (disable via PLATYPUS_DRAW_QS_FULL_VIEW=0). The guide is now built
+    # geometry-consistently with the strokes: _warp_original_to_render_region warps
+    # the original into the rotated render-rect space that ctx.tcg_to_full_image
+    # targets (see below), so straighten/rotation is followed. Runs only when the
+    # view is cropped/zoomed (_should_render_draw_refine_full_view); at full display
+    # it defers to the regular crop path, which already has the whole image.
     full_view_flag = os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower()
-    if full_view_flag not in {"1", "true", "yes", "on"}:
+    if full_view_flag in {"0", "false", "no", "off"}:
         return None
     original = ctx.get_original_image_rgb()
     if original is None or getattr(original, "size", 0) == 0:
@@ -136,7 +134,6 @@ def render_freedraw_edge_refine_full_view(
         return None
 
     disp_info = params.get_disp_info(ctx.tcg_info)
-    source_image, source_scale = _freedraw_refine_source_image_and_scale(ctx, original, disp_info)
     render_rect = _freedraw_refine_render_rect(
         ctx,
         original,
@@ -147,13 +144,26 @@ def render_freedraw_edge_refine_full_view(
     if render_rect is None:
         return None
     rx0, ry0, rx1, ry1 = render_rect
-    source_region = _crop_padded_image_region(source_image, render_rect, coordinate_scale=source_scale)
+    # Geometry-correct guide: warp the original directly into the rotated render
+    # region (the space tcg_to_full_image / the strokes live in), region-sized so
+    # there is no full-image rotation. valid_region marks real image content.
+    source_region, valid_region = _warp_original_to_render_region(ctx, original, render_rect)
+    if source_region is None:
+        return None
     region_h, region_w = source_region.shape[:2]
     if region_w <= 0 or region_h <= 0:
         return None
     render_image, render_scale = _scale_freedraw_refine_region(source_region)
     render_h, render_w = render_image.shape[:2]
-    total_scale = float(source_scale) * float(render_scale)
+    total_scale = float(render_scale)
+    # Validity at render resolution (eroded a few px so the trace stays off the
+    # synthetic border beyond the image edge).
+    valid_render = None
+    if valid_region is not None and bool(np.any(valid_region)) and not bool(np.all(valid_region)):
+        vr = cv2.resize(valid_region.astype(np.float32), (render_w, render_h),
+                        interpolation=cv2.INTER_NEAREST) > 0.5
+        vr = cv2.erode(vr.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2) > 0
+        valid_render = vr
 
     render_ctx = _make_region_view_context(
         ctx,
@@ -201,6 +211,14 @@ def render_freedraw_edge_refine_full_view(
         return_support=True,
     )
 
+    # Keep the selection off the synthetic border beyond the image edge: clip the
+    # refined mask / support to where real image content exists.
+    if valid_render is not None and os.environ.get("QS_FULLVIEW_VALIDITY", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        vmask = valid_render.astype(np.float32)
+        refined = np.asarray(refined, dtype=np.float32) * vmask
+        if render_support is not None:
+            render_support = np.asarray(render_support, dtype=np.float32) * vmask
+
     out = _crop_full_view_to_texture(
         ctx,
         refined,
@@ -239,36 +257,14 @@ def _should_render_draw_refine_full_view(ctx, original):
         return False
     if disp_info is None:
         return False
-    orig_h, orig_w = original.shape[:2]
-    dx, dy, dw, dh = disp_info[:4]
-    full_rect = (
-        abs(float(dx)) < 1e-6
-        and abs(float(dy)) < 1e-6
-        and abs(float(dw) - float(orig_w)) < 1e-6
-        and abs(float(dh) - float(orig_h)) < 1e-6
-    )
-    if full_rect:
+    # Skip when the whole image is displayed: the regular crop path already has
+    # the full image as its guide, so full-view adds no beyond-viewport context.
+    # _disp_is_initial_full_rect is the correct "whole image" test (the previous
+    # dx==0,dy==0 check missed the centered letterbox of non-square images, e.g.
+    # a 160x100 image whose initial rect is (0,30,160,130) -> dy=30).
+    if _disp_is_initial_full_rect(ctx, original, disp_info):
         return False
     return True
-
-
-def _freedraw_refine_source_image_and_scale(ctx, original, disp_info):
-    crop = getattr(ctx, "crop_image_rgb", None)
-    if crop is None or getattr(crop, "size", 0) == 0:
-        return original, 1.0
-    if not _disp_is_initial_full_rect(ctx, original, disp_info):
-        return original, 1.0
-
-    try:
-        orig_h, orig_w = original.shape[:2]
-        crop_h, crop_w = crop.shape[:2]
-        orig_max = float(max(int(orig_w), int(orig_h)))
-        crop_max = float(max(int(crop_w), int(crop_h)))
-        if orig_max <= 0.0 or crop_max <= 0.0:
-            return original, 1.0
-        return crop, crop_max / orig_max
-    except Exception:
-        return original, 1.0
 
 
 def _disp_is_initial_full_rect(ctx, original, disp_info):
@@ -324,6 +320,61 @@ def _freedraw_refine_render_rect(ctx, original, disp_info, effects_param, source
     if x1 <= x0 or y1 <= y0:
         return None
     return (x0, y0, x1, y1)
+
+
+def _warp_original_to_render_region(ctx, original, render_rect):
+    """Warp the *pre-rotation* original directly into the render rect (which is in
+    the rotated "full image" canvas space that ctx.tcg_to_full_image targets).
+
+    This makes the full-view guide geometry-consistent with the strokes (which are
+    positioned via tcg_to_full_image) without rotating the whole image: a single
+    cv2 warp whose cost is proportional to the (small) output region, reusing the
+    exact transform the geometry effect uses (core.combined_rotation_canvas_matrix).
+
+    Returns (region_rgb_f32, valid_bool) where valid marks where real image content
+    exists (False over the synthetic border beyond the image, so the edge trace can
+    be kept off it).
+    """
+    rx0, ry0, rx1, ry1 = [int(round(float(v))) for v in render_rect]
+    rw, rh = rx1 - rx0, ry1 - ry0
+    if rw <= 0 or rh <= 0:
+        return None, None
+    tcg = getattr(ctx, "tcg_info", {}) or {}
+    angle_deg = float(np.degrees(float(tcg.get("rotation", 0.0)) + float(tcg.get("rotation2", 0.0))))
+    flip = int(tcg.get("flip_mode", 0))
+    matrix = tcg.get("matrix", None)
+    if matrix is not None and np.allclose(np.asarray(matrix, dtype=np.float64), np.eye(3), atol=1e-9):
+        matrix = None
+
+    # original -> rotated canvas (same transform that produced imgc / the display).
+    trans, _size, ttype = core.combined_rotation_canvas_matrix(
+        np.asarray(original).shape, angle_deg, flip, matrix)
+    trans3 = np.eye(3, dtype=np.float64)
+    if ttype == "perspective":
+        trans3 = np.asarray(trans, dtype=np.float64)
+    else:
+        trans3[:2, :] = np.asarray(trans, dtype=np.float64)
+    # compose original -> render-region output (crop translate by the rect origin)
+    crop_t = np.array([[1.0, 0.0, -rx0], [0.0, 1.0, -ry0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    m = crop_t @ trans3
+
+    src = np.asarray(original, dtype=np.float32)
+    ones = np.ones(src.shape[:2], dtype=np.float32)
+    # Zero (constant black) border beyond the image: the photo edge is a real
+    # boundary, so the wall there matches the in-crop behaviour (and the validity
+    # mask below stops the selection from leaking into the synthetic void).
+    if ttype == "perspective":
+        region = cv2.warpPerspective(src, m, (rw, rh), flags=cv2.INTER_LINEAR,
+                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        valid = cv2.warpPerspective(ones, m, (rw, rh), flags=cv2.INTER_NEAREST,
+                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    else:
+        m2 = m[:2, :]
+        region = cv2.warpAffine(src, m2, (rw, rh), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        valid = cv2.warpAffine(ones, m2, (rw, rh), flags=cv2.INTER_NEAREST,
+                               borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    return region.astype(np.float32, copy=False), (valid > 0.5)
 
 
 def _crop_padded_image_region(image, rect, coordinate_scale=1.0):

@@ -1272,7 +1272,12 @@ class EdgeRefineTest(unittest.TestCase):
             rect_for((25, 25, 50, 50, 2.0)),
         )
 
-    def test_freedraw_full_view_matches_local_preview_scale_for_full_display(self):
+    def test_freedraw_full_view_defers_at_full_display(self):
+        """When the whole image is displayed (initial full rect), full-view must
+        defer (return None) so the regular crop path -- which already has the full
+        image as its guide -- handles it. The previous dx==0,dy==0 skip check
+        missed the centered letterbox of non-square images (a 160x100 image's
+        initial rect is (0,30,160,130) -> dy=30), wrongly running full-view there."""
         original = np.zeros((100, 160, 3), dtype=np.float32)
         original[:, :80] = (0.2, 0.7, 0.2)
         original[:, 80:] = (0.4, 0.7, 1.0)
@@ -1296,39 +1301,19 @@ class EdgeRefineTest(unittest.TestCase):
         line = mask_rasters.Line(False, 20, 100)
         for x in (30, 60, 90, 130):
             line.add_point(x - 80, 50 - 80)
-        texture_line = mask_rasters.Line(False, ctx.tcg_to_image_scale(line.size, 0)[0], 100)
-        for point in line.points:
-            texture_line.add_point(*ctx.tcg_to_texture(*point))
-        mask = mask_rasters.draw_line_texture((80, 80), [texture_line])
         effects_param = {
             "switch_mask2_options": True,
             "mask2_edge_refine_mode": "Quick Select",
             "mask2_edge_refine_radius": 24,
             "mask2_edge_refine_strength": 80,
         }
+        mask_shape = (80, 80)
 
-        local = extended_params.apply_extended_params(
-            ctx,
-            effects_param,
-            mask,
-            line.points[1],
-            fill_grown_region=True,
-            seed_mask=edge_refine.make_confident_seed(mask),
-            edge_refine_selection_strategy=edge_refine.STRATEGY_DRAW,
-            edge_refine_draw_strokes=[texture_line],
-        )
         old_full_view = os.environ.get("PLATYPUS_DRAW_QS_FULL_VIEW")
-        # Full view is opt-in (default off, since it is not geometry-aware -- it
-        # crops the guide from the pre-rotation original). Enable it explicitly to
-        # exercise the path; at rotation=0 it must still match the local preview.
-        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "1"
+        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "1"  # even when enabled, defers at full display
         try:
             full = extended_params.render_freedraw_edge_refine_full_view(
-                ctx,
-                effects_param,
-                [line],
-                line.points[1],
-                mask.shape,
+                ctx, effects_param, [line], line.points[1], mask_shape,
             )
         finally:
             if old_full_view is None:
@@ -1336,25 +1321,64 @@ class EdgeRefineTest(unittest.TestCase):
             else:
                 os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = old_full_view
 
-        self.assertIsNotNone(full)
-        self.assertLess(float(np.abs(local - full).mean()), 0.020)
+        self.assertIsNone(full)
 
-        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "0"
-        try:
-            disabled = extended_params.render_freedraw_edge_refine_full_view(
-                ctx,
-                effects_param,
-                [line],
-                line.points[1],
-                mask.shape,
-            )
-        finally:
-            if old_full_view is None:
-                os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)
-            else:
-                os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = old_full_view
+    def test_freedraw_full_view_guide_follows_image_rotation(self):
+        """The full-view guide must be geometry-correct: its region equals the
+        rotated image's region (so guide edges align with the rotated strokes),
+        and is NOT the unrotated crop. Regression for "selection ignores rotation"."""
+        H, W = 300, 400
+        orig = np.zeros((H, W, 3), np.float32)
+        orig[:, :200] = (0.2, 0.7, 0.2)
+        orig[:, 200:] = (0.4, 0.5, 1.0)
+        orig[140:160, :] = (1.0, 1.0, 1.0)
+        for ang in (20.0, -26.0):
+            primary = {
+                "original_img_size": (W, H), "img_size": (W, H),
+                "rotation": ang, "rotation2": 0.0, "flip_mode": 0,
+                "matrix": np.eye(3), "disp_info": (0, 0, W, H, 1.0),
+            }
+            ctx = Mask2CoordinateContext()
+            ctx.set_texture_size(W, H)
+            ctx.set_primary_param(primary, (0, 0, W, H, 1.0))
+            ctx.set_ref_image(orig, orig)
 
-        self.assertIsNone(disabled)
+            full = core.rotation(orig, ang, 0, None, border_mode="reflect")
+            size = full.shape[0]
+            rect = (size // 4, size // 4, size // 4 + 150, size // 4 + 120)
+            region, valid = extended_params._warp_original_to_render_region(ctx, orig, rect)
+            ref = full[rect[1]:rect[3], rect[0]:rect[2]]
+            # geometry-correct: warped guide == the rotated image's region
+            self.assertLess(
+                float(np.abs(region[4:-4, 4:-4] - ref[4:-4, 4:-4]).mean()), 0.005,
+                f"warped guide does not match rotated image region at {ang} deg")
+            # and clearly differs from the *unrotated* crop (rotation is applied)
+            unrot = extended_params._crop_padded_image_region(orig, rect, 1.0)
+            self.assertGreater(
+                float(np.abs(region[4:-4, 4:-4] - unrot[4:-4, 4:-4]).mean()), 0.02,
+                f"warped guide is the unrotated crop at {ang} deg (rotation ignored)")
+            self.assertTrue(bool(np.all(valid)))  # rect inside the image -> all valid
+
+    def test_freedraw_full_view_off_image_margin_marked_invalid(self):
+        """A render rect extending beyond the image must mark the off-image part
+        invalid so the trace cannot snap to the synthetic (zero) border."""
+        H = W = 200
+        orig = np.full((H, W, 3), 0.5, np.float32)
+        primary = {
+            "original_img_size": (W, H), "img_size": (W, H),
+            "rotation": 0.0, "rotation2": 0.0, "flip_mode": 0,
+            "matrix": np.eye(3), "disp_info": (0, 0, W, H, 1.0),
+        }
+        ctx = Mask2CoordinateContext()
+        ctx.set_texture_size(W, H)
+        ctx.set_primary_param(primary, (0, 0, W, H, 1.0))
+        ctx.set_ref_image(orig, orig)
+
+        # canvas == image [0,200]; rect spans x 120..320 -> right half is off-image
+        region, valid = extended_params._warp_original_to_render_region(ctx, orig, (120, 60, 320, 180))
+        self.assertIsNotNone(valid)
+        self.assertTrue(bool(valid[:, :60].all()))    # in-image part valid
+        self.assertFalse(bool(valid[:, -20:].any()))  # off-image part invalid
 
     def test_headless_parametric_masks_ignore_quick_select(self):
         image = np.zeros((100, 100, 3), dtype=np.float32)
