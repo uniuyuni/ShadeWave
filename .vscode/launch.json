@@ -41,6 +41,9 @@
                 "PYTORCH_MPS_FAST_MATH": "1",
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
                 "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/.pixi/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
+                "QS_DRAW_V4": "1",
+                "QS_V4_EDGE_SNAP": "1",
+                //"PLATYPUS_DEBUG_PIPELINE_STATS": "1",
                 //"PLATYPUS_DEBUG_MASK_GEOMETRY": "0",
                 //"PLATYPUS_DEBUG_MESH_WARP": "0",
                 //"PLATYPUS_DEBUG_MASK_ZOOM_SYNC": "0",
@@ -48,6 +51,7 @@
                 //"PLATYPUS_DEBUG_EDGE_REFINE_DIR": "./edge_refine_debug",
                 //"PLATYPUS_DEBUG_EDGE_REFINE_LIMIT": "100"
                 //"PLATYPUS_DRAW_QS_FULL_VIEW": "1"
+                "QS_DUMP_INPUT": "./edge_refine_debug"
                 //"QS_DUMP_INPUT_LIMIT": "100",
                 //"QS_BRUSH_AS_RADIUS": "1",
                 //"QS_COLOR_W_OUT": "0.9"

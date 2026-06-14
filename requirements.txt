@@ -37,7 +37,6 @@ pyopencl
 pyobjc-framework-Cocoa
 pyobjc-framework-Quartz
 pyvips
-rawpy
 regex
 requests
 realesrgan

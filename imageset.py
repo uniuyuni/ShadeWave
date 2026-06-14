@@ -2,9 +2,9 @@
 import cv2
 import time
 import numpy as np
-import rawpy
 import logging
 import io
+import re
 from functools import partial
 import importlib.metadata
 from PIL import Image as PILImage, ImageOps as PILImageOps, ImageCms
@@ -13,6 +13,10 @@ import base64
 import pyvips
 
 import libraw_enhanced as lre
+try:
+    from libraw_enhanced.constants import LibRawError
+except ModuleNotFoundError:
+    from libraw_enhanced.libraw_enhanced.constants import LibRawError
 import config
 import define
 import file_cache_system
@@ -41,7 +45,37 @@ def _log_lre_info():
 
 _log_lre_info()
 
-#print(f"libraw version:{rawpy.libraw_version}")
+_LIBRAW_ERROR_CODE_RE = re.compile(r":\s*(-?\d+)\s*$")
+_LRE_CORE_ERROR_TYPES = tuple(
+    error_type
+    for error_type in (
+        getattr(getattr(lre, "_core", None), "LibRawError", None),
+        getattr(getattr(lre, "_core", None), "LibRawInvalidArgument", None),
+        getattr(getattr(lre, "_core", None), "LibRawOutOfRange", None),
+    )
+    if isinstance(error_type, type) and issubclass(error_type, BaseException)
+)
+_LRE_LOAD_ERROR_TYPES = (FileNotFoundError, RuntimeError) + _LRE_CORE_ERROR_TYPES
+
+
+def _libraw_enhanced_error_code(exc):
+    match = _LIBRAW_ERROR_CODE_RE.search(str(exc))
+    if not match:
+        return None
+    try:
+        return LibRawError(int(match.group(1)))
+    except ValueError:
+        return None
+
+
+def _is_libraw_enhanced_unsupported_or_io_error(exc):
+    if isinstance(exc, FileNotFoundError):
+        return True
+    error_code = _libraw_enhanced_error_code(exc)
+    return error_code in {
+        LibRawError.FILE_UNSUPPORTED,
+        LibRawError.IO_ERROR,
+    }
 
 def imageset_to_shared_memory(imgset):
     """
@@ -398,8 +432,11 @@ class ImageSet:
             self.img = np.array(img_array)
             self.fidelity = ImageFidelity.FULL
 
-        except (rawpy.LibRawFileUnsupportedError, rawpy.LibRawIOError):
-            logging.warning("file is not supported " + file_path)
+        except _LRE_LOAD_ERROR_TYPES as e:
+            if _is_libraw_enhanced_unsupported_or_io_error(e):
+                logging.warning("file is not supported " + file_path)
+            else:
+                logging.error(e)
         
         except Exception as e:
             logging.error(e)
@@ -445,7 +482,8 @@ class ImageSet:
             src_icc_profile_name = get_icc_profile_name(vips_image)
             import cores.colour_functions as colour_functions
             img_array = colour_functions.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE.get(src_icc_profile_name, 'sRGB'), 'ProPhoto RGB', config.get_config('cat'),
-                                            apply_cctf_decoding=True, apply_gamut_mapping=True).astype(np.float32)
+                                            apply_cctf_decoding=True, apply_gamut_mapping=False)
+            img_array = colour_functions.apply_RGB_gamut_mapping(img_array).astype(np.float32)
 
             # 画像からホワイトバランスパラメータ取得
             params.set_temperature_to_param(param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))

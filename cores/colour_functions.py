@@ -819,6 +819,15 @@ def get_colourspace_info(colourspace: str) -> Dict:
 # ガンマ補正ヘルパー関数 / Gamma Correction Helpers
 # ============================================================================
 
+def _as_float_array(value: ArrayLike) -> np.ndarray:
+    arr = np.asarray(value)
+    if np.issubdtype(arr.dtype, np.floating):
+        if arr.dtype.itemsize < np.dtype(np.float32).itemsize:
+            return arr.astype(np.float32)
+        return arr
+    return arr.astype(np.float64)
+
+
 def sRGB_to_linear(sRGB: ArrayLike) -> np.ndarray:
     """
     Convert gamma-corrected sRGB to linear sRGB.
@@ -835,24 +844,12 @@ def sRGB_to_linear(sRGB: ArrayLike) -> np.ndarray:
         linear: ndarray
             Linear sRGB values
     """
-    sRGB = np.asarray(sRGB, dtype=np.float64)
-    
-    # Split positive and negative values
-    result = np.zeros_like(sRGB)
-    
-    # Positive values: standard sRGB inverse transfer function
-    pos_mask = sRGB >= 0
-    pos_vals = sRGB[pos_mask]
-    result[pos_mask] = np.where(
-        pos_vals <= 0.04045,
-        pos_vals / 12.92,
-        np.power((pos_vals + 0.055) / 1.055, 2.4)
-    )
-    
-    # Negative values: linear scaling only (colour library behavior)
-    neg_mask = sRGB < 0
-    result[neg_mask] = sRGB[neg_mask] / 12.92
-    
+    sRGB = _as_float_array(sRGB)
+
+    result = np.empty_like(sRGB)
+    low = sRGB <= 0.04045
+    result[low] = sRGB[low] / 12.92
+    result[~low] = np.power((sRGB[~low] + 0.055) / 1.055, 2.4)
     return result
 
 
@@ -872,24 +869,12 @@ def linear_to_sRGB(linear: ArrayLike) -> np.ndarray:
         sRGB: ndarray
             Gamma-corrected sRGB values
     """
-    linear = np.asarray(linear, dtype=np.float64)
-    
-    # Split positive and negative values
-    result = np.zeros_like(linear)
-    
-    # Positive values: standard sRGB transfer function
-    pos_mask = linear >= 0
-    pos_vals = linear[pos_mask]
-    result[pos_mask] = np.where(
-        pos_vals <= 0.0031308,
-        12.92 * pos_vals,
-        1.055 * np.power(pos_vals, 1.0/2.4) - 0.055
-    )
-    
-    # Negative values: linear scaling only (colour library behavior)
-    neg_mask = linear < 0
-    result[neg_mask] = 12.92 * linear[neg_mask]
-    
+    linear = _as_float_array(linear)
+
+    result = np.empty_like(linear)
+    low = linear <= 0.0031308
+    result[low] = 12.92 * linear[low]
+    result[~low] = 1.055 * np.power(linear[~low], 1.0/2.4) - 0.055
     return result
 
 
@@ -909,7 +894,7 @@ def apply_gamma(rgb: ArrayLike, gamma: float) -> np.ndarray:
         rgb_gamma: ndarray
             Gamma-corrected RGB values
     """
-    rgb = np.asarray(rgb, dtype=np.float64)
+    rgb = _as_float_array(rgb)
     
     # Preserve sign for negative values
     sign = np.sign(rgb)
@@ -936,8 +921,114 @@ def remove_gamma(rgb_gamma: ArrayLike, gamma: float) -> np.ndarray:
         rgb: ndarray
             Linear RGB values
     """
-    rgb_gamma = np.asarray(rgb_gamma, dtype=np.float64)
+    rgb_gamma = _as_float_array(rgb_gamma)
     return np.power(np.maximum(rgb_gamma, 0), gamma)
+
+
+def _get_colourspace(colourspace: Union[str, RGBColourspace]) -> RGBColourspace:
+    if isinstance(colourspace, RGBColourspace):
+        return colourspace
+    if colourspace not in RGB_COLOURSPACES:
+        raise ValueError(f"Unknown colorspace: {colourspace}")
+    return RGB_COLOURSPACES[colourspace]
+
+
+def _chromatic_adaptation_matrix(whitepoint_source: np.ndarray,
+                                 whitepoint_destination: np.ndarray,
+                                 chromatic_adaptation_transform: Optional[str] = 'CAT02') -> np.ndarray:
+    if chromatic_adaptation_transform is None or np.allclose(whitepoint_source, whitepoint_destination):
+        return np.identity(3, dtype=np.float64)
+
+    cat_transform = chromatic_adaptation_transform.upper().replace('-', '')
+    if cat_transform == 'CAT16':
+        matrix = CAT16_MATRIX
+        matrix_inv = CAT16_MATRIX_INV
+    elif cat_transform == 'CAT02':
+        matrix = CAT02_MATRIX
+        matrix_inv = CAT02_MATRIX_INV
+    else:
+        matrix = BRADFORD_MATRIX
+        matrix_inv = BRADFORD_MATRIX_INV
+
+    XYZ_source = xy_to_XYZ(whitepoint_source, Y=1.0)
+    XYZ_dest = xy_to_XYZ(whitepoint_destination, Y=1.0)
+    RGB_source = np.dot(matrix, XYZ_source)
+    RGB_dest = np.dot(matrix, XYZ_dest)
+    scale_matrix = np.diag(RGB_dest / RGB_source)
+    return np.dot(matrix_inv, np.dot(scale_matrix, matrix))
+
+
+def matrix_RGB_to_RGB(input_colourspace: Union[str, RGBColourspace],
+                      output_colourspace: Union[str, RGBColourspace],
+                      chromatic_adaptation_transform: Optional[str] = 'CAT02') -> np.ndarray:
+    """
+    Compute the RGB-to-RGB conversion matrix using the same structure as
+    colour-science: output_XYZ_to_RGB @ CAT @ input_RGB_to_XYZ.
+    """
+    input_cs = _get_colourspace(input_colourspace)
+    output_cs = _get_colourspace(output_colourspace)
+
+    M = input_cs.RGB_to_XYZ_matrix
+    if chromatic_adaptation_transform is not None:
+        M_CAT = _chromatic_adaptation_matrix(
+            input_cs.whitepoint,
+            output_cs.whitepoint,
+            chromatic_adaptation_transform,
+        )
+        M = np.matmul(M_CAT, M)
+
+    return np.matmul(output_cs.XYZ_to_RGB_matrix, M)
+
+
+def _get_encoding(colourspace: Union[str, RGBColourspace]) -> str:
+    name = colourspace.name if isinstance(colourspace, RGBColourspace) else str(colourspace)
+    cs_lower = name.lower()
+    if cs_lower.startswith('linear '):
+        return 'linear'
+    if 'srgb' in cs_lower or 'rec.709' in cs_lower or 'rec709' in cs_lower:
+        return 'sRGB'
+    if 'display p3' in cs_lower or 'p3-d65' in cs_lower:
+        return 'sRGB'
+    if 'adobe' in cs_lower:
+        return 'gamma-2.2'
+    if 'prophoto' in cs_lower or 'romm' in cs_lower:
+        return 'gamma-1.8'
+    return 'linear'
+
+
+def _decode_RGB_encoding(RGB: np.ndarray, encoding: str) -> np.ndarray:
+    if encoding == 'sRGB':
+        return sRGB_to_linear(RGB)
+    if encoding == 'gamma-2.2':
+        return remove_gamma(RGB, 2.2)
+    if encoding == 'gamma-1.8':
+        return remove_gamma(RGB, 1.8)
+    if isinstance(encoding, (int, float)):
+        return remove_gamma(RGB, float(encoding))
+    return RGB
+
+
+def _encode_RGB_encoding(RGB: np.ndarray, encoding: str) -> np.ndarray:
+    if encoding == 'sRGB':
+        return linear_to_sRGB(RGB)
+    if encoding == 'gamma-2.2':
+        return apply_gamma(RGB, 2.2)
+    if encoding == 'gamma-1.8':
+        return apply_gamma(RGB, 1.8)
+    if isinstance(encoding, (int, float)):
+        return apply_gamma(RGB, float(encoding))
+    return RGB
+
+
+def encode_display_output(rgb: ArrayLike, colourspace: Union[str, RGBColourspace]) -> np.ndarray:
+    """
+    Encode linear display RGB for the configured display colourspace.
+
+    This is the CCTF/output-encoding half of RGB_to_RGB(...,
+    apply_cctf_encoding=True), exposed separately so display-only gamut
+    handling can happen between RGB conversion and output encoding.
+    """
+    return _encode_RGB_encoding(_as_float_array(rgb), _get_encoding(colourspace))
 
 
 # ============================================================================
@@ -978,7 +1069,7 @@ def gamut_compress_scale(rgb: ArrayLike) -> np.ndarray:
         rgb_compressed: ndarray
             RGB with negatives handled, HDR preserved
     """
-    rgb = np.asarray(rgb, dtype=np.float64)
+    rgb = _as_float_array(rgb)
     original_shape = rgb.shape
     
     if rgb.ndim == 1:
@@ -1016,7 +1107,7 @@ def gamut_compress_preserve_luminance(rgb: ArrayLike, amount: float = 1.0) -> np
         rgb_compressed: ndarray
             RGB with negatives handled, HDR (>1.0) preserved
     """
-    rgb = np.asarray(rgb, dtype=np.float64)
+    rgb = _as_float_array(rgb)
     original_shape = rgb.shape
     
     if rgb.ndim == 1:
@@ -1055,6 +1146,58 @@ def gamut_compress_preserve_luminance(rgb: ArrayLike, amount: float = 1.0) -> np
         return result.flatten()
     
     return result
+
+
+def apply_RGB_gamut_mapping(rgb: ArrayLike, method: str = 'preserve-luminance') -> np.ndarray:
+    if method == 'clip':
+        return gamut_clip(rgb)
+    if method == 'scale':
+        return gamut_compress_scale(rgb)
+    if method == 'preserve-luminance':
+        return gamut_compress_preserve_luminance(rgb)
+    raise ValueError(f"Unknown gamut mapping method: {method}")
+
+
+def compress_negative_display_gamut(rgb: ArrayLike,
+                                    luminance_weights: ArrayLike = (0.2126, 0.7152, 0.0722),
+                                    eps: float = 1e-12) -> np.ndarray:
+    """
+    Compress display-linear RGB pixels with negative channels toward neutral
+    gray while preserving luminance when possible.
+
+    This is intended for display conversion only, after conversion into the
+    target display RGB space and before CCTF encoding. Values above 1.0 are
+    preserved; pixels without negative channels are left unchanged.
+    """
+    arr = _as_float_array(rgb)
+    original_shape = arr.shape
+    if arr.size == 0 or arr.shape[-1] < 3:
+        return arr.copy()
+
+    result = arr.copy()
+    if result.ndim == 1:
+        result = result.reshape(1, -1)
+
+    rgb3 = result[..., :3]
+    negative_mask = np.min(rgb3, axis=-1) < 0
+    if not np.any(negative_mask):
+        return result.reshape(original_shape)
+
+    weights = np.asarray(luminance_weights, dtype=rgb3.dtype)
+    luminance = np.tensordot(rgb3, weights, axes=([-1], [0]))
+    valid_mask = negative_mask & (luminance > eps)
+
+    if np.any(valid_mask):
+        values = rgb3[valid_mask]
+        lum = luminance[valid_mask, np.newaxis]
+        denom = np.maximum(lum - values, eps)
+        ratios = np.where(values < 0, lum / denom, 1.0)
+        scale = np.clip(np.min(ratios, axis=1), 0.0, 1.0)[:, np.newaxis]
+        rgb3[valid_mask] = lum + scale * (values - lum)
+
+    # If luminance is not positive, no non-negative RGB can preserve it.
+    rgb3[negative_mask] = np.maximum(rgb3[negative_mask], 0)
+    return result.reshape(original_shape)
 
 
 # ============================================================================
@@ -1157,34 +1300,20 @@ def RGB_to_RGB(RGB: ArrayLike,
     - Position arguments: RGB, input_colourspace, output_colourspace
     - chromatic_adaptation_transform accepts 'CAT02', 'CAT16', 'Bradford'
     - CCTF encoding/decoding is applied automatically based on colorspace
-    - Gamut mapping uses 'preserve-luminance' method when enabled
+    - Gamut mapping is a backwards-compatible extension and delegates to
+      apply_RGB_gamut_mapping().
     """
-    RGB = np.asarray(RGB, dtype=np.float64)
-    
-    # Auto-detect encoding from colorspace if not explicitly provided
-    def get_encoding(colourspace: str) -> str:
-        """Determine appropriate encoding for colorspace."""
-        cs_lower = colourspace.lower()
-        if 'srgb' in cs_lower or 'rec.709' in cs_lower or 'rec709' in cs_lower:
-            return 'sRGB'
-        elif 'display p3' in cs_lower or 'p3-d65' in cs_lower:
-            return 'sRGB'
-        elif 'adobe' in cs_lower:
-            return 'gamma-2.2'
-        elif 'prophoto' in cs_lower or 'romm' in cs_lower:
-            return 'gamma-1.8'
-        else:
-            return 'linear'
+    RGB = _as_float_array(RGB)
     
     # Determine input/output encoding
     input_encoding = kwargs.get('input_encoding', None)
     output_encoding = kwargs.get('output_encoding', None)
     
     if input_encoding is None:
-        input_encoding = get_encoding(input_colourspace) if apply_cctf_decoding else 'linear'
+        input_encoding = _get_encoding(input_colourspace) if apply_cctf_decoding else 'linear'
     
     if output_encoding is None:
-        output_encoding = get_encoding(output_colourspace) if apply_cctf_encoding else 'linear'
+        output_encoding = _get_encoding(output_colourspace) if apply_cctf_encoding else 'linear'
     
     # Determine gamut mapping method
     gamut_mapping = kwargs.get('gamut_mapping', None)
@@ -1193,64 +1322,24 @@ def RGB_to_RGB(RGB: ArrayLike,
     elif not apply_gamut_mapping:
         gamut_mapping = None
     
-    # Step 1: Decode input (remove gamma if needed)
-    RGB_linear = RGB.copy()
-    
-    if input_encoding != 'linear':
-        if input_encoding == 'sRGB':
-            RGB_linear = sRGB_to_linear(RGB)
-        elif input_encoding == 'gamma-2.2':
-            RGB_linear = remove_gamma(RGB, 2.2)
-        elif input_encoding == 'gamma-1.8':
-            RGB_linear = remove_gamma(RGB, 1.8)
-        elif isinstance(input_encoding, (int, float)):
-            RGB_linear = remove_gamma(RGB, float(input_encoding))
-    
-    # Step 2: Convert colorspace (linear → linear)
+    # Step 1: Decode input (remove gamma if needed).
+    RGB_linear = _decode_RGB_encoding(RGB, input_encoding)
+
+    # Step 2: Convert colorspace (linear -> linear) using the colour-science
+    # matrix path: output_XYZ_to_RGB @ CAT @ input_RGB_to_XYZ.
     if input_colourspace == output_colourspace:
         RGB_out_linear = RGB_linear
     else:
-        # Get white points for chromatic adaptation
-        if input_colourspace in RGB_COLOURSPACES:
-            input_wp = RGB_COLOURSPACES[input_colourspace].whitepoint
-        else:
-            input_wp = ILLUMINANTS['D65']
-        
-        if output_colourspace in RGB_COLOURSPACES:
-            output_wp = RGB_COLOURSPACES[output_colourspace].whitepoint
-        else:
-            output_wp = ILLUMINANTS['D65']
-        
-        # Convert via XYZ with chromatic adaptation
-        XYZ = RGB_to_XYZ(RGB_linear, colourspace=input_colourspace,
-                        illuminant_XYZ=output_wp,  # Target white point
-                        chromatic_adaptation_transform=chromatic_adaptation_transform)
-        RGB_out_linear = XYZ_to_RGB(XYZ, colourspace=output_colourspace,
-                                    chromatic_adaptation_transform=chromatic_adaptation_transform)
+        M = matrix_RGB_to_RGB(input_colourspace, output_colourspace, chromatic_adaptation_transform)
+        M = M.astype(RGB_linear.dtype, copy=False)
+        RGB_out_linear = np.dot(RGB_linear.reshape(-1, 3), M.T).reshape(RGB_linear.shape)
     
     # Step 3: Gamut mapping
     if gamut_mapping is not None:
-        if gamut_mapping == 'clip':
-            RGB_out_linear = gamut_clip(RGB_out_linear)
-        elif gamut_mapping == 'scale':
-            RGB_out_linear = gamut_compress_scale(RGB_out_linear)
-        elif gamut_mapping == 'preserve-luminance':
-            RGB_out_linear = gamut_compress_preserve_luminance(RGB_out_linear)
+        RGB_out_linear = apply_RGB_gamut_mapping(RGB_out_linear, gamut_mapping)
     
     # Step 4: Encode output (apply gamma if needed)
-    RGB_out = RGB_out_linear.copy()
-    
-    if output_encoding != 'linear':
-        if output_encoding == 'sRGB':
-            RGB_out = linear_to_sRGB(RGB_out_linear)
-        elif output_encoding == 'gamma-2.2':
-            RGB_out = apply_gamma(RGB_out_linear, 2.2)
-        elif output_encoding == 'gamma-1.8':
-            RGB_out = apply_gamma(RGB_out_linear, 1.8)
-        elif isinstance(output_encoding, (int, float)):
-            RGB_out = apply_gamma(RGB_out_linear, float(output_encoding))
-    
-    return RGB_out
+    return _encode_RGB_encoding(RGB_out_linear, output_encoding)
 
 
 # ============================================================================

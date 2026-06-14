@@ -45,9 +45,10 @@ def _param2_has_substantive_heavy_payload(param2: dict) -> bool:
     return False
 
 # レンズ3: lensfun 実効（color/subpixel/geometry）の書き戻しは SPECIAL、.pmck の primary には出さない。
-# lensfun_user は「ユーザー3つ」だけ。デフォルト (T,T,T) ＝キーなし。少なくとも1つオフなら保存対象。
-# .pmck に積むのは「デフォルト差分があり、かつ lensfun 実効と一致しない」場合。
+# lensfun_user は「ユーザー3つ」だけ。RAW の TCA は LibRaw 側を優先するため、Subpixel はデフォルト OFF。
+# .pmck に積むのは「ユーザー指定がデフォルトと異なる」場合。
 LENSFUN_USER_KEY = "lensfun_user"
+DEFAULT_LENSFUN_USER = (True, False, True)
 # pmck には含めない内部状態（capability）
 LENSFUN_STATE_KEY = "_lensfun_state"
 _LENSFUN_CAPABILITY_KEY = "lensfun_capability"
@@ -67,7 +68,7 @@ def get_lensfun_user_tuple(param):
     n = normalize_lensfun_user(raw)
     if n is not None:
         return n
-    return (True, True, True)
+    return DEFAULT_LENSFUN_USER
 
 
 def _ensure_lensfun_state(param) -> dict:
@@ -120,38 +121,35 @@ def _get_lensfun_capability(param):
 def should_persist_lensfun_in_pmck(param) -> bool:
     """
     ルール（ユーザー指定）:
-    - lensfun 純粋対応可否 c がある: t==c なら保存しない、t!=c なら保存する
-    - lensfun 対応可否 c がない: デフォルト (T,T,T) と同じなら保存しない、違えば保存する
+    - デフォルト (Color=True, Subpixel=False, Geometry=True) と同じなら保存しない
+    - ユーザーが Subpixel ON などデフォルトから変えた場合だけ保存する
     """
     t = get_lensfun_user_tuple(param)
-    c = _get_lensfun_capability(param)
-    if c is None:
-        return t != (True, True, True)
-    return t != c
+    return t != DEFAULT_LENSFUN_USER
 
 
-def _strip_lensfun_all_on_from_pmck_primary_param(param2: dict) -> None:
+def _strip_default_lensfun_from_pmck_primary_param(param2: dict) -> None:
     """
-    primary_param の lensfun_user を正規化し、全オン（不正値含む扱い）ならキーを落とす。
-    has_user_lens / delete_special 以外の経路で混入した (T,T,T) も消す最終防衛。
+    primary_param の lensfun_user を正規化し、デフォルト（不正値含む扱い）ならキーを落とす。
+    has_user_lens / delete_special 以外の経路で混入した DEFAULT_LENSFUN_USER も消す最終防衛。
     """
     k = LENSFUN_USER_KEY
     if k not in param2:
         return
     n = normalize_lensfun_user(param2.get(k))
-    if n is None or not any(not bool(x) for x in n):
+    if n is None or n == DEFAULT_LENSFUN_USER:
         param2.pop(k, None)
 
 
 def collapse_default_lensfun_user(param: dict) -> None:
     """
-    ユーザーレンズ3がデフォルト (T,T,T) または正規化不能ならキーを落とす。
+    ユーザーレンズ3がデフォルトまたは正規化不能ならキーを落とす。
     Kivy/numpy の 0/1 や list/msgpack 由来で == 比較だけでは delete_default から抜けないのを防ぐ。
     """
     if LENSFUN_USER_KEY not in param:
         return
     n = normalize_lensfun_user(param.get(LENSFUN_USER_KEY))
-    if n is None or n == (True, True, True):
+    if n is None or n == DEFAULT_LENSFUN_USER:
         param.pop(LENSFUN_USER_KEY, None)
 
 
@@ -548,7 +546,7 @@ def serialize(param, mask_editor2, file_path=None):
         t = get_lensfun_user_tuple(param)
         param2[LENSFUN_USER_KEY] = (bool(t[0]), bool(t[1]), bool(t[2]))
 
-    _strip_lensfun_all_on_from_pmck_primary_param(param2)
+    _strip_default_lensfun_from_pmck_primary_param(param2)
     if not has_mask and not param2:
         return None
     if not param2 and has_mask:

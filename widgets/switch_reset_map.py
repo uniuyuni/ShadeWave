@@ -40,7 +40,7 @@ BASE_SWITCH_TARGETS = {
     "switch_sat_vs_sat": (2, "vs_and_saturation", "SatvsSat"),
     "switch_ai_noise_reduction": (0, "ai_noise_reduction", None),
     "switch_light_noise_reduction": (2, "light_noise_reduction", None),
-    "switch_details": (0, ["inpaint", "patchmatch_inpaint", "subpixel_shift"], None),
+    "switch_details": (0, ["inpaint", "patchmatch_inpaint", "subpixel_shift", "exposure_fusion_debevec"], None),
     "switch_lut": (2, "lut", None),
     "switch_color_match": (0, "color_match", None),
     "switch_solid_color": (2, "solid_color", None),

@@ -3,7 +3,11 @@
 _ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # use .pixi/libraw-install as the local LibRaw install prefix
 export LIBRAW_LOCAL_PREFIX="${_ROOT}/.pixi/libraw-install"
-export PKG_CONFIG_PATH="${LIBRAW_LOCAL_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+if [[ -n "${CONDA_PREFIX:-}" ]]; then
+  export PKG_CONFIG_PATH="${LIBRAW_LOCAL_PREFIX}/lib/pkgconfig:${CONDA_PREFIX}/lib/pkgconfig:${CONDA_PREFIX}/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+else
+  export PKG_CONFIG_PATH="${LIBRAW_LOCAL_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+fi
 # 実行時にローカル libraw / libomp を解決（rpath でも足りない環境向け）
 if [[ "$(uname -s)" == "Darwin" ]]; then
   export DYLD_FALLBACK_LIBRARY_PATH="${LIBRAW_LOCAL_PREFIX}/lib:${CONDA_PREFIX:+$CONDA_PREFIX/lib}:${DYLD_FALLBACK_LIBRARY_PATH:-}"

@@ -12,6 +12,7 @@ This lets Edge Bias affect edge feel without blindly dilating the support mask.
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import cv2
@@ -42,8 +43,9 @@ def compute_draw_support(
     empty = np.zeros((h, w), dtype=bool)
     strokes = _normalize_strokes(draw_strokes)
     add_strokes = [stroke for stroke in strokes if not bool(getattr(stroke, "is_erasing", False))]
-    has_erase = any(bool(getattr(stroke, "is_erasing", False)) for stroke in strokes)
-    if has_erase or not add_strokes:
+    if not add_strokes:
+        # Erase-only / empty stays on the V1 add+erase pipeline: there is no add
+        # stroke to anchor a per-stroke solve against.
         base = _v2.compute_draw_support(
             guide,
             mask_f,
@@ -67,7 +69,7 @@ def compute_draw_support(
         edge_bias,
     )
 
-    erase = _erase_stroke_mask(hint.shape, strokes)
+    all_erase = _erase_stroke_mask(hint.shape, strokes)
     seed_all = np.zeros((h, w), dtype=bool)
     candidate_all = np.zeros((h, w), dtype=bool)
     support_all = np.zeros((h, w), dtype=bool)
@@ -78,8 +80,24 @@ def compute_draw_support(
     plane_weight = np.zeros((h, w), dtype=bool)
     solved_count = 0
 
-    for stroke_index, stroke in enumerate(add_strokes):
+    for stroke_index, stroke in enumerate(strokes):
+        if bool(getattr(stroke, "is_erasing", False)):
+            continue
+        # Only erases drawn *after* this add can undo it; an add drawn after an
+        # erase must win in the overlap (draw -> erase -> draw again). So carve
+        # and subtract by future erases only, preserving temporal stroke order.
+        future_erases = [
+            s for s in strokes[stroke_index + 1:]
+            if bool(getattr(s, "is_erasing", False))
+        ]
+        erase = _erase_stroke_mask(hint.shape, future_erases)
         stroke_mask = _single_stroke_mask((w, h), stroke)
+        stroke_mask_full = stroke_mask
+        if np.any(erase):
+            # Carve the future-erased region out of this add stroke's footprint so
+            # the FG seed never overlaps the erase BG seed (same-colour overlap
+            # would otherwise read the whole stroke as background).
+            stroke_mask = np.where(erase, 0.0, stroke_mask).astype(np.float32, copy=False)
         if not np.any(stroke_mask > 0.02):
             continue
         stroke_seed = _er.make_confident_seed(stroke_mask)
@@ -89,7 +107,7 @@ def compute_draw_support(
             radius,
             strength,
             seed_mask=stroke_seed,
-            draw_strokes=[stroke],
+            draw_strokes=[stroke] + future_erases,
             pixel_scale=pixel_scale,
             edge_bias=0.0,
             _dump_input=False,
@@ -97,6 +115,9 @@ def compute_draw_support(
         if result.support.size == 0:
             continue
         support = np.asarray(result.support, dtype=bool) & ~erase
+        if np.any(erase):
+            support = _snap_kept_boundary_to_edges(
+                guide, support, erase, strength, getattr(stroke, "size", 16.0))
         candidate = np.asarray(result.candidate, dtype=bool)
         seed = np.asarray(result.seed, dtype=bool)
         planes = {name: value for name, value in result.debug_planes}
@@ -115,6 +136,18 @@ def compute_draw_support(
             planes,
             edge_bias,
         )
+        if np.any(erase):
+            # Erase is a *local* correction: carving the seed + feeding the erase
+            # as a background seed re-routes the whole band-limited min-cut (and the
+            # void-fill / boundary-bias that follow), so the boundary can move many
+            # pixels away from where the user erased. Bound that: resolve+refine the
+            # add *without* the erase (the region the user already sees) and only
+            # keep the erase-affected result within a small reach of the erase
+            # footprint. Outside that reach the boundary is the untouched no-erase
+            # one, so an erase never affects pixels away from the brush.
+            support = _localize_erase_effect(
+                guide, support, stroke, stroke_mask_full, erase,
+                radius, strength, pixel_scale, edge_bias)
         support_alpha = _support_alpha_from_edge_softness(
             guide,
             support,
@@ -133,13 +166,20 @@ def compute_draw_support(
     if solved_count == 0:
         return DrawSupportResult(empty, empty, empty.copy(), [])
 
-    support_all &= ~erase
+    # Drop the 1px brush-circle rim left floating past object edges (before alpha
+    # so the matte follows the trimmed boundary).
+    support_all = _trim_offedge_brush_rim(support_all, mask_f, guide)
+
+    # No global erase subtract: temporal order is already handled per add stroke
+    # via future-erase carving, so a later add wins over an earlier erase.
+    net_erased = all_erase & ~support_all
     alpha_all = np.where(support_all & (alpha_all <= 1e-6), 1.0, alpha_all)
     alpha_all = np.where(support_all, alpha_all, 0.0).astype(np.float32, copy=False)
     out_planes = _finalize_debug_planes(plane_accum, support_all.shape)
     out_planes.extend([
         ("v3_same_color_void_fill", gap_fill_all),
         ("v3_boundary_bias_delta", boundary_bias_all),
+        ("v3_erase_support", net_erased),
         ("boundary_bias_px", np.full(support_all.shape, float(edge_bias), dtype=np.float32)),
         ("support_alpha", alpha_all),
         ("v3_stroke_count", np.full(support_all.shape, float(solved_count), dtype=np.float32)),
@@ -281,6 +321,149 @@ def _finalize_debug_planes(accum, shape):
         if arr.shape == tuple(shape):
             planes.append((name, arr))
     return planes
+
+
+def _trim_offedge_brush_rim(support, mask, guide):
+    """Drop the 1px selection rim that merely traces the brush footprint.
+
+    Where the add brush overhangs an object edge into the background, the min-cut
+    cuts the bulk of the overhang but a 1px arc on the *brush circle* survives
+    (the geometric FG prior keeps the outermost band pixel even though it is
+    background) -- a circular sliver floating past the edge. Remove the outermost
+    1px of support that (a) sits on the brush footprint boundary and (b) is NOT on
+    any image edge: a real boundary lands on an edge and is kept, the floating
+    brush arc is not. Purely geometric (no colour test) so it cannot misfire on
+    low-contrast subjects where FG/BG colours are close.
+    """
+    support = np.asarray(support, dtype=bool)
+    hint = _er._as_mask(mask) > 0.02
+    if not np.any(support) or not np.any(hint):
+        return support
+    edge = _er._draw_snap_edge_strength(_er._prepare_guide_image(guide, support.shape))
+    if edge is None:
+        return support
+    k = np.ones((3, 3), dtype=np.uint8)
+    # 0.08 separates the floating brush arc (sky/background, edge ~0 -> trimmed)
+    # from genuine low-contrast boundaries (weak but nonzero edge -> spared).
+    edge_t = float(os.environ.get("QS_RIM_EDGE_T", "0.08"))
+    on_edge = cv2.dilate((np.asarray(edge, np.float32) > edge_t).astype(np.uint8),
+                         k, iterations=2) > 0
+    hint_b = hint & ~(cv2.erode(hint.astype(np.uint8), k, iterations=2) > 0)
+    brush_zone = cv2.dilate(hint_b.astype(np.uint8), k, iterations=1) > 0
+    ring = support & ~(cv2.erode(support.astype(np.uint8), k, iterations=1) > 0)
+    residue = ring & brush_zone & ~on_edge
+    return support & ~residue
+
+
+def _erase_reach(erase, brush_size, radius):
+    """How far (px) outside the erase footprint the erase is allowed to move the
+    boundary: just enough for a local edge snap, never a band-wide reroute."""
+    try:
+        snap_r = float(np.clip(float(brush_size) * 0.30, 3.0, 10.0))
+    except Exception:
+        snap_r = 6.0
+    try:
+        rpx = max(0.0, float(radius))
+    except Exception:
+        rpx = 0.0
+    return int(round(np.clip(snap_r + rpx, 3.0, 24.0)))
+
+
+def _localize_erase_effect(
+        guide, support_erase, stroke, stroke_mask_full, erase,
+        radius, strength, pixel_scale, edge_bias):
+    """Confine an erase's influence to a small reach around its footprint.
+
+    ``support_erase`` is the (already refined) add solved *with* the erase as
+    background -- it can reroute far away. We solve+refine the add *without* the
+    erase to reproduce the boundary the user already sees, then keep the
+    erase-affected result only within ``dilate(erase, reach)``; everywhere else we
+    restore the no-erase boundary. The no-erase reference is run through the same
+    void-fill / boundary-bias steps so the two agree away from the erase.
+    """
+    support_erase = np.asarray(support_erase, dtype=bool)
+    erase = np.asarray(erase, dtype=bool)
+    if not np.any(erase):
+        return support_erase
+    try:
+        result_ne = _v2._compute_add_only_support(
+            guide,
+            stroke_mask_full,
+            radius,
+            strength,
+            seed_mask=_er.make_confident_seed(stroke_mask_full),
+            draw_strokes=[stroke],
+            pixel_scale=pixel_scale,
+            edge_bias=0.0,
+            _dump_input=False,
+        )
+    except Exception:
+        return support_erase
+    if result_ne.support.size == 0:
+        return support_erase
+    empty = np.zeros_like(erase)
+    support_ne = np.asarray(result_ne.support, dtype=bool)
+    seed_ne = np.asarray(result_ne.seed, dtype=bool)
+    candidate_ne = np.asarray(result_ne.candidate, dtype=bool)
+    planes_ne = {name: value for name, value in result_ne.debug_planes}
+    support_ne, _ = _fill_selected_color_voids(
+        support_ne, stroke_mask_full > 0.02, seed_ne, empty, planes_ne)
+    support_ne, _ = _apply_boundary_bias(
+        support_ne, candidate_ne, seed_ne, empty, planes_ne, edge_bias)
+    reach = _erase_reach(erase, getattr(stroke, "size", 16.0), radius)
+    near = cv2.dilate(
+        erase.astype(np.uint8), np.ones((3, 3), dtype=np.uint8), iterations=reach) > 0
+    return np.where(near, support_erase, support_ne)
+
+
+def _snap_kept_boundary_to_edges(guide, support, erase, strength, brush_size):
+    """Snap the kept/erased boundary out to a nearby strong edge.
+
+    After an erase the kept boundary sits on the (rough) brush edge. If a strong
+    image edge lies just inside the erased region, grow the kept region out to it
+    -- but only when an edge is actually reached, so a sloppy erase over flat
+    colour, or a deliberate erase well past an edge, is honoured exactly (no blind
+    regrow). The snap reach is bounded by the brush size, so only small overshoots
+    snap; large erases are kept as drawn.
+    """
+    support = np.asarray(support, dtype=bool)
+    erase = np.asarray(erase, dtype=bool)
+    if not np.any(support) or not np.any(erase):
+        return support
+    guide_img = _er._prepare_guide_image(guide, support.shape)
+    if guide_img is None:
+        return support
+    barrier = _er._make_edge_stop_mask(guide_img, _er._draw_barrier_strength(strength))
+    if barrier is None or not np.any(barrier):
+        return support
+
+    try:
+        snap_r = int(round(float(np.clip(float(brush_size) * 0.30, 3.0, 10.0))))
+    except Exception:
+        snap_r = 6
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    near = cv2.dilate(support.astype(np.uint8), kernel, iterations=snap_r) > 0
+    band = near & erase & ~support
+    if not np.any(band):
+        return support
+
+    free = (band & ~barrier) | support
+    grown = _er._connected_to_seed(free, support) & band
+    if not np.any(grown):
+        return support
+
+    # Keep only grown components that actually reach an edge (a real snap target);
+    # drop blind growth over flat colour so a sloppy erase is honoured.
+    barrier_near = cv2.dilate(barrier.astype(np.uint8), kernel, iterations=2) > 0
+    n_labels, labels = cv2.connectedComponents(grown.astype(np.uint8), connectivity=8)
+    keep = np.zeros_like(grown)
+    for i in range(1, n_labels):
+        comp = labels == i
+        if np.any(comp & barrier_near):
+            keep |= comp
+    if not np.any(keep):
+        return support
+    return support | keep
 
 
 def _erase_stroke_mask(shape, draw_strokes):

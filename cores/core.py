@@ -2576,32 +2576,42 @@ def modify_lensfun(mod, img, is_cm=True, is_sd=True, is_gd=True):
         logging.warning("Lensfun is not initialized")
         return (img, False, False, False)
 
-    modimg = img
+    modimg = img.copy()
     
     if is_cm == True:
-        modimg = img.copy()
         did_apply = mod.apply_color_modification(modimg)
         if did_apply == False:
             logging.warning("Apply Color Modification is Failed")
             is_cm = False
 
-    if is_sd == True:
+    combined_distortion_applied = False
+    if is_sd == True and is_gd == True and hasattr(mod, "apply_subpixel_geometry_distortion"):
+        undist_coords = mod.apply_subpixel_geometry_distortion()
+        if undist_coords is None:
+            logging.warning("Apply Subpixel Geometry Distortion is Failed")
+        else:
+            modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_CUBIC)
+            modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_CUBIC)
+            modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_CUBIC)
+            combined_distortion_applied = True
+
+    if is_sd == True and not combined_distortion_applied:
         undist_coords = mod.apply_subpixel_distortion()
         if undist_coords is None:
             logging.warning("Apply Subpixel Distortion is Failed")
             is_sd = False
         else:
-            modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_LANCZOS4)
-            modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_LANCZOS4)
-            modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_LANCZOS4)
+            modimg[..., 0] = cv2.remap(modimg[..., 0], undist_coords[..., 0, :], None, cv2.INTER_CUBIC)
+            modimg[..., 1] = cv2.remap(modimg[..., 1], undist_coords[..., 1, :], None, cv2.INTER_CUBIC)
+            modimg[..., 2] = cv2.remap(modimg[..., 2], undist_coords[..., 2, :], None, cv2.INTER_CUBIC)
 
-    if is_gd == True:
+    if is_gd == True and not combined_distortion_applied:
         undist_coords = mod.apply_geometry_distortion()
         if undist_coords is None:
             logging.warning("Apply Geometry Distortion is Failed")
             is_gd = False
         else:
-            modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_LANCZOS4)
+            modimg = cv2.remap(modimg, undist_coords, None, cv2.INTER_CUBIC)
 
     return (modimg, is_cm, is_sd, is_gd)
 

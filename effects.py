@@ -8,6 +8,7 @@ import logging
 import cores.core as core
 import cores.cubelut as cubelut
 import cores.subpixel_shift as subpixel_shift
+import cores.exposure_fusion_debevec as exposure_fusion_debevec
 import cores.film_emulator as film_emulator
 from cores.coating_simulator import CoatingSimulator
 from cores.lens_aberration_simulator import LensAberrationSimulator
@@ -421,7 +422,7 @@ class LensModifierEffect(Effect):
         return {
             'switch_lens_modifier': True,
             'lens_modifier': True,
-            params.LENSFUN_USER_KEY: (True, True, True),
+            params.LENSFUN_USER_KEY: params.DEFAULT_LENSFUN_USER,
         }
 
     def set2widget(self, widget, param):
@@ -438,7 +439,7 @@ class LensModifierEffect(Effect):
         ngd = widget.ids["checkbox_geometry_distortion"].active
         param['switch_lens_modifier'] = nsw
         t = (bool(ncm), bool(nsd), bool(ngd))
-        if t == (True, True, True):
+        if t == params.DEFAULT_LENSFUN_USER:
             param.pop(params.LENSFUN_USER_KEY, None)
         else:
             param[params.LENSFUN_USER_KEY] = t
@@ -532,6 +533,55 @@ class SubpixelShiftEffect(Effect):
         
         return self.diff
     
+
+class ExposureFusionDebevecEffect(Effect):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
+        self.keep_async_result = False
+
+    def get_param_dict(self, param):
+        return {
+            'switch_details': True,
+            'exposure_fusion_debevec': False,
+        }
+
+    def set2widget(self, widget, param):
+        widget.ids["switch_details"].active = self._get_param(param, 'switch_details')
+        widget.ids["switch_exposure_fusion_debevec"].active = self._get_param(param, 'exposure_fusion_debevec')
+
+    def set2param(self, param, widget):
+        param['switch_details'] = widget.ids["switch_details"].active
+        param['exposure_fusion_debevec'] = widget.ids["switch_exposure_fusion_debevec"].active
+
+    def make_diff(self, img, param, efconfig):
+        switch_details = self._get_param(param, 'switch_details')
+        hdr = self._get_param(param, 'exposure_fusion_debevec')
+        if switch_details == False or hdr == False or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
+            if efconfig.processor is not None:
+                efconfig.processor.cancel_effect(self.__class__.__name__)
+                efconfig.processor.discard_effect_results(self.__class__.__name__)
+
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((hdr))
+
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            if not needed and self.diff is not None:
+                return self.diff
+
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+            if handled:
+                return result
+
+            if needed:
+                self.hash = combined_hash
+                self.diff, _ = exposure_fusion_debevec.exposure_fusion_debevec(img, out_ldr=False)
+
+        return self.diff
+
 
 class InpaintDiff:
     def __init__(self, **kwargs):
@@ -2427,7 +2477,27 @@ class DehazeEffect(Effect):
 
 class RGB2HLSEffect(Effect):
 
+    @staticmethod
+    def _hls_pipeline_active(param):
+        color_names = ("red", "skin", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta")
+        if param.get("switch_color_mixer", True):
+            for color_name in color_names:
+                if not param.get(f"switch_hls_{color_name}", True):
+                    continue
+                if (param.get(f"hls_{color_name}_hue", 0) != 0
+                        or param.get(f"hls_{color_name}_lum", 0) != 0
+                        or param.get(f"hls_{color_name}_sat", 0) != 0):
+                    return True
+        if param.get("switch_saturation", True) and (
+                param.get("saturation", 0) != 0 or param.get("vibrance", 0) != 0):
+            return True
+        return False
+
     def make_diff(self, rgb, param, efconfig):
+        if not self._hls_pipeline_active(param):
+            self.diff = None
+            self.hash = None
+            return self.diff
         if self.diff is None:
             rgb = core.type_convert(rgb, np.ndarray)
             self.diff = hlsrgb.rgb_to_hlc_gain(rgb)
@@ -2436,6 +2506,14 @@ class RGB2HLSEffect(Effect):
 class HLS2RGBEffect(Effect):
 
     def make_diff(self, hls, param, efconfig):
+        if not RGB2HLSEffect._hls_pipeline_active(param):
+            self.diff = None
+            self.hash = None
+            return self.diff
+        if getattr(hls, "ndim", 0) < 3 or hls.shape[2] < 4:
+            self.diff = None
+            self.hash = None
+            return self.diff
         if self.diff is None:
             hls = core.type_convert(hls, np.ndarray)
             self.diff = hlsrgb.hlc_gain_to_rgb(hls)
@@ -2793,19 +2871,8 @@ class HighlightCompressEffect(Effect):
         param['highlight_compress'] = widget.ids["switch_highlight_compress"].active
 
     def make_diff(self, rgb, param, efconfig):
-        switch_global = self._get_param(param, 'switch_global')
-        hc = self._get_param(param, 'highlight_compress')
-        if switch_global == False or hc == False:
-            self.diff = None
-            self.hash = None
-        else:        
-            param_hash = hash((hc))
-            if self.hash != param_hash:
-                self.hash = param_hash
-
-                rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = core.highlight_compress(rgb)
-
+        self.diff = None
+        self.hash = None
         return self.diff
 
 class LevelEffect(Effect):
@@ -4393,6 +4460,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['remove_chromatic_aberration'] = RemoveChromaticAberrationEffect()
     lv0['lens_modifier'] = LensModifierEffect(lens_modifier_callback=lens_modifier_callback)
     lv0['subpixel_shift'] = SubpixelShiftEffect()
+    lv0['exposure_fusion_debevec'] = ExposureFusionDebevecEffect()
     lv0['inpaint'] = InpaintEffect()
     lv0['patchmatch_inpaint'] = PatchmatchInpaintEffect()
     lv0['cross_filter'] = CrossFilterEffect()

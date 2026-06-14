@@ -230,6 +230,7 @@ NPZ には solver 入力だけが保存される。`result.debug_planes` は rep
 | `interior_fill` | hint 内 hole fill で追加された領域。 |
 | `same_side_gap_fill` | V2 の同側ギャップ補完で追加された領域。 |
 | `v3_boundary_bias_delta` | V3 Boundary Bias の px シフトで追加/削除された領域。 |
+| `v3_erase_support` | V3-native erase で最終的に消えた領域（全 erase footprint のうち support に残らなかった部分）。 |
 | `edge_lock_effective` | replay 時の内部 EdgeLock。 |
 | `edge_lock_auto` | auto 推定された EdgeLock。 |
 | `edge_lock_offset` | auto からの UI offset。 |

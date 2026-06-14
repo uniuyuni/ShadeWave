@@ -309,14 +309,17 @@ def _profile_colourspace_name(icc_profile):
 def _convert_to_profile_linear(img, icc_profile, apply_gamut_mapping=True):
     colourspace_name = _profile_colourspace_name(icc_profile)
     if colourspace_name in colour_functions.RGB_COLOURSPACES:
-        return colour_functions.RGB_to_RGB(
+        out = colour_functions.RGB_to_RGB(
             img,
             'ProPhoto RGB',
             colourspace_name,
             _export_chromatic_adaptation_transform(),
             apply_cctf_encoding=False,
-            apply_gamut_mapping=apply_gamut_mapping,
-        ).astype(np.float32)
+            apply_gamut_mapping=False,
+        )
+        if apply_gamut_mapping:
+            out = colour_functions.apply_RGB_gamut_mapping(out)
+        return out.astype(np.float32)
 
     matrix, _white_xyz = _icc_profile_matrix_and_whitepoint(icc_profile)
     prophoto_xyz_d50 = colour_functions.RGB_to_XYZ(

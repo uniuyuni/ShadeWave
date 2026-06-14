@@ -2012,7 +2012,7 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
             self.assertEqual(np.asarray(planes[name]).shape, (h, w))
         self.assertAlmostEqual(float(np.max(planes["boundary_bias_px"])), 1.5)
 
-    def test_v3_mixed_erase_keeps_v2_fallback_path(self):
+    def test_v3_mixed_erase_is_solved_natively_per_stroke(self):
         from cores.mask2 import draw_quick_select_v3
 
         h, w = 48, 72
@@ -2030,11 +2030,78 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         res = draw_quick_select_v3.compute_draw_support(
             image, mask, 6, 0, draw_strokes=[add, erase])
         planes = {name: plane for name, plane in res.debug_planes}
+        support = np.asarray(res.support, dtype=bool)
 
-        self.assertIn("v2_mode", planes)
-        self.assertEqual(float(np.max(planes["v2_mode"])), 0.0)
+        # Mixed add+erase is now solved by the V3-native per-stroke path (not the
+        # V1 fallback): add strokes are solved per-stroke and erase is an
+        # edge-snapped removal.
         self.assertIn("v3_stroke_count", planes)
-        self.assertEqual(float(np.max(planes["v3_stroke_count"])), 0.0)
+        self.assertGreaterEqual(float(np.max(planes["v3_stroke_count"])), 1.0)
+        self.assertIn("v3_erase_support", planes)
+        self.assertGreater(int(support.sum()), 0)
+
+        # The erased footprint is removed from the support.
+        erase_fp = draw_quick_select_v3._single_stroke_mask((w, h), erase) > 0.02
+        self.assertGreater(int(erase_fp.sum()), 0)
+        self.assertLess(
+            int(np.count_nonzero(support & erase_fp)),
+            max(8, int(0.10 * erase_fp.sum())),
+            "erase footprint should be removed from the support",
+        )
+
+    def test_v3_add_after_erase_wins_in_overlap(self):
+        # draw -> erase -> draw again: the later add must be reflected in the
+        # area that an earlier erase removed (temporal order, "last write wins").
+        from cores.mask2 import draw_quick_select_v3
+
+        h, w = 60, 120
+        image = np.zeros((h, w, 3), dtype=np.float32)
+        image[:, :60] = (0.55, 0.55, 0.60)
+        image[:, 60:] = (0.58, 0.57, 0.62)
+
+        def line(x0, x1, size, erasing):
+            ln = mask_rasters.Line(erasing, size, 100)
+            for x in range(x0, x1 + 1, 2):
+                ln.add_point(x, 30)
+            return ln
+
+        add1 = line(15, 40, 16, False)
+        erase = line(33, 58, 16, True)
+        add2 = line(46, 70, 16, False)   # drawn AFTER erase, over the erased area
+        strokes = [add1, erase, add2]
+        mask = mask_rasters.draw_line_texture((w, h), strokes)
+
+        res = draw_quick_select_v3.compute_draw_support(
+            image, mask, 6, 0,
+            seed_mask=edge_refine.make_confident_seed(mask), draw_strokes=strokes)
+        support = np.asarray(res.support, dtype=bool)
+
+        add2_fp = draw_quick_select_v3._single_stroke_mask((w, h), add2) > 0.02
+        erase_fp = draw_quick_select_v3._single_stroke_mask((w, h), erase) > 0.02
+        overlap = add2_fp & erase_fp
+        self.assertGreater(int(overlap.sum()), 0)
+        self.assertGreater(
+            int(np.count_nonzero(support & overlap)) / int(overlap.sum()),
+            0.7,
+            "an add drawn after an erase should be reflected in the erased region",
+        )
+
+        # And the reverse order (add, add, erase) still lets the final erase win:
+        # the bulk of its footprint is removed. (Edge-snapping may keep a thin
+        # sliver where the erase boundary sits next to a strong image edge, so
+        # this checks "mostly removed", not a perfectly clean cut.)
+        strokes_erase_last = [add1, add2, line(33, 58, 16, True)]
+        mask2 = mask_rasters.draw_line_texture((w, h), strokes_erase_last)
+        res2 = draw_quick_select_v3.compute_draw_support(
+            image, mask2, 6, 0,
+            seed_mask=edge_refine.make_confident_seed(mask2),
+            draw_strokes=strokes_erase_last)
+        support2 = np.asarray(res2.support, dtype=bool)
+        self.assertLess(
+            int(np.count_nonzero(support2 & erase_fp)),
+            max(8, int(0.10 * erase_fp.sum())),
+            "an erase drawn last should remove the earlier adds in its footprint",
+        )
 
     def test_v3_boundary_bias_moves_near_edge_without_color_gate(self):
         from cores.mask2 import draw_quick_select_v3
@@ -2799,6 +2866,424 @@ class DrawQuickSelectMinCutTest(unittest.TestCase):
         diff = np.mean(np.abs(down[core].astype(np.float32)
                               - res_full.support[core].astype(np.float32)))
         self.assertLess(diff, 0.12)
+
+
+class DrawQuickSelectGuardRailTest(unittest.TestCase):
+    """Predictability guard rails for Draw Quick Select (Phase 0).
+
+    These encode the V3 policy promises as hard gates *before* the solver is
+    re-tuned: a control must move the output smoothly (no cliffs), the result
+    must not depend on zoom, Radius must not inflate into featureless/far areas,
+    and add strokes must compose by union without disturbing earlier strokes.
+
+    Thresholds are calibrated to current behavior with margin, so they catch a
+    regression (a new cliff, a zoom drift, a runaway grow) rather than over-fit.
+    Fast synthetic scenes keep the suite quick; real corpus dumps are exercised
+    opportunistically and skipped when absent.
+    """
+
+    def _synthetic_dump(self, stroke_x=110, radius=12.0, edge_bias=0.0):
+        image = _straight_edge_scene(edge_x=120)
+        line = _straight_edge_line(stroke_x=stroke_x)
+        h, w = image.shape[:2]
+        mask = mask_rasters.draw_line_texture((w, h), [line])
+        return {
+            "name": "guardrail_straight",
+            "guide": image,
+            "mask": mask,
+            "seed_mask": edge_refine.make_confident_seed(mask),
+            "radius": float(radius),
+            "strength": 0.0,
+            "strength_mode": "offset",
+            "edge_bias": float(edge_bias),
+            "pixel_scale": 1.0,
+            "strokes": [line],
+        }
+
+    def test_edge_lock_offset_sweep_has_no_cliff(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        swept = qs_metrics.control_sweep_for_dump(
+            self._synthetic_dump(), "strength", solver="v3")
+        # A small change in EdgeLock must not flip a big chunk of the footprint.
+        self.assertLess(
+            swept["max_step_frac"], 0.15,
+            f"EdgeLock sweep has a cliff: {swept}")
+
+    def test_edge_bias_sweep_moves_smoothly_and_is_not_a_no_op(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        swept = qs_metrics.control_sweep_for_dump(
+            self._synthetic_dump(), "edge_bias", solver="v3")
+        # Edge Bias should travel a meaningful distance...
+        self.assertGreater(
+            swept["range_frac"], 0.05,
+            f"Edge Bias is effectively a no-op: {swept}")
+        # ...but it must do so without a cliff between adjacent steps.
+        self.assertLess(
+            swept["max_step_frac"], 0.15,
+            f"Edge Bias sweep has a cliff: {swept}")
+
+    def test_radius_sweep_does_not_inflate_or_cross_edge(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        dump = self._synthetic_dump(stroke_x=110)
+        for radius in (4.0, 8.0, 12.0, 18.0, 24.0, 32.0):
+            probe = dict(dump)
+            probe["radius"] = radius
+            support = np.asarray(
+                qs_metrics._solve_support(probe, solver="v3").support, dtype=bool)
+            # Never leak across the strong edge into the far (bright) side, no
+            # matter how large Radius gets.
+            self.assertLess(
+                support[:, 140:].mean(), 0.02,
+                f"radius={radius} inflated across the edge")
+
+    def test_zoom_invariance_gate(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        metrics = qs_metrics.zoom_metrics_for_dump(self._synthetic_dump(), solver="v3")
+        self.assertGreaterEqual(
+            metrics["zoom_iou_2_0x"], 0.90,
+            f"2x zoom changed the result: {metrics}")
+        self.assertGreaterEqual(
+            metrics["zoom_iou_0_5x"], 0.72,
+            f"0.5x zoom changed the result: {metrics}")
+
+    def test_add_stroke_composition_preserves_earlier_stroke(self):
+        from cores.mask2 import draw_quick_select_v3
+
+        image = _two_edges_scene()
+        h, w = image.shape[:2]
+        s0 = mask_rasters.Line(False, 22, 100)
+        for y in np.linspace(20, h - 20, 24):
+            s0.add_point(40, int(y))   # dark band (x < 80)
+        s1 = mask_rasters.Line(False, 22, 100)
+        for y in np.linspace(20, h - 20, 24):
+            s1.add_point(115, int(y))  # mid band (80 <= x < 150)
+
+        def solve(strokes):
+            mask = mask_rasters.draw_line_texture((w, h), strokes)
+            seed = edge_refine.make_confident_seed(mask)
+            res = draw_quick_select_v3.compute_draw_support(
+                image, mask, 12, 0, seed_mask=seed, draw_strokes=strokes)
+            return np.asarray(res.support, dtype=bool)
+
+        support_first = solve([s0])
+        support_both = solve([s0, s1])
+        self.assertGreater(int(support_first.sum()), 0)
+        # V3 composes add strokes by union: adding a second stroke must not
+        # remove what the first stroke already selected.
+        lost = int(np.count_nonzero(support_first & ~support_both))
+        self.assertLess(
+            lost, max(40, int(0.02 * support_first.sum())),
+            "second stroke disturbed the first stroke's selection")
+
+    def test_auto_edge_lock_is_continuous_and_faithful(self):
+        from cores.mask2 import draw_quick_select_v2 as v2
+
+        f = v2._auto_edge_lock_from_stats
+        # Regime centers reproduce the original discrete targets exactly, so the
+        # de-cliffed estimate keeps corpus behavior where it was decisive.
+        self.assertAlmostEqual(f(0.85, 0.60, 0.20, 0.50), 34.0, places=3)
+        self.assertAlmostEqual(f(0.70, 0.40, 0.10, 0.40), 44.0, places=3)
+        self.assertAlmostEqual(f(0.04, 0.02, 0.00, 0.00), 100.0, places=3)
+        self.assertAlmostEqual(f(0.50, 0.40, 0.05, 0.10), 96.0, places=3)
+        self.assertAlmostEqual(f(0.50, 0.40, 0.02, 0.30), 20.0, places=3)
+        self.assertAlmostEqual(f(0.18, 0.12, 0.00, 0.04), 78.0, places=3)
+        # No cliffs: a small change in any statistic moves auto by a bounded
+        # amount (the old discrete table jumped up to 40 points here).
+        for (p75, sd, md) in [(0.4, 0.10, 0.10), (0.4, 0.05, 0.30),
+                              (0.2, 0.00, 0.05), (0.4, 0.16, 0.50)]:
+            xs = np.linspace(0.0, 1.0, 201)
+            ys = np.array([f(x, p75, sd, md) for x in xs])
+            self.assertLess(
+                float(np.abs(np.diff(ys)).max()), 12.0,
+                f"auto EdgeLock cliff along p90 at p75={p75} sd={sd} md={md}")
+
+    def test_local_corpus_controls_have_no_cliff_when_present(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        # Limit to the cliff-prone dumps: same-colour (roof2) and sparse-strong
+        # tree/sky (tree2_sky) are where auto-EdgeLock can jump. The smooth dumps
+        # (simple/snow_edge) add solve time without adding coverage here.
+        names = ("roof2", "tree2_sky")
+        checked = 0
+        for name in names:
+            path = PROJECT_ROOT / "edge_refine_debug" / f"qs_input_{name}.npz"
+            if not path.exists():
+                continue
+            dump = qs_metrics.load_dump(path)
+            cont = qs_metrics.continuity_metrics_for_dump(dump, solver="v3")
+            for control in ("strength", "edge_bias"):
+                step = cont.get(f"{control}_max_step_frac")
+                if step is None:
+                    continue
+                self.assertLess(
+                    step, 0.35,
+                    f"{name} {control} control has a cliff (max_step_frac={step})")
+            checked += 1
+        if checked == 0:
+            self.skipTest("no local corpus dumps present")
+
+
+class DrawQuickSelectRealGTTest(unittest.TestCase):
+    """Gate against *hand-drawn* ground truth (edge_refine_debug/gt_new/).
+
+    The original label_exports/*_expected.png were seeded from the solver output
+    (export-labels), so IoU against them is partly circular and hid real failures
+    (tree2 measured 0.96 there but 0.16 against true GT). These thresholds are the
+    real measured V3 values minus a small margin: they document the honest state
+    (tree2 is bad) and guard against regressing further. Raise them as the solver
+    improves. Skipped when the GT files are absent.
+    """
+
+    def test_v3_against_hand_drawn_gt_when_present(self):
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        gt_dir = PROJECT_ROOT / "edge_refine_debug" / "gt_new"
+        thresholds = {
+            "simple": 0.95,
+            "simple2": 0.94,
+            "lowcontrast": 0.95,
+            "roof": 0.77,
+            "tree2_sky": 0.14,   # known-bad (region over-selection); do not regress
+            "tree2_tree": 0.40,  # known-bad; do not regress
+        }
+        if not gt_dir.exists():
+            self.skipTest(f"missing hand-drawn GT dir: {gt_dir}")
+        checked = 0
+        for name, min_iou in thresholds.items():
+            dump_path = PROJECT_ROOT / "edge_refine_debug" / f"qs_input_{name}.npz"
+            gt_path = gt_dir / f"{name}_expected.png"
+            if not dump_path.exists() or not gt_path.exists():
+                continue
+            metrics = qs_metrics.label_metrics_for_dump(
+                qs_metrics.load_dump(dump_path), gt_path, solver="v3")
+            self.assertGreaterEqual(
+                metrics["label_iou"], min_iou,
+                f"{name} regressed against hand-drawn GT: {metrics['label_iou']:.3f}")
+            checked += 1
+        if checked == 0:
+            self.skipTest(f"no hand-drawn GT found in {gt_dir}")
+
+
+class DrawQuickSelectV4Test(unittest.TestCase):
+    """V4 = V3 region + opt-in boundary edge-snap (default off => V4 == V3)."""
+
+    def _solve(self, module, image, mask):
+        return np.asarray(module.compute_draw_support(
+            image, mask, 12, 0,
+            seed_mask=edge_refine.make_confident_seed(mask),
+            draw_strokes=[_straight_edge_line(stroke_x=110)]).support, dtype=bool)
+
+    def test_v4_edge_snap_is_opt_in_and_keeps_region(self):
+        from cores.mask2 import draw_quick_select_v3, draw_quick_select_v4
+
+        image = _straight_edge_scene(edge_x=120)
+        mask = mask_rasters.draw_line_texture(
+            (image.shape[1], image.shape[0]), [_straight_edge_line(stroke_x=110)])
+        s3 = self._solve(draw_quick_select_v3, image, mask)
+
+        old = os.environ.get("QS_V4_EDGE_SNAP")
+        os.environ.pop("QS_V4_EDGE_SNAP", None)  # default = off
+        try:
+            s4_off = self._solve(draw_quick_select_v4, image, mask)
+            os.environ["QS_V4_EDGE_SNAP"] = "1"
+            s4_on = self._solve(draw_quick_select_v4, image, mask)
+        finally:
+            if old is None:
+                os.environ.pop("QS_V4_EDGE_SNAP", None)
+            else:
+                os.environ["QS_V4_EDGE_SNAP"] = old
+
+        # Default off keeps V4 identical to V3 (no regression by default).
+        self.assertTrue(np.array_equal(s3, s4_off))
+        # With the snap on the result is still a valid selection that never
+        # leaks across the strong edge into the far side.
+        self.assertGreater(int(s4_on.sum()), 0)
+        self.assertLess(s4_on[:, 140:].mean(), 0.02)
+
+    def test_v4_snap_improves_clean_edges_and_does_not_over_snap(self):
+        """With snap on (the in-app mode), the auto edge-trace must improve the
+        clean-edge cases and never regress same-colour roof. Locks the distprior
+        curve so it cannot drift back to the destructive over-snap floor."""
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        gt_dir = PROJECT_ROOT / "edge_refine_debug" / "gt_new"
+        # (name, min v4-snap-on b_f1, must-not-regress-vs-v3)
+        gates = {"simple": 0.80, "lowcontrast": 0.84, "roof": None}
+        old = os.environ.get("QS_V4_EDGE_SNAP")
+        os.environ["QS_V4_EDGE_SNAP"] = "1"
+        os.environ.pop("QS_V4_TRACE_DISTPRIOR", None)
+        checked = 0
+        try:
+            for name, floor in gates.items():
+                dump_path = PROJECT_ROOT / "edge_refine_debug" / f"qs_input_{name}.npz"
+                gt_path = gt_dir / f"{name}_expected.png"
+                if not dump_path.exists() or not gt_path.exists():
+                    continue
+                dump = qs_metrics.load_dump(dump_path)
+                v3 = qs_metrics.label_metrics_for_dump(dump, gt_path, solver="v3")
+                v4 = qs_metrics.label_metrics_for_dump(dump, gt_path, solver="v4")
+                b3, b4 = v3["label_boundary_f1"], v4["label_boundary_f1"]
+                if floor is not None:
+                    self.assertGreaterEqual(
+                        b4, floor, f"{name} snap-on b_f1 {b4:.3f} below {floor}")
+                self.assertGreaterEqual(
+                    b4, b3 - 0.02, f"{name} snap regressed vs v3 ({b4:.3f} < {b3:.3f})")
+                checked += 1
+        finally:
+            if old is None:
+                os.environ.pop("QS_V4_EDGE_SNAP", None)
+            else:
+                os.environ["QS_V4_EDGE_SNAP"] = old
+        if checked == 0:
+            self.skipTest("no GT dumps present for snap-quality gate")
+
+
+class DrawQuickSelectEraseLocalityTest(unittest.TestCase):
+    """An erase is a *local* correction: it must not move the selection boundary
+    far from where it was drawn. Regression for the band-limited min-cut rerouting
+    the whole add boundary when the erase was fed in as a background seed."""
+
+    def test_erase_only_changes_support_near_its_footprint(self):
+        import cv2
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+        from cores.mask2 import draw_quick_select_v3 as v3
+
+        dump_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_erase.npz"
+        if not dump_path.exists():
+            self.skipTest(f"missing erase fixture: {dump_path}")
+        dump = qs_metrics.load_dump(dump_path)
+        strokes = dump.get("strokes") or []
+        adds = [s for s in strokes if not bool(getattr(s, "is_erasing", False))]
+        erases = [s for s in strokes if bool(getattr(s, "is_erasing", False))]
+        if not adds or not erases:
+            self.skipTest("erase fixture lacks an add+erase pair")
+
+        add_only = dict(dump)
+        add_only["strokes"] = adds
+        s_add = np.asarray(
+            qs_metrics._solve_support(add_only, solver="v3").support, dtype=bool)
+        s_all = np.asarray(
+            qs_metrics._solve_support(dump, solver="v3").support, dtype=bool)
+
+        erase_fp = v3._erase_stroke_mask(s_add.shape, erases)
+        changed = s_add ^ s_all
+        # The erase clearly does something local.
+        self.assertGreater(int(changed.sum()), 0, "erase had no effect at all")
+        # But essentially nothing moves well beyond the erase footprint. Reach is
+        # a small snap margin (<=24px); 50px is a generous guard band.
+        far = cv2.dilate(
+            erase_fp.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=50) > 0
+        leaked = int((changed & ~far).sum())
+        self.assertLess(
+            leaked, 200,
+            f"erase moved {leaked}px more than 50px from its footprint "
+            "(boundary reroute, not a local correction)")
+
+    def test_unrelated_erase_does_not_move_add_with_v4_snap(self):
+        """An erase that does not touch the add's selection must leave the add
+        untouched even with V4 snap on. Regression for the trace reading the
+        stroke-accumulated ``context_edge`` plane, which an unrelated erase
+        perturbed -> the add boundary shifted tens of px ("erasing elsewhere
+        moved my selection"). dump 020 is a real add + far erase capture."""
+        import cv2
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+        from cores.mask2 import draw_quick_select_v3 as v3
+
+        dump_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_020.npz"
+        if not dump_path.exists():
+            self.skipTest(f"missing fixture: {dump_path}")
+        dump = qs_metrics.load_dump(dump_path)
+        strokes = dump.get("strokes") or []
+        adds = [s for s in strokes if not bool(getattr(s, "is_erasing", False))]
+        erases = [s for s in strokes if bool(getattr(s, "is_erasing", False))]
+        if not adds or not erases:
+            self.skipTest("fixture lacks an add + far-erase pair")
+        add_only = dict(dump)
+        add_only["strokes"] = adds
+
+        old = os.environ.get("QS_V4_EDGE_SNAP")
+        os.environ["QS_V4_EDGE_SNAP"] = "1"
+        try:
+            s_add = np.asarray(
+                qs_metrics._solve_support(add_only, solver="v4").support, dtype=bool)
+            s_all = np.asarray(
+                qs_metrics._solve_support(dump, solver="v4").support, dtype=bool)
+        finally:
+            if old is None:
+                os.environ.pop("QS_V4_EDGE_SNAP", None)
+            else:
+                os.environ["QS_V4_EDGE_SNAP"] = old
+
+        erase_fp = v3._erase_stroke_mask(s_add.shape, erases)
+        # The erase here does not overlap the add selection at all.
+        if bool((erase_fp & s_add).any()):
+            self.skipTest("erase overlaps the add selection in this fixture")
+        near = cv2.dilate(
+            erase_fp.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=10) > 0
+        moved = int(((s_add ^ s_all) & ~near).sum())
+        self.assertEqual(
+            moved, 0,
+            f"unrelated erase moved the add selection by {moved}px with V4 snap on")
+
+
+class DrawQuickSelectBrushRimTest(unittest.TestCase):
+    """The selection must not leave a 1px brush-circle arc floating past an object
+    edge into the background. Regression for the min-cut keeping the outermost
+    band pixel on the brush footprint where it overhangs an edge."""
+
+    def test_offedge_brush_rim_is_trimmed(self):
+        import cv2
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        dump_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_020.npz"
+        if not dump_path.exists():
+            self.skipTest(f"missing fixture: {dump_path}")
+        dump = qs_metrics.load_dump(dump_path)
+        adds = [s for s in (dump.get("strokes") or [])
+                if not bool(getattr(s, "is_erasing", False))]
+        if not adds:
+            self.skipTest("fixture lacks an add stroke")
+        add_only = dict(dump)
+        add_only["strokes"] = adds
+
+        def off_edge_brush_rim(support):
+            hint = (np.asarray(dump["mask"], np.float32) > 0.02)
+            edge = edge_refine._draw_snap_edge_strength(
+                edge_refine._prepare_guide_image(dump["guide"], support.shape))
+            k = np.ones((3, 3), np.uint8)
+            on_edge = cv2.dilate((edge > 0.08).astype(np.uint8), k, iterations=2) > 0
+            hint_b = hint & ~(cv2.erode(hint.astype(np.uint8), k, iterations=2) > 0)
+            zone = cv2.dilate(hint_b.astype(np.uint8), k, iterations=1) > 0
+            ring = support & ~(cv2.erode(support.astype(np.uint8), k, iterations=1) > 0)
+            return int((ring & zone & ~on_edge).sum())
+
+        old_snap = os.environ.get("QS_V4_EDGE_SNAP")
+        old_t = os.environ.get("QS_RIM_EDGE_T")
+        os.environ["QS_V4_EDGE_SNAP"] = "1"
+        try:
+            os.environ["QS_RIM_EDGE_T"] = "-1"  # disable trim -> baseline
+            base = np.asarray(
+                qs_metrics._solve_support(add_only, solver="v4").support, dtype=bool)
+            os.environ.pop("QS_RIM_EDGE_T", None)  # default trim on
+            trimmed = np.asarray(
+                qs_metrics._solve_support(add_only, solver="v4").support, dtype=bool)
+        finally:
+            for key, val in (("QS_V4_EDGE_SNAP", old_snap), ("QS_RIM_EDGE_T", old_t)):
+                if val is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = val
+
+        before = off_edge_brush_rim(base)
+        after = off_edge_brush_rim(trimmed)
+        self.assertGreater(before, 10, "fixture no longer exhibits the brush-rim arc")
+        self.assertLessEqual(
+            after, before // 3,
+            f"floating brush-rim arc not trimmed (before={before}, after={after})")
 
 
 if __name__ == "__main__":

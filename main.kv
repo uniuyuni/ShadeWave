@@ -1447,7 +1447,7 @@
                                             ref_width: 68
                                         ParamCheckBox:
                                             id: checkbox_subpixel_distortion
-                                            active: True
+                                            active: False
                                             on_press: root.begin_history_effect_ctrl(0, 'lens_modifier')
                                             on_active: root.apply_effects_lv(0, 'lens_modifier')
                                             on_release: root.end_history_effect_ctrl(0, 'lens_modifier')
@@ -1795,9 +1795,9 @@
                                 HeadLabel:
                                     id: switch_details
                                     text: ' Details'
-                                    on_press: root.begin_history_effect_ctrl(0, ['inpaint', 'subpixel_shift'])
-                                    on_active: root.apply_effects_lv(0, ['inpaint', 'subpixel_shift'])
-                                    on_release: root.end_history_effect_ctrl(0, ['inpaint', 'subpixel_shift'])
+                                    on_press: root.begin_history_effect_ctrl(0, ['inpaint', 'subpixel_shift', 'exposure_fusion_debevec'])
+                                    on_active: root.apply_effects_lv(0, ['inpaint', 'subpixel_shift', 'exposure_fusion_debevec'])
+                                    on_release: root.end_history_effect_ctrl(0, ['inpaint', 'subpixel_shift', 'exposure_fusion_debevec'])
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1873,6 +1873,17 @@
                                         on_pre_active: root.begin_history_effect_ctrl(0, 'subpixel_shift')
                                         on_active: root.apply_effects_lv(0, 'subpixel_shift')
                                         on_post_active: root.end_history_effect_ctrl(0, 'subpixel_shift')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Exposure fusion"
+                                    VSpacer:
+                                        size_hint_x: 0.55
+                                    ParamSwitch:
+                                        id: switch_exposure_fusion_debevec
+                                        on_pre_active: root.begin_history_effect_ctrl(0, 'exposure_fusion_debevec')
+                                        on_active: root.apply_effects_lv(0, 'exposure_fusion_debevec')
+                                        on_post_active: root.end_history_effect_ctrl(0, 'exposure_fusion_debevec')
 
                                 VSeparator:
 
@@ -3416,6 +3427,42 @@
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
+                                ParamSlider:
+                                    id: slider_mask2_freedraw_brush_hardness
+                                    text: "Brush Hardness"
+                                    min: 0
+                                    max: 100
+                                    value: 100
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                AnchorLayout:
+                                    anchor_x: 'right'
+                                    anchor_y: 'center'
+                                    size_hint_y: None
+                                    ref_height: 24
+
+                                    MDGridLayout:
+                                        size_hint: None, None
+                                        ref_width: 256
+                                        ref_height: 20
+                                        cols: 2
+                                        ref_spacing: 2
+
+                                        ParamLabel:
+                                            text: "Polyline Fill"
+                                            ref_width: 128
+                                        ParamCheckBox:
+                                            id: checkbox_mask2_polyline_fill
+                                            active: True
+                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
+                                            on_active: root.apply_effects_lv(3, 'mask2')
+                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
+
+                                VSeparator:
+
                                 ParamBoxLayout:
                                     ParamLabel:
                                         text: "Quick"
@@ -3470,40 +3517,6 @@
                                     on_after_edit:
                                         root.end_history_effect_ctrl(3, 'mask2')
                                         root.apply_mask2_edge_refine_slider(settle=True)
-
-                                ParamSlider:
-                                    id: slider_mask2_freedraw_brush_hardness
-                                    text: "Brush Hardness"
-                                    min: 0
-                                    max: 100
-                                    value: 100
-                                    step: 1
-                                    on_slider: root.apply_effects_lv(3, 'mask2')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
-
-                                AnchorLayout:
-                                    anchor_x: 'right'
-                                    anchor_y: 'center'
-                                    size_hint_y: None
-                                    ref_height: 24
-
-                                    MDGridLayout:
-                                        size_hint: None, None
-                                        ref_width: 256
-                                        ref_height: 20
-                                        cols: 2
-                                        ref_spacing: 2
-
-                                        ParamLabel:
-                                            text: "Polyline Fill"
-                                            ref_width: 128
-                                        ParamCheckBox:
-                                            id: checkbox_mask2_polyline_fill
-                                            active: True
-                                            on_press: root.begin_history_effect_ctrl(3, 'mask2')
-                                            on_active: root.apply_effects_lv(3, 'mask2')
-                                            on_release: root.end_history_effect_ctrl(3, 'mask2')
 
                                 VSeparator:
 

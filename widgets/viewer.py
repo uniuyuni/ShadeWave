@@ -1,7 +1,6 @@
 import os
 import threading
 import base64
-import rawpy
 import numpy as np
 import cv2
 from watchfiles import watch
@@ -24,6 +23,7 @@ from kivy.uix.recycleview.views import RecycleDataViewBehavior
 
 import logging
 
+import libraw_enhanced as lre
 import define
 import cores.core as core
 import utils.kvutils as kvutils
@@ -509,8 +509,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
                         thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
                 else:
                     if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
-                        with rawpy.imread(file_path) as raw:
-                            thumb = raw.postprocess()
+                        with lre.imread(file_path) as raw:
+                            thumb = raw.postprocess(output_bps=8)
                     elif file_path.lower().endswith(define.SUPPORTED_FORMATS_EXR):
                         # EXR は pyvips 非対応。OpenEXR で読み、表示用にトーンマップ済み float32[0,1] を得る。
                         import cores.exr_io as exr_io

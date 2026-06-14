@@ -137,6 +137,10 @@ def _solver_module(solver: Optional[str] = None):
     value = (solver or os.environ.get("QS_DRAW_SOLVER") or "").strip().lower()
     if not value and os.environ.get("QS_DRAW_V2", "").strip().lower() in {"1", "true", "yes", "on"}:
         value = "v2"
+    if value in {"v4", "4"}:
+        from cores.mask2 import draw_quick_select_v4
+
+        return draw_quick_select_v4
     if value in {"v3", "3"}:
         from cores.mask2 import draw_quick_select_v3
 
@@ -154,7 +158,7 @@ def _solve_support(dump, *, solver: Optional[str] = None):
     old_mode = os.environ.get("QS_V2_STRENGTH_MODE")
     mode = dump.get("strength_mode")
     use_dump_mode = module.__name__.endswith(
-        ("draw_quick_select_v2", "draw_quick_select_v3")
+        ("draw_quick_select_v2", "draw_quick_select_v3", "draw_quick_select_v4")
     ) and mode in {"internal", "offset"}
     if use_dump_mode:
         os.environ["QS_V2_STRENGTH_MODE"] = mode
@@ -422,6 +426,102 @@ def zoom_metrics_for_dump(
         key = str(scale).replace(".", "_")
         out[f"zoom_iou_{key}x"] = round(_iou(base, back), 6)
         out[f"zoom_diff_px_{key}x"] = int(np.count_nonzero(base ^ back))
+    return out
+
+
+# --- control continuity / monotonicity ---------------------------------------
+# A predictable control changes the output smoothly: a small change in a knob
+# (EdgeLock offset, Radius, Edge Bias) must not produce a cliff in the selected
+# area. These helpers sweep one control over a grid, solve at each point, and
+# summarize how "jumpy" the output is. This is the measurement behind the V3
+# goal "調整結果を予測できる" and the guard the de-cliffing work is checked against.
+CONTINUITY_CONTROLS = ("strength", "radius", "edge_bias")
+
+
+def default_control_grid(dump, control: str) -> List[float]:
+    """A reasonable fine sweep grid for one control around the dump's value."""
+    if control == "strength":
+        mode = str(dump.get("strength_mode", "internal"))
+        if mode == "offset":
+            return [round(v, 3) for v in np.arange(-40.0, 40.0 + 1e-6, 5.0)]
+        return [round(v, 3) for v in np.arange(0.0, 100.0 + 1e-6, 6.25)]
+    if control == "edge_bias":
+        base = float(dump.get("edge_bias", 0.0))
+        return [round(base + d, 3) for d in np.arange(-6.0, 6.0 + 1e-6, 1.0)]
+    if control == "radius":
+        base = float(dump.get("radius", 0.0))
+        return [round(base + d, 3) for d in np.arange(0.0, 1.6 + 1e-6, 0.2)]
+    raise ValueError(f"unknown control: {control}")
+
+
+def _support_px(dump, *, solver: Optional[str] = None) -> int:
+    res = _solve_support(dump, solver=solver)
+    return int(np.count_nonzero(np.asarray(res.support, dtype=bool)))
+
+
+def control_sweep_for_dump(
+        dump,
+        control: str,
+        grid=None,
+        *,
+        solver: Optional[str] = None) -> dict:
+    """Sweep one control over ``grid`` and summarize output continuity.
+
+    Returns the per-point ``support_px`` plus:
+
+    * ``max_step_frac``   -- the largest jump in support between *adjacent* grid
+                             points, as a fraction of the drawn hint (a cliff).
+    * ``range_frac``      -- (max-min)/hint over the whole sweep (total travel).
+
+    Both are normalized by ``hint_px`` so they are comparable across dumps. A
+    well-behaved control has a small ``max_step_frac`` (no cliffs) even when
+    ``range_frac`` is large (it can still move the boundary a lot, smoothly).
+    """
+    if control not in CONTINUITY_CONTROLS:
+        raise ValueError(f"unknown control: {control}")
+    if grid is None:
+        grid = default_control_grid(dump, control)
+    grid = [float(v) for v in grid]
+    hint_px = max(1, int(np.count_nonzero(np.asarray(dump["mask"], dtype=np.float32) > HINT_THRESH)))
+
+    support = []
+    for value in grid:
+        probe = dict(dump)
+        probe[control] = float(value)
+        support.append(_support_px(probe, solver=solver))
+    support = np.asarray(support, dtype=np.float64)
+    steps = np.abs(np.diff(support)) if support.size > 1 else np.zeros(0)
+    max_step = float(steps.max()) if steps.size else 0.0
+    span = float(support.max() - support.min()) if support.size else 0.0
+    worst = int(np.argmax(steps)) if steps.size else 0
+    return {
+        "control": control,
+        "grid": grid,
+        "support_px": [int(v) for v in support],
+        "hint_px": hint_px,
+        "max_step_px": int(round(max_step)),
+        "max_step_frac": round(max_step / hint_px, 6),
+        "max_step_at": [grid[worst], grid[worst + 1]] if steps.size else [],
+        "range_px": int(round(span)),
+        "range_frac": round(span / hint_px, 6),
+    }
+
+
+def continuity_metrics_for_dump(
+        dump,
+        *,
+        solver: Optional[str] = None,
+        controls=CONTINUITY_CONTROLS) -> dict:
+    """Run a continuity sweep for each control; return the flattened summary."""
+    out: dict = {}
+    for control in controls:
+        try:
+            swept = control_sweep_for_dump(dump, control, solver=solver)
+        except ValueError:
+            continue
+        out[f"{control}_max_step_frac"] = swept["max_step_frac"]
+        out[f"{control}_range_frac"] = swept["range_frac"]
+        out[f"{control}_max_step_at"] = swept["max_step_at"]
     return out
 
 

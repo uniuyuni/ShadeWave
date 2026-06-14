@@ -161,6 +161,58 @@ import cv2
 
 import file_cache_system
 
+
+def _debug_display_stats(label, img):
+    if os.getenv("PLATYPUS_DEBUG_PIPELINE_STATS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    try:
+        import logging
+        arr = np.asarray(img)
+        if arr.size == 0:
+            logging.warning("[DISPLAY_STATS] %s shape=%s empty", label, getattr(arr, "shape", None))
+            return
+        finite = np.isfinite(arr)
+        finite_count = int(np.count_nonzero(finite))
+        total_count = int(arr.size)
+        if finite_count == 0:
+            logging.warning("[DISPLAY_STATS] %s shape=%s dtype=%s finite=0/%d", label, arr.shape, arr.dtype, total_count)
+            return
+        finite_values = arr[finite]
+        parts = [
+            f"[DISPLAY_STATS] {label}",
+            f"shape={arr.shape}",
+            f"dtype={arr.dtype}",
+            f"finite={finite_count}/{total_count}",
+            f"min={float(np.min(finite_values)):.6g}",
+            f"max={float(np.max(finite_values)):.6g}",
+            f"mean={float(np.mean(finite_values)):.6g}",
+            f"neg={int(np.count_nonzero(arr < 0))}",
+            f"over1={int(np.count_nonzero(arr > 1))}",
+        ]
+        if arr.ndim == 3 and arr.shape[2] >= 3:
+            rgb = arr[..., :3]
+            any_neg = np.any(rgb < 0, axis=2)
+            any_over = np.any(rgb > 1, axis=2)
+            all_over = np.all(rgb > 1, axis=2)
+            ch_min = np.nanmin(rgb, axis=(0, 1))
+            ch_max = np.nanmax(rgb, axis=(0, 1))
+            ch_neg = np.count_nonzero(rgb < 0, axis=(0, 1))
+            ch_over = np.count_nonzero(rgb > 1, axis=(0, 1))
+            parts.extend([
+                "ch_min=({:.6g},{:.6g},{:.6g})".format(*ch_min),
+                "ch_max=({:.6g},{:.6g},{:.6g})".format(*ch_max),
+                "ch_neg=({},{},{})".format(*ch_neg),
+                "ch_over1=({},{},{})".format(*ch_over),
+                f"px_any_neg={int(np.count_nonzero(any_neg))}",
+                f"px_any_over1={int(np.count_nonzero(any_over))}",
+                f"px_all_over1={int(np.count_nonzero(all_over))}",
+            ])
+        logging.warning(" ".join(parts))
+    except Exception:
+        import logging
+        logging.exception("[DISPLAY_STATS] failed to inspect %s", label)
+
+
 # OpenCVの設定
 cv2.ocl.setUseOpenCL(True)
 cv2.setUseOptimized(True)
@@ -908,18 +960,6 @@ if __name__ == '__main__':
             #logging.debug(f"draw_histogram_view")
             self.ids["histogram"].draw_histogram_from_data(hist_data)
 
-        def _display_output_encoding(self, colourspace):
-            cs_lower = str(colourspace).lower()
-            if 'srgb' in cs_lower or 'rec.709' in cs_lower or 'rec709' in cs_lower:
-                return 'srgb'
-            if 'display p3' in cs_lower or 'p3-d65' in cs_lower:
-                return 'srgb'
-            if 'adobe' in cs_lower:
-                return 'gamma-2.2'
-            if 'prophoto' in cs_lower or 'romm' in cs_lower:
-                return 'gamma-1.8'
-            return 'linear'
-
         def _get_fast_display_basis(self, src_space, dst_space, cat):
             key = (src_space, dst_space, cat)
             basis = self._fast_display_transform_cache.get(key)
@@ -940,20 +980,8 @@ if __name__ == '__main__':
             basis = self._get_fast_display_basis(src_space, dst_space, cat)
             src = np.asarray(img, dtype=np.float32)
             out = (src.reshape(-1, 3) @ basis).reshape(src.shape)
-            np.maximum(out, 0.0, out=out)
-
-            encoding = self._display_output_encoding(dst_space)
-            if encoding == 'srgb':
-                encoded = np.empty_like(out, dtype=np.float32)
-                low = out <= 0.0031308
-                encoded[low] = out[low] * 12.92
-                encoded[~low] = 1.055 * np.power(out[~low], 1.0 / 2.4) - 0.055
-                return encoded
-            if encoding == 'gamma-2.2':
-                return np.power(out, 1.0 / 2.2).astype(np.float32, copy=False)
-            if encoding == 'gamma-1.8':
-                return np.power(out, 1.0 / 1.8).astype(np.float32, copy=False)
-            return out
+            out = colour_functions.compress_negative_display_gamut(out)
+            return colour_functions.encode_display_output(out, dst_space)
 
         def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False):
             self._draw_image_core_active = True
@@ -1014,6 +1042,7 @@ if __name__ == '__main__':
                         post_t0 = time.perf_counter() if debug_mask_geom else None
                         img = np.array(img)
                         utils.print_nan_inf(img, "output")
+                        _debug_display_stats("input", img)
 
                         src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
                         dst_space = config.get_config('display_color_gamut')
@@ -1022,8 +1051,18 @@ if __name__ == '__main__':
                         if fast_display:
                             img = self._fast_display_color_transform(img, src_space, dst_space, cat)
                         else:
-                            img = colour_functions.RGB_to_RGB(img, src_space, dst_space, cat,
-                                                    apply_cctf_decoding=False, apply_cctf_encoding=True, apply_gamut_mapping=True).astype(np.float32)
+                            img = colour_functions.RGB_to_RGB(
+                                img,
+                                src_space,
+                                dst_space,
+                                cat,
+                                apply_cctf_decoding=False,
+                                apply_cctf_encoding=False,
+                                apply_gamut_mapping=False,
+                            )
+                            img = colour_functions.compress_negative_display_gamut(img).astype(np.float32)
+                            img = colour_functions.encode_display_output(img, dst_space)
+                        _debug_display_stats("converted fast=%s %s->%s" % (fast_display, src_space, dst_space), img)
                         color_ms = (time.perf_counter() - color_t0) * 1000.0 if debug_mask_geom else 0.0
 
                         # Ge タブでは Mask2 モードでも full-preview なので zero-wrap しない。
@@ -1035,6 +1074,7 @@ if __name__ == '__main__':
                         img_draw = core.apply_out_of_range_exposure(img, self.ids['toggle_overexposure'].state == 'down', self.ids['toggle_underexposure'].state == 'down')
                         img_draw, _ = core.apply_zero_wrap(img_draw, self.primary_param, crop_editing=crop_editing)
                         img_draw = np.clip(img_draw, 0, 1)
+                        _debug_display_stats("clipped", img_draw)
                         preview_ms = (time.perf_counter() - preview_t0) * 1000.0 if debug_mask_geom else 0.0
                         if debug_mask_geom:
                             logging.warning(
@@ -2601,7 +2641,7 @@ if __name__ == '__main__':
             self._set_disabled_for_ids(
                 (
                     'switch_fringe_removal',
-                    ''
+                    'switch_rca',
                     'slider_rca_purple_amount',
                     'slider_rca_green_amount',
                     'slider_rca_fringe_width',
@@ -2613,7 +2653,6 @@ if __name__ == '__main__':
             self._set_disabled_for_ids(
                 (
                     'switch_mask2_draw_effects',
-                    'switch_rca',
                     'slider_mask2_color_dodge',
                     'slider_mask2_color_burn',
                     'slider_mask2_mix_black',
@@ -3168,8 +3207,9 @@ if __name__ == '__main__':
                 src_space = core.ICC_PROFILE_TO_COLOR_SPACE.get(src_icc_profile_name, 'sRGB')
                 arr = colour_functions.RGB_to_RGB(
                     arr, src_space, 'ProPhoto RGB', config.get_config('cat'),
-                    apply_cctf_decoding=True, apply_gamut_mapping=True,
-                ).astype(np.float32)
+                    apply_cctf_decoding=True, apply_gamut_mapping=False,
+                )
+                arr = colour_functions.apply_RGB_gamut_mapping(arr).astype(np.float32)
                 # MKL を知覚均等空間で走らせるため、保存時点で sRGB ガンマエンコード済みにしておく
                 import cores.color as color
                 arr = color.srgb_gamma_encode(arr).astype(np.float32)

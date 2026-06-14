@@ -1,10 +1,14 @@
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
+import importlib
 
 
 def child():
     import libraw_enhanced as lre
-    inner = __import__("libraw_enhanced.libraw_enhanced", fromlist=["*"])
+    try:
+        inner = importlib.import_module("libraw_enhanced.libraw_enhanced")
+    except ModuleNotFoundError:
+        inner = lre
     return {
         "top_file": getattr(lre, "__file__", None),
         "top_has_imread": hasattr(lre, "imread"),
@@ -20,4 +24,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -14,10 +14,10 @@ build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
 # GitHub から最新 LibRaw を取得して .pixi/libraw-install にビルドします
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
 # 拡張モジュールのみ再ビルド（ローカル LibRaw は .pixi/libraw-install を参照）
-install-libraw-enhanced = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip install -e libraw_enhanced --no-build-isolation" }
+install-libraw-enhanced = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip --disable-pip-version-check install -e libraw_enhanced --no-build-isolation --force-reinstall --no-deps --no-cache-dir" }
 install-sam3 = { cmd = "python -m pip install -e SAM3" }
 # 初回: LibRaw を取得してビルド → editable インストール（毎回フルビルドしたい場合はこちら）
-setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip install -e libraw_enhanced --no-build-isolation'" }
+setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip --disable-pip-version-check install -e libraw_enhanced --no-build-isolation --force-reinstall --no-deps --no-cache-dir'" }
 test-hls-color-adjust = { cmd = "python tests/test_hls_color_adjust.py" }
 check-exr-export-env = { cmd = "python scripts/check_exr_export_env.py" }
 build-denoise-native = """
@@ -34,7 +34,6 @@ curl = ">=8.17.0,<9"
 git = ">=2.51.0,<3"
 gdown = ">=5.2.1,<6"
 libtool = ">=2.4,<3"
-libvips = ">=8.17.2,<9"
 pip = ">=25.0.1,<26"
 pkg-config = ">=0.29,<1"
 python = ">=3.11.13,<3.12"
@@ -44,6 +43,7 @@ cmake = "*"
 ninja = "*"
 cxx-compiler = "*"
 pybind11 = "*"
+libvips = ">=8.17.2,<9"
 
 [pypi-dependencies]
 radiance_denoise = { path = "radiance_denoise", editable = true }

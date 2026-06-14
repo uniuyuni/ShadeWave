@@ -23,6 +23,24 @@ _PIPELINE_TIMING_FRAME_SEQ = 0
 _PIPELINE_TIMING_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M%S")
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
 _DEBUG_MASK_ZOOM_SYNC = os.getenv("PLATYPUS_DEBUG_MASK_ZOOM_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+_DEBUG_PIPELINE_STATS = os.getenv("PLATYPUS_DEBUG_PIPELINE_STATS", "0").strip().lower() in {"1", "true", "yes", "on"}
+_DEBUG_PIPELINE_STATS_VERBOSE = os.getenv("PLATYPUS_DEBUG_PIPELINE_STATS_VERBOSE", "0").strip().lower() in {"1", "true", "yes", "on"}
+_DEBUG_PIPELINE_STATS_EFFECTS = {
+    name.strip()
+    for name in os.getenv(
+        "PLATYPUS_DEBUG_PIPELINE_STATS_EFFECTS",
+        "color_temperature,remove_muddy_color,auto_exposure,lut,highlight_compress,hls2rgb2,vignette",
+    ).split(",")
+    if name.strip()
+}
+_DEBUG_PIPELINE_STATS_LABELS = {
+    name.strip()
+    for name in os.getenv(
+        "PLATYPUS_DEBUG_PIPELINE_STATS_LABELS",
+        "primary crop,primary after lv2,primary after lv3",
+    ).split(",")
+    if name.strip()
+}
 
 
 def _mask_geom_debug(message, *args):
@@ -33,6 +51,130 @@ def _mask_geom_debug(message, *args):
 def _mask_zoom_sync_debug(message, *args):
     if _DEBUG_MASK_ZOOM_SYNC:
         logging.warning("[MASK_ZOOM_SYNC] " + message, *args)
+
+
+def _debug_pipeline_param_summary(effect_name, param, effect=None):
+    if not _DEBUG_PIPELINE_STATS or param is None:
+        return ""
+    keys_by_effect = {
+        "color_temperature": (
+            "switch_white_balance",
+            "color_temperature_reset",
+            "color_temperature",
+            "color_tint_reset",
+            "color_tint",
+            "color_Y",
+        ),
+        "remove_muddy_color": (
+            "switch_global",
+            "remove_muddy_yellow",
+            "shadow_threshold",
+            "separation_strength",
+        ),
+        "auto_exposure": ("switch_lut", "rgb_or_raw", "auto_exposure", "lut_to_log", "lut_name"),
+        "lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log"),
+        "exposure": ("exposure",),
+        "contrast": ("contrast",),
+        "tone": ("high_light", "light", "dark", "shadow"),
+        "level": ("black_level", "white_level", "gamma"),
+        "highlight_compress": ("highlight_compress",),
+        "clahe": ("switch_clahe", "clahe_clip_limit", "clahe_tile_grid_size"),
+        "hls": ("hue", "lightness", "saturation2"),
+        "vs_and_saturation": ("saturation", "vibrance"),
+        "curves": ("tonecurve", "tonecurve_red", "tonecurve_green", "tonecurve_blue"),
+        "film_emulation": ("film_simulation", "film_simulation_intensity"),
+        "solid_color": ("solid_color", "solid_color_intensity"),
+        "unsharp_mask": ("unsharp_mask", "unsharp_mask_radius", "unsharp_mask_amount"),
+        "grain": ("grain", "grain_radius", "grain_amount"),
+        "vignette": ("vignette", "vignette_radius", "vignette_softness"),
+    }
+    keys = keys_by_effect.get(effect_name)
+    if not keys:
+        return ""
+    values = []
+    for key in keys:
+        try:
+            if effect is not None:
+                value = effect._get_param(param, key)
+                source = "param" if key in param else "default"
+                values.append(f"{key}={value!r}({source})")
+            elif key in param:
+                values.append(f"{key}={param[key]!r}")
+        except Exception:
+            if key in param:
+                values.append(f"{key}={param[key]!r}")
+    return " params={" + ", ".join(values) + "}" if values else ""
+
+
+def _debug_pipeline_image_stats(label, img, *, effect_name=None, param=None, effect=None, state=None):
+    if not _DEBUG_PIPELINE_STATS:
+        return
+    if not _DEBUG_PIPELINE_STATS_VERBOSE:
+        if effect_name is None and label not in _DEBUG_PIPELINE_STATS_LABELS:
+            return
+        if effect_name is not None and effect_name not in _DEBUG_PIPELINE_STATS_EFFECTS:
+            return
+    if img is None:
+        logging.warning("[PIPELINE_STATS] %s image=None", label)
+        return
+    try:
+        arr = np.asarray(img)
+        if arr.size == 0:
+            logging.warning("[PIPELINE_STATS] %s shape=%s empty", label, getattr(arr, "shape", None))
+            return
+        finite = np.isfinite(arr)
+        finite_count = int(np.count_nonzero(finite))
+        total_count = int(arr.size)
+        if finite_count == 0:
+            logging.warning(
+                "[PIPELINE_STATS] %s shape=%s dtype=%s finite=0/%d",
+                label,
+                arr.shape,
+                arr.dtype,
+                total_count,
+            )
+            return
+
+        finite_values = arr[finite]
+        msg_parts = [
+            f"[PIPELINE_STATS] {label}",
+            f"shape={arr.shape}",
+            f"dtype={arr.dtype}",
+            f"finite={finite_count}/{total_count}",
+            f"min={float(np.min(finite_values)):.6g}",
+            f"max={float(np.max(finite_values)):.6g}",
+            f"mean={float(np.mean(finite_values)):.6g}",
+            f"neg={int(np.count_nonzero(arr < 0))}",
+            f"over1={int(np.count_nonzero(arr > 1))}",
+        ]
+        if arr.ndim == 3 and arr.shape[2] >= 3:
+            rgb = arr[..., :3]
+            ch_min = np.nanmin(rgb, axis=(0, 1))
+            ch_max = np.nanmax(rgb, axis=(0, 1))
+            ch_mean = np.nanmean(rgb, axis=(0, 1))
+            msg_parts.extend([
+                "ch_min=({:.6g},{:.6g},{:.6g})".format(*ch_min),
+                "ch_max=({:.6g},{:.6g},{:.6g})".format(*ch_max),
+                "ch_mean=({:.6g},{:.6g},{:.6g})".format(*ch_mean),
+            ])
+            luma = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+            shadow = np.isfinite(luma) & (luma >= 0.0) & (luma < 0.03)
+            if np.any(shadow):
+                shadow_rgb = rgb[shadow]
+                shadow_spread = np.max(shadow_rgb, axis=1) - np.min(shadow_rgb, axis=1)
+                shadow_mean = np.nanmean(shadow_rgb, axis=0)
+                msg_parts.extend([
+                    f"shadow_px={int(np.count_nonzero(shadow))}",
+                    f"shadow_spread_mean={float(np.nanmean(shadow_spread)):.6g}",
+                    "shadow_ch_mean=({:.6g},{:.6g},{:.6g})".format(*shadow_mean),
+                ])
+        if state:
+            msg_parts.append(f"state={state}")
+        if effect_name:
+            msg_parts.append(_debug_pipeline_param_summary(effect_name, param, effect=effect))
+        logging.warning(" ".join(part for part in msg_parts if part))
+    except Exception:
+        logging.exception("[PIPELINE_STATS] failed to inspect %s", label)
 
 
 def _mask_geom_id(mask):
@@ -515,6 +657,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         disp_info2 = disp_info
     mask_editor2.set_primary_param(primary_param, disp_info2, redraw_mask=False)
     mask_editor2.set_ref_image(imgc, pre_rotation_img)
+    _debug_pipeline_image_stats("primary crop", imgc, param=primary_param)
     #mask_editor2.update()
     if timing is not None:
         _timing_add_section_ms(timing, "crop_and_mask_ref", (time.perf_counter() - _t0) * 1000.0)
@@ -539,9 +682,14 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
             _timing_add_section_ms(timing, "pipeline_last", (time.perf_counter() - _t0) * 1000.0)
     else:
         img2 = imgc
+        # Drag/space preview intentionally skips lv1-lv4, but the crop may have
+        # changed. Do not keep this crop cache for the next normal frame, because
+        # many downstream effects cache full processed images and rely on
+        # lv1reset=True to invalidate those caches.
+        crop_image = None
 
     _finalize_pipeline_timing(timing)
-    return img2, imgc
+    return img2, crop_image if is_drag else imgc
 
 def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     if not params.has_original_img_size(primary_param):
@@ -585,9 +733,13 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
 
     previous_layer_label = getattr(efconfig, "pipeline_layer_label", "primary")
     efconfig.pipeline_layer_label = "primary"
+    _debug_pipeline_image_stats("primary pipeline2 input", imgc, param=primary_param)
     img1, lv2reset, upstream_status = pipeline_lv1(imgc, primary_effects, primary_param, efconfig, lv1reset, upstream_status, processor)
+    _debug_pipeline_image_stats("primary after lv1", img1, param=primary_param)
     img2, lv3reset, upstream_status = pipeline_lv2(img1, primary_effects, primary_param, efconfig, lv2reset, upstream_status, processor)
+    _debug_pipeline_image_stats("primary after lv2", img2, param=primary_param)
     img3, lv1reset, upstream_status = pipeline_lv3(img2, primary_effects, primary_param, efconfig, lv3reset, upstream_status, processor)
+    _debug_pipeline_image_stats("primary after lv3", img3, param=primary_param)
 
     # マスクレイヤー
     if mask_editor2 is not None:
@@ -820,6 +972,14 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
         apply_ms = 0.0
         if diff is not None:
             rgb = diff
+        _debug_pipeline_image_stats(
+            f"{getattr(efconfig, 'pipeline_layer_label', 'primary')} lv1 {n}",
+            rgb,
+            effect_name=n,
+            param=param,
+            effect=lv1[n],
+            state="changed" if diff is not None else "noop",
+        )
         if getattr(efconfig, "debug_nan_inf_check", False):
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -898,6 +1058,14 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
             rgb = lv2[n].apply_diff(rgb)
             apply_ms = (time.perf_counter() - _apply_t0) * 1000.0 if _apply_t0 is not None else 0.0
+        _debug_pipeline_image_stats(
+            f"{getattr(efconfig, 'pipeline_layer_label', 'primary')} lv2 {n}",
+            rgb,
+            effect_name=n,
+            param=param,
+            effect=lv2[n],
+            state="changed" if diff is not None else "noop",
+        )
         if getattr(efconfig, "debug_nan_inf_check", False):
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -976,6 +1144,14 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
             rgb = lv3[n].apply_diff(rgb)
             apply_ms = (time.perf_counter() - _apply_t0) * 1000.0 if _apply_t0 is not None else 0.0
+        _debug_pipeline_image_stats(
+            f"{getattr(efconfig, 'pipeline_layer_label', 'primary')} lv3 {n}",
+            rgb,
+            effect_name=n,
+            param=param,
+            effect=lv3[n],
+            state="changed" if diff is not None else "noop",
+        )
         if getattr(efconfig, "debug_nan_inf_check", False):
             if _iter_t0 is not None:
                 _t = time.perf_counter()
@@ -1056,6 +1232,14 @@ def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=Non
             _apply_t0 = time.perf_counter() if _iter_t0 is not None else None
             rgb = lv4[n].apply_diff(rgb)
             apply_ms = (time.perf_counter() - _apply_t0) * 1000.0 if _apply_t0 is not None else 0.0
+        _debug_pipeline_image_stats(
+            f"{getattr(efconfig, 'pipeline_layer_label', 'primary')} lv4 {n}",
+            rgb,
+            effect_name=n,
+            param=param,
+            effect=lv4[n],
+            state="changed" if diff is not None else "noop",
+        )
 
         if _iter_t0 is not None:
             _t = time.perf_counter()

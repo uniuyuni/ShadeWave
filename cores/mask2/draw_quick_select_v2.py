@@ -22,6 +22,31 @@ from cores.mask2 import edge_refine as _er
 DrawSupportResult = _v1.DrawSupportResult
 
 
+# --- continuity helpers (Phase 1: de-cliff discrete control resolution) -------
+def _smoothstep(x, lo, hi):
+    """Hermite smoothstep: 0 at/below ``lo``, 1 at/above ``hi``, smooth between.
+
+    Used to turn the solver's hard ``if value >= threshold`` regime switches into
+    continuous ramps so a small change in the input cannot flip the output.
+    """
+    lo = float(lo)
+    hi = float(hi)
+    if hi <= lo:
+        return 1.0 if float(x) >= hi else 0.0
+    t = float(np.clip((float(x) - lo) / (hi - lo), 0.0, 1.0))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _soft_band(x, lo0, lo1, hi0, hi1):
+    """Smooth membership of ``x`` in an interval (rises lo0..lo1, falls hi0..hi1)."""
+    return _smoothstep(x, lo0, lo1) * (1.0 - _smoothstep(x, hi0, hi1))
+
+
+def _soft_or(a, b):
+    """Probabilistic OR of two 0..1 memberships."""
+    return 1.0 - (1.0 - float(a)) * (1.0 - float(b))
+
+
 def compute_draw_support(
         guide,
         mask,
@@ -424,10 +449,16 @@ def _v2_unit_edge_lock(
     delta = float(selected_luma_delta)
     stroke_hw = float(max(1.0, getattr(scales, "stroke_half_width", 1.0)))
     unit_auto = auto
-    if 0.04 < delta <= 0.20 and stroke_hw >= 140.0:
-        unit_auto = min(unit_auto, 45.0)
-    if delta >= 0.75 and stroke_hw >= 120.0:
-        unit_auto = max(unit_auto, 90.0)
+    # Broad mid-tone bright dab: pull auto stricter (toward <=45) so it snaps to
+    # the soft boundary. Smooth ramps replace the old hard delta/width gates so
+    # a stroke just under the threshold is nudged, not switched.
+    w_mid = _soft_band(delta, 0.03, 0.05, 0.19, 0.21) * _smoothstep(stroke_hw, 125.0, 140.0)
+    if w_mid > 0.0:
+        unit_auto = unit_auto * (1.0 - w_mid) + min(unit_auto, 45.0) * w_mid
+    # Very bright background: floor auto looser (toward >=90).
+    w_bright = _smoothstep(delta, 0.70, 0.78) * _smoothstep(stroke_hw, 108.0, 120.0)
+    if w_bright > 0.0:
+        unit_auto = unit_auto * (1.0 - w_bright) + max(unit_auto, 90.0) * w_bright
 
     effective = _apply_edge_lock_offset(unit_auto, offset_strength)
     return effective, unit_auto
@@ -489,21 +520,53 @@ def _estimate_auto_edge_lock(edge_strength, hint):
     p75 = float(np.percentile(vals, 75.0))
     strong_density = float(np.mean(vals >= 0.60))
     mid_density = float(np.mean(vals >= 0.35))
-    auto = 55.0
-    if p90 >= 0.75 and strong_density >= 0.16:
-        auto = 34.0
-    elif p90 >= 0.60 or strong_density >= 0.08:
-        auto = 44.0
-    elif p90 < 0.08 and mid_density < 0.02:
-        auto = 100.0
-    elif 0.45 <= p90 < 0.55 and 0.04 <= strong_density < 0.08 and mid_density < 0.20:
-        auto = 96.0
-    elif 0.45 <= p90 < 0.55 and strong_density < 0.06 and mid_density >= 0.20:
-        auto = 20.0
-    elif p75 < 0.25 and mid_density < 0.08:
-        auto = 78.0
-    elif p90 < 0.45:
-        auto = 60.0
+    return _auto_edge_lock_from_stats(p90, p75, strong_density, mid_density)
+
+
+def _auto_edge_lock_from_stats(p90, p75, strong_density, mid_density):
+    """Continuous auto EdgeLock from boundary edge statistics.
+
+    This is a smooth (cliff-free) restatement of the original if/elif regime
+    table. Each regime keeps its target value and its deciding condition, but the
+    hard thresholds become smoothstep memberships and the elif precedence becomes
+    a multiplicative ``remaining`` weight. At the interior of a regime the result
+    equals the old discrete value (so corpus behavior is preserved); only near a
+    regime boundary does it blend instead of jumping -- which is what made the
+    same input at a different zoom or stroke position pick a different regime.
+    """
+    p90 = float(p90)
+    p75 = float(p75)
+    sd = float(strong_density)
+    md = float(mid_density)
+    # (membership, target) in the original elif order; targets are unchanged.
+    regimes = (
+        # crisp solid boundary -> strict / low sensitivity
+        (_smoothstep(p90, 0.72, 0.78) * _smoothstep(sd, 0.13, 0.19), 34.0),
+        # strong boundary (high peak OR many strong pixels)
+        (_soft_or(_smoothstep(p90, 0.56, 0.64), _smoothstep(sd, 0.06, 0.10)), 44.0),
+        # almost featureless -> very loose
+        ((1.0 - _smoothstep(p90, 0.06, 0.10)) * (1.0 - _smoothstep(md, 0.015, 0.025)), 100.0),
+        # sparse strong peaks (e.g. trees on sky) -> loose
+        (_soft_band(p90, 0.43, 0.47, 0.53, 0.57)
+         * _soft_band(sd, 0.03, 0.05, 0.07, 0.09)
+         * (1.0 - _smoothstep(md, 0.18, 0.22)), 96.0),
+        # diffuse mid-tone boundary -> strict
+        (_soft_band(p90, 0.43, 0.47, 0.53, 0.57)
+         * (1.0 - _smoothstep(sd, 0.05, 0.07))
+         * _smoothstep(md, 0.18, 0.22), 20.0),
+        # weak boundary -> loose-ish
+        ((1.0 - _smoothstep(p75, 0.23, 0.27)) * (1.0 - _smoothstep(md, 0.07, 0.09)), 78.0),
+        # moderate boundary
+        (1.0 - _smoothstep(p90, 0.43, 0.47), 60.0),
+    )
+    remaining = 1.0
+    auto = 0.0
+    for raw, target in regimes:
+        raw = float(np.clip(raw, 0.0, 1.0))
+        weight = raw * remaining
+        auto += weight * target
+        remaining *= (1.0 - raw)
+    auto += remaining * 55.0  # default / final else
     return float(np.clip(auto, 0.0, 100.0))
 
 

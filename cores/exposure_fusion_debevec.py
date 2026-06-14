@@ -1,6 +1,16 @@
 import cv2
 import numpy as np
 import os
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+def _to_merge_input(img):
+    img = np.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
+    img = np.clip(img, 0.0, 1.0)
+    return np.round(img * 255.0).astype(np.uint8)
 
 def exposure_fusion_debevec(img, out_ldr=False):
     """
@@ -16,7 +26,7 @@ def exposure_fusion_debevec(img, out_ldr=False):
 
     images = [
         simulate_ev(img, -2.0),
-        img,
+        simulate_ev(img,  0.0),
         simulate_ev(img,  2.0)
     ]
     
@@ -50,13 +60,25 @@ def exposure_fusion_debevec(img, out_ldr=False):
     else:
         ldr_linear = None
 
-    # 8. デバッグ出力
-    print(f"✅ HDR生成完了")
-    print(f"   正規化後値域 HDR: Min={hdr_linear.min():.4f}, Max={hdr_linear.max():.4f}, Mean={hdr_linear.mean():.4f}")
-    print(f"   dtype: {hdr_linear.dtype}, shape: {hdr_linear.shape}")
+    hdr_linear = np.nan_to_num(hdr_linear, nan=0.0, posinf=1.0, neginf=0.0).astype(np.float32)
+
+    logger.debug("HDR生成完了")
+    logger.debug(
+        "正規化後値域 HDR: Min=%.4f, Max=%.4f, Mean=%.4f",
+        hdr_linear.min(),
+        hdr_linear.max(),
+        hdr_linear.mean(),
+    )
+    logger.debug("dtype: %s, shape: %s", hdr_linear.dtype, hdr_linear.shape)
     if ldr_linear is not None:
-        print(f"   正規化後値域 LDR: Min={ldr_linear.min():.4f}, Max={ldr_linear.max():.4f}, Mean={ldr_linear.mean():.4f}")
-        print(f"   dtype: {ldr_linear.dtype}, shape: {ldr_linear.shape}")
+        ldr_linear = np.nan_to_num(ldr_linear, nan=0.0, posinf=1.0, neginf=0.0).astype(np.float32)
+        logger.debug(
+            "正規化後値域 LDR: Min=%.4f, Max=%.4f, Mean=%.4f",
+            ldr_linear.min(),
+            ldr_linear.max(),
+            ldr_linear.mean(),
+        )
+        logger.debug("dtype: %s, shape: %s", ldr_linear.dtype, ldr_linear.shape)
     
     return (hdr_linear, ldr_linear)
 

@@ -66,12 +66,13 @@ V3 の add path は、各 stroke を個別に rasterize し、V2 の add-only so
 基本フロー:
 
 1. `draw_strokes` を normalize する。
-2. erase stroke が混ざる場合は安全側として V2 fallback を使う。
-3. add stroke だけなら、stroke ごとに mask/seed を作る。
-4. stroke ごとに `_v2._compute_add_only_support()` を呼ぶ。
+2. add stroke が無い（erase-only/空）場合のみ V2→V1 fallback を使う。
+3. add stroke ごとに mask/seed を作る。erase があれば footprint を carve する。
+4. stroke ごとに `_v2._compute_add_only_support()` を呼ぶ（erase strokes は
+   BG context として渡す）。
 5. stroke local な support/candidate/debug plane を得る。
 6. V3 の post process を適用する。
-7. add stroke の support/alpha を union/max 合成する。
+7. add stroke の support/alpha を union/max 合成し、erase 領域を除外する。
 
 重要な不変条件:
 
@@ -79,13 +80,39 @@ V3 の add path は、各 stroke を個別に rasterize し、V2 の add-only so
 - stroke local の候補領域外に support を増やしてはいけない。
 - add support の合成は union、alpha は max を基本にする。
 
-## 3.2 Erase はまだ fallback 優先
+## 3.2 Erase も V3-native（add+erase 混在時）
 
-V3 の主目的は add stroke の安定化。erase stroke は add と同じ基準で完全に解くには別 profile が必要。
+add stroke がある場合、erase が混ざっても per-stroke の V3 path で解く。
 
-現在は erase が混ざる場合、V2 fallback を使い、V3 alpha/postprocess を重ねる。
+- **時間順（後勝ち）を保つ**: 各 add stroke は、それより *後* に描かれた
+  erase（future erases）だけで carve / 減算する。これにより「描画→消去→
+  追加描画」で、以前消した領域に後から描いた add がきちんと復活する
+  （グローバルに erase を引くと後勝ちが壊れる）。
+- 各 add stroke の footprint から future erase 領域を carve してから解く（FG seed
+  と erase BG seed が同色で重なると全体が BG に読まれるため）。
+- 各 add stroke の solve に future erases を BG context として渡し、
+  保持側と除去側の境界が edge に乗るようにする。
+- 合成は per-stroke の `support & ~future_erase` を union するだけ。最後に
+  グローバル erase 減算は行わない（順序が壊れるため）。
+- debug plane `v3_erase_support` は最終的に消えた領域（`全erase & ~support`）。
 
-将来 erase を V3 化する場合も、add と erase の auto profile は分けるべき。
+### 3.2.1 erase 境界のエッジ吸着
+
+erase 後の保持/消去境界を近傍の強エッジへ吸着する（`_snap_kept_boundary_to_edges`）。
+
+- ブラシ相対の小バンド（`brush*0.3`、3〜10px）内に強エッジ（`_make_edge_stop_mask`）
+  があれば、保持側をそのエッジまで成長させて吸着する。
+- **エッジに実際に到達した連結成分のみ**復元する（barrier に接しない盲目的成長は
+  捨てる）→ 平坦色の上の雑な erase や、エッジから大きく外れた意図的 erase はそのまま尊重。
+- 同系色（雲など強エッジ無し）では barrier が立たず吸着しない＝erase サンプルは不変。
+- erase がある stroke のみ作用＝add-only は bit-identical（回帰なし）。
+- 注意: エッジ近傍で消すと吸着により薄い残存が出るのは仕様（完全消去とのトレードオフ）。
+
+erase-only / add が無い場合のみ V2→V1 fallback を使う（anchor になる add stroke
+が無いため）。
+
+実測（`qs_input_erase`）: V1 fallback は描いた三日月の ~37% を脱落させていたが、
+V3-native は ratio 0.943 で保持し、erase footprint 内の残存はほぼ 0。
 
 ## 4. UI パラメータの意味
 
@@ -316,6 +343,7 @@ V3 で重要な debug plane:
 - `boundary_bias_px`
 - `v3_same_color_void_fill`
 - `v3_boundary_bias_delta`
+- `v3_erase_support`
 - `support_alpha`
 - `v3_stroke_count`
 - `v3_runtime_ms`
@@ -402,11 +430,17 @@ git diff --check
 
 優先度が高いもの:
 
-- erase stroke を V3 化する。ただし add とは別 profile にする。
 - EdgeLock の effective 値を plane max だけでなく stroke/unit ごとに見やすくする。
 - preview 中の coarse solve または postprocess cache を入れる。
 - zoom/pixel_scale の regression test を corpus 側でさらに強化する。
-- roof 系の同系色 edge を、sample-specific でなく edge/colour confidence の一般則として改善する。
+- erase-only（add 無し）の path も V3 化する（現状は V2→V1 fallback）。
+
+完了済み / 方針確定:
+
+- erase stroke の V3 化（add+erase 混在時）: 2026-06 完了。3.2 参照。
+- roof 系の同系色 edge: 診断の結果、true boundary の約70%に color/edge の局所信号が
+  無く、古典手法では原理的に不可と確定。意味的境界は別系統（SAM3）が担当し、本ツールは
+  「軽い・予測できる・足し消しで直しやすい」に注力する。
 
 この資料の基本方針は、調整を増やす時ほど「何のパラメータが、どの範囲に、どの根拠で効くのか」を狭く保つこと。
 

@@ -119,6 +119,10 @@ CORES="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 make -j"${CORES}"
 make install
 
+if [[ "${SRC}" == "${FETCH_DIR}" ]]; then
+  rm -rf "${FETCH_DIR}"
+fi
+
 echo
 echo "LibRaw を ${PREFIX} にインストールしました。"
 echo "注意: 従来の third_party/libraw-install は不要になります。"
