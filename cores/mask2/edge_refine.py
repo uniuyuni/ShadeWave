@@ -2593,10 +2593,82 @@ def _sample_bilinear_many(image, xs, ys):
     return out
 
 
-def _draw_snap_edge_strength(guide):
+def _guide_fingerprint(guide):
+    """Cheap content fingerprint for caching edge maps per guide image.
+
+    The previous key was the raw buffer pointer (``guide.ctypes.data``). numpy
+    routinely hands a freshly allocated array the address of one it just freed,
+    so a *different* crop (e.g. after a zoom / pan) can land on the same pointer
+    and silently hit a stale cached edge -- which produces a different result for
+    the "same" view depending on heap reuse. Mix in shape, size and a strided
+    value sample so distinct images get distinct keys while identical content
+    still shares one entry. ~0.5ms vs the ~40ms edge recompute it guards.
+    """
+    a = np.asarray(guide)
+    flat = np.ascontiguousarray(a).reshape(-1)
+    n = int(flat.size)
+    if n == 0:
+        return (a.shape, 0)
+    step = max(1, n // 512)
+    sample = flat[::step]
+    return (a.shape, n, float(sample.sum()), float(flat[0]), float(flat[n // 2]), float(flat[-1]))
+
+
+def _to_perceptual_guide(guide):
+    """Re-encode a *linear* guide into a perceptual (display-like) space.
+
+    The mask editor feeds edge-refine the working-space crop, which in this app
+    is linear scene-referred RGB. On a real photo nearly all of the tonal range
+    sits far below 1.0 (e.g. max ~0.01 on an underexposed frame), so a Sobel /
+    Lab gradient is dominated by the few bright highlights and the perceptually
+    obvious shadow / midtone boundaries collapse to ~0 after percentile
+    normalization. The edge map then only "sees" part of the silhouette, so the
+    snap sticks to some edges and ignores others, and the result shifts with the
+    zoom-dependent highlight content.
+
+    Auto-expose by a high luminance percentile (keeps colour ratios via a single
+    scalar) and apply the sRGB OETF. This makes gradient magnitude roughly
+    perceptually uniform -- the same edges the user sees on the toned display --
+    without depending on the absolute exposure of the crop. Set
+    ``QS_EDGE_PERCEPTUAL=0`` to fall back to the raw linear behaviour.
+    """
+    if guide is None:
+        return None
+    if os.environ.get("QS_EDGE_PERCEPTUAL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return guide
+    g = np.asarray(guide, dtype=np.float32)
+    if g.ndim == 3 and g.shape[2] >= 3:
+        lum = 0.2126 * g[..., 0] + 0.7152 * g[..., 1] + 0.0722 * g[..., 2]
+    else:
+        lum = g if g.ndim == 2 else g[..., 0]
+    ref = float(np.percentile(lum, 99.5))
+    # Two gates decide whether re-encoding actually helps:
+    #
+    # 1) ref < 0.5: only touch genuinely linear scene-referred guides. A real
+    #    capture sits far below display white (ref ~ 0.01 on an underexposed
+    #    frame); an already display-encoded / toned guide reaches ref ~ 0.8-1.0.
+    #
+    # 2) median << highlight (p50 < 0.1 * ref): only when the subject is buried
+    #    in deep shadow. That is exactly when a *linear* gradient is dominated by
+    #    the few bright highlights and the salient boundary collapses to ~0 after
+    #    percentile normalization -- the "snaps to some edges, ignores others"
+    #    symptom. When the linear tones are already balanced (median close to the
+    #    highlight) the gradient is fine as-is, and re-encoding only over-amplifies
+    #    flat-region noise into spurious edges -- so leave those guides untouched.
+    p50 = float(np.percentile(lum, 50))
+    if ref >= 0.5 or ref <= 1e-6 or p50 >= 0.1 * ref:
+        return g
+    gn = np.clip(g / ref, 0.0, 1.0)
+    low = gn <= 0.0031308
+    return np.where(low, 12.92 * gn, 1.055 * np.power(np.clip(gn, 0.0, None), 1.0 / 2.4) - 0.055).astype(np.float32, copy=False)
+
+
+def _draw_snap_edge_strength(guide, perceptual=False):
     guide = _prepare_guide_image(guide, np.asarray(guide).shape[:2])
     if guide is None:
         return None
+    if perceptual:
+        guide = _to_perceptual_guide(guide)
     guide = cv2.GaussianBlur(guide, (0, 0), 1.0)
     if guide.ndim == 2:
         gray = guide.astype(np.float32, copy=False)

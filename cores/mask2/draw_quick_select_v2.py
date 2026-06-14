@@ -23,15 +23,17 @@ DrawSupportResult = _v1.DrawSupportResult
 
 # Edge-strength 1-slot cache: guide image is stable across strokes on the same
 # photo. Full-resolution edge strength (~40ms) and stable-edge (~10ms) are
-# deterministic functions of the guide; cache them keyed on the raw guide's
-# buffer pointer (captured before _prepare_guide_image reassigns the local var).
-_V2_EDGE_CACHE: dict = {}  # {(raw_guide_ptr, shape): (edge_strength, stable_edge)}
+# deterministic functions of the guide; cache them keyed on a content
+# fingerprint of the raw guide (captured before _prepare_guide_image reassigns
+# the local var). A fingerprint -- not the buffer pointer -- so a recycled
+# allocation address from a different crop can never return a stale edge.
+_V2_EDGE_CACHE: dict = {}  # {(guide_fingerprint, shape): (edge_strength, stable_edge)}
 
 # Edge-cost 1-slot cache: edge_cost_all (~20ms, incl. ridge skeletonize) depends
 # only on solver_edge_strength (cached via _V2_EDGE_CACHE) + edge_lock policy.
-# Cache it keyed on (raw_guide_ptr, shape, raw_strength, edge_bias) so slider
+# Cache it keyed on (guide_fingerprint, shape, raw_strength, edge_bias) so slider
 # changes invalidate it while repeated painting strokes hit the cache.
-_V2_COST_CACHE: dict = {}  # {(raw_guide_ptr, shape, str_key, bias_key): (edge_cost_all, solver_es)}
+_V2_COST_CACHE: dict = {}  # {(guide_fingerprint, shape, str_key, bias_key): (edge_cost_all, solver_es)}
 
 
 # --- continuity helpers (Phase 1: de-cliff discrete control resolution) -------
@@ -122,10 +124,12 @@ def _compute_add_only_support(
     if not np.any(hint) or _v1.maximum_flow is None:
         return DrawSupportResult(empty, empty, empty.copy(), [])
 
-    # Capture raw guide buffer pointer *before* _prepare_guide_image reassigns
-    # the local variable; used as cache key for edge-strength computations.
+    # Fingerprint the raw guide *before* _prepare_guide_image reassigns the local
+    # variable; used as cache key for edge-strength computations. A content
+    # fingerprint (not the buffer pointer) so a recycled allocation address from a
+    # different crop can never return a stale edge (see _guide_fingerprint).
     try:
-        _raw_guide_ptr = guide.ctypes.data
+        _raw_guide_ptr = _er._guide_fingerprint(guide)
     except AttributeError:
         _raw_guide_ptr = None
 

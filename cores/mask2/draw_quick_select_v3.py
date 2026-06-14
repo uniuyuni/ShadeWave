@@ -29,21 +29,30 @@ DrawSupportResult = _v1.DrawSupportResult
 # Guide-edge 1-slot cache: the guide image is stable across strokes on the
 # same photo. Edge strength is ~40ms on 1M-pixel images; caching it avoids
 # recomputing it 4-5× per stroke (trim, alpha, V4 trace, V4 trim, …).
-_GUIDE_EDGE_CACHE: dict = {}  # {(buffer_ptr, shape): edge}
+_GUIDE_EDGE_CACHE: dict = {}  # {(guide_fingerprint, shape, perceptual): edge}
 
 
-def _get_guide_edge(guide, shape):
-    """Return cached edge-strength map for *guide* at *shape*, computing once."""
+def _get_guide_edge(guide, shape, perceptual=False):
+    """Return cached edge-strength map for *guide* at *shape*, computing once.
+
+    ``perceptual`` selects the linear (region solver / trim) or perceptually
+    re-encoded (V4 boundary trace) edge map; both are cached per guide so the
+    two callers never evict each other within a stroke.
+    """
     try:
-        key = (guide.ctypes.data, shape)
+        fp = _er._guide_fingerprint(guide)
+        key = (fp, shape, bool(perceptual))
     except AttributeError:
+        fp = None
         key = None
     if key is not None and key in _GUIDE_EDGE_CACHE:
         return _GUIDE_EDGE_CACHE[key]
     g = _er._prepare_guide_image(guide, shape)
-    edge = _er._draw_snap_edge_strength(g) if g is not None else None
+    edge = _er._draw_snap_edge_strength(g, perceptual=perceptual) if g is not None else None
     if key is not None:
-        _GUIDE_EDGE_CACHE.clear()  # keep only 1 entry
+        # Drop entries for a different guide; keep both encodings of this one.
+        for cached in [k for k in _GUIDE_EDGE_CACHE if k[0] != fp]:
+            del _GUIDE_EDGE_CACHE[cached]
         _GUIDE_EDGE_CACHE[key] = edge
     return edge
 

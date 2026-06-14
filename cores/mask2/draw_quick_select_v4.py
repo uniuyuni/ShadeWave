@@ -37,7 +37,7 @@ _EDGE_SNAP_DEFAULT = False
 
 # Coherence 1-slot cache: structure tensor is expensive (~20ms) and only
 # depends on the guide image, so cache it alongside the edge.
-_GUIDE_COH_CACHE: dict = {}  # {(buffer_ptr, shape): coh}
+_GUIDE_COH_CACHE: dict = {}  # {(guide_fingerprint, shape): coh}
 
 
 def _snap_enabled():
@@ -79,7 +79,14 @@ def compute_draw_support(
     # (breaking stroke independence: "erasing elsewhere moved my selection"). The
     # guide is stroke independent, so the trace edge is too. The result is cached
     # per guide buffer across strokes (~40ms on 1M-pixel images).
-    edge = _v3._get_guide_edge(guide, support.shape)
+    # Perceptual edge for the trace: the app feeds a linear scene-referred guide,
+    # so on a deep-shadow subject the linear gradient is dominated by highlights
+    # and the boundary's shadow side reads ~0 -- the trace then snaps to some of
+    # the silhouette and ignores the rest (the "Edge Lock only moves part of the
+    # edge" symptom). Re-encoding to a perceptual space before the edge map gives
+    # the DP a consistent signal all the way round. Scoped to the V4 trace only;
+    # the V3 region solver and trim keep the validated linear edge.
+    edge = _v3._get_guide_edge(guide, support.shape, perceptual=True)
     if edge is None:
         edge = planes.get("context_edge")
     if edge is None:
@@ -108,8 +115,13 @@ def compute_draw_support(
     snapped = _localize_to_brush(snapped, support, mask, draw_strokes, radius)
     # The DP trace fills a polygon, which can re-add the 1px brush-circle rim that
     # V3 trimmed. Re-trim it here so the final boundary never traces the brush
-    # footprint past an object edge. Pass the already-cached edge to avoid recompute.
-    snapped = _v3._trim_offedge_brush_rim(snapped, mask, guide, _edge=edge)
+    # footprint past an object edge. The trim keys off the *linear* edge (same as
+    # V3's trim): the perceptual trace edge would mark deep-shadow texture as a
+    # real edge and spare background arcs the trim is meant to drop. Cached, so
+    # this is the region solver's edge (a cache hit, no extra recompute).
+    edge_linear = _v3._get_guide_edge(guide, support.shape, perceptual=False)
+    snapped = _v3._trim_offedge_brush_rim(
+        snapped, mask, guide, _edge=edge_linear if edge_linear is not None else edge)
     delta = snapped ^ support
     if not np.any(delta):
         return base
@@ -165,6 +177,10 @@ def _edge_coherence(guide, shape):
     g = _er._prepare_guide_image(guide, shape)
     if g is None:
         return None
+    # Match _draw_snap_edge_strength: re-encode the linear guide to a perceptual
+    # space so the structure tensor is not dominated by highlights (see
+    # edge_refine._to_perceptual_guide).
+    g = _er._to_perceptual_guide(g)
     gray = cv2.cvtColor(g[..., :3], cv2.COLOR_RGB2GRAY) if g.ndim == 3 else g
     gray = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.0)
     gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
@@ -181,7 +197,7 @@ def _edge_coherence(guide, shape):
 def _get_guide_coh(guide, shape):
     """Return cached coherence for *guide* at *shape*, computing once per guide."""
     try:
-        key = (guide.ctypes.data, shape)
+        key = (_er._guide_fingerprint(guide), shape)
     except AttributeError:
         key = None
     if key is not None and key in _GUIDE_COH_CACHE:
