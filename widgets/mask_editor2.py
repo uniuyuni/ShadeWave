@@ -861,20 +861,46 @@ class BaseMask(KVWidget):
 
     def _get_edge_refine_guide_image(self, mask_shape):
         crop = getattr(self.editor, 'crop_image_rgb', None)
-        if crop is not None and getattr(crop, 'shape', (None, None))[:2] == tuple(mask_shape):
-            return crop
+        crop_shape = getattr(crop, 'shape', None)
+        path = None
+        result = None
+        if crop is not None and crop_shape[:2] == tuple(mask_shape):
+            path = "crop_image_rgb"
+            result = crop
+        else:
+            original = self.editor.get_original_image_rgb()
+            if original is not None:
+                path = "fitted_original(NO_ROTATION)"
+                guide = self._fit_image_mask_to_texture(original)
+                if getattr(guide, 'shape', (None, None))[:2] != tuple(mask_shape):
+                    guide = cv2.resize(guide, (int(mask_shape[1]), int(mask_shape[0])), interpolation=cv2.INTER_LINEAR)
+                result = guide
+            else:
+                hls = getattr(self.editor, 'crop_image_hls', None)
+                if hls is not None:
+                    path = "crop_image_hls"
+                    result = hls[..., 1]
+        self._debug_log_guide_geometry(path, crop_shape, mask_shape)
+        return result
 
-        original = self.editor.get_original_image_rgb()
-        if original is not None:
-            guide = self._fit_image_mask_to_texture(original)
-            if getattr(guide, 'shape', (None, None))[:2] != tuple(mask_shape):
-                guide = cv2.resize(guide, (int(mask_shape[1]), int(mask_shape[0])), interpolation=cv2.INTER_LINEAR)
-            return guide
-
-        hls = getattr(self.editor, 'crop_image_hls', None)
-        if hls is not None:
-            return hls[..., 1]
-        return None
+    def _debug_log_guide_geometry(self, path, crop_shape, mask_shape):
+        if os.environ.get("PLATYPUS_DEBUG_EDGE_REFINE", "").strip().lower() not in {"1", "true", "yes", "on"} \
+                and not os.environ.get("QS_DUMP_INPUT"):
+            return
+        try:
+            tcg = self.editor.tcg_info
+            disp = params.get_disp_info(tcg)
+            logging.info(
+                "[QS_GUIDE_GEOM] path=%s crop_shape=%s mask_shape=%s rotation=%.4f rotation2=%.4f flip=%s "
+                "disp_info=%s matrix_is_identity=%s",
+                path, crop_shape, tuple(mask_shape),
+                float(tcg.get('rotation', 0.0)), float(tcg.get('rotation2', 0.0)),
+                tcg.get('flip_mode'), disp,
+                bool(np.allclose(np.asarray(tcg.get('matrix', np.eye(3)), dtype=np.float64),
+                                 np.eye(3), atol=1e-6)) if tcg.get('matrix') is not None else None,
+            )
+        except Exception:
+            logging.exception("[QS_GUIDE_GEOM] logging failed")
 
     def _get_edge_refine_guide_point(self):
         center = getattr(self, 'center', None)

@@ -1318,7 +1318,10 @@ class EdgeRefineTest(unittest.TestCase):
             edge_refine_draw_strokes=[texture_line],
         )
         old_full_view = os.environ.get("PLATYPUS_DRAW_QS_FULL_VIEW")
-        os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)
+        # Full view is opt-in (default off, since it is not geometry-aware -- it
+        # crops the guide from the pre-rotation original). Enable it explicitly to
+        # exercise the path; at rotation=0 it must still match the local preview.
+        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "1"
         try:
             full = extended_params.render_freedraw_edge_refine_full_view(
                 ctx,

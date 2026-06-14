@@ -114,8 +114,16 @@ def render_freedraw_edge_refine_full_view(
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):
         return None
+    # Default OFF (opt-in via PLATYPUS_DRAW_QS_FULL_VIEW=1). This path crops its
+    # guide from the *pre-rotation* original (get_original_image_rgb) but positions
+    # strokes / render rect via ctx.tcg_to_full_image(), which applies the image
+    # rotation (center_rotate). So under any straighten/rotation the guide edges sit
+    # at the wrong angle relative to the strokes -- the selection ignores the
+    # geometry. The regular crop path (_apply_edge_refine -> _get_edge_refine_guide_image
+    # -> crop_image_rgb, the already-rotated crop, with the equally-rotated
+    # tcg_to_texture) is geometry-consistent, so fall through to it.
     full_view_flag = os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower()
-    if full_view_flag in {"0", "false", "no", "off"}:
+    if full_view_flag not in {"1", "true", "yes", "on"}:
         return None
     original = ctx.get_original_image_rgb()
     if original is None or getattr(original, "size", 0) == 0:
