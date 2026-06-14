@@ -26,6 +26,27 @@ from cores.mask2 import mask_rasters
 
 DrawSupportResult = _v1.DrawSupportResult
 
+# Guide-edge 1-slot cache: the guide image is stable across strokes on the
+# same photo. Edge strength is ~40ms on 1M-pixel images; caching it avoids
+# recomputing it 4-5× per stroke (trim, alpha, V4 trace, V4 trim, …).
+_GUIDE_EDGE_CACHE: dict = {}  # {(buffer_ptr, shape): edge}
+
+
+def _get_guide_edge(guide, shape):
+    """Return cached edge-strength map for *guide* at *shape*, computing once."""
+    try:
+        key = (guide.ctypes.data, shape)
+    except AttributeError:
+        key = None
+    if key is not None and key in _GUIDE_EDGE_CACHE:
+        return _GUIDE_EDGE_CACHE[key]
+    g = _er._prepare_guide_image(guide, shape)
+    edge = _er._draw_snap_edge_strength(g) if g is not None else None
+    if key is not None:
+        _GUIDE_EDGE_CACHE.clear()  # keep only 1 entry
+        _GUIDE_EDGE_CACHE[key] = edge
+    return edge
+
 
 def compute_draw_support(
         guide,
@@ -167,8 +188,9 @@ def compute_draw_support(
         return DrawSupportResult(empty, empty, empty.copy(), [])
 
     # Drop the 1px brush-circle rim left floating past object edges (before alpha
-    # so the matte follows the trimmed boundary).
-    support_all = _trim_offedge_brush_rim(support_all, mask_f, guide)
+    # so the matte follows the trimmed boundary). Guide edge is already cached.
+    _guide_edge = _get_guide_edge(guide, (h, w))
+    support_all = _trim_offedge_brush_rim(support_all, mask_f, guide, _edge=_guide_edge)
 
     # No global erase subtract: temporal order is already handled per add stroke
     # via future-erase carving, so a later add wins over an earlier erase.
@@ -285,7 +307,8 @@ def _maybe_dump_v3_input(
 
 def _single_stroke_mask(image_size, stroke):
     line = mask_rasters.Line(False, getattr(stroke, "size", 1.0), getattr(stroke, "soft", 100.0))
-    for x, y in getattr(stroke, "points", []) or []:
+    _pts = getattr(stroke, "points", None)
+    for x, y in (_pts if _pts is not None else []):
         line.add_point(float(x), float(y))
     if not line.points:
         return np.zeros((int(image_size[1]), int(image_size[0])), dtype=np.float32)
@@ -323,7 +346,7 @@ def _finalize_debug_planes(accum, shape):
     return planes
 
 
-def _trim_offedge_brush_rim(support, mask, guide):
+def _trim_offedge_brush_rim(support, mask, guide, _edge=None):
     """Drop the 1px selection rim that merely traces the brush footprint.
 
     Where the add brush overhangs an object edge into the background, the min-cut
@@ -339,7 +362,7 @@ def _trim_offedge_brush_rim(support, mask, guide):
     hint = _er._as_mask(mask) > 0.02
     if not np.any(support) or not np.any(hint):
         return support
-    edge = _er._draw_snap_edge_strength(_er._prepare_guide_image(guide, support.shape))
+    edge = _edge if _edge is not None else _get_guide_edge(guide, support.shape)
     if edge is None:
         return support
     k = np.ones((3, 3), dtype=np.uint8)

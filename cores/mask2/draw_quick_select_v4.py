@@ -35,6 +35,10 @@ DrawSupportResult = _v1.DrawSupportResult
 
 _EDGE_SNAP_DEFAULT = False
 
+# Coherence 1-slot cache: structure tensor is expensive (~20ms) and only
+# depends on the guide image, so cache it alongside the edge.
+_GUIDE_COH_CACHE: dict = {}  # {(buffer_ptr, shape): coh}
+
 
 def _snap_enabled():
     value = os.environ.get("QS_V4_EDGE_SNAP")
@@ -73,8 +77,9 @@ def compute_draw_support(
     # erase far from this add) perturbs it even when the V3 support is byte
     # identical -- which used to shift the trace tens of pixels near the add
     # (breaking stroke independence: "erasing elsewhere moved my selection"). The
-    # guide is stroke independent, so the trace edge is too.
-    edge = _er._draw_snap_edge_strength(_er._prepare_guide_image(guide, support.shape))
+    # guide is stroke independent, so the trace edge is too. The result is cached
+    # per guide buffer across strokes (~40ms on 1M-pixel images).
+    edge = _v3._get_guide_edge(guide, support.shape)
     if edge is None:
         edge = planes.get("context_edge")
     if edge is None:
@@ -84,7 +89,8 @@ def compute_draw_support(
         return base
 
     # Coherence gate: prefer oriented edges (silhouettes) over isotropic texture.
-    coh = _edge_coherence(guide, support.shape)
+    # Cached per guide buffer; structure tensor is ~20ms on 1M-pixel images.
+    coh = _get_guide_coh(guide, support.shape)
     trace_edge = edge * coh if (coh is not None and coh.shape == edge.shape) else edge
 
     seed = np.asarray(base.seed, dtype=bool)
@@ -102,8 +108,8 @@ def compute_draw_support(
     snapped = _localize_to_brush(snapped, support, mask, draw_strokes, radius)
     # The DP trace fills a polygon, which can re-add the 1px brush-circle rim that
     # V3 trimmed. Re-trim it here so the final boundary never traces the brush
-    # footprint past an object edge.
-    snapped = _v3._trim_offedge_brush_rim(snapped, mask, guide)
+    # footprint past an object edge. Pass the already-cached edge to avoid recompute.
+    snapped = _v3._trim_offedge_brush_rim(snapped, mask, guide, _edge=edge)
     delta = snapped ^ support
     if not np.any(delta):
         return base
@@ -172,6 +178,21 @@ def _edge_coherence(guide, shape):
     return np.clip(coh, 0.0, 1.0).astype(np.float32, copy=False)
 
 
+def _get_guide_coh(guide, shape):
+    """Return cached coherence for *guide* at *shape*, computing once per guide."""
+    try:
+        key = (guide.ctypes.data, shape)
+    except AttributeError:
+        key = None
+    if key is not None and key in _GUIDE_COH_CACHE:
+        return _GUIDE_COH_CACHE[key]
+    coh = _edge_coherence(guide, shape)
+    if key is not None:
+        _GUIDE_COH_CACHE.clear()  # keep only 1 entry
+        _GUIDE_COH_CACHE[key] = coh
+    return coh
+
+
 def _bilinear(img, px, py):
     h, w = img.shape
     px = np.clip(px, 0.0, w - 1.0)
@@ -204,7 +225,15 @@ def _lock_to_dist_prior(lock):
 
 def _trace_one_contour(cnt, edge, lock_plane, W, smooth):
     """DP ribbon trace for one ordered contour. Returns new boundary points, or
-    None to keep the contour unchanged (no edge / too short)."""
+    None to keep the contour unchanged (too short).
+
+    The former ``e.max() < 0.30`` early-exit is intentionally removed: when no
+    strong edge exists in the ribbon the DP cost function naturally keeps offset=0
+    for every point (dist_prior makes any other offset more expensive than staying
+    put), so the boundary doesn't move. Removing the guard makes Edge Lock affect
+    the *whole* contour uniformly -- the old guard caused the slider to visibly
+    "stop working" on parts of the boundary that happened to have weaker edges.
+    """
     if len(cnt) < 16:
         return None
     step = max(1, len(cnt) // 480)
@@ -220,8 +249,6 @@ def _trace_one_contour(cnt, edge, lock_plane, W, smooth):
     px = cnt[:, 0][:, None] + offsets[None, :] * normal[:, 0][:, None]
     py = cnt[:, 1][:, None] + offsets[None, :] * normal[:, 1][:, None]
     e = _bilinear(edge, px, py)
-    if float(e.max(initial=0.0)) < 0.30:
-        return None
 
     # Per-contour-point Edge Lock read locally from the plane => each stroke's
     # boundary uses its own snap strength (no cross-stroke bleed).
@@ -244,24 +271,21 @@ def _trace_one_contour(cnt, edge, lock_plane, W, smooth):
     m = 2 * W + 1
     dp = cost[0].astype(np.float64).copy()
     back = np.zeros((n, m), dtype=np.int32)
-    idx = np.arange(m)
+    # Pre-allocate loop temporaries once (avoids 480 × 7 np.full/zeros calls).
+    _d_vals = np.arange(-k, k + 1, dtype=np.int32)   # [-2,-1,0,1,2]
+    _pens = smooth * np.abs(_d_vals).astype(np.float64)
+    _shifted = np.empty((2 * k + 1, m), dtype=np.float64)
+    _idx = np.arange(m, dtype=np.int32)
     for i in range(1, n):
-        best = np.full(m, inf)
-        src = np.zeros(m, dtype=np.int32)
-        for d in range(-k, k + 1):
-            shifted = np.full(m, inf)
-            pen = smooth * abs(d)
+        _shifted.fill(inf)
+        for ki, (d, pen) in enumerate(zip(_d_vals, _pens)):
             if d >= 0:
-                shifted[d:] = dp[:m - d] + pen
-                src_idx = idx - d
+                _shifted[ki, d:] = dp[:m - d] + pen
             else:
-                shifted[:d] = dp[-d:] + pen
-                src_idx = idx - d
-            upd = shifted < best
-            best[upd] = shifted[upd]
-            src[upd] = src_idx[upd]
-        dp = cost[i] + best
-        back[i] = src
+                _shifted[ki, :d] = dp[-d:] + pen
+        best_ki = np.argmin(_shifted, axis=0)   # (m,) index into _d_vals
+        dp = cost[i] + _shifted[best_ki, _idx]
+        back[i] = _idx - _d_vals[best_ki]       # source index = dest - d
 
     o = int(np.argmin(dp))
     path = np.zeros(n, dtype=np.int64)

@@ -21,6 +21,18 @@ from cores.mask2 import edge_refine as _er
 
 DrawSupportResult = _v1.DrawSupportResult
 
+# Edge-strength 1-slot cache: guide image is stable across strokes on the same
+# photo. Full-resolution edge strength (~40ms) and stable-edge (~10ms) are
+# deterministic functions of the guide; cache them keyed on the raw guide's
+# buffer pointer (captured before _prepare_guide_image reassigns the local var).
+_V2_EDGE_CACHE: dict = {}  # {(raw_guide_ptr, shape): (edge_strength, stable_edge)}
+
+# Edge-cost 1-slot cache: edge_cost_all (~20ms, incl. ridge skeletonize) depends
+# only on solver_edge_strength (cached via _V2_EDGE_CACHE) + edge_lock policy.
+# Cache it keyed on (raw_guide_ptr, shape, raw_strength, edge_bias) so slider
+# changes invalidate it while repeated painting strokes hit the cache.
+_V2_COST_CACHE: dict = {}  # {(raw_guide_ptr, shape, str_key, bias_key): (edge_cost_all, solver_es)}
+
 
 # --- continuity helpers (Phase 1: de-cliff discrete control resolution) -------
 def _smoothstep(x, lo, hi):
@@ -110,6 +122,13 @@ def _compute_add_only_support(
     if not np.any(hint) or _v1.maximum_flow is None:
         return DrawSupportResult(empty, empty, empty.copy(), [])
 
+    # Capture raw guide buffer pointer *before* _prepare_guide_image reassigns
+    # the local variable; used as cache key for edge-strength computations.
+    try:
+        _raw_guide_ptr = guide.ctypes.data
+    except AttributeError:
+        _raw_guide_ptr = None
+
     guide = _er._prepare_guide_image(guide, (h, w))
     if guide is None:
         return DrawSupportResult(empty, empty, empty.copy(), [])
@@ -149,10 +168,17 @@ def _compute_add_only_support(
     scales = _v1._resolve_scales(radius, draw_strokes, hint)
     raw_strength = strength
 
-    edge_strength = _er._draw_snap_edge_strength(guide)
-    if edge_strength is None:
-        edge_strength = np.zeros((h, w), dtype=np.float32)
-    stable_edge_strength = _stable_edge_strength(guide, edge_strength)
+    _edge_cache_key = (_raw_guide_ptr, (h, w)) if _raw_guide_ptr is not None else None
+    if _edge_cache_key is not None and _edge_cache_key in _V2_EDGE_CACHE:
+        edge_strength, stable_edge_strength = _V2_EDGE_CACHE[_edge_cache_key]
+    else:
+        edge_strength = _er._draw_snap_edge_strength(guide)
+        if edge_strength is None:
+            edge_strength = np.zeros((h, w), dtype=np.float32)
+        stable_edge_strength = _stable_edge_strength(guide, edge_strength)
+        if _edge_cache_key is not None:
+            _V2_EDGE_CACHE.clear()  # keep only 1 entry
+            _V2_EDGE_CACHE[_edge_cache_key] = (edge_strength, stable_edge_strength)
     use_stable_edge = os.environ.get("QS_V2_STABLE_EDGE", "").strip().lower() in {"1", "true", "yes", "on"}
     solve_edge_strength = stable_edge_strength if use_stable_edge else edge_strength
     strength, auto_strength, offset_strength, strength_mode = _resolve_edge_lock(
@@ -172,9 +198,22 @@ def _compute_add_only_support(
             edge_lock_offset=offset_strength,
             edge_bias=edge_bias,
         )
-    solver_edge_strength = _v1._solver_edge_strength(solve_edge_strength, pixel_scale)
-    resolved_policy = _v1._edge_policy(strength, edge_bias=edge_bias)
-    edge_cost_all = _v1._edge_cost_map(solver_edge_strength, policy=resolved_policy)
+    # Cache edge_cost_all (includes ~20ms ridge+skeletonize) by guide + policy key.
+    # raw_strength is the pre-resolve value that uniquely identifies the policy.
+    _cost_key = (
+        _raw_guide_ptr, (h, w),
+        round(float(raw_strength), 3),
+        round(float(edge_bias), 3),
+    ) if _raw_guide_ptr is not None else None
+    if _cost_key is not None and _cost_key in _V2_COST_CACHE:
+        edge_cost_all, solver_edge_strength, resolved_policy = _V2_COST_CACHE[_cost_key]
+    else:
+        solver_edge_strength = _v1._solver_edge_strength(solve_edge_strength, pixel_scale)
+        resolved_policy = _v1._edge_policy(strength, edge_bias=edge_bias)
+        edge_cost_all = _v1._edge_cost_map(solver_edge_strength, policy=resolved_policy)
+        if _cost_key is not None:
+            _V2_COST_CACHE.clear()  # keep only 1 entry
+            _V2_COST_CACHE[_cost_key] = (edge_cost_all, solver_edge_strength, resolved_policy)
     solver_edge_context_all = solver_edge_strength.copy()
 
     fg_stroke, bg_stroke, has_strokes = _er._draw_random_walker_stroke_seeds(
