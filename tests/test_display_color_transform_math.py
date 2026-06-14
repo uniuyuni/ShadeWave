@@ -1,8 +1,15 @@
 import unittest
+import pathlib
+import sys
 
 import numpy as np
 
-from cores import colour_functions
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from effect_backends import colour_functions_reference as ref
+from effect_backends import colour_functions_adapter
 
 
 def _encode_srgb(linear):
@@ -25,7 +32,7 @@ class DisplayColorTransformMathTest(unittest.TestCase):
         dst_space = "sRGB"
         cat = "Bradford"
 
-        formal = colour_functions.RGB_to_RGB(
+        formal = ref.RGB_to_RGB(
             img,
             src_space,
             dst_space,
@@ -34,10 +41,10 @@ class DisplayColorTransformMathTest(unittest.TestCase):
             apply_cctf_encoding=False,
             apply_gamut_mapping=False,
         ).astype(np.float32)
-        formal = colour_functions.compress_negative_display_gamut(formal)
+        formal = ref.compress_negative_display_gamut(formal)
         formal = _encode_srgb(formal)
 
-        basis = colour_functions.RGB_to_RGB(
+        basis = ref.RGB_to_RGB(
             np.eye(3, dtype=np.float32),
             src_space,
             dst_space,
@@ -47,10 +54,47 @@ class DisplayColorTransformMathTest(unittest.TestCase):
             apply_gamut_mapping=False,
         ).astype(np.float32)
         fast = (img.reshape(-1, 3) @ basis).reshape(img.shape)
-        fast = colour_functions.compress_negative_display_gamut(fast)
+        fast = ref.compress_negative_display_gamut(fast)
         fast = _encode_srgb(fast)
 
         np.testing.assert_allclose(formal, fast, rtol=1e-5, atol=1e-5)
+
+    def test_canonical_display_transform_matches_explicit_steps(self):
+        rng = np.random.default_rng(23)
+        img = rng.normal(0.2, 0.45, (40, 24, 3)).astype(np.float32)
+        img[:4] *= 3.0
+        img[4:8] -= 0.35
+
+        explicit = ref.RGB_to_RGB(
+            img,
+            "ProPhoto RGB",
+            "sRGB",
+            "CAT16",
+            apply_cctf_decoding=False,
+            apply_cctf_encoding=False,
+            apply_gamut_mapping=False,
+        )
+        explicit = ref.compress_negative_display_gamut(explicit).astype(np.float32)
+        explicit = ref.encode_display_output(explicit, "sRGB")
+
+        canonical = colour_functions_adapter.display_color_transform(
+            img,
+            "ProPhoto RGB",
+            "sRGB",
+            "CAT16",
+        )
+
+        np.testing.assert_allclose(canonical, explicit, rtol=1e-5, atol=1e-5)
+
+    def test_display_transform_basis_apply_matches_canonical_transform(self):
+        rng = np.random.default_rng(29)
+        img = rng.random((32, 16, 3), dtype=np.float32) * 2.0 - 0.2
+
+        basis = colour_functions_adapter.display_color_transform_basis("ProPhoto RGB", "sRGB", "CAT16")
+        applied = colour_functions_adapter.apply_display_color_transform(img, basis, "sRGB")
+        canonical = colour_functions_adapter.display_color_transform(img, "ProPhoto RGB", "sRGB", "CAT16")
+
+        np.testing.assert_allclose(applied, canonical, rtol=0.0, atol=0.0)
 
 
 if __name__ == "__main__":

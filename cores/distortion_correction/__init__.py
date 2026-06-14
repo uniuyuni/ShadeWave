@@ -16,6 +16,7 @@ from .warp_correction import (
     outer_ring_pins_tcg,
     correct_with_lines,
     calculate_lines_homography,
+    calculate_mesh_mls_coarse_map,
     get_mesh_coordinates
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     'outer_ring_pins_tcg',
     'correct_with_lines',
     'calculate_lines_homography',
+    'calculate_mesh_mls_coarse_map',
     'get_mesh_coordinates',
 ]

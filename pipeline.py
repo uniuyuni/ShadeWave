@@ -632,7 +632,51 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
             texture_width,
             texture_height,
         )
-        imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos, zoom_ratio=zoom_ratio)
+        deferred_geometry = getattr(efconfig, "deferred_geometry_transform", None)
+        if deferred_geometry is not None:
+            try:
+                if is_zoomed:
+                    imgc, disp_info2 = core.transform_zoom_crop_image(
+                        pre_rotation_img,
+                        deferred_geometry["matrix"],
+                        deferred_geometry["width"],
+                        deferred_geometry["height"],
+                        disp_info,
+                        params.get_crop_rect(primary_param),
+                        texture_width,
+                        texture_height,
+                        click_x,
+                        click_y,
+                        center_pos,
+                        zoom_ratio=zoom_ratio,
+                        border_mode=deferred_geometry.get("border_mode", "reflect"),
+                        transform_type=deferred_geometry.get("transform_type", "affine"),
+                        lens_strength=deferred_geometry.get("lens_strength", 0.0),
+                        lens_scale=deferred_geometry.get("lens_scale", 1.0),
+                        mesh_map_x=deferred_geometry.get("mesh_map_x"),
+                        mesh_map_y=deferred_geometry.get("mesh_map_y"),
+                    )
+                else:
+                    imgc, disp_info2 = core.transform_crop_image(
+                        pre_rotation_img,
+                        deferred_geometry["matrix"],
+                        deferred_geometry["width"],
+                        deferred_geometry["height"],
+                        disp_info,
+                        texture_width,
+                        texture_height,
+                        border_mode=deferred_geometry.get("border_mode", "reflect"),
+                        transform_type=deferred_geometry.get("transform_type", "affine"),
+                        lens_strength=deferred_geometry.get("lens_strength", 0.0),
+                        lens_scale=deferred_geometry.get("lens_scale", 1.0),
+                        mesh_map_x=deferred_geometry.get("mesh_map_x"),
+                        mesh_map_y=deferred_geometry.get("mesh_map_y"),
+                    )
+            except Exception:
+                logging.exception("deferred geometry preview failed; falling back to two-pass crop")
+                imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos, zoom_ratio=zoom_ratio)
+        else:
+            imgc, disp_info2 = core.crop_image(img0, disp_info, params.get_crop_rect(primary_param), texture_width, texture_height, click_x, click_y, is_zoomed, center_pos, zoom_ratio=zoom_ratio)
         _mask_zoom_sync_debug(
             "pipeline crop_result frame=%s out_disp=%s imgc_shape=%s primary_disp_before_set=%s",
             pipeline_version, disp_info2, getattr(imgc, "shape", None),
@@ -909,11 +953,11 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
 
         if _iter_t0 is not None:
             _t = time.perf_counter()
-            if pre_diff is not diff:
+            if pre_diff is not diff or pre_hash != getattr(lv0[n], "hash", None):
                 lv1reset = True
             overhead_components["reset_flag_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
-            if pre_diff is not diff:
+            if pre_diff is not diff or pre_hash != getattr(lv0[n], "hash", None):
                 lv1reset = True
         if _iter_t0 is not None:
             _timing_record_effect(

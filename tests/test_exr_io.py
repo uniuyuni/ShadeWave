@@ -21,7 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import OpenEXR
 
 import cores.exr_io as exr_io
-import cores.colour_functions as cf
+from effect_backends import colour_functions_adapter as cf
 
 
 def _write_exr(path, rgb, chromaticities=None):

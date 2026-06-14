@@ -1,8 +1,14 @@
 import unittest
+import pathlib
+import sys
 
 import numpy as np
 
-from cores import colour_functions as cf
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from effect_backends import colour_functions_adapter as cf
 
 
 class ColourFunctionsRGBToRGBTest(unittest.TestCase):
@@ -135,6 +141,49 @@ class ColourFunctionsRGBToRGBTest(unittest.TestCase):
         out = cf.encode_display_output(rgb, "Linear sRGB")
 
         np.testing.assert_array_equal(out, rgb)
+
+    def test_encode_display_output_supports_display_transfer_functions(self):
+        rgb = np.array([-0.01, 0.0, 1.0 / 512.0, 0.18, 1.0, 2.0], dtype=np.float32)
+
+        srgb = cf.encode_display_output(rgb, "sRGB")
+        display_p3 = cf.encode_display_output(rgb, "Display P3")
+        rec709 = cf.encode_display_output(rgb, "Rec.709")
+        rec2020 = cf.encode_display_output(rgb, "Rec.2020")
+        prophoto = cf.encode_display_output(rgb, "ProPhoto RGB")
+        dci_p3 = cf.encode_display_output(rgb, "DCI-P3")
+
+        np.testing.assert_allclose(display_p3, srgb, rtol=0.0, atol=0.0)
+        self.assertFalse(np.allclose(rec709, srgb))
+        self.assertFalse(np.allclose(rec2020, srgb))
+        self.assertFalse(np.allclose(prophoto, srgb))
+        self.assertFalse(np.allclose(dci_p3, srgb))
+
+        expected_prophoto = np.array(
+            [
+                -0.16,
+                0.0,
+                1.0 / 32.0,
+                np.power(0.18, 1.0 / 1.8),
+                1.0,
+                np.power(2.0, 1.0 / 1.8),
+            ],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(prophoto, expected_prophoto, rtol=0.0, atol=2e-7)
+
+    def test_transfer_function_roundtrips(self):
+        rgb = np.array([-0.01, 0.0, 0.001, 0.02, 0.18, 1.0, 2.0], dtype=np.float32)
+
+        pairs = [
+            (cf.linear_to_sRGB, cf.sRGB_to_linear),
+            (cf.linear_to_rec709, cf.rec709_to_linear),
+            (cf.linear_to_rec2020, cf.rec2020_to_linear),
+            (cf.linear_to_prophoto, cf.prophoto_to_linear),
+        ]
+        for encode, decode in pairs:
+            encoded = encode(rgb)
+            decoded = decode(encoded)
+            np.testing.assert_allclose(decoded, rgb, rtol=2e-6, atol=2e-6)
 
 
 if __name__ == "__main__":

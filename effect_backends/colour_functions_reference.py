@@ -703,80 +703,6 @@ def XYZ_to_RGB(XYZ: ArrayLike,
 
 
 # ============================================================================
-# RGB <-> RGB Direct Conversion
-# ============================================================================
-
-def RGB_to_RGB(RGB: ArrayLike,
-               input_colourspace: str = 'sRGB',
-               output_colourspace: str = 'sRGB',
-               **kwargs) -> np.ndarray:
-    """
-    Convert RGB from one colorspace to another.
-    
-    This is a convenience function that combines RGB_to_XYZ and XYZ_to_RGB.
-    
-    Parameters:
-        RGB: array_like, shape (..., 3)
-            Linear RGB values in input colorspace
-        input_colourspace: str
-            Name of input RGB colorspace (default: 'sRGB')
-        output_colourspace: str
-            Name of output RGB colorspace (default: 'sRGB')
-        **kwargs: optional
-            Additional arguments passed to RGB_to_XYZ and XYZ_to_RGB:
-            - illuminant_RGB_input: xy of input RGB illuminant
-            - illuminant_RGB_output: xy of output RGB illuminant
-            - chromatic_adaptation_transform: 'Bradford' or 'CAT02'
-    
-    Returns:
-        RGB: ndarray, shape (..., 3)
-            Linear RGB values in output colorspace
-    
-    Examples:
-        >>> # sRGB to Adobe RGB
-        >>> RGB_adobe = RGB_to_RGB([0.8, 0.6, 0.4], 
-        ...                         input_colourspace='sRGB',
-        ...                         output_colourspace='Adobe RGB (1998)')
-        
-        >>> # ProPhoto RGB to Display P3
-        >>> RGB_p3 = RGB_to_RGB([0.9, 0.7, 0.5],
-        ...                      input_colourspace='ProPhoto RGB',
-        ...                      output_colourspace='Display P3')
-        
-        >>> # Batch conversion
-        >>> RGB_batch = np.array([[0.8, 0.5, 0.3], [0.7, 0.4, 0.2]])
-        >>> RGB_rec2020 = RGB_to_RGB(RGB_batch,
-        ...                           input_colourspace='sRGB',
-        ...                           output_colourspace='Rec.2020')
-    """
-    # Same colorspace - no conversion needed
-    if input_colourspace == output_colourspace:
-        return np.asarray(RGB, dtype=np.float64)
-    
-    # Extract kwargs
-    illuminant_input = kwargs.get('illuminant_RGB_input', None)
-    illuminant_output = kwargs.get('illuminant_RGB_output', None)
-    chromatic_adaptation = kwargs.get('chromatic_adaptation_transform', 'Bradford')
-    
-    # Convert: input RGB → XYZ → output RGB
-    XYZ = RGB_to_XYZ(
-        RGB,
-        colourspace=input_colourspace,
-        illuminant_RGB=illuminant_input,
-        chromatic_adaptation_transform=chromatic_adaptation
-    )
-    
-    RGB_out = XYZ_to_RGB(
-        XYZ,
-        colourspace=output_colourspace,
-        illuminant_RGB=illuminant_output,
-        chromatic_adaptation_transform=chromatic_adaptation
-    )
-    
-    return RGB_out
-
-
-# ============================================================================
 # Utility Functions
 # ============================================================================
 
@@ -922,7 +848,77 @@ def remove_gamma(rgb_gamma: ArrayLike, gamma: float) -> np.ndarray:
             Linear RGB values
     """
     rgb_gamma = _as_float_array(rgb_gamma)
-    return np.power(np.maximum(rgb_gamma, 0), gamma)
+    sign = np.sign(rgb_gamma)
+    abs_rgb = np.abs(rgb_gamma)
+    return np.power(abs_rgb, gamma) * sign
+
+
+def linear_to_rec709(linear: ArrayLike) -> np.ndarray:
+    """Encode linear RGB with the Rec.709 OETF."""
+    linear = _as_float_array(linear)
+    result = np.empty_like(linear)
+    low = linear < 0.018
+    result[low] = 4.5 * linear[low]
+    result[~low] = 1.099 * np.power(linear[~low], 0.45) - 0.099
+    return result
+
+
+def rec709_to_linear(encoded: ArrayLike) -> np.ndarray:
+    """Decode Rec.709 OETF-encoded RGB to linear RGB."""
+    encoded = _as_float_array(encoded)
+    result = np.empty_like(encoded)
+    low = encoded < 0.081
+    result[low] = encoded[low] / 4.5
+    result[~low] = np.power((encoded[~low] + 0.099) / 1.099, 1.0 / 0.45)
+    return result
+
+
+_BT2020_ALPHA = 1.09929682680944
+_BT2020_BETA = 0.018053968510807
+
+
+def linear_to_rec2020(linear: ArrayLike) -> np.ndarray:
+    """Encode linear RGB with the Rec.2020 OETF."""
+    linear = _as_float_array(linear)
+    result = np.empty_like(linear)
+    low = linear < _BT2020_BETA
+    result[low] = 4.5 * linear[low]
+    result[~low] = _BT2020_ALPHA * np.power(linear[~low], 0.45) - (_BT2020_ALPHA - 1.0)
+    return result
+
+
+def rec2020_to_linear(encoded: ArrayLike) -> np.ndarray:
+    """Decode Rec.2020 OETF-encoded RGB to linear RGB."""
+    encoded = _as_float_array(encoded)
+    result = np.empty_like(encoded)
+    low = encoded < (4.5 * _BT2020_BETA)
+    result[low] = encoded[low] / 4.5
+    result[~low] = np.power((encoded[~low] + (_BT2020_ALPHA - 1.0)) / _BT2020_ALPHA, 1.0 / 0.45)
+    return result
+
+
+_PROPHOTO_LINEAR_THRESHOLD = 1.0 / 512.0
+_PROPHOTO_ENCODED_THRESHOLD = 16.0 / 512.0
+
+
+def linear_to_prophoto(linear: ArrayLike) -> np.ndarray:
+    """Encode linear ProPhoto RGB / ROMM RGB values."""
+    linear = _as_float_array(linear)
+    result = np.empty_like(linear)
+    low = linear < _PROPHOTO_LINEAR_THRESHOLD
+    result[low] = 16.0 * linear[low]
+    result[~low] = np.power(linear[~low], 1.0 / 1.8)
+    return result
+
+
+def prophoto_to_linear(encoded: ArrayLike) -> np.ndarray:
+    """Decode ProPhoto RGB / ROMM RGB encoded values to linear RGB."""
+    encoded = _as_float_array(encoded)
+    result = np.empty_like(encoded)
+    low = encoded < _PROPHOTO_ENCODED_THRESHOLD
+    result[low] = encoded[low] / 16.0
+    result[~low] = np.power(encoded[~low], 1.8)
+    return result
 
 
 def _get_colourspace(colourspace: Union[str, RGBColourspace]) -> RGBColourspace:
@@ -985,13 +981,21 @@ def _get_encoding(colourspace: Union[str, RGBColourspace]) -> str:
     cs_lower = name.lower()
     if cs_lower.startswith('linear '):
         return 'linear'
-    if 'srgb' in cs_lower or 'rec.709' in cs_lower or 'rec709' in cs_lower:
+    if 'srgb' in cs_lower:
         return 'sRGB'
     if 'display p3' in cs_lower or 'p3-d65' in cs_lower:
         return 'sRGB'
+    if 'rec.709' in cs_lower or 'rec709' in cs_lower:
+        return 'rec709'
+    if 'rec.2020' in cs_lower or 'bt.2020' in cs_lower or 'rec2020' in cs_lower or 'bt2020' in cs_lower:
+        return 'rec2020'
+    if 'dci-p3' in cs_lower:
+        return 'gamma-2.6'
     if 'adobe' in cs_lower:
-        return 'gamma-2.2'
+        return 'gamma-adobe-rgb'
     if 'prophoto' in cs_lower or 'romm' in cs_lower:
+        return 'prophoto'
+    if 'apple rgb' in cs_lower or 'colormatch' in cs_lower:
         return 'gamma-1.8'
     return 'linear'
 
@@ -999,10 +1003,20 @@ def _get_encoding(colourspace: Union[str, RGBColourspace]) -> str:
 def _decode_RGB_encoding(RGB: np.ndarray, encoding: str) -> np.ndarray:
     if encoding == 'sRGB':
         return sRGB_to_linear(RGB)
-    if encoding == 'gamma-2.2':
-        return remove_gamma(RGB, 2.2)
+    if encoding == 'rec709':
+        return rec709_to_linear(RGB)
+    if encoding == 'rec2020':
+        return rec2020_to_linear(RGB)
+    if encoding == 'gamma-adobe-rgb':
+        return remove_gamma(RGB, 563.0 / 256.0)
     if encoding == 'gamma-1.8':
         return remove_gamma(RGB, 1.8)
+    if encoding == 'gamma-2.2':
+        return remove_gamma(RGB, 2.2)
+    if encoding == 'gamma-2.6':
+        return remove_gamma(RGB, 2.6)
+    if encoding == 'prophoto':
+        return prophoto_to_linear(RGB)
     if isinstance(encoding, (int, float)):
         return remove_gamma(RGB, float(encoding))
     return RGB
@@ -1011,10 +1025,20 @@ def _decode_RGB_encoding(RGB: np.ndarray, encoding: str) -> np.ndarray:
 def _encode_RGB_encoding(RGB: np.ndarray, encoding: str) -> np.ndarray:
     if encoding == 'sRGB':
         return linear_to_sRGB(RGB)
-    if encoding == 'gamma-2.2':
-        return apply_gamma(RGB, 2.2)
+    if encoding == 'rec709':
+        return linear_to_rec709(RGB)
+    if encoding == 'rec2020':
+        return linear_to_rec2020(RGB)
+    if encoding == 'gamma-adobe-rgb':
+        return apply_gamma(RGB, 563.0 / 256.0)
     if encoding == 'gamma-1.8':
         return apply_gamma(RGB, 1.8)
+    if encoding == 'gamma-2.2':
+        return apply_gamma(RGB, 2.2)
+    if encoding == 'gamma-2.6':
+        return apply_gamma(RGB, 2.6)
+    if encoding == 'prophoto':
+        return linear_to_prophoto(RGB)
     if isinstance(encoding, (int, float)):
         return apply_gamma(RGB, float(encoding))
     return RGB
@@ -1029,6 +1053,58 @@ def encode_display_output(rgb: ArrayLike, colourspace: Union[str, RGBColourspace
     handling can happen between RGB conversion and output encoding.
     """
     return _encode_RGB_encoding(_as_float_array(rgb), _get_encoding(colourspace))
+
+
+def display_color_transform_basis(input_colourspace: Union[str, RGBColourspace],
+                                  output_colourspace: Union[str, RGBColourspace],
+                                  chromatic_adaptation_transform: str = 'CAT02',
+                                  dtype=np.float32) -> np.ndarray:
+    """
+    Return the row-vector basis used by the display transform hot path.
+
+    For an image array `rgb`, `rgb.reshape(-1, 3) @ basis` is equivalent to
+    `RGB_to_RGB(..., apply_cctf_encoding=False, apply_gamut_mapping=False)`.
+    """
+    return RGB_to_RGB(
+        np.eye(3, dtype=dtype),
+        input_colourspace,
+        output_colourspace,
+        chromatic_adaptation_transform,
+        apply_cctf_decoding=False,
+        apply_cctf_encoding=False,
+        apply_gamut_mapping=False,
+    ).astype(dtype, copy=False)
+
+
+def apply_display_color_transform(rgb: ArrayLike,
+                                  basis: ArrayLike,
+                                  output_colourspace: Union[str, RGBColourspace]) -> np.ndarray:
+    """
+    Apply the display conversion contract used immediately before texture upload:
+    linear RGB matrix conversion, negative display-gamut compression, then output
+    encoding. HDR values above 1.0 are preserved.
+    """
+    src = np.asarray(rgb, dtype=np.float32)
+    basis_arr = np.asarray(basis, dtype=np.float32)
+    out = (src.reshape(-1, 3) @ basis_arr).reshape(src.shape)
+    out = compress_negative_display_gamut(out)
+    return encode_display_output(out, output_colourspace)
+
+
+def display_color_transform(rgb: ArrayLike,
+                            input_colourspace: Union[str, RGBColourspace],
+                            output_colourspace: Union[str, RGBColourspace],
+                            chromatic_adaptation_transform: str = 'CAT02') -> np.ndarray:
+    """
+    Canonical display transform for preview output. This is the function family
+    a native backend must match before it can replace the Python path.
+    """
+    basis = display_color_transform_basis(
+        input_colourspace,
+        output_colourspace,
+        chromatic_adaptation_transform,
+    )
+    return apply_display_color_transform(rgb, basis, output_colourspace)
 
 
 # ============================================================================
@@ -1239,9 +1315,13 @@ def RGB_to_RGB(RGB: ArrayLike,
         Apply input Colour Component Transfer Function (CCTF) decoding.
         If True, assumes input RGB is gamma-corrected and converts to linear.
         Encoding type is determined automatically from colorspace:
-        - sRGB/Rec.709/Display P3: sRGB transfer function
-        - Adobe RGB: gamma 2.2
-        - ProPhoto RGB: gamma 1.8
+        - sRGB / Display P3: sRGB transfer function
+        - Rec.709: Rec.709 OETF
+        - Rec.2020 / BT.2020: Rec.2020 OETF
+        - Adobe RGB: gamma 563/256
+        - ProPhoto RGB / ROMM RGB: ProPhoto toe + gamma 1.8
+        - DCI-P3: gamma 2.6
+        - Linear variants: no transfer function
     
     apply_cctf_encoding : bool, default False
         Apply output CCTF encoding.

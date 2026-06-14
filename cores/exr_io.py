@@ -18,7 +18,7 @@ import numpy as np
 
 import OpenEXR
 
-import cores.colour_functions as cf
+from effect_backends import colour_functions_adapter as cf
 
 
 # chromaticities マッチング許容差（原色座標の絶対誤差）

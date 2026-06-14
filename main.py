@@ -69,7 +69,7 @@ if __name__ == '__main__':
     import threads
     import os
 
-    import cores.colour_functions as colour_functions
+    from effect_backends import colour_functions_adapter as colour_functions
     import re
     import time
     import multiprocessing
@@ -964,24 +964,17 @@ if __name__ == '__main__':
             key = (src_space, dst_space, cat)
             basis = self._fast_display_transform_cache.get(key)
             if basis is None:
-                basis = colour_functions.RGB_to_RGB(
-                    np.eye(3, dtype=np.float32),
+                basis = colour_functions.display_color_transform_basis(
                     src_space,
                     dst_space,
                     cat,
-                    apply_cctf_decoding=False,
-                    apply_cctf_encoding=False,
-                    apply_gamut_mapping=False,
-                ).astype(np.float32)
+                )
                 self._fast_display_transform_cache[key] = basis
             return basis
 
         def _fast_display_color_transform(self, img, src_space, dst_space, cat):
             basis = self._get_fast_display_basis(src_space, dst_space, cat)
-            src = np.asarray(img, dtype=np.float32)
-            out = (src.reshape(-1, 3) @ basis).reshape(src.shape)
-            out = colour_functions.compress_negative_display_gamut(out)
-            return colour_functions.encode_display_output(out, dst_space)
+            return colour_functions.apply_display_color_transform(img, basis, dst_space)
 
         def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False):
             self._draw_image_core_active = True
@@ -1051,17 +1044,7 @@ if __name__ == '__main__':
                         if fast_display:
                             img = self._fast_display_color_transform(img, src_space, dst_space, cat)
                         else:
-                            img = colour_functions.RGB_to_RGB(
-                                img,
-                                src_space,
-                                dst_space,
-                                cat,
-                                apply_cctf_decoding=False,
-                                apply_cctf_encoding=False,
-                                apply_gamut_mapping=False,
-                            )
-                            img = colour_functions.compress_negative_display_gamut(img).astype(np.float32)
-                            img = colour_functions.encode_display_output(img, dst_space)
+                            img = colour_functions.display_color_transform(img, src_space, dst_space, cat)
                         _debug_display_stats("converted fast=%s %s->%s" % (fast_display, src_space, dst_space), img)
                         color_ms = (time.perf_counter() - color_t0) * 1000.0 if debug_mask_geom else 0.0
 
@@ -3183,7 +3166,7 @@ if __name__ == '__main__':
                 import io as _io
                 import pyvips
                 from PIL import ImageCms
-                import cores.colour_functions as colour_functions
+                from effect_backends import colour_functions_adapter as colour_functions
                 with pyvips.Image.new_from_file(path) as vips_image:
                     long_side = max(vips_image.width, vips_image.height)
                     if long_side > 1024:

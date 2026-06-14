@@ -15,7 +15,7 @@ import json
 from typing import Any, Dict
 import base64
 
-import cores.colour_functions as colour_functions
+from effect_backends import colour_functions_adapter as colour_functions
 import cores.sigmoid as sigmoid
 import dng_sdk.dng_temperature
 import utils.utils as utils
@@ -23,6 +23,7 @@ import params
 import config
 from threads import lock_numba
 import cores.hlsrgb as hlsrgb
+from effect_backends import image_transform_adapter
 
 def normalize_image(image_data):
     # 画像データを正規化
@@ -108,13 +109,12 @@ def invert_TempTint2RGB(temp, tint, Y, reference_temp=5000.0):
 
 #--------------------------------------------------
 
-def rotation(img, angle, flip_mode=0, matrix=None, inter_mode='bilinear', border_mode="reflect"):
-    # 元の画像の高さと幅を取得
-    height, width = img.shape[:2]
-    
+def rotation_canvas_matrix(image_shape, angle, flip_mode=0):
+    height, width = image_shape[:2]
+
     # 回転の中心点を計算
     center = (int(width/2), int(height/2))
-    
+
     # 回転行列を計算（スケール付き）
     trans = cv2.getRotationMatrix2D(center, angle, 1)
 
@@ -147,37 +147,52 @@ def rotation(img, angle, flip_mode=0, matrix=None, inter_mode='bilinear', border
         trans[1, 1] = -m11
         trans[1, 2] = m11*(height-1) + m12
 
-    if matrix is not None:
-        # transを3x3行列に拡張
-        trans3x3 = np.eye(3)
-        trans3x3[:2, :] = trans
-        
-        # transを中心原点座標系に変換
-        # matrixは既にparams.add_matrixで中心原点座標系に変換済み
-        T = np.array([
-            [1, 0, size / 2],
-            [0, 1, size / 2],
-            [0, 0, 1]
-        ])
-        T_inv = np.linalg.inv(T)
-        trans_centered = T_inv @ trans3x3 @ T
-        
-        # 中心原点座標系で合成: 先にtrans（回転・フリップ）を適用し、その後にmatrix（ジオメトリ補正）を適用
-        combined = matrix @ trans_centered
-        
-        # 左上原点座標系に戻す
-        final_matrix = T @ combined @ T_inv
-        
-        # こっちはパースペクティブ
-        img_affine = cv2.warpPerspective(img, final_matrix, (size, size),
-                                    flags=cv2.INTER_CUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
+    return trans, size
+
+
+def combined_rotation_canvas_matrix(image_shape, angle, flip_mode=0, matrix=None):
+    trans, size = rotation_canvas_matrix(image_shape, angle, flip_mode)
+    if matrix is None:
+        return trans, size, "affine"
+
+    trans3x3 = np.eye(3)
+    trans3x3[:2, :] = trans
+
+    T = np.array([
+        [1, 0, size / 2],
+        [0, 1, size / 2],
+        [0, 0, 1]
+    ])
+    T_inv = np.linalg.inv(T)
+    trans_centered = T_inv @ trans3x3 @ T
+    combined = matrix @ trans_centered
+    return T @ combined @ T_inv, size, "perspective"
+
+
+def rotation(img, angle, flip_mode=0, matrix=None, inter_mode='bilinear', border_mode="reflect"):
+    transform_matrix, size, transform_type = combined_rotation_canvas_matrix(img.shape, angle, flip_mode, matrix)
+
+    if transform_type == "perspective":
+        img_affine = image_transform_adapter.transform_to_canvas(
+            img,
+            transform_matrix,
+            size,
+            size,
+            transform_type="perspective",
+            interpolation="cubic" if inter_mode == "bicubic" else "linear",
+            border_mode=border_mode,
+        )
 
     else:
-        # 回転と中心補正を同時に行う
-        img_affine = cv2.warpAffine(img, trans, (size, size),
-                                    flags=cv2.INTER_CUBIC if inter_mode == 'bicubic' else cv2.INTER_LINEAR, 
-                                    borderMode=cv2.BORDER_REFLECT if border_mode == "reflect" else cv2.BORDER_CONSTANT)
+        img_affine = image_transform_adapter.transform_to_canvas(
+            img,
+            transform_matrix,
+            size,
+            size,
+            transform_type="affine",
+            interpolation="cubic" if inter_mode == "bicubic" else "linear",
+            border_mode=border_mode,
+        )
 
     return img_affine
 
@@ -775,69 +790,18 @@ def apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale=
 #    # 効果適用
 #    result = np.clip(image * vignette, 0, 1) if intensity < 0 else np.clip(image + (1-image)*(1-vignette), 0, 1)
 #    return result.astype(np.float32)
-@lock_numba
-@njit(parallel=True, fastmath=True, cache=True)
 def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
-    intensity = intensity / 100.0
-    radius_percent = radius_percent / 100.0
-    gradient_softness = max(0.1, gradient_softness)
-    
-    h, w = image.shape[:2]
-    
-    dx, dy, _, _, scale = disp_info
-    
-    x1, y1, x2, y2 = crop_rect
-    offset_x, offset_y = offset
-        
-    center_x = (x1 + (x2 - x1) / 2 - dx) * scale + offset_x
-    center_y = (y1 + (y2 - y1) / 2 - dy) * scale + offset_y
-    
-    mm = max((x2 - x1), (y2 - y1)) * scale
-    max_radius = math.sqrt(mm**2 + mm**2) / 2
-    
-    radius = max_radius * radius_percent
-    
-    res = np.empty_like(image)
-    
-    # 3 channels assumed
-    c = 3
-    if image.ndim == 2:
-        c = 1
-    
-    for y in prange(h):
-        for x in prange(w):
-            dist = math.sqrt((x - center_x)**2 + (y - center_y)**2)
-            val = dist / radius
-            if val > 1.0: val = 1.0
-            elif val < 0.0: val = 0.0
-            
-            # pow and smoothstep
-            mask = val ** gradient_softness
-            mask = mask * mask * (3 - 2 * mask)
-            
-            if intensity < 0:
-                vig = 1.0 + intensity * mask
-                if c == 3:
-                    for k in range(3):
-                        v = image[y, x, k] * vig
-                        # v is float32
-                        res[y, x, k] = v
-                else:
-                    v = image[y, x] * vig
-                    res[y, x] = v
-            else:
-                vig = 1.0 - intensity * mask
-                if c == 3:
-                     for k in range(3):
-                        v = image[y, x, k]
-                        # image + (1-image)*(1-vignette) -> v + (1-v)*(1-vig)
-                        v_out = v + (1.0 - v) * (1.0 - vig)
-                        res[y, x, k] = v_out
-                else:
-                    v = image[y, x]
-                    v_out = v + (1.0 - v) * (1.0 - vig)
-                    res[y, x] = v_out
-    return res
+    from effect_backends import vignette_adapter
+
+    return vignette_adapter.apply_vignette(
+        image,
+        intensity,
+        radius_percent,
+        disp_info,
+        crop_rect,
+        offset,
+        gradient_softness,
+    )
 
 #--------------------------------------------------
 # テクスチャサイズとクロップ情報から、新しい描画サイズと余白の大きさを得る
@@ -900,55 +864,64 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         scale = texture_height/disp_info[3]
 
     if not is_zoomed:
-        # リサイズ
         dx, dy, dw, dh, _ = disp_info
-        resized_img = cv2.resize(image[dy:dy+dh, dx:dx+dw], (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-        # リサイズした画像を中央に配置
-        result = np.pad(resized_img, ((offset_y, texture_height-(offset_y+new_height)), (offset_x, texture_width-(offset_x+new_width)), (0, 0)), mode="constant")
+        result = image_transform_adapter.fit_crop_to_canvas(
+            image,
+            (dx, dy, dw, dh),
+            texture_width,
+            texture_height,
+            new_width,
+            new_height,
+            offset_x,
+            offset_y,
+            "area",
+        )
 
         # 再設定
         disp_info = (dx, dy, dw, dh, scale)
 
     else:
-        zoom_ratio = min(4.0, max(0.5, float(zoom_ratio)))
-        # クリック位置を元の画像の座標系に変換
-        click_x = click_x - offset_x
-        click_y = click_y - offset_y
-        click_image_x = click_x / scale
-        click_image_y = click_y / scale
-
-        # 切り抜き範囲を計算
-        crop_width = max(1, int(round(texture_width / zoom_ratio)))
-        crop_height = max(1, int(round(texture_height / zoom_ratio)))
-
-        if center_pos is not None:
-             # 中心座標指定
-            crop_x = center_pos[0] - crop_width / 2.0
-            crop_y = center_pos[1] - crop_height / 2.0
-
-        else:
-            # 既に同じ倍率でズーム済みなら位置を維持
-            if abs(scale - zoom_ratio) < 0.01:
-                crop_x = disp_info[0] + disp_info[2] / 2.0 - crop_width / 2.0
-                crop_y = disp_info[1] + disp_info[3] / 2.0 - crop_height / 2.0
-            else:
-                # クリック位置を中心にする
-                crop_x = disp_info[0] + click_image_x - crop_width / 2.0
-                crop_y = disp_info[1] + click_image_y - crop_height / 2.0
+        crop_source_info, zoom_debug = zoom_crop_source_info(
+            disp_info,
+            crop_rect,
+            texture_width,
+            texture_height,
+            click_x,
+            click_y,
+            center_pos,
+            zoom_ratio,
+            base_scale=scale,
+            base_offset=(offset_x, offset_y),
+        )
 
         # クロップ
         if debug_zoom_sync:
             logging.warning(
                 "[MASK_ZOOM_SYNC] crop_image zoom_calc base_scale=%.6f click_image=(%.2f,%.2f) crop_xywh=(%.2f,%.2f,%s,%s)",
-                scale, click_image_x, click_image_y, crop_x, crop_y, crop_width, crop_height,
+                scale,
+                zoom_debug["click_image_x"],
+                zoom_debug["click_image_y"],
+                zoom_debug["crop_x"],
+                zoom_debug["crop_y"],
+                zoom_debug["crop_width"],
+                zoom_debug["crop_height"],
             )
-        result, disp_info = crop_image_info(image, (crop_x, crop_y, crop_width, crop_height, zoom_ratio), crop_rect)
+        result, disp_info = crop_image_info(image, crop_source_info, crop_rect)
         target_width = max(1, int(texture_width))
         target_height = max(1, int(texture_height))
         if result.shape[1] != target_width or result.shape[0] != target_height:
-            interpolation = cv2.INTER_NEAREST if zoom_ratio >= 1.0 else cv2.INTER_AREA
-            result = cv2.resize(result, (target_width, target_height), interpolation=interpolation)
+            interpolation = "nearest" if zoom_ratio >= 1.0 else "area"
+            result = image_transform_adapter.fit_crop_to_canvas(
+                result,
+                (0, 0, result.shape[1], result.shape[0]),
+                target_width,
+                target_height,
+                target_width,
+                target_height,
+                0,
+                0,
+                interpolation,
+            )
         actual_scale = target_width / max(1, disp_info[2])
         disp_info = (disp_info[0], disp_info[1], disp_info[2], disp_info[3], actual_scale)
     if debug_zoom_sync:
@@ -958,6 +931,168 @@ def crop_image(image, disp_info, crop_rect, texture_width, texture_height, click
         )
     
     return result, disp_info
+
+
+def zoom_crop_source_info(disp_info, crop_rect, texture_width, texture_height, click_x, click_y, center_pos=None, zoom_ratio=1.0, base_scale=None, base_offset=None):
+    if base_offset is None:
+        _, _, offset_x, offset_y = crop_size_and_offset_from_texture(texture_width, texture_height, disp_info)
+    else:
+        offset_x, offset_y = base_offset
+
+    if base_scale is None:
+        if disp_info[2] >= disp_info[3]:
+            base_scale = texture_width / disp_info[2]
+        else:
+            base_scale = texture_height / disp_info[3]
+
+    zoom_ratio = min(4.0, max(0.5, float(zoom_ratio)))
+    click_x = click_x - offset_x
+    click_y = click_y - offset_y
+    click_image_x = click_x / base_scale
+    click_image_y = click_y / base_scale
+
+    crop_width = max(1, int(round(texture_width / zoom_ratio)))
+    crop_height = max(1, int(round(texture_height / zoom_ratio)))
+
+    if center_pos is not None:
+        crop_x = center_pos[0] - crop_width / 2.0
+        crop_y = center_pos[1] - crop_height / 2.0
+    else:
+        if abs(base_scale - zoom_ratio) < 0.01:
+            crop_x = disp_info[0] + disp_info[2] / 2.0 - crop_width / 2.0
+            crop_y = disp_info[1] + disp_info[3] / 2.0 - crop_height / 2.0
+        else:
+            crop_x = disp_info[0] + click_image_x - crop_width / 2.0
+            crop_y = disp_info[1] + click_image_y - crop_height / 2.0
+
+    return (
+        (crop_x, crop_y, crop_width, crop_height, zoom_ratio),
+        {
+            "click_image_x": click_image_x,
+            "click_image_y": click_image_y,
+            "crop_x": crop_x,
+            "crop_y": crop_y,
+            "crop_width": crop_width,
+            "crop_height": crop_height,
+        },
+    )
+
+
+def transform_crop_image(
+    image,
+    transform_matrix,
+    transform_width,
+    transform_height,
+    disp_info,
+    texture_width,
+    texture_height,
+    border_mode="reflect",
+    transform_type="affine",
+    lens_strength=0.0,
+    lens_scale=1.0,
+    mesh_map_x=None,
+    mesh_map_y=None,
+):
+    disp_info = _clamp_disp_info_to_image(disp_info, int(transform_width), int(transform_height))
+    new_width, new_height, offset_x, offset_y = crop_size_and_offset_from_texture(texture_width, texture_height, disp_info)
+
+    if disp_info[2] >= disp_info[3]:
+        scale = texture_width / disp_info[2]
+    else:
+        scale = texture_height / disp_info[3]
+
+    dx, dy, dw, dh, _ = disp_info
+    result = image_transform_adapter.transform_crop_to_canvas(
+        image,
+        transform_matrix,
+        (dx, dy, dw, dh),
+        int(transform_width),
+        int(transform_height),
+        int(texture_width),
+        int(texture_height),
+        int(new_width),
+        int(new_height),
+        int(offset_x),
+        int(offset_y),
+        transform_type=transform_type,
+        interpolation="area",
+        border_mode=border_mode,
+        lens_strength=lens_strength,
+        lens_scale=lens_scale,
+        mesh_map_x=mesh_map_x,
+        mesh_map_y=mesh_map_y,
+    )
+    return result, (dx, dy, dw, dh, scale)
+
+
+def transform_zoom_crop_image(
+    image,
+    transform_matrix,
+    transform_width,
+    transform_height,
+    disp_info,
+    crop_rect,
+    texture_width,
+    texture_height,
+    click_x,
+    click_y,
+    center_pos=None,
+    zoom_ratio=1.0,
+    border_mode="reflect",
+    transform_type="affine",
+    lens_strength=0.0,
+    lens_scale=1.0,
+    mesh_map_x=None,
+    mesh_map_y=None,
+):
+    crop_rect = _clamp_crop_rect_to_image(crop_rect, int(transform_width), int(transform_height))
+    disp_info = _clamp_disp_info_to_image(disp_info, int(transform_width), int(transform_height))
+    _, _, offset_x, offset_y = crop_size_and_offset_from_texture(texture_width, texture_height, disp_info)
+
+    if disp_info[2] >= disp_info[3]:
+        scale = texture_width / disp_info[2]
+    else:
+        scale = texture_height / disp_info[3]
+
+    crop_source_info, _ = zoom_crop_source_info(
+        disp_info,
+        crop_rect,
+        texture_width,
+        texture_height,
+        click_x,
+        click_y,
+        center_pos,
+        zoom_ratio,
+        base_scale=scale,
+        base_offset=(offset_x, offset_y),
+    )
+    disp_info = _clamp_disp_info_to_crop_rect(crop_source_info, crop_rect)
+    dx, dy, dw, dh, _ = disp_info
+    target_width = max(1, int(texture_width))
+    target_height = max(1, int(texture_height))
+    interpolation = "nearest" if float(zoom_ratio) >= 1.0 else "area"
+    result = image_transform_adapter.transform_crop_to_canvas(
+        image,
+        transform_matrix,
+        (dx, dy, dw, dh),
+        int(transform_width),
+        int(transform_height),
+        target_width,
+        target_height,
+        target_width,
+        target_height,
+        0,
+        0,
+        transform_type=transform_type,
+        interpolation=interpolation,
+        border_mode=border_mode,
+        lens_strength=lens_strength,
+        lens_scale=lens_scale,
+        mesh_map_x=mesh_map_x,
+        mesh_map_y=mesh_map_y,
+    )
+    actual_scale = target_width / max(1, dw)
+    return result, (dx, dy, dw, dh, actual_scale)
 
 
 def crop_image_info(image, disp_info, crop_rect):

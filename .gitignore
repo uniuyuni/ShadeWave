@@ -19,6 +19,11 @@ splitimage/*.egg*/**
 
 **/__pycache__/**
 **/venv3.11.9/**
+effect_backends/*.so
+effect_backends/*.egg-info/
+effect_backends/build/
+native_effects/*.so
+native_effects/__pycache__/
 
 # Debug outputs
 edge_refine_debug/

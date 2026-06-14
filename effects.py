@@ -20,9 +20,12 @@ import cores.hlsrgb as hlsrgb
 from cores.fringe_removal import remove_chromatic_aberration
 from cores.distortion_correction import (
     correct_lens_distortion, correct_trapezoid, correct_four_points, correct_with_lines, warp_mesh,
-    calculate_trapezoid_homography, calculate_four_point_homography, calculate_lines_homography
+    calculate_trapezoid_homography, calculate_four_point_homography, calculate_lines_homography,
+    calculate_mesh_mls_coarse_map
 )
-import cores.cross_filter as cross_filter
+from effect_backends import cross_filter_adapter as cross_filter
+from effect_backends import image_transform_adapter
+from effect_backends import vignette_adapter as backend_vignette
 import config
 import pipeline
 import params
@@ -192,6 +195,7 @@ class EffectConfig():
         self.crop_editing = False
         self.full_preview = False
         self.pipeline_layer_label = "primary"
+        self.deferred_geometry_transform = None
 
 # 補正基底クラス
 class Effect():
@@ -1343,6 +1347,102 @@ class GeometryEffect(Effect):
             param['rotation2'] = rot
 
 
+    def _build_deferred_preview_transform(
+        self,
+        img,
+        param,
+        ang,
+        ang2,
+        flp,
+        switch_distortion_correction,
+        correct_horizontal,
+        correct_vertical,
+        focal_length,
+        four_points,
+        reference_lines,
+        mesh_size,
+        control_points,
+    ):
+        params.set_matrix(param, None)
+        size = max(img.shape[0], img.shape[1])
+        half_size = size / 2
+        reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+        has_matrix = False
+
+        if switch_distortion_correction:
+            if correct_horizontal != 0 or correct_vertical != 0:
+                multiplier = 0.5 + (focal_length * 0.025)
+                f_pixel = size * multiplier
+                H = calculate_trapezoid_homography(
+                    size,
+                    size,
+                    horizontal=correct_horizontal * 0.5,
+                    vertical=correct_vertical * 0.5,
+                    focal_length=f_pixel,
+                )
+                params.add_matrix(param, H, offset=(half_size, half_size))
+                has_matrix = True
+
+            if four_points != [] and four_points is not None and four_points != reset_points:
+                tcg_info = params.param_to_tcg_info(param)
+
+                class DummyShape:
+                    def __init__(self, s):
+                        self.shape = (s, s, 3)
+
+                dummy_img = DummyShape(size)
+                src_point = []
+                for cx, cy in four_points:
+                    src_point.append(params.tcg_to_ref_image(cx, cy, dummy_img, tcg_info))
+                dst_point = []
+                for cx, cy in reset_points:
+                    dst_point.append(params.tcg_to_ref_image(cx, cy, dummy_img, tcg_info))
+
+                H_inv = calculate_four_point_homography(src_point, dst_point)
+                H = np.linalg.inv(H_inv)
+                params.add_matrix(param, H, offset=(half_size, half_size))
+                has_matrix = True
+
+            if len(reference_lines or []) > 0:
+                tcg_info = params.param_to_tcg_info(param)
+                H = calculate_lines_homography(reference_lines, size, size, tcg_info=tcg_info)
+                if H is not None:
+                    params.add_matrix(param, H, offset=(half_size, half_size))
+                    has_matrix = True
+
+        mesh_map_x = None
+        mesh_map_y = None
+        if control_points:
+            cp = {}
+            for key, value in control_points.items():
+                if isinstance(key, str):
+                    try:
+                        parts = key.strip('()').split(',')
+                        cp_key = (int(parts[0]), int(parts[1]))
+                    except Exception:
+                        continue
+                else:
+                    cp_key = tuple(key)
+                cp[cp_key] = tuple(value)
+
+            if cp:
+                tcg_info = params.param_to_tcg_info(param)
+                mesh_maps = calculate_mesh_mls_coarse_map(
+                    size,
+                    size,
+                    mesh_size if mesh_size else (4, 4),
+                    cp,
+                    tcg_info=tcg_info,
+                    grid_step=64,
+                )
+                if mesh_maps is not None:
+                    mesh_map_x, mesh_map_y = mesh_maps
+
+        matrix = param.get("matrix") if has_matrix else None
+        transform_matrix, size, transform_type = core.combined_rotation_canvas_matrix(img.shape, ang + ang2, flp, matrix)
+        return transform_matrix, size, transform_type, mesh_map_x, mesh_map_y
+
+
     def make_diff(self, img, param, efconfig):
         ang = self._get_param(param, 'rotation')
         ang2 = self._get_param(param, 'rotation2')
@@ -1367,8 +1467,55 @@ class GeometryEffect(Effect):
         mesh_hash = tuple(mesh_size)
         
         param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_editing, full_preview, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
+        lens_active = switch_distortion_correction and (lens_distortion_strength != 0 or lens_distortion_scale != 0)
+        deferred_geometry_supported = (
+            efconfig.mode != EffectMode.EXPORT
+            and image_transform_adapter.native_available()
+            and img.dtype == np.float32
+            and img.ndim == 3
+            and img.shape[2] == 3
+            and (not lens_active or lens_distortion_scale == 0)
+        )
+        if deferred_geometry_supported:
+            try:
+                transform_matrix, size, transform_type, mesh_map_x, mesh_map_y = self._build_deferred_preview_transform(
+                    img,
+                    param,
+                    ang,
+                    ang2,
+                    flp,
+                    switch_distortion_correction,
+                    correct_horizontal,
+                    correct_vertical,
+                    focal_length,
+                    four_points,
+                    reference_lines,
+                    mesh_size,
+                    control_points,
+                )
+                efconfig.deferred_geometry_transform = {
+                    "matrix": transform_matrix,
+                    "width": size,
+                    "height": size,
+                    "transform_type": transform_type,
+                    "border_mode": "constant" if full_preview else "reflect",
+                    "lens_strength": lens_distortion_strength if lens_active else 0.0,
+                    "lens_scale": 1.0,
+                    "mesh_map_x": mesh_map_x,
+                    "mesh_map_y": mesh_map_y,
+                    "hash": param_hash,
+                }
+                self.hash = param_hash
+                self.diff = None
+                return self.diff
+            except Exception:
+                logging.exception("deferred geometry transform build failed; falling back to two-pass geometry")
+                efconfig.deferred_geometry_transform = None
+                self.hash = None
+
         if self.hash != param_hash:
             self.hash = param_hash
+            efconfig.deferred_geometry_transform = None
             
             params.set_matrix(param, None)
 
@@ -1454,7 +1601,8 @@ class GeometryEffect(Effect):
                         tcg_info=tcg_info, # correct_with_lines内部でtcg_info使うので渡す
                         interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
-                    params.add_matrix(param, H, offset=(half_size, half_size))
+                    if H is not None:
+                        params.add_matrix(param, H, offset=(half_size, half_size))
 
                 # Mesh           
                 if control_points:
@@ -4446,7 +4594,7 @@ class VignetteEffect(Effect):
                 
                 rgb = core.type_convert(rgb, np.ndarray)
                 vs = (100 - vs) / 100.0 * 3.0 + 1.0  # 1.0-4.0
-                self.diff = core.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y), vs)
+                self.diff = backend_vignette.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y), vs)
         
         return self.diff
     

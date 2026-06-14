@@ -1,7 +1,7 @@
 
 APPNAME = "Platypus"
 #APPNAME = "Shade Wave"
-VERSION = "1.72.2"
+VERSION = "2.1.2"
 
 # 画面リサイズ時にウィンドウ/プレビュー/テクスチャ等を表示（本番は False）
 RESIZE_DEBUG = True

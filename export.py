@@ -5,7 +5,7 @@ import numpy as np
 import json
 import exiftool
 import struct
-import cores.colour_functions as colour_functions
+from effect_backends import colour_functions_adapter as colour_functions
 import pyvips
 import subprocess
 import cv2

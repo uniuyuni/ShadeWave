@@ -24,6 +24,7 @@ build-denoise-native = """
 cmake -G Ninja -S radiance_denoise/native -B radiance_denoise/native/build -DCMAKE_BUILD_TYPE=Release && \
 cmake --build radiance_denoise/native/build
 """
+install-effect-backends = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip --disable-pip-version-check install -e effect_backends --no-build-isolation --force-reinstall --no-deps --no-cache-dir" }
 # radiance_denoise を未取得なら clone し、ネイティブ拡張をビルドして配置（初回セットアップ用）
 setup-denoise = { cmd = "bash scripts/setup_radiance_denoise.sh" }
 

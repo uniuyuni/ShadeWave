@@ -26,7 +26,7 @@ import cores.bit_depth_expansion as bit_depth_expansion
 import cores.core as core
 import cores.highlight_recovery as highlight_recovery
 import cores.local_contrast as local_contrast
-import cores.colour_functions as colour_functions
+from effect_backends import colour_functions_adapter as colour_functions
 import cores.color as color
 from enums import ImageFidelity, LoadStage
 from utils import perf_trace
@@ -480,7 +480,7 @@ class ImageSet:
                     return "sRGB"
 
             src_icc_profile_name = get_icc_profile_name(vips_image)
-            import cores.colour_functions as colour_functions
+            from effect_backends import colour_functions_adapter as colour_functions
             img_array = colour_functions.RGB_to_RGB(img_array, core.ICC_PROFILE_TO_COLOR_SPACE.get(src_icc_profile_name, 'sRGB'), 'ProPhoto RGB', config.get_config('cat'),
                                             apply_cctf_decoding=True, apply_gamut_mapping=False)
             img_array = colour_functions.apply_RGB_gamut_mapping(img_array).astype(np.float32)

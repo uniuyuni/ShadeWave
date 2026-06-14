@@ -307,6 +307,65 @@ def warp_mesh(
     )
 
 
+def calculate_mesh_mls_coarse_map(
+    width: int,
+    height: int,
+    mesh_size: Tuple[int, int],
+    control_points: Dict[Tuple[int, int], Tuple[float, float]],
+    tcg_info: Dict = None,
+    grid_step: int = 32,
+    extra_pin_points_tcg: Optional[List[Tuple[float, float]]] = None,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """MLS mesh warp用のcoarse mapを計算する。
+
+    `warp_mesh()` のMLS branchと同じ src/dst 制御点を使い、画像本体をremapせずに
+    coarse mapだけを返す。GPU fused previewではこのmapをsampleして中間画像生成を避ける。
+    """
+    rows, cols = mesh_size
+    image_shape = (height, width)
+    base_coords = get_mesh_coordinates(image_shape, mesh_size)
+
+    src_points = []
+    dst_points = []
+    for r in range(rows + 1):
+        for c in range(cols + 1):
+            bx, by = base_coords[r, c]
+            off_x, off_y = control_points.get((r, c), (0.0, 0.0))
+            src_points.append((bx, by))
+            dst_points.append((bx + off_x, by + off_y))
+
+    if extra_pin_points_tcg is None:
+        extra_pin_points_tcg = outer_ring_pins_tcg()
+    if extra_pin_points_tcg:
+        for px, py in extra_pin_points_tcg:
+            src_points.append((px, py))
+            dst_points.append((px, py))
+
+    if all(src == dst for src, dst in zip(src_points, dst_points)):
+        return None
+
+    class DummyImage:
+        def __init__(self, w, h):
+            self.shape = (h, w, 3)
+
+    dummy_img = DummyImage(width, height)
+
+    def _mapper(px, py):
+        return params.tcg_to_ref_image(px, py, dummy_img, tcg_info)
+
+    src_px = np.array([_mapper(px, py) for px, py in src_points])
+    dst_px = np.array([_mapper(px, py) for px, py in dst_points])
+
+    grid_step = max(1, int(grid_step))
+    grid_h = (height + grid_step - 1) // grid_step
+    grid_w = (width + grid_step - 1) // grid_step
+    coarse_x_coords = np.linspace(0, width - 1, grid_w)
+    coarse_y_coords = np.linspace(0, height - 1, grid_h)
+    coarse_x_mesh, coarse_y_mesh = np.meshgrid(coarse_x_coords, coarse_y_coords)
+    map_x, map_y = _mls_affine_map(src_px, dst_px, coarse_x_mesh, coarse_y_mesh)
+    return map_x.astype(np.float32), map_y.astype(np.float32)
+
+
 # デフォルト margin=0.15 用の事前計算済 pin 座標 (hot path で list allocation を避けるため)。
 _OUTER_RING_PINS_DEFAULT = (
     (-0.65, -0.65), (0.0, -0.65), (0.65, -0.65),
@@ -676,5 +735,4 @@ def _validate_image(image: np.ndarray):
         or image.ndim == 2
     ):
         raise TypeError(f"image must have shape (H, W, 3) or (H, W), got {image.shape}")
-
 

@@ -29,7 +29,7 @@ class CoreCropImageClampFlowTest(unittest.TestCase):
         )
         self.assertLess(
             source.index("disp_info = _clamp_disp_info_to_image"),
-            source.index("cv2.resize"),
+            source.index("image_transform_adapter.fit_crop_to_canvas"),
         )
         self.assertNotIn(
             "disp_info = _clamp_disp_info_to_crop_rect(disp_info, crop_rect)",
