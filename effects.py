@@ -1034,6 +1034,7 @@ class DistortionEffect(Effect):
         self.distortion_painter = None
         self.is_initial_open = 0
         self.effect_type = 'forward_warp'
+        self._painter_ref_key = None
         self.set_distortion_callback(distortion_callback)
 
     def set_distortion_callback(self, callback):
@@ -1085,22 +1086,51 @@ class DistortionEffect(Effect):
             self.distortion_painter.set_effect(arg)
             self.effect_type = arg
 
+    def _make_painter_ref_key(self, img, param, efconfig):
+        matrix = param.get('matrix')
+        if matrix is not None:
+            matrix = tuple(np.asarray(matrix, dtype=np.float64).round(8).ravel())
+        return (
+            tuple(img.shape),
+            str(img.dtype),
+            params.get_disp_info(param),
+            tuple(param.get('original_img_size', ())),
+            tuple(param.get('img_size', ())),
+            param.get('rotation', 0.0),
+            param.get('rotation2', 0.0),
+            param.get('flip_mode', 0),
+            matrix,
+            getattr(efconfig, 'upstream_hash', None),
+        )
+
+    def _sync_distortion_painter_ref(self, img, param, efconfig, force=False):
+        if self.distortion_painter is None:
+            return
+        ref_key = self._make_painter_ref_key(img, param, efconfig)
+        if not force and ref_key == self._painter_ref_key:
+            return
+
+        self.distortion_painter.set_effect(self.effect_type)
+        self.distortion_painter.set_primary_param(param)
+        self.distortion_painter.set_ref_image(img, True)
+        self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
+        self.distortion_painter.remap_recorded()
+        self._painter_ref_key = ref_key
+
     def make_diff(self, img, param, efconfig):
         if self.is_initial_open > 0:
             if self.distortion_painter is not None and efconfig.loading_flag != None:
-                self.distortion_painter.set_effect(self.effect_type)
-                self.distortion_painter.set_primary_param(param)
-                self.distortion_painter.set_ref_image(img, True)
-                self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
-                self.distortion_painter.remap_recorded()
+                self._sync_distortion_painter_ref(img, param, efconfig, force=True)
 
                 if _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
                     self.is_initial_open = 0
+        elif self.distortion_painter is not None:
+            self._sync_distortion_painter_ref(img, param, efconfig)
         
         switch_distortion = self._get_param(param, 'switch_distortion')
         if switch_distortion == True and self.distortion_painter is not None:
             self.diff = self.distortion_painter.get_current_image()
-            self.hash = hash((len(self.distortion_painter.get_recorded())))
+            self.hash = hash((len(self.distortion_painter.get_recorded()), self._painter_ref_key))
 
         else:
             dr = self._get_param(param, 'distortion_recorded')
@@ -1152,6 +1182,7 @@ class DistortionEffect(Effect):
             widget.ids["preview_widget"].remove_widget(self.distortion_painter)
             param['distortion_recorded'] = self.distortion_painter.get_recorded()
             self.distortion_painter = None
+            self._painter_ref_key = None
 
     def _painter_callback(self, proc, widget):
         if self.distortion_callback is not None:

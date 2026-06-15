@@ -412,7 +412,7 @@
                         id: slider_zoom_ratio
                         size_hint_x: 0.32
                         text: "Zoom " + str(int(round(root.zoom_ratio * 100))) + "%"
-                        min: 20
+                        min: 10 # 今変変えてもmain.pyでクランプしてるのでそっちも変えること
                         max: 400
                         value: 100
                         step: 10
@@ -498,15 +498,15 @@
                             root.reset_all()
                             root.end_history_reset_all()
 
-                    ToggleButton:
-                        id: preset
+                    Button:
+                        id: auto_adjust
                         size_hint_x: None
                         ref_width: 60
                         ref_height: 15
                         font_size: '9pt'
-                        text: "Preset"
+                        text: "Auto"
                         disabled: root.image_loaded == False
-                        #on_state: root.on_preset_press(self.state)
+                        on_release: root.on_auto_adjust_press()
 
 
                 TabbedPanel:

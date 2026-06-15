@@ -228,6 +228,7 @@ class ImageSet:
                         logging.warning(f"Failed to load raw for preview geometry: {e}")
 
             # exifのプレビューを展開
+            preview_base64 = None
             for key in ('PreviewImage', 'JpgFromRaw', 'PreviewTIFF'):
                 preview_base64 = exif_data.get(key, None)
                 if preview_base64 is not None:
@@ -238,14 +239,15 @@ class ImageSet:
                     img = PILImageOps.exif_transpose(img)
                     img = img.convert("RGB")
                     img_array = np.array(img)
+
+                t1 = time.perf_counter()
+                logging.info(f"PERF: Preview image decoded. {t1-t0:.4f}s Size: {img.size}")
+                perf_trace.event("raw_preview.jpeg_decoded", size=list(img.size))
             else:
                 img_array = None
                 #raise ValueError(f"Unsupported thumbnail format.")
-
-            t1 = time.perf_counter()
-            logging.info(f"PERF: Preview image decoded. {t1-t0:.4f}s Size: {img.size}")
-            perf_trace.event("raw_preview.jpeg_decoded", size=list(img.size))
-
+                t1 = time.perf_counter()
+                logging.warning(f"Preview image not found.")
 
             # float32へ
             if img_array is not None:
@@ -276,6 +278,7 @@ class ImageSet:
                 # プレビューがない場合は、サイズだけ合わせた黒画像を作る
                 _, _, width, height = self._delete_exif_orientation(exif_data)
                 img_array = np.zeros((height, width, 3), dtype=np.float32)
+                self._apply_whitebalance(img_array, raw, exif_data, param)
 
             # 自動露出調整値を適当に設定する
             param['rgb_or_raw'] = 'rgb'

@@ -488,6 +488,31 @@ def _serialize_param(param, include_heavy=True):
         for k in HEAVY_PRIMARY_PARAM_KEYS:
             param.pop(k, None)
 
+def _msgpack_safe_key(key):
+    if isinstance(key, np.generic):
+        key = key.item()
+    if isinstance(key, (str, bytes, int, float, bool)) or key is None:
+        return key
+    if isinstance(key, tuple):
+        return ",".join(str(_msgpack_safe_key(v)) for v in key)
+    return str(key)
+
+def _msgpack_safe_value(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {
+            _msgpack_safe_key(k): _msgpack_safe_value(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_msgpack_safe_value(v) for v in value]
+    if isinstance(value, list):
+        return [_msgpack_safe_value(v) for v in value]
+    return value
+
 def _deserialize_param(param, load_heavy=True):
     param['disp_info'] = core.convert_rect_to_info(param['crop_rect'], config.get_preview_texture_side()/max(param['original_img_size']))
     if load_heavy:
@@ -561,7 +586,7 @@ def serialize(param, mask_editor2, file_path=None):
     if mask_dict is not None:
         ser.update(mask_dict)
 
-    return ser
+    return _msgpack_safe_value(ser)
 
 def deserialize(ser, param, mask_editor2, load_heavy=True):
     pp = ser.get("primary_param")

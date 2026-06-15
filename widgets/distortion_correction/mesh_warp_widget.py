@@ -328,7 +328,10 @@ class MeshWarpWidget(KVFloatLayout):
     def get_correction_params(self) -> dict:
         """現在のパラメータを取得"""
         # JSON互換のためキーを文字列に変換
-        cp_str_keys = {f"{k[0]},{k[1]}": v for k, v in self.control_offsets_tcg.items()}
+        cp_str_keys = {
+            f"{k[0]},{k[1]}": (float(v[0]), float(v[1]))
+            for k, v in self.control_offsets_tcg.items()
+        }
         return {
             "mesh_size": list(self.mesh_size),
             "control_points": cp_str_keys,

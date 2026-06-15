@@ -4393,7 +4393,13 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                             break
                     composit_mask.add_mask(mask, op_type, composit_mask_index)
                 self.set_active_mask(mask)
-                mask.update_mask()
+                self.request_mask_render_update(
+                    mask,
+                    reason="history.layer_create",
+                    structure_changed=True,
+                    redraw_overlay=True,
+                    redraw_pipeline=True,
+                )
 
             case "Delete":
                 self._remove_mask(self.get_mask(index))
@@ -4403,13 +4409,17 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 mask.clear()
                 mask.deserialize(dict)
                 self.set_active_mask(mask)
-                mask.update_mask()
+                self.request_mask_render_update(
+                    mask,
+                    reason="history.layer_update",
+                    structure_changed=True,
+                    redraw_overlay=True,
+                    redraw_pipeline=True,
+                )
 
             case _:
                 logging.error("Invalid operation: " + op)
                 assert False
-
-        self.dispatch('on_structure_change')
     
     # LayerCtrl用
     def get_layer(self, index):

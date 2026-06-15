@@ -408,6 +408,12 @@ class ParamSlider(KVBoxLayout):
         self._notify_after_edit()
         self._input_scrub_accum = 0.0
 
+    def on_slider_interaction_start(self):
+        self._notify_before_edit()
+
+    def on_slider_interaction_end(self):
+        self._notify_after_edit()
+
     def on_slider_touch_down(self, touch):
         if touch.is_double_tap:
             if self.ids['label'].collide_point(*touch.pos):
@@ -428,6 +434,8 @@ class ParamSlider(KVBoxLayout):
         return False
 
     def _notify_before_edit(self):
+        if self._editing:
+            return
         self._editing = True
         if _DEBUG_MASK_GEOMETRY and self.text in _MASK_GEOM_SLIDER_TEXTS:
             logging.warning("[MASK_GEOM] ParamSlider.before_edit text=%s value=%s", self.text, self.value)

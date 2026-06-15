@@ -74,6 +74,8 @@
         track_color_inactive: gray_color
         track_color_active:  dark_blue
         thumb_color: light_blue
+        interaction_start_callback: root.on_slider_interaction_start
+        interaction_end_callback: root.on_slider_interaction_end
         on_value: root.on_slider_value()
         on_touch_down: root.on_slider_touch_down(args[1])
         on_touch_up: root.on_slider_touch_up(args[1])

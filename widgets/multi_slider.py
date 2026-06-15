@@ -28,6 +28,8 @@ class MultiSlider(Widget):
     thumb_color = ColorProperty([1, 1, 1, 1])
     thumb_colors = ListProperty([])
     disabled_color = ColorProperty([0.6, 0.6, 0.6, 1])
+    interaction_start_callback = ObjectProperty(None, allownone=True)
+    interaction_end_callback = ObjectProperty(None, allownone=True)
     
     debug_mode = BooleanProperty(False)
     
@@ -117,6 +119,8 @@ class MultiSlider(Widget):
         if closest_idx != -1:
             self._active_idx = closest_idx
             self._selection_locked = False
+            if callable(self.interaction_start_callback):
+                self.interaction_start_callback()
             self._update_value_from_touch_x(touch.x)
             return True
             
@@ -131,6 +135,8 @@ class MultiSlider(Widget):
     def on_touch_up(self, touch):
         if self.disabled: return False
         if self._active_idx is not None:
+            if callable(self.interaction_end_callback):
+                self.interaction_end_callback()
             self._active_idx = None
             self._selection_locked = False
             return True

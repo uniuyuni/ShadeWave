@@ -1,9 +1,9 @@
 
 APPNAME = "Shade Wave"
-VERSION = "2.2.4"
+VERSION = "2.3.7"
 
 # 画面リサイズ時にウィンドウ/プレビュー/テクスチャ等を表示（本番は False）
-RESIZE_DEBUG = True
+RESIZE_DEBUG = False
 
 SUPPORTED_FORMATS_RGB = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.jxl')
 SUPPORTED_FORMATS_RAW = ('.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', '.raf', '.rw2', '.sr2', '.pef', '.raw', '3fr', 'fff')

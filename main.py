@@ -83,6 +83,7 @@ if __name__ == '__main__':
     #logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.WARNING)
 
     import define
+    import auto_adjust
     import cores.core as core
     import params
     from enums import ImageFidelity, LoadStage, coerce_load_stage
@@ -1173,6 +1174,8 @@ if __name__ == '__main__':
 
         def distortion_callback(self, proc, widget):
             match proc:
+                case 'focus':
+                    self._clear_text_input_focus()
                 case 'start':
                     self.begin_history_effect_ctrl(1, 'distortion')
                 case 'update' | 'apply':
@@ -1180,6 +1183,9 @@ if __name__ == '__main__':
                 case 'end':
                     self.primary_param.update(widget.get_distortion_params())
                     self.end_history_effect_ctrl(1, 'distortion')
+                case 'brush_size':
+                    self.primary_param['distortion_brush_size'] = widget.brush_size
+                    self.ids["slider_distortion_brush_size"].set_slider_value(widget.brush_size)
 
         def geometry_callback(self, proc, widget):
             match proc:
@@ -1536,7 +1542,30 @@ if __name__ == '__main__':
             self._apply_mask_overlay_policy(0, 'crop')
             self.start_draw_image_and_crop(self.imgset)
             self.end_history_effect_ctrl(0, 'crop')
-            self.save_current_sidecar()
+            self.save_current_sidecar() # 要るかどうかは微妙。CropEditorの操作はHistoryに入るので、Undo/RedoでCrop状態も変わる。
+
+        def on_auto_adjust_press(self):
+            if self.imgset is None or getattr(self.imgset, "img", None) is None:
+                return
+            if not params.has_original_img_size(self.primary_param):
+                return
+            effect_list = ['exposure', 'contrast', 'tone']
+            if not self.begin_history_effect_ctrl(2, effect_list):
+                return
+            try:
+                adjustment = auto_adjust.compute_basic_auto_adjustment(
+                    self.imgset.img,
+                    crop_rect=params.get_crop_rect(self.primary_param),
+                )
+                self.primary_param.update(adjustment)
+                self.set2widget_all(self.primary_effects, self.primary_param)
+                effects.reeffect_all(self.primary_effects, 2)
+                self.start_draw_image()
+            except Exception:
+                self.current_op = None
+                logging.exception("auto adjust failed")
+                return
+            self.end_history_effect_ctrl(2, effect_list)
 
         def begin_rotation_crop_preview(self):
             self.primary_effects[0]['crop'].begin_rotation_preview(self.primary_param)
@@ -2158,7 +2187,7 @@ if __name__ == '__main__':
             return tex_x, tex_y
 
         def _clamp_zoom_ratio(self, value):
-            return min(4.0, max(0.5, float(value)))
+            return min(4.0, max(0.1, float(value)))
 
         def _sync_zoom_ratio_slider(self, *args):
             try:
@@ -2269,6 +2298,9 @@ if __name__ == '__main__':
             return True
 
         def _text_input_has_focus(self):
+            return self._focused_text_input() is not None
+
+        def _focused_text_input(self):
             stack = [self]
             try:
                 stack.extend(KVWindow.children)
@@ -2284,12 +2316,17 @@ if __name__ == '__main__':
                     continue
                 seen.add(wid)
                 if isinstance(widget, KVTextInput) and getattr(widget, "focus", False):
-                    return True
+                    return widget
                 try:
                     stack.extend(widget.children)
                 except Exception:
                     pass
-            return False
+            return None
+
+        def _clear_text_input_focus(self):
+            focused = self._focused_text_input()
+            if focused is not None:
+                focused.focus = False
 
         def _is_mask2_on(self):
             """Mask2 トグルが ON 状態か。マスク編集モードの判定軸。
@@ -2328,6 +2365,7 @@ if __name__ == '__main__':
 
         def on_image_touch_down(self, touch):
             if self.ids['preview_widget'].collide_point(*touch.pos):
+                self._clear_text_input_focus()
                 # 画像未確定の間は preview 上のジェスチャを受け付けない
                 if not self._image_interaction_ready():
                     return False
@@ -3213,6 +3251,8 @@ if __name__ == '__main__':
         #--------------------------------
 
         def on_current_tab(self, current):
+            self._clear_text_input_focus()
+
             # 描画中の操作 (Polyline の途中など) はタブ切替で確定させる。
             try:
                 self.ids['mask_editor2'].commit_in_progress()

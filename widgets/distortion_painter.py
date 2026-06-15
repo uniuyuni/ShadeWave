@@ -498,6 +498,7 @@ class DistortionCanvas(KVFloatLayout):
         self.is_recording = False
         self.last_touch_time = 0
         self.points_buffer = []  # 補間用ポイントバッファ
+        self._paint_touch_uid = None
         self.update_event = None
         self.preview_texture = None
         self.full_quality_texture = None
@@ -614,6 +615,15 @@ class DistortionCanvas(KVFloatLayout):
         
     def on_touch_down(self, touch):
         if self.image_widget.collide_point(*touch.pos) and self.current_image is not None:
+            if self.callback is not None:
+                self.callback('focus', self)
+
+            if touch.is_mouse_scrolling:
+                if self._adjust_brush_size_from_scroll(touch):
+                    return True
+                return super().on_touch_down(touch)
+
+            self._paint_touch_uid = touch.uid
             
             # 座標変換 (Widget座標 → 画像座標)
             tcg_x, tcg_y = self._window_to_tcg(touch.x, touch.y)
@@ -641,9 +651,14 @@ class DistortionCanvas(KVFloatLayout):
             self.points_buffer = []
             self.points_buffer.append(record)
 
+            return True
+
         return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
+        if self._paint_touch_uid != touch.uid:
+            return super().on_touch_move(touch)
+
         if self.image_widget.collide_point(*touch.pos) and self.current_image is not None:
              
             # 座標変換 (Widget座標 → 画像座標)
@@ -686,14 +701,36 @@ class DistortionCanvas(KVFloatLayout):
         return True
 
     def on_touch_up(self, touch):
-        # バッファに残っているポイントを処理
-        if self.points_buffer:
-            self.process_buffer()
-            
-        if self.callback is not None:
-            self.callback('end', self)
+        if self._paint_touch_uid != touch.uid:
+            return super().on_touch_up(touch)
 
-        return super().on_touch_up(touch)
+        try:
+            # バッファに残っているポイントを処理
+            if self.points_buffer:
+                self.process_buffer()
+
+            if self.callback is not None:
+                self.callback('end', self)
+        finally:
+            self._paint_touch_uid = None
+        return True
+
+    def _adjust_brush_size_from_scroll(self, touch):
+        if touch.button == 'scrollup':
+            new_size = max(10, self.brush_size - 10)
+        elif touch.button == 'scrolldown':
+            new_size = min(1000, self.brush_size + 10)
+        else:
+            return False
+
+        if new_size == self.brush_size:
+            return True
+
+        self.set_brush_size(new_size)
+        self._update_brush_cursor(touch.x, touch.y)
+        if self.callback is not None:
+            self.callback('brush_size', self)
+        return True
 
     def process_buffer(self):
         if not self.points_buffer or len(self.points_buffer) <= 0:
