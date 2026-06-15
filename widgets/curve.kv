@@ -1,13 +1,21 @@
 
+#:import kvutils utils.kvutils
+
+<CurveResetButton@MDRoundFlatButton>:
+    size_hint: None, None
+    ref_width: 60
+    ref_height: 20
+    _min_width: kvutils.dpi_scale_width(self.ref_width)
+    _min_height: kvutils.dpi_scale_height(self.ref_height)
+    padding: kvutils.dpi_scale_width(6), 0, kvutils.dpi_scale_width(6), 0
+    font_size: '9pt'
+
 <CurveWidget>:
     orientation: 'vertical'
 
     BoxLayout:
         HSpacer:
             size_hint_x: 0.9
-        MDRoundFlatButton:
+        CurveResetButton:
             text: "Reset"
-            size_hint: None, None
-            ref_width: 60
-            ref_height: 20
             on_touch_up: if self.collide_point(*args[1].pos) and args[1].button == 'right': root.set_point_list(None, True)

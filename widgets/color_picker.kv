@@ -29,7 +29,7 @@
     spacing: 20
     radius: [0]
     size_hint: 1, None
-    ref_height: 160
+    ref_height: 172
     pos_hint: {'center_x': 0.5, 'center_y': .5}
 
     MDBoxLayout:
@@ -40,7 +40,7 @@
         MDBoxLayout:
             id: sliders_container
             orientation: 'vertical'
-            pos_hint: {'center_x': .5, 'center_y': .55}
+            pos_hint: {'center_x': .5, 'center_y': .52}
 
             CWColorPreview:
                 id: preview
@@ -49,7 +49,7 @@
             ParamSlider:
                 text: 'R:'
                 label_width: 20
-                ref_height: 20
+                ref_height: 24
                 id: slider_red
                 min: 0
                 max: 255
@@ -61,7 +61,7 @@
             ParamSlider:
                 text: 'G:'
                 label_width: 20
-                ref_height: 20
+                ref_height: 24
                 id: slider_green
                 min: 0
                 max: 255
@@ -73,7 +73,7 @@
             ParamSlider:
                 text: 'B:'
                 label_width: 20
-                ref_height: 20
+                ref_height: 24
                 id: slider_blue
                 min: 0
                 max: 255
@@ -85,7 +85,7 @@
             ParamSlider:
                 text: 'H:'
                 label_width: 20
-                ref_height: 20
+                ref_height: 24
                 id: slider_hue
                 min: 0
                 max: 360
@@ -97,7 +97,7 @@
             ParamSlider:
                 text: 'L:'
                 label_width: 20
-                ref_height: 20
+                ref_height: 24
                 id: slider_lum
                 min: 0
                 max: 100
@@ -109,7 +109,7 @@
             ParamSlider:
                 text: 'S:'
                 label_width: 20
-                ref_height: 20
+                ref_height: 24
                 id: slider_sat
                 min: 0
                 max: 100
@@ -117,4 +117,3 @@
                 on_slider: root.on_slider_change_hls()
                 on_before_edit: root.on_slider_before_edit()
                 on_after_edit: root.on_slider_after_edit()
-

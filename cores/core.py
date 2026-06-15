@@ -323,10 +323,42 @@ def apply_lens_distortion(image, map_x, map_y, scale=1.0, interpolation='linear'
                      res[i, j, k] = 0.0
     return res
 
-def highlight_compress(image):
+_detail_tonemap_warned = False
+
+
+def _aces_highlight_compress(image):
     import cores.aces_tonemapping as aces_tonemapping
     
     return aces_tonemapping.aces_tonemapping(image, 0.7, config.get_config('gpu_device'))
+
+
+def detail_preserving_tonemap(image, strength=1.0):
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0:
+        return image
+
+    src = np.asarray(image, dtype=np.float32)
+    try:
+        import libraw_enhanced as lre
+        tonemap = getattr(lre, "detail_preserving_tonemap", None)
+        if tonemap is None:
+            raise AttributeError("libraw_enhanced.detail_preserving_tonemap is unavailable")
+        mapped = tonemap(np.ascontiguousarray(src), use_gpu_acceleration=True)
+    except Exception as exc:
+        global _detail_tonemap_warned
+        if not _detail_tonemap_warned:
+            logging.warning("detail_preserving_tonemap unavailable; falling back to ACES tonemap: %s", exc)
+            _detail_tonemap_warned = True
+        mapped = _aces_highlight_compress(src)
+
+    mapped = np.asarray(mapped, dtype=np.float32)
+    if strength >= 1.0:
+        return mapped
+    return src + (mapped - src) * strength
+
+
+def highlight_compress(image):
+    return detail_preserving_tonemap(image, 1.0)
 
 def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96), opacity=0.5) -> np.ndarray:
     """
@@ -394,6 +426,53 @@ def adjust_contrast(img, cf, c=0.5):
         adjust_img = sigmoid.scaled_inverse_sigmoid(img/mm, -f, c/mm)*mm
         
     return adjust_img
+
+def adjust_luminance_contrast(img, cf, c=None):
+    """輝度ベースのコントラスト補正。
+
+    RGB に直接補正をかけず、輝度だけをピボット中心に拡大/縮小する。
+    ピボットは既定で画像の輝度中央値を使うため、暗め/明るめの画像でも
+    露出補正ではなく画像内の明暗差を広げる挙動になりやすい。
+
+    正の補正は RGB 比率を保つゲインで戻す。負の補正は YCbCr の Y だけを差し替え、
+    色差は軽く抑えることで、暗部持ち上げ時の彩度増幅と白っぽい浮きを避ける。
+    """
+    if cf == 0:
+        return img.copy()
+
+    img_f32 = np.asarray(img, dtype=np.float32)
+    y = cvtColorRGB2Gray(img_f32)
+    pivot = float(np.clip(np.median(np.clip(y, 0.0, 1.0)), 0.25, 0.75)) if c is None else c
+    effective_cf = float(cf)
+    if effective_cf < 0.0:
+        effective_cf *= 0.5
+    factor = np.float32(max(0.0, 1.0 + effective_cf / 100.0))
+    adjusted_y = pivot + (y - pivot) * factor
+    adjusted_y = np.maximum(adjusted_y, 0.0).astype(np.float32, copy=False)
+
+    if cf < 0:
+        lift = adjusted_y - y
+        shadow_lift_weight = (smoothstep(0.0, 0.055, y) * (0.25 + 0.75 * smoothstep(0.055, 0.24, y))).astype(np.float32, copy=False)
+        adjusted_y = np.where(lift > 0.0, y + lift * shadow_lift_weight, adjusted_y).astype(np.float32, copy=False)
+        ycbcr = hlsrgb.linear_rgb_to_ycbcr(img_f32)
+        _, cb, cr = cv2.split(ycbcr)
+        chroma_scale = (1.0 - min(1.0, -effective_cf / 100.0) * 0.12 * shadow_lift_weight).astype(np.float32, copy=False)
+        out_ycbcr = cv2.merge((
+            adjusted_y.astype(np.float32, copy=False),
+            (cb * chroma_scale).astype(np.float32, copy=False),
+            (cr * chroma_scale).astype(np.float32, copy=False),
+        ))
+        result = hlsrgb.linear_ycbcr_to_rgb(out_ycbcr).astype(np.float32, copy=False)
+        return np.maximum(result, np.minimum(img_f32, 0.0))
+
+    eps = np.float32(1e-6)
+    gain = np.divide(
+        adjusted_y,
+        y,
+        out=np.ones_like(y, dtype=np.float32),
+        where=np.abs(y) > eps,
+    )
+    return (img_f32 * gain[..., np.newaxis]).astype(np.float32, copy=False)
 
 def apply_level_adjustment(image, black_level=0, midtone_level=128, white_level=255):
     """
@@ -479,9 +558,9 @@ def calc_saturation(hsl_s, sat, vib):
 #--------------------------------------------------
 
 def calc_point_list_to_lut(point_list, max_value=1.0):
-    from scipy.interpolate import splprep, splev
+    from scipy.interpolate import PchipInterpolator
     """
-    スプライン補間を使った基本的なLUT生成関数
+    コントロールポイントから1D LUTを生成する関数
     
     Parameters:
     -----------
@@ -495,73 +574,71 @@ def calc_point_list_to_lut(point_list, max_value=1.0):
     ndarray
         65536エントリーのLUT
     """
-    # ポイントをソート
-    point_list = sorted((pl[0], pl[1]) for pl in point_list)
-    
-    # ポイントからx, y配列を取得
-    x, y = zip(*point_list)
-    x, y = np.array(x), np.array(y)
-    
-    # 3点以上ある場合はスプライン補間を使用
-    if len(x) >= 3:
-        # スプライン補間のパラメータ（次数は点の数-1か3の小さい方）
-        k = min(3, len(x) - 1)
-        # スプライン補間の計算
-        tck, u = splprep([x, y], k=k, s=0)
-        
-        # [0, 1]の範囲で細かい点を生成
-        fine_u = np.linspace(0, 1, 1000)
-        fine_points = splev(fine_u, tck)
-        
-        # 生成された点を取得
-        fine_x, fine_y = fine_points
-        
-        # この点を使って通常の線形補間でLUTを生成
-        lut_size = 65536
-        input_range = np.linspace(0, max_value, lut_size)
-        
-        # max_valueを超える部分は直線で外挿
-        mask_in_range = input_range <= max(fine_x)
-        lut = np.zeros(lut_size, dtype=np.float32)
-        
-        # 範囲内は補間
-        lut[mask_in_range] = np.interp(
-            input_range[mask_in_range], 
-            fine_x, 
-            fine_y
-        )
-        
-        # 範囲外は直線外挿（最後の2点から傾きを計算）
-        if np.any(~mask_in_range):
-            # 最後の2点から傾きを計算
-            last_idx = len(fine_x) - 1
-            second_last_idx = last_idx - 1
-            slope = (fine_y[last_idx] - fine_y[second_last_idx]) / (fine_x[last_idx] - fine_x[second_last_idx])
-            
-            # 直線外挿
-            x_out = input_range[~mask_in_range]
-            y_last = fine_y[last_idx]
-            x_last = fine_x[last_idx]
-            lut[~mask_in_range] = y_last + slope * (x_out - x_last)
+    lut_size = 65536
+    input_range = np.linspace(0, max_value, lut_size, dtype=np.float32)
+
+    points = np.asarray(point_list, dtype=np.float32)
+    if points.size == 0:
+        return input_range.copy()
+
+    points = points.reshape(-1, 2)
+    points = points[np.isfinite(points).all(axis=1)]
+    if len(points) == 0:
+        return input_range.copy()
+
+    order = np.argsort(points[:, 0], kind="stable")
+    points = points[order]
+
+    # 同じX位置の点は最後に追加/移動された点を優先する。
+    unique_x = np.unique(points[:, 0])
+    if len(unique_x) != len(points):
+        last_indices = []
+        for x_value in unique_x:
+            last_indices.append(np.flatnonzero(points[:, 0] == x_value)[-1])
+        points = points[np.array(last_indices, dtype=np.int64)]
+
+    x = points[:, 0]
+    y = points[:, 1]
+
+    if len(x) == 1:
+        lut = np.full(lut_size, y[0], dtype=np.float32)
+    elif len(x) >= 3:
+        interpolator = PchipInterpolator(x, y, extrapolate=False)
+        lut = interpolator(input_range).astype(np.float32)
+        lut[input_range < x[0]] = y[0]
+        lut[input_range > x[-1]] = y[-1]
     else:
-        # 点が少ない場合は単純な線形補間
-        lut_size = 65536
-        input_range = np.linspace(0, max_value, lut_size)
-        lut = np.interp(input_range, x, y).astype(np.float32)
+        lut = np.interp(input_range, x, y, left=y[0], right=y[-1]).astype(np.float32)
+
+    if x[0] <= input_range[0]:
+        lut[0] = y[0]
+    if x[-1] >= input_range[-1]:
+        lut[-1] = y[-1]
     
     return lut
 
-def apply_lut(img, lut, max_value=1.0):
+def apply_lut(img, lut, max_value=1.0, overrange="clip"):
     """
     画像にLUTを適用する関数
     max_value: LUTが対応する最大値（デフォルト1.0）
+    overrange:
+        "clip"     - 従来通りLUT範囲外を端に丸める
+        "preserve" - max_valueを超える値はLUT終端の補正量だけを足して階調を保持する
     """
+    img = np.asarray(img, dtype=np.float32)
+
     # スケーリングしてLUTのインデックスに変換
     scale_factor = 65535 / max_value
     lut_indices = np.clip(np.round(img * scale_factor), 0, 65535).astype(np.uint16)
 
     # LUTを適用
     result = np.take(lut, lut_indices)
+
+    if overrange == "preserve":
+        high_mask = img > max_value
+        if np.any(high_mask):
+            result = result.astype(np.float32, copy=True)
+            result[high_mask] = img[high_mask] + (np.float32(lut[-1]) - np.float32(max_value))
     
     return result
 
@@ -3076,105 +3153,155 @@ def unsharp_mask(rgb_image, amount=1.0, sigma=1.0):
     return sharpened
 
 
-def remove_muddy_yellow(img_linear, strength=0.3, protect_vivid=True):
+def apply_color_separation(
+    img_float32,
+    shadow_chroma_clean=0.0,
+    shadow_threshold=0.2,
+    color_separation=0.0,
+    chroma_clarity=0.0,
+    color_density=0.0,
+    subtractive_saturation=0.0,
+    opponent_contrast=0.0,
+):
     """
-    HDR対応の黄色除去フィルター
+    Clean low-luminance chroma and gently separate colors in linear RGB.
+
+    The operation is intentionally conservative:
+    - all-zero parameters are an exact identity,
+    - vivid colors are protected from shadow chroma cleaning,
+    - color separation is reduced on already vivid pixels,
+    - newly introduced negative values are limited to the input lower bound.
     """
-    # 1. 汎用関数で YCbCr に変換
-    img_ycbcr = hlsrgb.linear_rgb_to_ycbcr(img_linear)
-    y, cb, cr = cv2.split(img_ycbcr)
-    
-    # 2. 黄色成分の特定 (Cb < 0 が黄色寄り)
-    yellow_mask = np.minimum(cb, 0.0) # マイナス値が保持される
-    
-    # 3. 濁り判定（鮮やかさ保護）
-    if protect_vivid:
-        # 彩度 (Chroma)
-        chroma = np.sqrt(cb**2 + cr**2)
-        
-        # 相対彩度（輝度に対する彩度の割合）
-        # ゼロ除算防止のイプシロン
-        relative_saturation = chroma / (np.maximum(y, 0.0) + 1e-6)
-        
-        # 彩度が低い（濁っている）場所ほど 1.0 に近づくウェイト
-        dullness_weight = np.exp(-1.0 * relative_saturation * 5.0)
-        
-        # 最終的な補正量
-        correction_factor = strength * dullness_weight
+    shadow_chroma_clean = float(shadow_chroma_clean)
+    shadow_threshold = float(shadow_threshold)
+    color_separation = float(color_separation)
+    chroma_clarity = float(chroma_clarity)
+    color_density = float(color_density)
+    subtractive_saturation = float(subtractive_saturation)
+    opponent_contrast = float(opponent_contrast)
+    if (shadow_chroma_clean == 0.0 and color_separation == 0.0
+            and chroma_clarity == 0.0 and color_density == 0.0
+            and subtractive_saturation == 0.0
+            and opponent_contrast == 0.0):
+        return img_float32
+
+    src = np.asarray(img_float32, dtype=np.float32)
+    ycbcr = hlsrgb.linear_rgb_to_ycbcr(src)
+    y, cb, cr = cv2.split(ycbcr)
+
+    chroma = np.sqrt(cb * cb + cr * cr)
+    relative_chroma = chroma / (np.maximum(y, 0.0) + 1.0e-4)
+
+    if shadow_chroma_clean > 0.0 and shadow_threshold > 0.0:
+        threshold = max(shadow_threshold, 1.0e-4)
+        shadow_mask = 1.0 - smoothstep(threshold * 0.35, threshold, y)
+        vivid_protect = smoothstep(0.12, 0.45, relative_chroma)
+        clean_amount = np.clip(shadow_chroma_clean, 0.0, 1.0) * 0.9
+        clean_scale = 1.0 - clean_amount * shadow_mask * (1.0 - vivid_protect)
+        cb = cb * clean_scale
+        cr = cr * clean_scale
+
+    if chroma_clarity != 0.0:
+        chroma = np.sqrt(cb * cb + cr * cr)
+        relative_chroma = chroma / (np.maximum(y, 0.0) + 1.0e-4)
+        midtone_mask = smoothstep(0.035, 0.18, y)
+        hdr_protect = 1.0 - smoothstep(1.6, 4.0, y)
+        neutral_gate = smoothstep(0.015, 0.10, relative_chroma)
+        vivid_limit = 1.0 - 0.45 * smoothstep(0.80, 1.80, relative_chroma)
+        clarity_weight = midtone_mask * hdr_protect * neutral_gate * vivid_limit
+        clarity_gain = np.clip(chroma_clarity, -1.0, 1.0)
+        cb32 = cb.astype(np.float32, copy=False)
+        cr32 = cr.astype(np.float32, copy=False)
+        cb_local = gaussian_blur_cv(cb32, (0, 0), 1.2)
+        cr_local = gaussian_blur_cv(cr32, (0, 0), 1.2)
+        cb_base = gaussian_blur_cv(cb32, (0, 0), 7.0)
+        cr_base = gaussian_blur_cv(cr32, (0, 0), 7.0)
+        cb = cb + (cb_local - cb_base) * clarity_gain * 1.15 * clarity_weight
+        cr = cr + (cr_local - cr_base) * clarity_gain * 1.15 * clarity_weight
+
+    if color_separation > 0.0:
+        chroma = np.sqrt(cb * cb + cr * cr)
+        relative_chroma = chroma / (np.maximum(y, 0.0) + 1.0e-4)
+        midtone_mask = smoothstep(0.04, 0.22, y)
+        hdr_protect = 1.0 - smoothstep(1.6, 4.0, y)
+        vivid_limit = 1.0 - 0.65 * smoothstep(0.30, 0.90, relative_chroma)
+        sep_gain = 1.0 + np.clip(color_separation, 0.0, 1.0) * 0.35 * midtone_mask * hdr_protect * vivid_limit
+        cb = cb * sep_gain
+        cr = cr * sep_gain
+
+    if color_density != 0.0:
+        chroma = np.sqrt(cb * cb + cr * cr)
+        relative_chroma = chroma / (np.maximum(y, 0.0) + 1.0e-4)
+        midtone_mask = smoothstep(0.06, 0.24, y) * (1.0 - smoothstep(1.4, 3.2, y))
+        neutral_gate = smoothstep(0.025, 0.18, relative_chroma)
+        density_value = np.clip(color_density, -1.0, 1.0)
+        if density_value > 0.0:
+            vivid_rolloff = 1.0 - 0.85 * smoothstep(0.45, 1.05, relative_chroma)
+            density_amount = density_value * midtone_mask * neutral_gate * vivid_rolloff
+            target_chroma = chroma + 0.10 * np.tanh(chroma / 0.10)
+            density_gain = 1.0 + density_amount * ((target_chroma / (chroma + 1.0e-6)) - 1.0)
+        else:
+            vivid_rolloff = 1.0 - 0.35 * smoothstep(0.70, 1.60, relative_chroma)
+            density_amount = (-density_value) * midtone_mask * neutral_gate * vivid_rolloff
+            density_gain = 1.0 - 0.40 * density_amount
+        cb = cb * density_gain
+        cr = cr * density_gain
+
+    y = y.astype(np.float32, copy=False)
+    cb = cb.astype(np.float32, copy=False)
+    cr = cr.astype(np.float32, copy=False)
+    out = hlsrgb.linear_ycbcr_to_rgb(cv2.merge((y, cb, cr))).astype(np.float32, copy=False)
+    if subtractive_saturation != 0.0:
+        out = _apply_subtractive_saturation(out, subtractive_saturation)
+    if opponent_contrast > 0.0:
+        r, g, b = cv2.split(out)
+        y_opp = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        rg = r - g
+        by = b - 0.5 * (r + g)
+        opponent_strength = (np.abs(rg) + np.abs(by)) / (np.maximum(y_opp, 0.0) + 1.0e-4)
+        midtone_mask = smoothstep(0.05, 0.24, y_opp)
+        hdr_protect = 1.0 - smoothstep(1.6, 4.0, y_opp)
+        vivid_rolloff = 1.0 - 0.70 * smoothstep(0.70, 1.80, opponent_strength)
+        opponent_gain = 1.0 + np.clip(opponent_contrast, 0.0, 1.0) * 0.26 * midtone_mask * hdr_protect * vivid_rolloff
+        rg = rg * opponent_gain
+        by = by * opponent_gain
+        g_new = y_opp - (0.2126 + 0.0722 * 0.5) * rg - 0.0722 * by
+        r_new = g_new + rg
+        b_new = g_new + 0.5 * rg + by
+        out = cv2.merge((
+            r_new.astype(np.float32, copy=False),
+            g_new.astype(np.float32, copy=False),
+            b_new.astype(np.float32, copy=False),
+        ))
+    lower_bound = np.minimum(src, 0.0)
+    return np.maximum(out, lower_bound)
+
+
+def _apply_subtractive_saturation(rgb, amount):
+    amount = np.clip(float(amount), -1.0, 1.0)
+    if amount == 0.0:
+        return rgb
+
+    src = np.asarray(rgb, dtype=np.float32)
+    y = (0.2126 * src[..., 0] + 0.7152 * src[..., 1] + 0.0722 * src[..., 2]).astype(np.float32, copy=False)
+    neutral = y[..., None]
+    chroma_vec = src - neutral
+    chroma = np.sqrt(np.sum(chroma_vec * chroma_vec, axis=-1))
+    relative_chroma = chroma / (np.maximum(y, 0.0) + 1.0e-4)
+    chroma_gate = smoothstep(0.025, 0.42, relative_chroma)
+    midtone_gate = smoothstep(0.035, 0.24, y) * (1.0 - smoothstep(1.7, 4.0, y))
+
+    if amount > 0.0:
+        vivid_rolloff = 1.0 - 0.45 * smoothstep(0.95, 2.20, relative_chroma)
+        sat_gain = 1.0 + amount * 0.55 * chroma_gate * midtone_gate * vivid_rolloff
+        density = 1.0 - amount * 0.18 * chroma_gate * midtone_gate
     else:
-        correction_factor = strength
+        soften = -amount
+        sat_gain = 1.0 - soften * 0.42 * chroma_gate * midtone_gate
+        density = 1.0 + soften * 0.08 * chroma_gate * midtone_gate
 
-    # 4. Cbチャンネルの操作（黄色成分の除去）
-    # yellow_maskはマイナス値なので、引くことでプラス（0方向）へ戻る
-    # つまり「青みを足す」のと同じ効果だが、Yは不変なので明るさは変わらない
-    cb_new = cb - (yellow_mask * correction_factor)
-
-    # 5. 汎用関数で RGB に戻す
-    img_result_ycbcr = cv2.merge((y, cb_new, cr))
-    return hlsrgb.linear_ycbcr_to_rgb(img_result_ycbcr)
-
-def clean_image_mud(img_float32, shadow_threshold=0.2, separation_strength=0.2):
-    """
-    画像の「暗部の色濁り」を除去し、「色の分離」を良くして透明感を出す関数。
-    
-    Args:
-        img_float32 (numpy.ndarray): 入力画像 (RGB, float32, 0.0-1.0)
-        shadow_threshold (float): これより暗い領域の彩度を落とす（黒を締める）閾値。
-        separation_strength (float): 色分離（クロストーク除去）の強度。
-
-    Returns:
-        numpy.ndarray: 処理後の画像 (RGB, float32)
-    """
-    
-    # --- Step 1: シャドークリーニング（暗部の濁り取り） ---
-    # HSV空間に変換 (H:色相, S:彩度, V:明度)
-    hlcg = hlsrgb.rgb_to_hlc_gain(img_float32)
-    h, l, c, g = cv2.split(hlcg)
-    
-    # 明度(v)が低い部分ほど、彩度(s)を下げるマスクを作成
-    # シグモイド関数的なカーブで、自然に減衰させます
-    # v < threshold の領域に対して、彩度に乗算する係数(0.0〜1.0)を作る
-    
-    # 傾き（急峻さ）
-    slope = 15.0 
-    # 中心点
-    center = shadow_threshold
-    
-    # ロジスティック関数で滑らかなマスク作成 (0に近いほど暗部 -> 係数を小さくする)
-    # vが小さい(暗い) -> desat_mask は 0に近づく
-    # vが大きい(明るい) -> desat_mask は 1に近づく
-    desat_mask = 1.0 / (1.0 + np.exp(-slope * (l - center)))
-    
-    # 彩度を適用 (暗部の色を抜く＝黒を純粋な黒にする)
-    c_cleaned = c * desat_mask
-    
-    # 一旦RGBに戻す
-    hlcg_cleaned = cv2.merge((h, l, c_cleaned, g))
-    img_shadow_clean = hlsrgb.hlc_gain_to_rgb(hlcg_cleaned)
-
-    # --- Step 2: カラーセパレーション（色の純度向上） ---
-    # CMOS特有の「混色」を取り除く簡易的なマトリクス処理
-    # 例: Rピクセルにある「わずかなGやB」を引き算して、RをよりRらしくする
-    
-    # 各チャンネルを取得
-    r, g, b = cv2.split(img_shadow_clean)
-    
-    # 平均輝度（グレー成分）を計算
-    gray = (r + g + b) / 3.0
-    
-    # 各色が「グレー（無彩色）」からどれだけ離れているか（＝色の強さ）
-    # この差分を強調することで、色が分離する
-    # dst = src + (src - gray) * strength
-    
-    r_sep = r + (r - gray) * separation_strength
-    g_sep = g + (g - gray) * separation_strength
-    b_sep = b + (b - gray) * separation_strength
-    
-    # マージ
-    img_separated = cv2.merge((r_sep, g_sep, b_sep))
-    
-    return img_separated
-
+    out = neutral + chroma_vec * sat_gain[..., None]
+    return (out * density[..., None]).astype(np.float32, copy=False)
 
 
 def smoothstep(e0, e1, x):

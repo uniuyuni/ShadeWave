@@ -29,7 +29,7 @@ _DEBUG_PIPELINE_STATS_EFFECTS = {
     name.strip()
     for name in os.getenv(
         "PLATYPUS_DEBUG_PIPELINE_STATS_EFFECTS",
-        "color_temperature,remove_muddy_color,auto_exposure,lut,highlight_compress,hls2rgb2,vignette",
+        "color_temperature,auto_exposure,input_lut,look_lut,color_separation,hls2rgb2,vignette",
     ).split(",")
     if name.strip()
 }
@@ -65,19 +65,23 @@ def _debug_pipeline_param_summary(effect_name, param, effect=None):
             "color_tint",
             "color_Y",
         ),
-        "remove_muddy_color": (
-            "switch_global",
-            "remove_muddy_yellow",
-            "shadow_threshold",
-            "separation_strength",
-        ),
         "auto_exposure": ("switch_lut", "rgb_or_raw", "auto_exposure", "lut_to_log", "lut_name"),
-        "lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log"),
+        "input_lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log"),
+        "look_lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log"),
         "exposure": ("exposure",),
         "contrast": ("contrast",),
         "tone": ("high_light", "light", "dark", "shadow"),
         "level": ("black_level", "white_level", "gamma"),
-        "highlight_compress": ("highlight_compress",),
+        "color_separation": (
+            "switch_global",
+            "shadow_chroma_clean",
+            "shadow_chroma_threshold",
+            "color_separation",
+            "chroma_clarity",
+            "color_density",
+            "subtractive_saturation",
+            "detail_tonemap",
+        ),
         "clahe": ("switch_clahe", "clahe_clip_limit", "clahe_tile_grid_size"),
         "hls": ("hue", "lightness", "saturation2"),
         "vs_and_saturation": ("saturation", "vibrance"),

@@ -83,11 +83,22 @@
         halign: 'right'
         valign: 'middle'
         font_size: '9pt'
+        background_normal: ''
+        background_active: ''
+        background_color: 0.18, 0.18, 0.18, 1
+        foreground_color: 0.82, 0.82, 0.82, 1
+        cursor_color: 0.82, 0.82, 0.82, 1
         multiline: False
         size_hint_x: None
         ref_width: 40
         for_float: root.for_float
         on_text_validate: root.on_input_text_validate()
+        canvas.after:
+            Color:
+                rgba: 0.30, 0.30, 0.30, 1
+            Line:
+                points: self.x, self.y, self.x, self.y + self.height - 2, self.x + self.width, self.y + self.height - 2, self.x + self.width, self.y, self.x, self.y
+                width: 1
 
     BoxLayout:
         orientation: 'vertical'

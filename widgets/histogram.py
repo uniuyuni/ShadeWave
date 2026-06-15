@@ -61,8 +61,10 @@ class HistogramWidget(KVImage):
         l_hist = manual_scale(l_hist)
         #l_hist = np.clip(l_hist, 0, 255)
 
-        # ヒストグラムの最大値を取得
-        max_value = max(np.max(r_hist), np.max(g_hist), np.max(b_hist), np.max(l_hist))
+        # ヒストグラムの表示スケールを取得。
+        # 1つのbinに極端な値があると全体が潰れるため、最大値ではなく上位percentileを使う。
+        hist_values = np.concatenate((r_hist, g_hist, b_hist, l_hist))
+        max_value = max(1e-6, np.percentile(hist_values, 99.5))
 
         return (r_hist, g_hist, b_hist, l_hist, max_value)
 

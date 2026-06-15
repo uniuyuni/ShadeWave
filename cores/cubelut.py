@@ -31,7 +31,7 @@ def read_lut(lut_path, clip=False):
     return lut
 
 
-def apply_lut(image, lut, log=False):
+def apply_lut(image, lut, log=False, overrange="clip"):
     
     """Opens the image at <image_path>, transforms it using the passed
     <lut> with trilinear interpolation, and saves the image at
@@ -44,18 +44,20 @@ def apply_lut(image, lut, log=False):
     <log>: if True, transform to log colorspace
     """
 
-    im_array = image
-    is_non_default_domain = not np.array_equal(lut.domain, np.array([[0., 0., 0.], [1., 1., 1.]]))
-    dom_scale = None
-    if is_non_default_domain:
-        dom_scale = lut.domain[1] - lut.domain[0]
-        im_array = im_array * dom_scale + lut.domain[0]
+    im_array = np.asarray(image, dtype=np.float32)
     if log:
         im_array = im_array ** (1/2.2)
-    im_array = lut.apply(im_array)
-    if log:
-        im_array = im_array ** (2.2)
-    if is_non_default_domain:
-        im_array = (im_array - lut.domain[0]) / dom_scale
 
-    return im_array.astype(np.float32)
+    if overrange == "preserve":
+        domain_min = lut.domain[0]
+        domain_max = lut.domain[1]
+        lut_input = np.clip(im_array, domain_min, domain_max)
+        result = lut.apply(lut_input)
+        result = result + (im_array - lut_input)
+    else:
+        result = lut.apply(im_array)
+
+    if log:
+        result = result ** (2.2)
+
+    return result.astype(np.float32)

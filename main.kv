@@ -196,12 +196,11 @@
                                     on_state: root.start_draw_image()
 
                                 HSpacer:
-                                    size_hint_x: 1
+                                    ref_width: 4
 
                                 BoxLayout:
                                     orientation: 'horizontal'
-                                    size_hint: None, 1
-                                    ref_width: 176
+                                    size_hint: 1, 1
                                     opacity: 1 if root.preview_pixel_visible else 0
                                     disabled: not root.preview_pixel_visible
                                     ref_spacing: 4
@@ -413,7 +412,7 @@
                         id: slider_zoom_ratio
                         size_hint_x: 0.32
                         text: "Zoom " + str(int(round(root.zoom_ratio * 100))) + "%"
-                        min: 50
+                        min: 20
                         max: 400
                         value: 100
                         step: 10
@@ -1890,9 +1889,9 @@
                                 HeadLabel:
                                     id: switch_lut
                                     text: ' LUT'
-                                    on_press: root.begin_history_effect_ctrl(2, 'lut')
-                                    on_active: root.apply_effects_lv(2, 'lut')
-                                    on_release: root.end_history_effect_ctrl(2, 'lut')
+                                    on_press: root.begin_history_effect_ctrl(2, ['input_lut', 'look_lut'])
+                                    on_active: root.apply_effects_lv(2, ['input_lut', 'look_lut'])
+                                    on_release: root.end_history_effect_ctrl(2, ['input_lut', 'look_lut'])
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1902,11 +1901,11 @@
                                     ParamSpinner:
                                         id: lut_spinner
                                         values: [ 'None', ]
-                                        #on_hovered_item: root.apply_effects_lv(2, 'lut')
+                                        #on_hovered_item: root.apply_effects_lv(2, ['input_lut', 'look_lut'])
                                         on_value:
-                                            root.begin_history_effect_ctrl(2, 'lut')
-                                            root.apply_effects_lv(2, 'lut')
-                                            root.end_history_effect_ctrl(2, 'lut')
+                                            root.begin_history_effect_ctrl(2, ['input_lut', 'look_lut'])
+                                            root.apply_effects_lv(2, ['input_lut', 'look_lut'])
+                                            root.end_history_effect_ctrl(2, ['input_lut', 'look_lut'])
                                     Button:
                                         pos_hint: {'center_x': .5, 'center_y': .5}
                                         size_hint: 0.08, None
@@ -1920,9 +1919,9 @@
                                     max: 100
                                     value: 100
                                     step: 1
-                                    on_slider: root.apply_effects_lv(2, 'lut')
-                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lut')
-                                    on_after_edit: root.end_history_effect_ctrl(2, 'lut')
+                                    on_slider: root.apply_effects_lv(2, ['input_lut', 'look_lut'])
+                                    on_before_edit: root.begin_history_effect_ctrl(2, ['input_lut', 'look_lut'])
+                                    on_after_edit: root.end_history_effect_ctrl(2, ['input_lut', 'look_lut'])
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -1933,9 +1932,9 @@
                                         id: lut_to_log_spinner
                                         values: [ 'None', 'slog3', 'logc4', 'clog3', 'redlog3g10', 'vlog', 'nlog', 'flog2', 'omlog400' ]
                                         on_value:
-                                            root.begin_history_effect_ctrl(2, 'lut')
-                                            root.apply_effects_lv(2, 'lut')
-                                            root.end_history_effect_ctrl(2, 'lut')
+                                            root.begin_history_effect_ctrl(2, ['input_lut', 'look_lut'])
+                                            root.apply_effects_lv(2, ['input_lut', 'look_lut'])
+                                            root.end_history_effect_ctrl(2, ['input_lut', 'look_lut'])
 
                                 VSeparator:
 
@@ -2010,56 +2009,88 @@
 
                                 HeadLabel:
                                     id: switch_global
-                                    text: ' Global'
-                                    on_press: root.begin_history_effect_ctrl(2, 'highlight_compress')
-                                    on_active: root.apply_effects_lv(2, 'highlight_compress')
-                                    on_release: root.end_history_effect_ctrl(2, 'highlight_compress')
-
-                                ParamBoxLayout:
-                                    ParamLabel:
-                                        text: "Tonemap"
-                                    VSpacer:
-                                        size_hint_x: 0.45
-                                    ParamSwitch:
-                                        id: switch_highlight_compress
-                                        active: False
-                                        on_pre_active: root.begin_history_effect_ctrl(2, 'highlight_compress')
-                                        on_active: root.apply_effects_lv(2, 'highlight_compress')
-                                        on_post_active: root.end_history_effect_ctrl(2, 'highlight_compress')
+                                    text: ' Global Color'
+                                    on_press: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_active: root.apply_effects_lv(2, 'color_separation')
+                                    on_release: root.end_history_effect_ctrl(2, 'color_separation')
 
                                 ParamSlider:
-                                    id: slider_remove_muddy_yellow
-                                    text: "Muddy Yellow"
+                                    id: slider_shadow_chroma_clean
+                                    text: "Shadow Clean"
                                     min: 0
-                                    max: 1
-                                    value: 0.3
-                                    step: 0.01
+                                    max: 100
+                                    value: 0
+                                    step: 1
                                     for_float: True
-                                    on_before_edit: root.begin_history_effect_ctrl(2, 'remove_muddy_color')
-                                    on_slider: root.apply_effects_lv(2, 'remove_muddy_color')
-                                    on_after_edit: root.end_history_effect_ctrl(2, 'remove_muddy_color')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
                                 ParamSlider:
-                                    id: slider_shadow_threshold
-                                    text: "Shadow Threshold"
+                                    id: slider_shadow_chroma_threshold
+                                    text: "Shadow Range"
                                     min: 0
                                     max: 1
                                     value: 0.2
                                     step: 0.01
                                     for_float: True
-                                    on_before_edit: root.begin_history_effect_ctrl(2, 'remove_muddy_color')
-                                    on_slider: root.apply_effects_lv(2, 'remove_muddy_color')
-                                    on_after_edit: root.end_history_effect_ctrl(2, 'remove_muddy_color')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
                                 ParamSlider:
-                                    id: slider_separation_strength
-                                    text: "Separation Strength"
+                                    id: slider_color_separation
+                                    text: "Separation"
                                     min: 0
-                                    max: 1
-                                    value: 0.2
-                                    step: 0.01
+                                    max: 100
+                                    value: 0
+                                    step: 1
                                     for_float: True
-                                    on_before_edit: root.begin_history_effect_ctrl(2, 'remove_muddy_color')
-                                    on_slider: root.apply_effects_lv(2, 'remove_muddy_color')
-                                    on_after_edit: root.end_history_effect_ctrl(2, 'remove_muddy_color')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
+                                ParamSlider:
+                                    id: slider_chroma_clarity
+                                    text: "Chroma Clarity"
+                                    min: -100
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    for_float: True
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
+                                ParamSlider:
+                                    id: slider_color_density
+                                    text: "Color Density"
+                                    min: -100
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    for_float: True
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
+                                ParamSlider:
+                                    id: slider_subtractive_saturation
+                                    text: "Subtractive Sat"
+                                    min: -100
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    for_float: True
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
+                                ParamSlider:
+                                    id: slider_detail_tonemap
+                                    text: "Detail Tonemap"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    for_float: True
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'color_separation')
+                                    on_slider: root.apply_effects_lv(2, 'color_separation')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'color_separation')
 
                                 VSeparator:
 
@@ -2344,9 +2375,9 @@
                                 HeadLabel:
                                     id: switch_orton_effect
                                     text: ' Orton Effect'
-                                    on_press: root.begin_history_effect_ctrl(1, 'orton')
-                                    on_active: root.apply_effects_lv(1, 'orton')
-                                    on_release: root.end_history_effect_ctrl(1, 'orton')
+                                    on_press: root.begin_history_effect_ctrl(2, 'orton')
+                                    on_active: root.apply_effects_lv(2, 'orton')
+                                    on_release: root.end_history_effect_ctrl(2, 'orton')
 
                                 ParamSlider:
                                     id: slider_orton_radius
@@ -2355,9 +2386,9 @@
                                     max: 100
                                     value: 30
                                     step: 1
-                                    on_slider: root.apply_effects_lv(1, 'orton')
-                                    on_before_edit: root.begin_history_effect_ctrl(1, 'orton')
-                                    on_after_edit: root.end_history_effect_ctrl(1, 'orton')
+                                    on_slider: root.apply_effects_lv(2, 'orton')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'orton')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'orton')
                                 ParamSlider:
                                     id: slider_orton_opacity
                                     text: "Opacity"
@@ -2365,9 +2396,9 @@
                                     max: 100
                                     value: 75
                                     step: 1
-                                    on_slider: root.apply_effects_lv(1, 'orton')
-                                    on_before_edit: root.begin_history_effect_ctrl(1, 'orton')
-                                    on_after_edit: root.end_history_effect_ctrl(1, 'orton')
+                                    on_slider: root.apply_effects_lv(2, 'orton')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'orton')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'orton')
                                 ParamSlider:
                                     id: slider_orton_intensity
                                     text: "Intensity"
@@ -2375,9 +2406,9 @@
                                     max: 100
                                     value: 0
                                     step: 1
-                                    on_slider: root.apply_effects_lv(1, 'orton')
-                                    on_before_edit: root.begin_history_effect_ctrl(1, 'orton')
-                                    on_after_edit: root.end_history_effect_ctrl(1, 'orton')
+                                    on_slider: root.apply_effects_lv(2, 'orton')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'orton')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'orton')
 
                                 VSeparator:
 

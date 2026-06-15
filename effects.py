@@ -2553,45 +2553,6 @@ class ColorTemperatureEffect(Effect):
 
         return self.diff
 
-class RemoveMuddyColorEffect(Effect):
-
-    def get_param_dict(self, param):
-        return {
-            'switch_global': True,
-            'remove_muddy_yellow': 0.3,
-            'shadow_threshold': 0.2,
-            'separation_strength': 0.2,
-        }
-
-    def set2widget(self, widget, param):
-        widget.ids['switch_global'].enabled = self._get_param(param, 'switch_global')
-        widget.ids["slider_remove_muddy_yellow"].set_slider_value(self._get_param(param, 'remove_muddy_yellow'))
-        widget.ids["slider_shadow_threshold"].set_slider_value(self._get_param(param, 'shadow_threshold'))
-        widget.ids["slider_separation_strength"].set_slider_value(self._get_param(param, 'separation_strength'))
-
-    def set2param(self, param, widget):
-        param['switch_global'] = widget.ids['switch_global'].enabled
-        param['remove_muddy_yellow'] = widget.ids["slider_remove_muddy_yellow"].value
-        param['shadow_threshold'] = widget.ids["slider_shadow_threshold"].value
-        param['separation_strength'] = widget.ids["slider_separation_strength"].value
-
-    def make_diff(self, rgb, param, efconfig):
-        switch_global = self._get_param(param, 'switch_global')
-        remove_muddy_yellow = self._get_param(param, 'remove_muddy_yellow')
-        shadow_threshold = self._get_param(param, 'shadow_threshold')
-        separation_strength = self._get_param(param, 'separation_strength')
-        if switch_global == False or (remove_muddy_yellow == 0.0 and shadow_threshold == 0.0 and separation_strength == 0.0):
-            self.diff = None
-            self.hash = None
-        else:
-            param_hash = hash((remove_muddy_yellow, shadow_threshold, separation_strength))
-            if self.hash != param_hash:
-                self.hash = param_hash
-                self.diff = core.remove_muddy_yellow(rgb, remove_muddy_yellow)
-                self.diff = core.clean_image_mud(self.diff, shadow_threshold, separation_strength)
-
-        return self.diff
-
 class DehazeEffect(Effect):
 
     def get_param_dict(self, param):
@@ -2618,8 +2579,12 @@ class DehazeEffect(Effect):
             param_hash = hash((de))
             if self.hash != param_hash:
                 self.hash = param_hash
-                
-                self.diff = core.dehaze_image(rgb, de/100)
+
+                if de > 0:
+                    de = de / 200 # 効果を半分に
+                else:
+                    de = de / 100
+                self.diff = core.dehaze_image(rgb, de)
 
         return self.diff
 
@@ -2853,7 +2818,9 @@ class ContrastEffect(Effect):
                 self.hash = param_hash
 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = core.adjust_tone(rgb, con, -con, disp_scale=efconfig.disp_info[4], resolution_scale=efconfig.resolution_scale)
+                if con > 0:
+                    con *= 0.5
+                self.diff = core.adjust_luminance_contrast(rgb, con)
 
         return self.diff
 
@@ -3002,26 +2969,94 @@ class ToneEffect(Effect):
 
         return self.diff
     
-class HighlightCompressEffect(Effect):
+class ColorSeparationEffect(Effect):
 
     def get_param_dict(self, param):
         return {
             'switch_global': True,
-            'highlight_compress': False,
+            'shadow_chroma_clean': 0.0,
+            'shadow_chroma_threshold': 0.2,
+            'color_separation': 0.0,
+            'chroma_clarity': 0.0,
+            'color_density': 0.0,
+            'subtractive_saturation': 0.0,
+            'detail_tonemap': 0.0,
         }
 
     def set2widget(self, widget, param):
         widget.ids["switch_global"].active = self._get_param(param, 'switch_global')
-        widget.ids["switch_highlight_compress"].active = self._get_param(param, 'highlight_compress')
+        widget.ids["slider_shadow_chroma_clean"].set_slider_value(self._get_param(param, 'shadow_chroma_clean'))
+        widget.ids["slider_shadow_chroma_threshold"].set_slider_value(self._get_param(param, 'shadow_chroma_threshold'))
+        widget.ids["slider_color_separation"].set_slider_value(self._get_param(param, 'color_separation'))
+        widget.ids["slider_chroma_clarity"].set_slider_value(self._get_param(param, 'chroma_clarity'))
+        widget.ids["slider_color_density"].set_slider_value(self._get_param(param, 'color_density'))
+        widget.ids["slider_subtractive_saturation"].set_slider_value(self._get_param(param, 'subtractive_saturation'))
+        widget.ids["slider_detail_tonemap"].set_slider_value(self._get_param(param, 'detail_tonemap'))
 
     def set2param(self, param, widget):
         param['switch_global'] = widget.ids["switch_global"].active
-        param['highlight_compress'] = widget.ids["switch_highlight_compress"].active
+        param['shadow_chroma_clean'] = widget.ids["slider_shadow_chroma_clean"].value
+        param['shadow_chroma_threshold'] = widget.ids["slider_shadow_chroma_threshold"].value
+        param['color_separation'] = widget.ids["slider_color_separation"].value
+        param['chroma_clarity'] = widget.ids["slider_chroma_clarity"].value
+        param['color_density'] = widget.ids["slider_color_density"].value
+        param['subtractive_saturation'] = widget.ids["slider_subtractive_saturation"].value
+        param['detail_tonemap'] = widget.ids["slider_detail_tonemap"].value
 
     def make_diff(self, rgb, param, efconfig):
-        self.diff = None
-        self.hash = None
+        switch_global = self._get_param(param, 'switch_global')
+        shadow_clean = self._get_param(param, 'shadow_chroma_clean')
+        threshold = self._get_param(param, 'shadow_chroma_threshold')
+        separation = self._get_param(param, 'color_separation')
+        clarity = self._get_param(param, 'chroma_clarity')
+        density = self._get_param(param, 'color_density')
+        subtractive_saturation = self._get_param(param, 'subtractive_saturation')
+        detail_tonemap = self._get_param(param, 'detail_tonemap')
+        if switch_global == False or (shadow_clean == 0.0 and separation == 0.0
+                                      and clarity == 0.0 and density == 0.0
+                                      and subtractive_saturation == 0.0
+                                      and detail_tonemap == 0.0):
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((
+                shadow_clean,
+                threshold,
+                separation,
+                clarity,
+                density,
+                subtractive_saturation,
+                detail_tonemap,
+            ))
+            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            if needed:
+                rgb = core.type_convert(rgb, np.ndarray)
+                shadow_clean_core = shadow_clean / 100.0
+                separation_core = separation / 100.0
+                clarity_core = clarity / 100.0
+                density_core = density / 100.0
+                subtractive_saturation_core = subtractive_saturation / 100.0
+                detail_tonemap_core = detail_tonemap / 100.0
+                if (shadow_clean == 0.0 and separation == 0.0 and clarity == 0.0
+                        and density == 0.0 and subtractive_saturation == 0.0):
+                    out = rgb
+                else:
+                    out = core.apply_color_separation(
+                        rgb,
+                        shadow_chroma_clean=shadow_clean_core,
+                        shadow_threshold=threshold,
+                        color_separation=separation_core,
+                        chroma_clarity=clarity_core,
+                        color_density=density_core,
+                        subtractive_saturation=subtractive_saturation_core,
+                    )
+                if detail_tonemap != 0.0:
+                    out = core.detail_preserving_tonemap(out, detail_tonemap_core)
+                self.diff = out
+                self.hash = combined_hash
+
         return self.diff
+
 
 class LevelEffect(Effect):
 
@@ -3238,7 +3273,7 @@ class TonecurveEffect(Effect):
     
     def apply_diff(self, rgb):
         rgb =  core.type_convert(rgb, np.ndarray)
-        return core.apply_lut(rgb, self.diff)
+        return core.apply_lut(rgb, self.diff, overrange="preserve")
 
 class TonecurveRedEffect(Effect):
 
@@ -3271,7 +3306,7 @@ class TonecurveRedEffect(Effect):
 
     def apply_diff(self, rgb_r):
         rgb_r =  core.type_convert(rgb_r, np.ndarray)
-        return core.apply_lut(rgb_r, self.diff)
+        return core.apply_lut(rgb_r, self.diff, overrange="preserve")
 
 class TonecurveGreenEffect(Effect):
 
@@ -3304,7 +3339,7 @@ class TonecurveGreenEffect(Effect):
 
     def apply_diff(self, rgb_g):
         rgb_g =  core.type_convert(rgb_g, np.ndarray)
-        return core.apply_lut(rgb_g, self.diff)
+        return core.apply_lut(rgb_g, self.diff, overrange="preserve")
 
 class TonecurveBlueEffect(Effect):
 
@@ -3338,7 +3373,7 @@ class TonecurveBlueEffect(Effect):
 
     def apply_diff(self, rgb_b):
         rgb_b =  core.type_convert(rgb_b, np.ndarray)
-        return core.apply_lut(rgb_b, self.diff)
+        return core.apply_lut(rgb_b, self.diff, overrange="preserve")
 
 class GradingEffect(Effect):
 
@@ -3816,10 +3851,12 @@ class AutoExposureEffect(Effect):
 
 class LUTEffect(Effect):
 
-    def __init__(self, **kwargs):
+    def __init__(self, stage="look", **kwargs):
         super().__init__(**kwargs)
 
         self.lut = None
+        self.lut_key = None
+        self.stage = stage
 
     def get_param_dict(self, param):
         return {
@@ -3841,6 +3878,7 @@ class LUTEffect(Effect):
         name = spinner.text if spinner.hovered_item is None else spinner.hovered_item.text
         if self._get_param(param, 'lut_name') != name:
             self.lut = None
+            self.lut_key = None
         param['lut_name'] = name
         param['lut_intensity'] = widget.ids["slider_lut_intensity"].value
         param['lut_to_log'] = widget.ids["lut_to_log_spinner"].text
@@ -3851,15 +3889,21 @@ class LUTEffect(Effect):
         lut_to_log = self._get_param(param, 'lut_to_log')
         lut_intensity = self._get_param(param, 'lut_intensity')
         lut_path = config.get_config('lut_path')
-        if switch_lut == False or lut_path is None or lut_name == 'None' or lut_intensity == 0:
+        stage_active = (
+            (self.stage == "input" and lut_to_log != 'None')
+            or (self.stage == "look" and lut_to_log == 'None')
+        )
+        if switch_lut == False or not stage_active or lut_path is None or lut_name == 'None' or lut_intensity == 0:
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((lut_name, lut_path, lut_to_log, lut_intensity))
+            param_hash = hash((self.stage, lut_name, lut_path, lut_to_log, lut_intensity))
             if self.hash != param_hash:
-                if self.lut is None:
-                    path = os.path.join(lut_path, lut_name)
+                path = os.path.join(lut_path, lut_name)
+                lut_key = (path, lut_name)
+                if self.lut is None or self.lut_key != lut_key:
                     self.lut = cubelut.read_lut(path)
+                    self.lut_key = lut_key
 
                 if self.lut is not None:
                     self.hash = param_hash
@@ -3868,7 +3912,8 @@ class LUTEffect(Effect):
                     if lut_to_log != 'None':
                         rgb = linear_to_log.process_image(rgb, lut_to_log)
 
-                    apply_rgb = cubelut.apply_lut(rgb, self.lut)
+                    overrange = "preserve" if lut_to_log == 'None' else "clip"
+                    apply_rgb = cubelut.apply_lut(rgb, self.lut, overrange=overrange)
                     self.diff = rgb * (1-lut_intensity/100) + apply_rgb * lut_intensity/100
                 else:
                     self.diff = None
@@ -4618,7 +4663,6 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
 
     lv1 = effects[1]
     lv1['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
-    lv1['orton'] = OrtonEffect()
     lv1['lensblur_filter'] = LensblurFilterEffect()
     lv1['scratch'] = ScratchEffect()
     lv1['frosted_glass'] = FrostedGlassEffect()
@@ -4627,24 +4671,22 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     
     lv2 = effects[2]
     lv2['color_temperature'] = ColorTemperatureEffect()
-    lv2['remove_muddy_color'] = RemoveMuddyColorEffect()
     
     lv2['auto_exposure'] = AutoExposureEffect()
-    lv2['lut'] = LUTEffect()
-
-    lv2['dehaze'] = DehazeEffect()
+    lv2['input_lut'] = LUTEffect(stage="input")
 
     lv2['exposure'] = ExposureEffect()
     lv2['contrast'] = ContrastEffect()
+    lv2['tone'] = ToneEffect()
+    lv2['level'] = LevelEffect()
+    lv2['curves'] = CurvesEffect()
+
+    lv2['dehaze'] = DehazeEffect()
     lv2['light_noise_reduction'] = LightNoiseReductionEffect()
     lv2['clarity'] = ClarityEffect()
     lv2['texture'] = TextureEffect()
     lv2['microcontrast'] = MicroContrastEffect()
-    lv2['tone'] = ToneEffect()
-    lv2['level'] = LevelEffect()
-
-    lv2['glow'] = GlowEffect()
-    lv2['highlight_compress'] = HighlightCompressEffect()
+    lv2['color_separation'] = ColorSeparationEffect()
 
     # ここでクリッピング
 
@@ -4658,11 +4700,12 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv2['vs_and_saturation'] = VSandSaturationEffect()
     lv2['hls2rgb2'] = HLS2RGBEffect()
 
-    lv2['curves'] = CurvesEffect()
-
+    lv2['look_lut'] = LUTEffect(stage="look")
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()
     lv2['solid_color'] = SolidColorEffect()
+    lv2['orton'] = OrtonEffect()
+    lv2['glow'] = GlowEffect()
     lv2['unsharp_mask'] = UnsharpMaskEffect()
 
     lv3 = effects[3]
@@ -4681,9 +4724,6 @@ def set_composit_mask_noop_defaults(param):
     param.setdefault('ai_noise_reduction', False)
     param.setdefault('light_noise_reduction', 0)
     param.setdefault('light_color_noise_reduction', 0)
-    param.setdefault('remove_muddy_yellow', 0.0)
-    param.setdefault('shadow_threshold', 0.0)
-    param.setdefault('separation_strength', 0.0)
 
 
 def set2widget_all(widget, effects, param, reset_effects=True):

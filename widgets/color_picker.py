@@ -8,7 +8,6 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.gridlayout import MDGridLayout
 from kivy.properties import ListProperty as KVListProperty, NumericProperty as KVNumericProperty
 from kivy.graphics import Color, Ellipse, Quad
-from kivy.metrics import dp as kvdp
 from kivy.clock import Clock as KVClock
 from kivy.lang import Builder as KVBuilder
 from kivy.config import Config as KVConfig
@@ -19,6 +18,7 @@ import threading
 
 import macos as device
 import widgets.param_slider
+import utils.kvutils as kvutils
 
 class CWColorPreview(MDCard):
     color = KVListProperty([0.5, 0.5, 0.5, 1])
@@ -36,11 +36,11 @@ class CWColorPreview(MDCard):
     def _open_text_color_dialog(self):
         if self.picker is None:
             return
-        # macOS ネイティブの入力ダイアログ（日本語可・キャンセル可）。メインスレッドで modal。
+        # Native macOS prompt. Color descriptions can use non-ASCII text.
         try:
             text = device.prompt_native(
-                message="色を表す言葉（例: 夕焼けのオレンジ）",
-                title="色を入力",
+                message="Describe a color (for example: sunset orange)",
+                title="Enter Color",
                 default="",
                 show_cancel=True,
                 ascii_only=False,
@@ -82,7 +82,7 @@ class CWColorWheel(MDBoxLayout):
         with self.canvas.after:
             # 選択位置のマーカー
             self.marker_color = Color(1, 1, 1, 1)
-            self.marker_size = kvdp(10)
+            self.marker_size = self._marker_size()
             self.marker = Ellipse(size=(self.marker_size, self.marker_size))
         
         KVClock.schedule_once(self.draw_wheel)
@@ -136,7 +136,7 @@ class CWColorWheel(MDBoxLayout):
             
             # 選択位置のマーカー
             self.marker_color = Color(1, 1, 1, 1)
-            self.marker_size = dp(10)
+            self.marker_size = self._marker_size()
             self.marker = Ellipse(size=(self.marker_size, self.marker_size))
             """
             self.update_marker()    
@@ -145,11 +145,18 @@ class CWColorWheel(MDBoxLayout):
         KVClock.schedule_once(self.draw_wheel)
     
     def update_marker(self):
+        marker_size = self._marker_size()
+        if marker_size != self.marker_size:
+            self.marker_size = marker_size
+            self.marker.size = (marker_size, marker_size)
         angle = self.hue * 2 * math.pi
         radius = self.saturation * self.wheel_radius
         x = self.center_x + radius * math.cos(angle)
         y = self.center_y + radius * math.sin(angle)
         self.marker.pos = (x - self.marker_size / 2, y - self.marker_size / 2)
+
+    def _marker_size(self):
+        return kvutils.dpi_scale_width(10)
     
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):

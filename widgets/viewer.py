@@ -495,18 +495,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 exif_data = exif_data_list[i]
                 file_path = file_path_list[i]
 
-                thumb_base64 = exif_data.get('ThumbnailImage', None)
-                if thumb_base64 is not None:
-                    image = np.frombuffer(base64.b64decode(thumb_base64[7:]), dtype=np.uint8)
-                    thumb = cv2.imdecode(image, 1)
-                    if thumb.ndim == 2:
-                        thumb = cv2.cvtColor(thumb, cv2.COLOR_GRAY2RGB)
-                    elif thumb.shape[2] == 4:
-                        thumb = cv2.cvtColor(thumb, cv2.COLOR_BGRA2RGB)
-                    elif thumb.shape[2] > 4:
-                        thumb = cv2.cvtColor(thumb[:, :, :3], cv2.COLOR_BGR2RGB)
-                    else:
-                        thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+                thumb = self._decode_embedded_thumbnail(exif_data)
+                if thumb is not None:
+                    pass
                 else:
                     if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
                         with lre.imread(file_path) as raw:
@@ -552,6 +543,29 @@ class ViewerWidget(RecycleView, DraggableWidget):
         except Exception as e:
             print(f"Error processing file {file_path}: {e}")
             return [None]*len(file_path_list)
+
+    def _decode_embedded_thumbnail(self, exif_data):
+        for key in ("ThumbnailImage", "PreviewImage", "JpgFromRaw", 'PreviewTIFF'):
+            encoded = exif_data.get(key, None)
+            if not encoded:
+                continue
+            if isinstance(encoded, str) and encoded.startswith("base64:"):
+                encoded = encoded[7:]
+            try:
+                image = np.frombuffer(base64.b64decode(encoded), dtype=np.uint8)
+                thumb = cv2.imdecode(image, 1)
+            except Exception:
+                continue
+            if thumb is None:
+                continue
+            if thumb.ndim == 2:
+                return cv2.cvtColor(thumb, cv2.COLOR_GRAY2RGB)
+            if thumb.shape[2] == 4:
+                return cv2.cvtColor(thumb, cv2.COLOR_BGRA2RGB)
+            if thumb.shape[2] > 4:
+                return cv2.cvtColor(thumb[:, :, :3], cv2.COLOR_BGR2RGB)
+            return cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+        return None
 
     def handle_selection(self, index, touch):
         # We also need to notify MainWidget about selection change

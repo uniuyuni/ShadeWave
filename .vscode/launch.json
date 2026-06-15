@@ -38,7 +38,7 @@
                 "ENABLE_PJRT_COMPATIBILITY": "1",
                 "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0",
                 "PYTORCH_ENABLE_MPS_FALLBACK": "1",
-                "PYTORCH_MPS_FAST_MATH": "1",
+                "PYTORCH_MPS_FAST_MATH": "0",
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
                 "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/.pixi/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
                 "QS_DRAW_V4": "1",
@@ -50,7 +50,7 @@
                 "PLATYPUS_DEBUG_EDGE_REFINE": "1",
                 //"PLATYPUS_DEBUG_EDGE_REFINE_DIR": "./edge_refine_debug",
                 //"PLATYPUS_DEBUG_EDGE_REFINE_LIMIT": "100"
-                //"PLATYPUS_DRAW_QS_FULL_VIEW": "1",
+                //"PLATYPUS_DRAW_QS_FULL_VIEW": "0",
                 //"QS_DUMP_INPUT": "./edge_refine_debug",
                 //"QS_DUMP_INPUT_LIMIT": "100",
                 //"QS_BRUSH_AS_RADIUS": "1",

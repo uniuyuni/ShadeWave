@@ -8,12 +8,11 @@ dcp/
 
 libraw_enhanced/
 metal/
-.pixi/libraw-install/
+radiance_denoise/
 SAM3/
 SCUNet/
 demosaicnet_torch/
 Real-ESRGAN/
-radiance_denoise/
 splitimage/**build/**
 splitimage/*.egg*/**
 
@@ -22,8 +21,6 @@ splitimage/*.egg*/**
 effect_backends/*.so
 effect_backends/*.egg-info/
 effect_backends/build/
-native_effects/*.so
-native_effects/__pycache__/
 
 # Debug outputs
 edge_refine_debug/

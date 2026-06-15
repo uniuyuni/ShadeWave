@@ -3963,7 +3963,7 @@ class TargetTextMask(BaseMask):
         try:
             text = device.prompt_native(
                 message="Target text (English only)",
-                title="ターゲットテキスト入力",
+                title="Enter Target Text",
                 default=self.target_text or "",
                 ascii_only=True,  # SAM3 側が日本語非対応のため非 ASCII を抑止
             )
@@ -4135,9 +4135,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             self._axes_scissor = self.push_scissor()
             # 軸線 (本体 + 矢印を 1 つの polyline で描画。先端から左右の羽が伸びる)
             self._axes_color_x = KVColor(0.7, 0.7, 0.7, 0.9)
-            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=max(1.0, 1.5 * device.dpi_scale()))
+            self._axis_x_line = KVLine(points=(0, 0, 0, 0), width=max(0.5, 0.75 * device.dpi_scale()))
             self._axes_color_y = KVColor(0.7, 0.7, 0.7, 0.9)
-            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=max(1.0, 1.5 * device.dpi_scale()))
+            self._axis_y_line = KVLine(points=(0, 0, 0, 0), width=max(0.5, 0.75 * device.dpi_scale()))
             # 互換用の instruction。中心点表示は使わないので常に size=(0, 0) のまま。
             self._pivot_color = KVColor(1, 1, 0, 0.85)
             self._pivot_marker = KVEllipse(pos=(0, 0), size=(0, 0))
@@ -4966,13 +4966,29 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         except Exception:
             pass
 
+    def refresh_mask_geom_axes(self):
+        self._draw_mask_geom_axes()
+
+    def _is_geometry_tab_active(self):
+        try:
+            app = KVApp.get_running_app()
+            root = getattr(app, "root", None)
+            tab_panel = root.ids.get("effects") if root is not None and hasattr(root, "ids") else None
+            current_tab = getattr(tab_panel, "current_tab", None)
+            return getattr(current_tab, "text", "") == "Ge"
+        except Exception:
+            return False
+
     def _draw_mask_geom_axes(self):
-        """Composit active かつ switch_mask_geometry ON のとき、mask Geom 座標系を overlay 表示。
+        """Ge タブで Composit active かつ switch_mask_geometry ON のとき、mask Geom 座標系を overlay 表示。
         - 軸 (X=赤, Y=緑) の原点 = post-translation 点 (image_center + (tx, ty))
         - 軸の向き = rotation + flip を反映
         - Scale 効果は除外 (= 軸の "向き" だけを伝える)
         - flip 軸線そのものが mirror axis (flip H なら Y軸線、flip V なら X軸線が mirror)
         """
+        if not self._is_geometry_tab_active():
+            self.clear_mask_geom_axes()
+            return
         if self._image_only_matrix is None:
             return
         if self._is_mesh_edit_active():

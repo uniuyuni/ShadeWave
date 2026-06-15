@@ -242,6 +242,7 @@ class HistoryContentPanel(KVBoxLayout):
                 "cross_filter_random": "cross_random",
                 "rotation2": "Rotation_90",
                 "highlight_compress": "tonemap",
+                "detail_tonemap": "detail_tonemap",
             }
             title = REPLACE_TEXT[result[0]] if result[0] in REPLACE_TEXT else result[0]
             title = self._format_string(title)

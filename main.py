@@ -3239,6 +3239,11 @@ if __name__ == '__main__':
             else:
                 self.primary_effects[0]['geometry'].close_geometry_editor(self)
 
+            try:
+                self.ids['mask_editor2'].refresh_mask_geom_axes()
+            except Exception:
+                logging.exception("on_current_tab: refresh_mask_geom_axes failed")
+
             if self.imgset is not None:
                 # apply_effects_lv(0, 'crop') 内の sync_crop_editor_mode_from_widget は
                 # Mask2 ON 時はクロップエディタを閉じるよう CropEffect 側で対応済み。
