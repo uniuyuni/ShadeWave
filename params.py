@@ -219,6 +219,7 @@ SPECIAL_PARAM = [
     'img_size',
     #'crop_rect',
     'disp_info',
+    '_mask1_restore_view_after_submit',
     # セッション中のみ（フル/プレビュー・_serialize 重い判定用）。.pmck primary には出さない
     "image_fidelity",
     # レンズ3のユーザー意図。メモリ・copy_special 用。pmck へは serialize が (T,T,T) 以外のときだけ明示的に書く

@@ -157,6 +157,7 @@ if __name__ != '__main__':
     #init_worker()
 
 import os
+import copy
 import numpy as np
 import cv2
 
@@ -320,6 +321,8 @@ if __name__ == '__main__':
             self.click_y = 0        
             self.crop_image = None
             self.crop_image_view_key = None
+            self._mask1_full_preview_backup = None
+            self._mask1_full_preview_sources = set()
             self.is_zoomed = False
             self.zoom_ratio = 1.0
             self.drag_center_start = None
@@ -458,10 +461,71 @@ if __name__ == '__main__':
                 try:
                     self.primary_effects[0]['inpaint'].set2widget(self, self.primary_param)
                     self._set_diff_list_to_inpaint_edit()
+                    self._finish_ai_inpaint_mask_mode()
                 except Exception:
                     logging.exception("failed to sync AI inpaint UI after async completion")
 
             KVClock.schedule_once(_sync, delay)
+
+        def _finish_ai_inpaint_mask_mode(self):
+            try:
+                self._cancel_mask1_mode(sources=("inpaint",), redraw=False)
+            except Exception:
+                logging.exception("failed to finish AI inpaint mask mode")
+
+        def _remove_mask1_editor_for_effect(self, effect_name):
+            effect = self.primary_effects[0].get(effect_name)
+            editor = getattr(effect, "mask_editor", None) if effect is not None else None
+            if editor is not None:
+                try:
+                    if getattr(editor, "parent", None) is not None:
+                        self.ids['preview_widget'].remove_widget(editor)
+                except Exception:
+                    logging.exception("failed to remove mask1 editor for %s", effect_name)
+                effect.mask_editor = None
+                effect.inpaint_mask_list = []
+
+        def _cancel_mask1_mode(self, sources=("inpaint", "patchmatch_inpaint"), redraw=False):
+            if "inpaint" in sources:
+                self.primary_param['inpaint'] = False
+                self.primary_param['inpaint_predict'] = False
+                self.primary_param['inpaint_mask_list'] = []
+                self.ids['switch_inpaint'].state = "normal"
+                self.ids['button_inpaint_predict'].state = "normal"
+                self._remove_mask1_editor_for_effect("inpaint")
+                self.exit_mask1_full_preview_mode('inpaint')
+
+            if "patchmatch_inpaint" in sources:
+                self.primary_param['patchmatch_inpaint'] = False
+                self.primary_param['patchmatch_inpaint_predict'] = False
+                self.primary_param['patchmatch_inpaint_mask_list'] = []
+                self.ids['switch_patchmatch_inpaint'].state = "normal"
+                self.ids['button_patchmatch_inpaint_predict'].state = "normal"
+                self._remove_mask1_editor_for_effect("patchmatch_inpaint")
+                self.exit_mask1_full_preview_mode('patchmatch_inpaint')
+
+            if redraw and self._image_interaction_ready():
+                self.start_draw_image_and_crop(self.imgset)
+
+        def _apply_mask1_exclusive_buttons(self, effect):
+            if effect == 'inpaint' and self.ids['switch_inpaint'].state == "down":
+                self.ids['switch_patchmatch_inpaint'].state = "normal"
+                self.ids['button_patchmatch_inpaint_predict'].state = "normal"
+            elif effect == 'patchmatch_inpaint' and self.ids['switch_patchmatch_inpaint'].state == "down":
+                self.ids['switch_inpaint'].state = "normal"
+                self.ids['button_inpaint_predict'].state = "normal"
+
+        def _restore_mask1_view_after_submit(self):
+            if not self.primary_param.pop('_mask1_restore_view_after_submit', False):
+                return False
+            try:
+                self._remove_mask1_editor_for_effect("inpaint")
+                self.exit_mask1_full_preview_mode('inpaint')
+                self.start_draw_image_and_crop(self.imgset)
+                return True
+            except Exception:
+                logging.exception("failed to restore mask1 view after submit")
+                return False
 
         def _reset_ai_inpaint_processing_ui(self):
             self.primary_param['inpaint_predict'] = False
@@ -1051,8 +1115,11 @@ if __name__ == '__main__':
                                 skip_histogram,
                             )
                         img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
+                        self._refresh_mask1_editors()
                         logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                         perf_trace.event("draw_image_core.pipeline_done")
+                        if self._restore_mask1_view_after_submit():
+                            return
                         if img is None:
                             return
                         stale_frame = frame_version < self.pipeline_version
@@ -1310,6 +1377,9 @@ if __name__ == '__main__':
                 effects.set2param_all(current_effects, current_param, self)
             else:
                 effect = effect if isinstance(effect, list) else [effect]
+                if lv == 0:
+                    for e in effect:
+                        self._apply_mask1_exclusive_buttons(e)
                 for e in effect:
                     current_effects[lv][e].set2param(current_param, self)
             # Remember Quick Select / edge-refine as a sticky tool setting so a
@@ -2006,6 +2076,8 @@ if __name__ == '__main__':
             self.update_mask2_options_enabled()
             self._actively_loading = True  # アニメーション表示開始
             with threads.primary_param_lock:
+                # Mask1 edit uses temporary original-image geometry; restore it before saving/switching.
+                self._cancel_mask1_mode(redraw=False)
                 # 前の設定を保存
                 self.save_current_sidecar()
                 # 前のエフェクトを終了
@@ -2314,6 +2386,119 @@ if __name__ == '__main__':
             self.start_draw_image_and_crop(self.imgset)
             return True
 
+        def _mask1_full_preview_disp_info(self):
+            original_img_size = self.primary_param.get('original_img_size')
+            if not original_img_size:
+                return None
+            width, height = original_img_size
+            scale = config.get_preview_texture_side() / max(width, height)
+            return core.get_initial_disp_info(width, height, scale)
+
+        _MASK1_GEOMETRY_BYPASS_KEYS = (
+            'rotation',
+            'rotation2',
+            'flip_mode',
+            'switch_distortion_correction',
+            'lens_distortion_strength',
+            'lens_distortion_scale',
+            'correct_horizontal',
+            'correct_vertical',
+            'focal_length',
+            'four_points',
+            'reference_lines',
+            'mesh_size',
+            'control_points',
+            'matrix',
+            'crop_rect',
+            'disp_info',
+            'img_size',
+            'switch_distortion',
+        )
+
+        def _backup_mask1_geometry_params(self):
+            return {
+                key: (key in self.primary_param, copy.deepcopy(self.primary_param.get(key)))
+                for key in self._MASK1_GEOMETRY_BYPASS_KEYS
+            }
+
+        def _restore_mask1_geometry_params(self, backup):
+            for key, (had_key, value) in backup.items():
+                if had_key:
+                    self.primary_param[key] = copy.deepcopy(value)
+                else:
+                    self.primary_param.pop(key, None)
+
+        def _apply_mask1_geometry_bypass(self, disp_info):
+            original_img_size = self.primary_param.get('original_img_size')
+            if not original_img_size:
+                return
+            width, height = original_img_size
+            params.set_crop_rect(self.primary_param, core.get_initial_crop_rect(width, height))
+            params.set_disp_info(self.primary_param, disp_info)
+            self.primary_param['img_size'] = (width, height)
+            self.primary_param['rotation'] = 0
+            self.primary_param['rotation2'] = 0
+            self.primary_param['flip_mode'] = 0
+            self.primary_param['switch_distortion_correction'] = False
+            self.primary_param['lens_distortion_strength'] = 0
+            self.primary_param['lens_distortion_scale'] = 0
+            self.primary_param['correct_horizontal'] = 0
+            self.primary_param['correct_vertical'] = 0
+            self.primary_param['focal_length'] = 20
+            self.primary_param['four_points'] = []
+            self.primary_param['reference_lines'] = []
+            self.primary_param['mesh_size'] = [4, 4]
+            self.primary_param['control_points'] = {}
+            self.primary_param['matrix'] = np.eye(3)
+            self.primary_param['switch_distortion'] = False
+
+        def enter_mask1_full_preview_mode(self, source, redraw=False):
+            if not self._image_interaction_ready():
+                return
+            if self._mask1_full_preview_backup is None:
+                self._mask1_full_preview_backup = {
+                    'is_zoomed': self.is_zoomed,
+                    'zoom_ratio': self.zoom_ratio,
+                    'click_x': self.click_x,
+                    'click_y': self.click_y,
+                    'crop_image_view_key': self.crop_image_view_key,
+                    'geometry_params': self._backup_mask1_geometry_params(),
+                }
+
+            self._mask1_full_preview_sources.add(source)
+            disp_info = self._mask1_full_preview_disp_info()
+            if disp_info is None:
+                return
+
+            self.is_zoomed = False
+            self.click_x, self.click_y = 0, 0
+            self.drag_center_start = None
+            self.crop_image = None
+            self.crop_image_view_key = None
+            self._apply_mask1_geometry_bypass(disp_info)
+            effects.reeffect_all(self.primary_effects, 0)
+            if redraw:
+                self.start_draw_image_and_crop(self.imgset)
+
+        def exit_mask1_full_preview_mode(self, source, redraw=False):
+            self._mask1_full_preview_sources.discard(source)
+            if self._mask1_full_preview_sources or self._mask1_full_preview_backup is None:
+                return
+
+            backup = self._mask1_full_preview_backup
+            self._mask1_full_preview_backup = None
+            self.is_zoomed = backup['is_zoomed']
+            self.zoom_ratio = backup['zoom_ratio']
+            self.click_x = backup['click_x']
+            self.click_y = backup['click_y']
+            self.drag_center_start = None
+            self.crop_image = None
+            self.crop_image_view_key = backup.get('crop_image_view_key')
+            self._restore_mask1_geometry_params(backup.get('geometry_params', {}))
+            effects.reeffect_all(self.primary_effects, 0)
+            if redraw and self._image_interaction_ready():
+                self.start_draw_image_and_crop(self.imgset)
+
         def _preview_texture_center_pos(self):
             preview = self.ids.get('preview')
             if preview is None:
@@ -2372,6 +2557,16 @@ if __name__ == '__main__':
             focused = self._focused_text_input()
             if focused is not None:
                 focused.focus = False
+
+        def _refresh_mask1_editors(self):
+            try:
+                for effect_name in ("inpaint", "patchmatch_inpaint"):
+                    effect = self.primary_effects[0].get(effect_name)
+                    editor = getattr(effect, "mask_editor", None) if effect is not None else None
+                    if editor is not None:
+                        editor.delay_update_canvas()
+            except Exception:
+                logging.exception("failed to refresh mask1 editors")
 
         def _is_mask2_on(self):
             """Mask2 トグルが ON 状態か。マスク編集モードの判定軸。
@@ -3297,6 +3492,7 @@ if __name__ == '__main__':
 
         def on_current_tab(self, current):
             self._clear_text_input_focus()
+            self._cancel_mask1_mode(redraw=False)
 
             # 描画中の操作 (Polyline の途中など) はタブ切替で確定させる。
             try:
@@ -3573,7 +3769,8 @@ if __name__ == '__main__':
                     return self._zoom_preview_from_keyboard()
                 return False
 
-            if key == 32:
+            if key == 32 or codepoint == ' ':
+                self._clear_text_input_focus()
                 if self.is_press_space == False:
                     self.sync_draw_image_and_crop(self.imgset)
                 self.is_press_space = True

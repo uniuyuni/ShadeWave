@@ -716,7 +716,7 @@ class InpaintEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids["switch_details"].active = self._get_param(param, 'switch_details')
-        widget.ids["switch_inpaint"].active = self._get_param(param, 'inpaint')
+        widget.ids["switch_inpaint"].state = "down" if self._get_param(param, 'inpaint') else "normal"
         widget.ids["button_inpaint_predict"].state = "normal" if self._get_param(param, 'inpaint_predict') == False else "down"
 
         # 履歴描画
@@ -729,10 +729,12 @@ class InpaintEffect(Effect):
 
     def set2param(self, param, widget):
         param['switch_details'] = widget.ids["switch_details"].active
-        param['inpaint'] = widget.ids["switch_inpaint"].active
+        param['inpaint'] = widget.ids["switch_inpaint"].state == "down"
         param['inpaint_predict'] = widget.ids["button_inpaint_predict"].state == "down"
 
         if param['inpaint'] == True:
+            if hasattr(widget, 'enter_mask1_full_preview_mode'):
+                widget.enter_mask1_full_preview_mode('inpaint')
             if self.mask_editor is None:
                 from widgets.mask_editor import MaskEditor
                 
@@ -748,6 +750,8 @@ class InpaintEffect(Effect):
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
                 self.mask_editor = None
                 param['inpaint_mask_list'] = self.inpaint_mask_list = []
+            if hasattr(widget, 'exit_mask1_full_preview_mode'):
+                widget.exit_mask1_full_preview_mode('inpaint')
 
 
     def make_diff(self, img, param, efconfig):
@@ -772,19 +776,20 @@ class InpaintEffect(Effect):
                     self._clear_pending_inpaint_mask(param)
                     self.hash = None
                     return self._apply_stored_inpaint_diffs(img)
+                if self._last_cache_event == "async_submitted":
+                    param['_mask1_restore_view_after_submit'] = True
                 return self.diff
 
-            import helpers.qwen_image_helper as qih
+            import helpers.runware_object_eraser_helper as rih
 
             mask = self._build_mask_from_inpaint_list(img.shape)
+            client = rih.setup()
 
-            # 各バウンディングごとに Qwen へ渡す（predict_helper は image を in-place 更新して返す）
+            # 各バウンディングごとに Runware へ渡す（predict_helper は image を in-place 更新して返す）
             img_work = img.copy()
             for inpaint_mask in self.inpaint_mask_list:
                 proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
-                img_work = qih.predict_helper(
-                    img_work, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace
-                )
+                img_work = rih.predict_helper(client, img_work, mask, (proc_x, proc_y, proc_w, proc_h))
 
             self._set_diff_list_from_result(img_work)
             param['inpaint_diff_list'] = self.inpaint_diff_list
@@ -842,7 +847,7 @@ class PatchmatchInpaintEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids["switch_details"].active = self._get_param(param, 'switch_details')
-        widget.ids["switch_patchmatch_inpaint"].active = self._get_param(param, 'patchmatch_inpaint')
+        widget.ids["switch_patchmatch_inpaint"].state = "down" if self._get_param(param, 'patchmatch_inpaint') else "normal"
         widget.ids["button_inpaint_predict"].state = "normal" if self._get_param(param, 'patchmatch_inpaint_predict') == False else "down"
 
         # 履歴描画
@@ -855,10 +860,12 @@ class PatchmatchInpaintEffect(Effect):
 
     def set2param(self, param, widget):
         param['switch_details'] = widget.ids["switch_details"].active
-        param['patchmatch_inpaint'] = widget.ids["switch_patchmatch_inpaint"].active
+        param['patchmatch_inpaint'] = widget.ids["switch_patchmatch_inpaint"].state == "down"
         param['patchmatch_inpaint_predict'] = widget.ids["button_patchmatch_inpaint_predict"].state == "down"
 
         if param['patchmatch_inpaint'] == True:
+            if hasattr(widget, 'enter_mask1_full_preview_mode'):
+                widget.enter_mask1_full_preview_mode('patchmatch_inpaint')
             if self.mask_editor is None:
                 from widgets.mask_editor import MaskEditor
                 
@@ -875,6 +882,8 @@ class PatchmatchInpaintEffect(Effect):
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
                 self.mask_editor = None
                 param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
+            if hasattr(widget, 'exit_mask1_full_preview_mode'):
+                widget.exit_mask1_full_preview_mode('patchmatch_inpaint')
 
     def make_diff(self, img, param, efconfig):
         switch_details = self._get_param(param, 'switch_details')

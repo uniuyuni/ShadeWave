@@ -34,6 +34,13 @@
     font_size: '9pt'
     color: 'b0b0b0'
 
+<ParamToggleButton@ToggleButton>:
+    pos_hint: {"center_x": .5, "center_y": .5}
+    size_hint: None, None
+    ref_width: 60
+    ref_height: 20
+    font_size: '9pt'
+
 <ParamSwitch@CompactSwitch>:
     pos_hint: {'center_y': .5}
     size_hint: None, None
@@ -1803,16 +1810,13 @@
                                         text: "Inpaint"
                                     VSpacer:
                                         size_hint_x: 0.25
-                                    ParamChip:
+                                    ParamToggleButton:
                                         id: switch_inpaint
-                                        size_hint_x: None
-                                        ref_width: 60
                                         disabled: root.ai_inpaint_processing
                                         on_press: root.begin_history_effect_ctrl(0, 'inpaint')
-                                        on_active: root.apply_effects_lv(0, 'inpaint')
+                                        on_state: root.apply_effects_lv(0, 'inpaint')
                                         on_release: root.end_history_effect_ctrl(0, 'inpaint')
-                                        ParamChipText:
-                                            text: "Mask"
+                                        text: "Mask"
                                     ParamChip:
                                         type: 'assist'
                                         id: button_inpaint_predict
@@ -1838,15 +1842,12 @@
                                         text: "Fill"
                                     VSpacer:
                                         size_hint_x: 0.25
-                                    ParamChip:
+                                    ParamToggleButton:
                                         id: switch_patchmatch_inpaint
-                                        size_hint_x: None
-                                        ref_width: 60
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
-                                        on_active: root.apply_effects_lv(0, 'patchmatch_inpaint')
+                                        on_state: root.apply_effects_lv(0, 'patchmatch_inpaint')
                                         on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
-                                        ParamChipText:
-                                            text: "Mask"
+                                        text: "Mask"
                                     ParamChip:
                                         type: 'assist'
                                         id: button_patchmatch_inpaint_predict

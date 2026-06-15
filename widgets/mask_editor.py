@@ -35,8 +35,9 @@ class MaskEditor(KVFloatLayout):
         self.pos_hint = {'x':0, 'top': 1}
 
         self.param = param
-        self.canvas_width = param.get('img_size', (512, 512))[0]
-        self.canvas_height = param.get('img_size', (512, 512))[1]
+        canvas_size = param.get('original_img_size', param.get('img_size', (512, 512)))
+        self.canvas_width = canvas_size[0]
+        self.canvas_height = canvas_size[1]
         self.tcg_info = params.param_to_tcg_info(param)
         self.drawing = False
         self.erasing = False
@@ -55,6 +56,11 @@ class MaskEditor(KVFloatLayout):
         
         self.last_touch_pos = None
         self.cursor_instruction = None
+        self._update_canvas_event = None
+        self._canvas_texture = None
+        self._texture_shape = None
+        self._la_buffer = None
+        self._la_view = None
 
         # ブラシカーソル初期化
         self.init_cursor()
@@ -66,6 +72,22 @@ class MaskEditor(KVFloatLayout):
         self.bind(size=self.delay_update_canvas, pos=self.delay_update_canvas)
         self.delay_update_canvas()
 
+    def _sync_texture_size(self):
+        self.texture_size = (config.get_config('preview_width'), config.get_config('preview_height'))
+
+    def _root_widget(self):
+        try:
+            return kvutils.get_root_widget(self)
+        except Exception:
+            return None
+
+    def _is_space_panning(self):
+        root = self._root_widget()
+        return bool(getattr(root, 'is_press_space', False))
+
+    def _hide_cursor(self):
+        self.cursor_line.circle = (0, 0, 0)
+
     def init_cursor(self):
         with self.canvas.after:
             KVPushMatrix()
@@ -75,14 +97,20 @@ class MaskEditor(KVFloatLayout):
             KVPopMatrix()
 
     def on_mouse_pos(self, window, pos):
+        if self._is_space_panning():
+            self._hide_cursor()
+            return
         # 画面内にあるときだけカーソルを更新
         if self.collide_point(*pos):
              self.update_cursor(pos[0], pos[1])
         else:
             # 画面外ならカーソルを隠す（または何もしない）
-            self.cursor_line.circle = (0,0,0) # 半径0で見えなくする簡易手法
+            self._hide_cursor()
 
     def update_cursor(self, x, y):
+        if self._is_space_panning():
+            self._hide_cursor()
+            return
         # brush_size は画像ピクセル単位
         # 画面上のサイズ（Points）に変換する
         
@@ -107,27 +135,34 @@ class MaskEditor(KVFloatLayout):
     def delay_update_canvas(self, *args):
         # Paramの内容が変わっている可能性があるため、tcg_infoを更新
         self.tcg_info = params.param_to_tcg_info(self.param)
-        KVClock.schedule_once(self.update_canvas, 0)
+        self._sync_texture_size()
+        if self._update_canvas_event is None:
+            self._update_canvas_event = KVClock.schedule_once(self.update_canvas, 0)
+
+    def _ensure_canvas_texture(self, w, h):
+        if self._canvas_texture is not None and self._texture_shape == (w, h):
+            return
+
+        self._texture_shape = (w, h)
+        self._canvas_texture = KVTexture.create(size=(w, h), colorfmt='luminance_alpha', bufferfmt='ubyte')
+        self._canvas_texture.flip_vertical()
+        self._la_buffer = bytearray(w * h * 2)
+        self._la_view = np.frombuffer(self._la_buffer, dtype=np.uint8).reshape((h, w, 2))
+        self._la_view[..., 0] = 255
 
     def update_canvas(self, *args):
+        self._update_canvas_event = None
         self.canvas.before.clear()
         
         self.tcg_info = params.param_to_tcg_info(self.param) # double check
+        self._sync_texture_size()
         
         h, w = self.mask.shape[:2]
         if h == 0 or w == 0: return
 
-        # テクスチャ更新
-        # RGBAを使用する（デバッグのため、より確実な方法を選択）
-        la_img = np.empty((h, w, 4), dtype=np.uint8)
-        la_img[:] = 255 # White
-        la_img[..., 3] = self.mask # Alpha channel
-        
-        texture_a = KVTexture.create(size=(w, h), colorfmt='rgba', bufferfmt='ubyte')
-        texture_a.blit_buffer(la_img.tobytes(), colorfmt='rgba', bufferfmt='ubyte')
-        # texture_a.flip_vertical() # params.tcg_to_windowで返される座標系によっては反転不要かも。要確認。
-        # MaskEditor2では `texture.flip_vertical()` している。
-        texture_a.flip_vertical()
+        self._ensure_canvas_texture(w, h)
+        self._la_view[..., 1] = self.mask # Alpha channel
+        self._canvas_texture.blit_buffer(self._la_buffer, colorfmt='luminance_alpha', bufferfmt='ubyte')
 
         # 描画位置の計算
         
@@ -142,18 +177,23 @@ class MaskEditor(KVFloatLayout):
         
         with self.canvas.before:
             KVColor(1, 0, 0, 0.5)
-            KVRectangle(texture=texture_a, pos=(rect_x, rect_y), size=(rect_w, rect_h))
+            KVRectangle(texture=self._canvas_texture, pos=(rect_x, rect_y), size=(rect_w, rect_h))
 
     def _window_to_mask_coords(self, wx, wy):
-        tx, ty = params.window_to_tcg(wx, wy, self.parent, self.texture_size, self.tcg_info, normalize=True)
-        ix, iy = params.tcg_to_ref_image(tx, ty, self.mask, self.tcg_info, apply_disp_info=True)
-        ix, iy = ix / self.tcg_info['disp_info'][4], iy / self.tcg_info['disp_info'][4]
+        self.tcg_info = params.param_to_tcg_info(self.param)
+        self._sync_texture_size()
+        tx, ty = params.window_to_tcg(wx, wy, self, self.texture_size, self.tcg_info, normalize=True)
+        ix, iy = params.tcg_to_ref_image(tx, ty, self.mask, self.tcg_info, apply_disp_info=False)
         m_max = max(self.mask.shape[:2])
         m_h, m_w = self.mask.shape[:2]
         ix, iy = ix - (m_max - m_w) // 2, iy - (m_max - m_h) // 2
-        return int(ix), int(iy)
+        return int(np.clip(ix, 0, m_w - 1)), int(np.clip(iy, 0, m_h - 1))
 
     def on_touch_down(self, touch):
+        if self._is_space_panning():
+            self._hide_cursor()
+            return super(MaskEditor, self).on_touch_down(touch)
+
         # Paramの内容が変わっている可能性があるため、tcg_infoを更新
         self.tcg_info = params.param_to_tcg_info(self.param)
         
@@ -188,6 +228,12 @@ class MaskEditor(KVFloatLayout):
         return super(MaskEditor, self).on_touch_down(touch)
 
     def on_touch_move(self, touch):
+        if self._is_space_panning():
+            self.drawing = False
+            self.erasing = False
+            self._hide_cursor()
+            return super(MaskEditor, self).on_touch_move(touch)
+
         # Paramの内容が変わっている可能性があるため、tcg_infoを更新
         self.tcg_info = params.param_to_tcg_info(self.param)
 

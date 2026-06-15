@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -8,6 +9,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from async_worker import AsyncWorker
 from effects import InpaintDiff, InpaintEffect
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class AsyncInpaintFlowTest(unittest.TestCase):
@@ -48,6 +52,12 @@ class AsyncInpaintFlowTest(unittest.TestCase):
 
         self.assertTrue(worker.has_pending_effect("InpaintEffect"))
         self.assertFalse(worker.has_pending_effect("PatchmatchInpaintEffect"))
+
+    def test_inpaint_effect_uses_runware_helper(self):
+        source = (ROOT / "effects.py").read_text(encoding="utf-8")
+
+        self.assertIn("helpers.runware_object_eraser_helper", source)
+        self.assertNotIn("import helpers.qwen_image_helper as qih", source)
 
 
 if __name__ == "__main__":
