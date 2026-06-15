@@ -14,6 +14,10 @@ import effects
 import config
 import waitinfo
 
+EFFECT_TIMEOUT_SECONDS = {
+    "InpaintEffect": 300.0,
+}
+
 def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict, latest_tasks):    
     """
     Background worker process.
@@ -181,6 +185,8 @@ class AsyncWorker:
         self.msg_queue = Queue()
         self.stop_event = Event()
         self.active_shms = set() # Track SHMs to unlink them if needed
+        self.active_effects = {} # task_id -> effect_name
+        self.active_started_at = {} # task_id -> monotonic start time
         self.task_counter = 0
         if self.thread_mode:
             self.latest_tasks = {}
@@ -263,6 +269,8 @@ class AsyncWorker:
             except:
                 pass
         self.active_shms.clear()
+        self.active_effects.clear()
+        self.active_started_at.clear()
         
         # Recreate queues to avoid corruption
         self.input_queue = Queue()
@@ -343,6 +351,8 @@ class AsyncWorker:
         # When result comes back (or error), we unlink the input SHM.
         
         self.active_shms.add((task_id, shm))
+        self.active_effects[task_id] = effect_name
+        self.active_started_at[task_id] = time.monotonic()
         
         return task_id
 
@@ -384,6 +394,35 @@ class AsyncWorker:
         # キューに待機中のタスクがあるか、または実行中のタスクがあるかをチェック
         return not self.input_queue.empty() or len(self.active_shms) > 0
 
+    def has_pending_effect(self, effect_name):
+        return any(name == effect_name for name in self.active_effects.values())
+
+    def effect_elapsed_seconds(self, effect_name):
+        starts = [
+            self.active_started_at.get(task_id)
+            for task_id, name in self.active_effects.items()
+            if name == effect_name
+        ]
+        starts = [started_at for started_at in starts if started_at is not None]
+        if not starts:
+            return None
+        return time.monotonic() - min(starts)
+
+    def cancel_timed_out_effects(self):
+        cancelled = []
+        for effect_name, timeout_seconds in EFFECT_TIMEOUT_SECONDS.items():
+            elapsed = self.effect_elapsed_seconds(effect_name)
+            if elapsed is not None and elapsed > timeout_seconds:
+                logging.error(
+                    "Async task timed out: %s elapsed=%.1fs timeout=%.1fs",
+                    effect_name,
+                    elapsed,
+                    timeout_seconds,
+                )
+                self.cancel_effect(effect_name)
+                cancelled.append(effect_name)
+        return cancelled
+
     def poll_results(self):
         """
         Yields (task_id, result_image_or_None, error_msg).
@@ -393,6 +432,8 @@ class AsyncWorker:
             try:
                 res = self.result_queue.get_nowait()
                 task_id = res['task_id']
+                self.active_effects.pop(task_id, None)
+                self.active_started_at.pop(task_id, None)
                 
                 # Cleanup Input SHM for this task
                 to_remove = None
@@ -442,4 +483,3 @@ class AsyncWorker:
                 yield msg
             except Empty:
                 break
-

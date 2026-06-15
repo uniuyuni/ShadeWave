@@ -1,5 +1,6 @@
 
 import dashscope
+from dashscope import ImageSynthesis
 from dashscope import MultiModalConversation
 import base64
 from pathlib import Path
@@ -18,9 +19,16 @@ import cores.core as core
 dashscope.api_key = os.environ.get("DASHSCOPE_API_KEY")
 dashscope.base_http_api_url = 'https://dashscope-intl.aliyuncs.com/api/v1'
 
+
+def _dashscope_request_timeout():
+    try:
+        return float(os.environ.get("DASHSCOPE_REQUEST_TIMEOUT", "60"))
+    except (TypeError, ValueError):
+        return 60.0
+
 def numpy_to_base64_png(image_array):
     """
-    float RGB numpy配列を16bit PNGのBase64文字列に変換
+    float RGB numpy配列を8bit PNGのBase64文字列に変換
     
     Args:
         image_array: float型のnumpy配列 (H, W, 3), 値の範囲は0.0-1.0
@@ -28,11 +36,11 @@ def numpy_to_base64_png(image_array):
     Returns:
         Base64エンコードされたPNG文字列
     """
-    # float (0.0-1.0) を uint16 (0-65535) に変換
-    image_uint16 = (image_array * 65535).astype(np.uint16)
+    image_array = np.clip(image_array, 0.0, 1.0)
+    image_uint8 = (image_array * 255).round().astype(np.uint8)
     
     # RGBからBGRに変換（OpenCVはBGR形式）
-    image_bgr = cv2.cvtColor(image_uint16, cv2.COLOR_RGB2BGR)
+    image_bgr = cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR)
     
     # PNGとしてエンコード
     success, encoded_image = cv2.imencode('.png', image_bgr, [cv2.IMWRITE_PNG_COMPRESSION, 0])
@@ -42,6 +50,94 @@ def numpy_to_base64_png(image_array):
     
     # Base64エンコード
     return base64.b64encode(encoded_image.tobytes()).decode('utf-8')
+
+
+def mask_to_base64_png(mask):
+    mask = np.asarray(mask, dtype=np.float32)
+    if mask.ndim == 3:
+        mask = mask[..., 0]
+    mask_uint8 = (np.clip(mask, 0.0, 1.0) * 255).round().astype(np.uint8)
+    success, encoded_image = cv2.imencode('.png', mask_uint8, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+    if not success:
+        raise ValueError("Mask encoding failed.")
+    return base64.b64encode(encoded_image.tobytes()).decode('utf-8')
+
+
+def _red_mask_from_image(image_array, threshold=0.9):
+    image_array = np.asarray(image_array)
+    return (
+        (image_array[..., 0] >= threshold)
+        & (image_array[..., 1] <= (1.0 - threshold))
+        & (image_array[..., 2] <= (1.0 - threshold))
+    )
+
+
+def _soft_edit_mask(mask, dilate_px=4, blur_px=3):
+    mask = np.asarray(mask, dtype=np.float32)
+    if mask.ndim == 3:
+        mask = mask[..., 0]
+    if not np.any(mask > 0):
+        return mask[..., np.newaxis]
+
+    kernel_size = max(1, int(dilate_px))
+    kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+    edit_mask = cv2.dilate((mask > 0).astype(np.uint8), kernel, iterations=1).astype(np.float32)
+
+    blur_px = max(0, int(blur_px))
+    if blur_px > 0:
+        ksize = blur_px * 2 + 1
+        edit_mask = cv2.GaussianBlur(edit_mask, (ksize, ksize), 0)
+        edit_mask = np.clip(edit_mask, 0.0, 1.0)
+
+    return edit_mask[..., np.newaxis]
+
+
+def _ensure_result_size(result_array, target_shape):
+    if result_array is None:
+        return None
+    if result_array.shape[:2] == target_shape[:2]:
+        return result_array
+    return cv2.resize(result_array, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+
+
+def _extract_image_urls(output):
+    def get_value(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        try:
+            return obj[key]
+        except Exception:
+            pass
+        try:
+            return getattr(obj, key)
+        except Exception:
+            return default
+
+    urls = []
+    for result in get_value(output, "results", []) or []:
+        url = get_value(result, "url")
+        if url:
+            urls.append(url)
+    for choice in get_value(output, "choices", []) or []:
+        message = get_value(choice, "message", {})
+        content = get_value(message, "content", []) or []
+        for item in content:
+            if isinstance(item, dict):
+                url = item.get("image")
+            else:
+                url = get_value(item, "image")
+            if url:
+                urls.append(url)
+    return urls
+
+
+def _make_mask_marker_image(image, mask, alpha=1.0):
+    mask = np.asarray(mask, dtype=np.float32)
+    if mask.ndim == 2:
+        mask = mask[..., np.newaxis]
+    alpha_mask = np.clip(mask * float(alpha), 0.0, 1.0)
+    marker = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    return image * (1.0 - alpha_mask) + marker * alpha_mask
 
 def download_image_to_numpy(url):
     """
@@ -111,18 +207,33 @@ def predict_helper(image, mask, bbox, predict_func):
     # 切り抜きとマスク適用
     crop_image = image[y:y+h, x:x+w, :]
     crop_mask = mask[y:y+h, x:x+w, np.newaxis]
-    mskimg = crop_image * (1 - crop_mask) + crop_mask * np.array([1.0, 0.0, 0.0])  # マスク部分を赤で塗りつぶし
+    mskimg = _make_mask_marker_image(crop_image, crop_mask)
 
     # 画像を分割して処理
     blocks, split_info = splitimage.split_image_with_overlap(mskimg, 1024, 1024, 192)  # オーバーラップを大きめに設定
+    original_blocks, _ = splitimage.split_image_with_overlap(crop_image, 1024, 1024, 192)
+    mask_blocks, _ = splitimage.split_image_with_overlap(
+        np.repeat(crop_mask.astype(np.float32), 3, axis=2),
+        1024,
+        1024,
+        192,
+    )
     predict_blocks = []
     for i, block in enumerate(blocks):
         #Image.fromarray((block * 255).astype(np.uint8)).save(f"../test/X-T5 Room input {i+1}.jpg")
-        if np.any((block == [1.0, 0.0, 0.0]).all(axis=-1)):
+        block_mask = mask_blocks[i][..., 0]
+        if np.any(block_mask > 0):
             print(f"Predicting block {i+1}/{len(blocks)}...")
-            pre_image = predict_func(block)
-            block[..., :] = pre_image  # 予測結果でブロックを更新することで境界の不連続を減らす
-            predict_blocks.append(pre_image)            
+            try:
+                pre_image = predict_func(block, block_mask)
+            except TypeError:
+                pre_image = predict_func(block)
+            pre_image = _ensure_result_size(pre_image, block.shape)
+            if pre_image is None:
+                predict_blocks.append(original_blocks[i])
+                continue
+            edit_mask = _soft_edit_mask(block_mask)
+            predict_blocks.append(pre_image * edit_mask + block * (1 - edit_mask))
         else:
             predict_blocks.append(block)
         #Image.fromarray((block * 255).astype(np.uint8)).save(f"../test/X-T5 Room output {i+1}.jpg")
@@ -154,16 +265,63 @@ def predict_helper(image, mask, bbox, predict_func):
 
     return image
 
-def predict_erace(image):
+def predict_erace(image, mask=None):
     # 設定
     PROMPT="""
-    赤（色コード 255,0,0）の領域を周囲に馴染むように自然に削除
+    Only edit the pure red masked area.
+    Remove the red masked content and fill it naturally so it blends with the surrounding area.
+    Do not change anything outside the red area.
+    Remove all red pixels.
     """
     NEGATIVE_PROMPT="""
-    赤の領域外の修正
+    red stain, red object, outline, seam, patch, color shift, blur, style change, changes outside the red area
     """
-
     return predict(image, PROMPT, NEGATIVE_PROMPT)
+
+
+def predict_with_mask(image_array, mask, prompt, negative_prompt=""):
+    try:
+        print("Encoding base image and mask...")
+        image_base64 = numpy_to_base64_png(image_array)
+        mask_base64 = mask_to_base64_png(mask)
+        base_image_url = f"data:image/png;base64,{image_base64}"
+        mask_image_url = f"data:image/png;base64,{mask_base64}"
+
+        print("Masked image editing in progress...")
+        call_kwargs = {
+            "api_key": dashscope.api_key,
+            "model": "qwen-image-2.0",
+            "prompt": prompt,
+            "base_image_url": base_image_url,
+            "mask_image_url": mask_image_url,
+            "function": "description_edit_with_mask",
+            "n": 1,
+            "watermark": False,
+            "request_timeout": _dashscope_request_timeout(),
+        }
+        if negative_prompt and negative_prompt.strip():
+            call_kwargs["negative_prompt"] = negative_prompt
+
+        response = ImageSynthesis.call(**call_kwargs)
+        if response.status_code != 200:
+            print(f"Masked edit error: {response.code} - {response.message}")
+            return None
+
+        for image_url in _extract_image_urls(response.output):
+            print(f"URL: {image_url}")
+            print("Downloading masked edit image...")
+            result_array = download_image_to_numpy(image_url)
+            print(f"Done! Output size: {result_array.shape}")
+            return result_array
+
+        print("Masked edit image data not found.")
+        print("Response:", response.output)
+        return None
+    except Exception as e:
+        print(f"Masked edit failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def predict(image_array, prompt, negative_prompt=""):
     """
@@ -198,36 +356,32 @@ def predict(image_array, prompt, negative_prompt=""):
             }
         ]
         
-        response = MultiModalConversation.call(
-            model='qwen-image-edit',
-            messages=messages,
-            temperature=0.0,
-            negative_prompt=negative_prompt,
-            watermark=False,
-            prompt_extend=True,
-        )
+        call_kwargs = {
+            "api_key": dashscope.api_key,
+            "model": "qwen-image-2.0",
+            "messages": messages,
+            "result_format": "message",
+            "stream": False,
+            "n": 1,
+            "watermark": False,
+            "request_timeout": _dashscope_request_timeout(),
+        }
+        if negative_prompt and negative_prompt.strip():
+            call_kwargs["negative_prompt"] = negative_prompt
+
+        response = MultiModalConversation.call(**call_kwargs)
         
         # レスポンスを確認
         if response.status_code == 200:
             output = response.output
             
-            # 編集された画像URLを取得
             if 'choices' in output and len(output['choices']) > 0:
-                choice = output['choices'][0]
-                if 'message' in choice and 'content' in choice['message']:
-                    content = choice['message']['content']
-                    
-                    # コンテンツから画像URLを抽出
-                    for item in content:
-                        if isinstance(item, dict) and 'image' in item:
-                            image_url = item['image']
-                            print(f"URL: {image_url}")
-                            
-                            # URLから画像をダウンロードしてnumpy配列に変換
-                            print("Downloading image...")
-                            result_array = download_image_to_numpy(image_url)
-                            print(f"Done! Output size: {result_array.shape}")
-                            return result_array
+                for image_url in _extract_image_urls(output):
+                    print(f"URL: {image_url}")
+                    print("Downloading image...")
+                    result_array = download_image_to_numpy(image_url)
+                    print(f"Done! Output size: {result_array.shape}")
+                    return result_array
             
             print("Image data not found.")
             print("Response:", output)

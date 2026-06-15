@@ -3666,7 +3666,8 @@ class DepthMapMask(BaseMask):
         center = self.editor.tcg_to_original_image(*self.center)
         depth_map_mask = None
 
-        newhash = hash((original_image_size,))
+        from cores.mask2 import inference_runtime as mask2_inference_runtime
+        newhash = hash((original_image_size, mask2_inference_runtime.DEPTH_MAP_ALGORITHM_VERSION))
         if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
             self.image_mask_cache_hash = newhash
 

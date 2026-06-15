@@ -1,6 +1,6 @@
 
 APPNAME = "Shade Wave"
-VERSION = "2.3.7"
+VERSION = "2.5.10"
 
 # 画面リサイズ時にウィンドウ/プレビュー/テクスチャ等を表示（本番は False）
 RESIZE_DEBUG = False

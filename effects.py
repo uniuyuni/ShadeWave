@@ -7,7 +7,6 @@ import logging
 
 import cores.core as core
 import cores.cubelut as cubelut
-import cores.subpixel_shift as subpixel_shift
 import cores.exposure_fusion_debevec as exposure_fusion_debevec
 import cores.film_emulator as film_emulator
 from cores.coating_simulator import CoatingSimulator
@@ -25,6 +24,7 @@ from cores.distortion_correction import (
 )
 from effect_backends import cross_filter_adapter as cross_filter
 from effect_backends import image_transform_adapter
+from effect_backends import subpixel_shift_adapter as subpixel_shift
 from effect_backends import tone_adapter
 from effect_backends import vignette_adapter as backend_vignette
 import config
@@ -598,10 +598,112 @@ class InpaintEffect(Effect):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
+        self.keep_async_result = False
         
         self.inpaint_diff_list = []
         self.inpaint_mask_list = []
         self.mask_editor = None
+
+    def _inpaint_mask_hash(self):
+        mask_keys = []
+        for inpaint_mask in self.inpaint_mask_list:
+            image = np.ascontiguousarray(inpaint_mask.image)
+            mask_keys.append((
+                tuple(inpaint_mask.disp_info),
+                image.shape,
+                image.dtype.str,
+                hash(image.tobytes()),
+            ))
+        return hash(tuple(mask_keys))
+
+    def _inpaint_diff_hash(self):
+        diff_keys = []
+        for inpaint_diff in self.inpaint_diff_list:
+            image = np.ascontiguousarray(inpaint_diff.image)
+            diff_keys.append((
+                inpaint_diff.type,
+                tuple(inpaint_diff.disp_info),
+                image.shape,
+                image.dtype.str,
+                hash(image.tobytes()),
+            ))
+        return hash(tuple(diff_keys))
+
+    def _build_mask_from_inpaint_list(self, image_shape):
+        h, w = image_shape[:2]
+        mask = np.zeros((h, w), dtype=np.float32)
+        for inpaint_mask in self.inpaint_mask_list:
+            proc_x, proc_y, proc_w, proc_h = [int(v) for v in inpaint_mask.disp_info]
+            src = np.asarray(inpaint_mask.image, dtype=np.float32)
+            if src.ndim == 3:
+                src = src[:, :, 0]
+            if src.size == 0:
+                continue
+            if float(np.nanmax(src)) > 1.0:
+                src = src / 255.0
+
+            x0 = max(proc_x, 0)
+            y0 = max(proc_y, 0)
+            x1 = min(proc_x + proc_w, w)
+            y1 = min(proc_y + proc_h, h)
+            if x1 <= x0 or y1 <= y0:
+                continue
+
+            sx0 = x0 - proc_x
+            sy0 = y0 - proc_y
+            sx1 = sx0 + (x1 - x0)
+            sy1 = sy0 + (y1 - y0)
+            mask[y0:y1, x0:x1] = np.maximum(mask[y0:y1, x0:x1], src[sy0:sy1, sx0:sx1])
+        return mask
+
+    def _set_diff_list_from_result(self, result_image):
+        self.inpaint_diff_list = []
+        h, w = result_image.shape[:2]
+        for inpaint_mask in self.inpaint_mask_list:
+            proc_x, proc_y, proc_w, proc_h = [int(v) for v in inpaint_mask.disp_info]
+            x0 = max(proc_x, 0)
+            y0 = max(proc_y, 0)
+            x1 = min(proc_x + proc_w, w)
+            y1 = min(proc_y + proc_h, h)
+            if x1 <= x0 or y1 <= y0:
+                continue
+            self.inpaint_diff_list.append(
+                InpaintDiff(
+                    type="image",
+                    disp_info=(x0, y0, x1 - x0, y1 - y0),
+                    image=result_image[y0:y1, x0:x1].copy(),
+                )
+            )
+
+    def _clear_pending_inpaint_mask(self, param):
+        param['inpaint_mask_list'] = self.inpaint_mask_list = []
+        if self.mask_editor is not None:
+            self.mask_editor.clear_mask()
+            self.mask_editor.delay_update_canvas()
+
+    def _apply_stored_inpaint_diffs(self, img):
+        if len(self.inpaint_diff_list) > 0:
+            img2 = img.copy()
+            h, w = img2.shape[:2]
+            for inpaint_diff in self.inpaint_diff_list:
+                if inpaint_diff.type == "image":
+                    cx, cy, cw, ch = [int(v) for v in inpaint_diff.disp_info]
+                    x0 = max(cx, 0)
+                    y0 = max(cy, 0)
+                    x1 = min(cx + cw, w)
+                    y1 = min(cy + ch, h)
+                    if x1 <= x0 or y1 <= y0:
+                        continue
+                    sx0 = x0 - cx
+                    sy0 = y0 - cy
+                    sx1 = sx0 + (x1 - x0)
+                    sy1 = sy0 + (y1 - y0)
+                    img2[y0:y1, x0:x1] = inpaint_diff.image[sy0:sy1, sx0:sx1]
+            self.diff = img2
+        else:
+            self.diff = None
+        return self.diff
 
     def get_param_dict(self, param):
         return {
@@ -656,11 +758,25 @@ class InpaintEffect(Effect):
         ip = self._get_param(param, 'inpaint')
         ipp = self._get_param(param, 'inpaint_predict')
         if switch_details == True and (ip == True and ipp == True) and heavy_ai_allowed(param):
-            import helpers.qwen_image_helper as qih
-            
-            param['inpaint_predict'] = False # なぜか二重起動するときがあるので予防
+            if len(self.inpaint_mask_list) == 0:
+                param['inpaint_predict'] = False
+                return self._apply_stored_inpaint_diffs(img)
 
-            mask = self.mask_editor.get_mask().astype(np.float32) / 255.0
+            param_hash_async = self._inpaint_mask_hash()
+            handled, result = self.try_async_execution(img, param, efconfig, param_hash_async)
+            if handled:
+                if result is not None:
+                    self._set_diff_list_from_result(result)
+                    param['inpaint_diff_list'] = self.inpaint_diff_list
+                    param['inpaint_predict'] = False
+                    self._clear_pending_inpaint_mask(param)
+                    self.hash = None
+                    return self._apply_stored_inpaint_diffs(img)
+                return self.diff
+
+            import helpers.qwen_image_helper as qih
+
+            mask = self._build_mask_from_inpaint_list(img.shape)
 
             # 各バウンディングごとに Qwen へ渡す（predict_helper は image を in-place 更新して返す）
             img_work = img.copy()
@@ -670,37 +786,15 @@ class InpaintEffect(Effect):
                     img_work, mask, (proc_x, proc_y, proc_w, proc_h), qih.predict_erace
                 )
 
-            self.inpaint_diff_list = []
-            for inpaint_mask in self.inpaint_mask_list:
-                proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
-                self.inpaint_diff_list.append(
-                    InpaintDiff(
-                        type="image",
-                        disp_info=(proc_x, proc_y, proc_w, proc_h),
-                        image=img_work[proc_y : proc_y + proc_h, proc_x : proc_x + proc_w].copy(),
-                    )
-                )
-
+            self._set_diff_list_from_result(img_work)
             param['inpaint_diff_list'] = self.inpaint_diff_list
-            
-            # マスク消去
-            self.mask_editor.clear_mask()
+            param['inpaint_predict'] = False
             param['inpaint_mask_list'] = self.inpaint_mask_list = []
-            self.mask_editor.delay_update_canvas()
         
-        param_hash = hash((len(self.inpaint_diff_list)))
+        param_hash = self._inpaint_diff_hash()
         if self.hash != param_hash:
             self.hash = param_hash
-
-            if len(self.inpaint_diff_list) > 0:
-                img2 = img.copy()
-                for inpaint_diff in self.inpaint_diff_list:
-                    if inpaint_diff.type == "image":
-                        cx, cy, cw, ch = inpaint_diff.disp_info
-                        img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
-                self.diff = img2
-            else:
-                self.diff = None
+            self._apply_stored_inpaint_diffs(img)
 
         return self.diff
 

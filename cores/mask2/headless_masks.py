@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-import cv2
 
 import cores.core as core
 import effects
@@ -29,6 +28,18 @@ def _clip_mask_range(image, allow_over_one=False, allow_under_zero=False):
     if min_value is None and max_value is None:
         return image
     return np.clip(image, min_value, max_value)
+
+
+def _fit_image_mask_to_texture(ctx, image):
+    texture_w = int(ctx.texture_size[0])
+    texture_h = int(ctx.texture_size[1])
+    if image is None or texture_w <= 0 or texture_h <= 0:
+        return np.zeros((max(texture_h, 0), max(texture_w, 0)), dtype=np.float32)
+
+    fitted = extended_params._fit_image_to_texture(ctx, image, (texture_h, texture_w))
+    if fitted is None:
+        return np.zeros((texture_h, texture_w) + image.shape[2:], dtype=image.dtype)
+    return fitted
 
 
 def _apply_mask_mesh_warp(composit, ctx, effects_param):
@@ -655,28 +666,14 @@ class HeadlessSegmentMask:
         ):
             self.segment_mask_cache_hash = newhash2
             segment_mask = self.image_mask_cache
-            disp_info, rotate_rad, flip, matrix = self.ctx.get_hash_items()
+            _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             segment_mask = core.rotation(
                 segment_mask,
                 np.rad2deg(rotate_rad),
                 flip,
                 np.array(matrix).reshape(3, 3),
             )
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(
-                *self.ctx.texture_size, disp_info
-            )
-            cx2, cy2, cw, ch, scale = disp_info
-            segment_mask = cv2.resize(
-                segment_mask[cy2 : cy2 + ch, cx2 : cx2 + cw], (nw, nh)
-            )
-            segment_mask = np.pad(
-                segment_mask,
-                (
-                    (oy, self.ctx.texture_size[1] - (oy + nh)),
-                    (ox, self.ctx.texture_size[0] - (ox + nw)),
-                ),
-                constant_values=0,
-            )
+            segment_mask = _fit_image_mask_to_texture(self.ctx, segment_mask)
             segment_mask = extended_params.apply_extended_params(
                 self.ctx,
                 self.effects_param,
@@ -742,7 +739,7 @@ class HeadlessDepthMapMask:
         original_image_size = tuple(self.ctx.get_image_size())
         depth_map_mask = None
 
-        newhash = hash((original_image_size,))
+        newhash = hash((original_image_size, inference_runtime.DEPTH_MAP_ALGORITHM_VERSION))
         if (
             self.image_mask_cache is None or self.image_mask_cache_hash != newhash
         ) and not self.initializing:
@@ -763,27 +760,11 @@ class HeadlessDepthMapMask:
         ):
             self.depth_map_mask_cache_hash = newhash2
             depth_map_mask = self.image_mask_cache
-            disp_info, rotate_rad, flip, matrix = self.ctx.get_hash_items()
+            _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             depth_map_mask = core.rotation(
                 depth_map_mask, rotate_rad, flip, np.array(matrix).reshape(3, 3)
             )
-            depth_map_mask = core.crop_image_with_disp_info(depth_map_mask, disp_info)
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(
-                self.ctx.texture_size[0], self.ctx.texture_size[1], disp_info
-            )
-            cx2, cy2, cw, ch, scale = disp_info
-            cx2, cy2, cw, ch = int(cx2 * scale), int(cy2 * scale), int(cw * scale), int(ch * scale)
-            depth_map_mask = cv2.resize(
-                depth_map_mask[cy2 : cy2 + ch, cx2 : cx2 + cw], (nw, nh)
-            )
-            depth_map_mask = np.pad(
-                depth_map_mask,
-                (
-                    (oy, self.ctx.texture_size[0] - (oy + nh)),
-                    (ox, self.ctx.texture_size[1] - (ox + nw)),
-                ),
-                constant_values=0,
-            )
+            depth_map_mask = _fit_image_mask_to_texture(self.ctx, depth_map_mask)
             depth_map_mask = extended_params.apply_extended_params(
                 self.ctx,
                 self.effects_param,
@@ -884,28 +865,14 @@ class HeadlessFaceMask:
         ):
             self.faces_mask_cache_hash = newhash2
             faces_mask = self.image_mask_cache
-            disp_info, rotate_rad, flip, matrix = self.ctx.get_hash_items()
+            _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             faces_mask = core.rotation(
                 faces_mask,
                 np.rad2deg(rotate_rad),
                 flip,
                 np.array(matrix).reshape(3, 3),
             )
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(
-                *self.ctx.texture_size, disp_info
-            )
-            cx2, cy2, cw, ch, scale = disp_info
-            faces_mask = cv2.resize(
-                faces_mask[cy2 : cy2 + ch, cx2 : cx2 + cw], (nw, nh)
-            )
-            faces_mask = np.pad(
-                faces_mask,
-                (
-                    (oy, self.ctx.texture_size[1] - (oy + nh)),
-                    (ox, self.ctx.texture_size[0] - (ox + nw)),
-                ),
-                constant_values=0,
-            )
+            faces_mask = _fit_image_mask_to_texture(self.ctx, faces_mask)
             faces_mask = extended_params.apply_extended_params(
                 self.ctx,
                 self.effects_param,
@@ -997,28 +964,14 @@ class HeadlessTargetTextMask:
         ):
             self.segment_mask_cache_hash = newhash2
             segment_mask = self.image_mask_cache
-            disp_info, rotate_rad, flip, matrix = self.ctx.get_hash_items()
+            _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             segment_mask = core.rotation(
                 segment_mask,
                 np.rad2deg(rotate_rad),
                 flip,
                 np.array(matrix).reshape(3, 3),
             )
-            nw, nh, ox, oy = core.crop_size_and_offset_from_texture(
-                *self.ctx.texture_size, disp_info
-            )
-            cx2, cy2, cw, ch, scale = disp_info
-            segment_mask = cv2.resize(
-                segment_mask[cy2 : cy2 + ch, cx2 : cx2 + cw], (nw, nh)
-            )
-            segment_mask = np.pad(
-                segment_mask,
-                (
-                    (oy, self.ctx.texture_size[1] - (oy + nh)),
-                    (ox, self.ctx.texture_size[0] - (ox + nw)),
-                ),
-                constant_values=0,
-            )
+            segment_mask = _fit_image_mask_to_texture(self.ctx, segment_mask)
             segment_mask = extended_params.apply_extended_params(
                 self.ctx,
                 self.effects_param,

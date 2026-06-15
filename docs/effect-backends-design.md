@@ -232,6 +232,7 @@ Python/pybind11、将来のRust/Swift/C++ UI、GPU command encoder は、このA
 - map/mask/kernel を backend 側で cache できる形にする。
 - geometry/remap/convolution のような処理は CPU native だけでなく GPU backend を候補にする。
 - adapter で大きな copy を作らない。copy が必要な場合は理由を明確にする。
+- CPU native backend の並列化は、可能なら OpenMP を優先する。`pthread` は既存実装との互換や、ビルド環境で OpenMP を使えない場合の fallback として扱う。新規 backend では `#pragma omp parallel for` で row/tile 単位の並列化を行い、pybind 層では引き続き GIL を解放する。
 
 ## Core Image Transform Backend
 

@@ -291,6 +291,7 @@ if __name__ == '__main__':
         mask2_wait_full_load = KVBooleanProperty(True)
         preview_size = KVListProperty([100, 100])
         is_processing = KVBooleanProperty(False)
+        ai_inpaint_processing = KVBooleanProperty(False)
         export_in_progress = KVBooleanProperty(False)
         export_done = KVNumericProperty(0)
         export_total = KVNumericProperty(0)
@@ -394,22 +395,36 @@ if __name__ == '__main__':
 
         def update_async_results(self, dt):
             if self.async_worker:
+                timed_out_effects = self.async_worker.cancel_timed_out_effects()
+                if "InpaintEffect" in timed_out_effects:
+                    self._reset_ai_inpaint_processing_ui()
+
                 results = self.async_worker.poll_results()
                 dirty = False
+                inpaint_completed = False
+                inpaint_failed = False
                 for task_id, result_image, error_msg in results:
                     if error_msg:
                         logging.error(f"Async Task {task_id} failed: {error_msg}")
+                        if self.primary_param.get('inpaint_predict'):
+                            inpaint_failed = True
                     elif result_image is not None:
                         # Update cache in manager
                         key = self.processor.update_result(task_id, result_image)
                         if key:
                             dirty = True
+                            if key[0] == "InpaintEffect":
+                                inpaint_completed = True
                             logging.info(f"Async Task {task_id} ({key}) completed.")
                 
                 if dirty:
                     # Trigger redraw
                     # We need to make sure we don't spam redraws?
                     self.start_draw_image()
+                if inpaint_completed:
+                    self._schedule_ai_inpaint_ui_sync()
+                if inpaint_failed:
+                    self._reset_ai_inpaint_processing_ui()
 
             if self.async_worker:
                 for msg in self.async_worker.poll_messages():
@@ -419,12 +434,42 @@ if __name__ == '__main__':
             # 処理状態の更新
             if self.async_worker:
                 has_tasks = self.async_worker.has_pending_tasks()
+                ai_inpaint_processing = self.async_worker.has_pending_effect("InpaintEffect")
+                if self.ai_inpaint_processing != ai_inpaint_processing:
+                    self.ai_inpaint_processing = ai_inpaint_processing
                 queue_empty = self.async_worker.input_queue.empty()
                 active_count = len(self.async_worker.active_shms)
                 should_processing = has_tasks or self._actively_loading
                 if self.is_processing != should_processing:
                     logging.info(f"is_processing changed: {self.is_processing} -> {should_processing} (queue_empty={queue_empty}, active_shms={active_count}, actively_loading={self._actively_loading})")
                     self.is_processing = should_processing
+
+        def _schedule_ai_inpaint_ui_sync(self, delay=0.15, retries=8):
+            def _sync(_dt):
+                if self.async_worker and self.async_worker.has_pending_effect("InpaintEffect"):
+                    return
+                if (
+                    retries > 0
+                    and self.primary_param.get('inpaint_predict')
+                    and len(self.primary_param.get('inpaint_mask_list', [])) > 0
+                ):
+                    self._schedule_ai_inpaint_ui_sync(delay=delay, retries=retries - 1)
+                    return
+                try:
+                    self.primary_effects[0]['inpaint'].set2widget(self, self.primary_param)
+                    self._set_diff_list_to_inpaint_edit()
+                except Exception:
+                    logging.exception("failed to sync AI inpaint UI after async completion")
+
+            KVClock.schedule_once(_sync, delay)
+
+        def _reset_ai_inpaint_processing_ui(self):
+            self.primary_param['inpaint_predict'] = False
+            self.ai_inpaint_processing = False
+            try:
+                self.primary_effects[0]['inpaint'].set2widget(self, self.primary_param)
+            except Exception:
+                logging.exception("failed to reset AI inpaint UI")
 
         def get_preview_window_minimum_size(self):
             """

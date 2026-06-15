@@ -1,3 +1,5 @@
+import os
+
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
@@ -11,6 +13,25 @@ class BuildExt(build_ext):
     def build_extensions(self):
         self.compiler.src_extensions.append(".mm")
         super().build_extensions()
+
+
+def _openmp_paths():
+    prefix = os.environ.get("CONDA_PREFIX", "")
+    include_dir = os.path.join(prefix, "include") if prefix else ""
+    library_dir = os.path.join(prefix, "lib") if prefix else ""
+    if (
+        include_dir
+        and library_dir
+        and os.path.exists(os.path.join(include_dir, "omp.h"))
+        and os.path.exists(os.path.join(library_dir, "libomp.dylib"))
+    ):
+        return [include_dir], [library_dir]
+    return [], []
+
+
+_openmp_include_dirs, _openmp_library_dirs = _openmp_paths()
+_openmp_compile_args = ["-O3", "-Xpreprocessor", "-fopenmp"] if _openmp_include_dirs else ["-O3"]
+_openmp_link_args = ["-lomp"] if _openmp_include_dirs else []
 
 
 setup(
@@ -47,6 +68,15 @@ setup(
             include_dirs=[pybind11.get_include()],
             language="c++",
             extra_compile_args=["-O3"],
+        ),
+        Extension(
+            "effect_backends._subpixel_shift_cpu",
+            ["subpixel_shift_pybind.cpp", "subpixel_shift_cpu.c"],
+            include_dirs=[pybind11.get_include(), *_openmp_include_dirs],
+            library_dirs=_openmp_library_dirs,
+            language="c++",
+            extra_compile_args=_openmp_compile_args,
+            extra_link_args=_openmp_link_args,
         ),
         Extension(
             "effect_backends._cross_filter_metal",

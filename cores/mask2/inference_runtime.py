@@ -13,6 +13,8 @@ _sam3_text_processor = None
 _depth_model = None
 _faces = None
 
+DEPTH_MAP_ALGORITHM_VERSION = 2
+
 
 def delete_faces():
     global _faces
