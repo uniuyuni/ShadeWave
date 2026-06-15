@@ -971,6 +971,7 @@ if HAS_PYOBJC:
             self._main_label = None
             self._sub_label = None
             self._pending_sub = None
+            self._parent_win = None
             self._panel_w = 268.0
             self._panel_h = 108.0
             self._built = False
@@ -992,15 +993,15 @@ if HAS_PYOBJC:
                 NSBackingStoreBuffered,
                 False,
             )
-            self._win.setFloatingPanel_(True)
+            self._win.setFloatingPanel_(False)
             self._win.setWorksWhenModal_(True)
-            self._win.setLevel_(NSFloatingWindowLevel)
+            self._win.setLevel_(getattr(AppKit, "NSNormalWindowLevel", 0))
             self._win.setAlphaValue_(0.92)
             self._win.setTitle_("")
             self._win.setReleasedWhenClosed_(False)
-            self._win.setHidesOnDeactivate_(False)
+            self._win.setHidesOnDeactivate_(True)
             self._win.setBecomesKeyOnlyIfNeeded_(True)
-            cb = getattr(AppKit, "NSWindowCollectionBehaviorCanJoinAllSpaces", 0)
+            cb = getattr(AppKit, "NSWindowCollectionBehaviorTransient", 0)
             if cb:
                 try:
                     self._win.setCollectionBehavior_(cb)
@@ -1062,11 +1063,32 @@ if HAS_PYOBJC:
 
             self._built = True
 
+        def _attach_to_main_window(self, main):
+            if not self._win:
+                return
+            if main is self._parent_win:
+                return
+            if self._parent_win is not None:
+                try:
+                    self._parent_win.removeChildWindow_(self._win)
+                except Exception:
+                    pass
+            self._parent_win = main
+            if main is not None:
+                try:
+                    main.addChildWindow_ordered_(
+                        self._win,
+                        getattr(AppKit, "NSWindowAbove", 1),
+                    )
+                except Exception:
+                    self._parent_win = None
+
         def _sync_frame_to_main_window(self):
             if not self._win:
                 return
             pw, ph = self._panel_w, self._panel_h
             main = get_window(self._app_name)
+            self._attach_to_main_window(main)
             if main is not None:
                 mf = main.frame()
                 x = mf.origin.x + (mf.size.width - pw) * 0.5
@@ -1125,7 +1147,7 @@ if HAS_PYOBJC:
             self._build()
             self._sync_frame_to_main_window()
             self._apply_pending()
-            self._win.orderFrontRegardless()
+            self._win.orderFront_(None)
             try:
                 NSCursor.arrowCursor().set()
             except Exception:
@@ -1140,6 +1162,12 @@ if HAS_PYOBJC:
 
         def hide(self):
             if self._win:
+                if self._parent_win is not None:
+                    try:
+                        self._parent_win.removeChildWindow_(self._win)
+                    except Exception:
+                        pass
+                    self._parent_win = None
                 self._win.orderOut_(None)
 
         def set_text(self, text):

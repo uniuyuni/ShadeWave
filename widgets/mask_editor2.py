@@ -50,6 +50,7 @@ import macos as device
 from cores.mask2 import mask_rasters
 from cores.mask2 import edge_refine
 from cores.mask2 import extended_params
+from cores.mask2 import cache_keys
 
 
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -81,6 +82,19 @@ def _mask_geom_matrix_hash(matrix):
         return hash(np.asarray(matrix, dtype=np.float64).tobytes())
     except Exception:
         return None
+
+
+def _hashable_cache_value(value):
+    if isinstance(value, dict):
+        return tuple(
+            (str(k), _hashable_cache_value(v))
+            for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_hashable_cache_value(v) for v in value)
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def _mask_geom_param_summary(param):
@@ -371,6 +385,7 @@ class BaseMask(KVWidget):
         self.is_draw_mask = True
         self.image_mask_cache = None
         self.image_mask_cache_hash = None
+        self.image_mask_cache_key = None
         self.do_draw_composit_mask = True
 
     def invalidate_render_cache(self):
@@ -388,6 +403,7 @@ class BaseMask(KVWidget):
 
         if not has_derived_cache:
             self.image_mask_cache_hash = None
+            self.image_mask_cache_key = None
         _mask_geom_debug(
             "invalidate_render_cache mask=%s class=%s old_hash=%s derived=%s",
             _mask_geom_id(self),
@@ -1173,6 +1189,7 @@ class CompositMask(BaseMask):
                 getattr(child, 'mask_id', None),
                 maskop,
                 getattr(child, 'image_mask_cache_hash', None),
+                _hashable_cache_value(getattr(child, 'image_mask_cache_key', None)),
                 getattr(child, 'segment_mask_cache_hash', None),
                 getattr(child, 'depth_map_mask_cache_hash', None),
                 getattr(child, 'faces_mask_cache_hash', None),
@@ -3400,7 +3417,7 @@ class SegmentMask(BaseMask):
         # マスクデータ保存
         if self.image_mask_cache is not None:
             dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+            dict['image_mask_cache_key'] = self.image_mask_cache_key
 
         return dict
 
@@ -3417,7 +3434,7 @@ class SegmentMask(BaseMask):
         self.image_mask_cache = dict.get('image_mask_cache', None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
+            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
 
         # 描き直し
         self.create_control_points()
@@ -3488,9 +3505,9 @@ class SegmentMask(BaseMask):
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
-        newhash = hash((original_image_size, center, corner, invert))
-        if (self.image_mask_cache_hash != newhash) and self.initializing == False:
-            self.image_mask_cache_hash = newhash
+        cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, invert)
+        if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
+            self.image_mask_cache_key = cache_key
 
             # 描画
             cx, cy = center
@@ -3616,7 +3633,7 @@ class DepthMapMask(BaseMask):
         # マスクデータ保存
         if self.image_mask_cache is not None:
             dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+            dict['image_mask_cache_key'] = self.image_mask_cache_key
 
         return dict
 
@@ -3630,7 +3647,7 @@ class DepthMapMask(BaseMask):
         self.image_mask_cache = dict.get('image_mask_cache', None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
+            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
 
         # 描き直し
         self.create_control_points()
@@ -3667,9 +3684,9 @@ class DepthMapMask(BaseMask):
         depth_map_mask = None
 
         from cores.mask2 import inference_runtime as mask2_inference_runtime
-        newhash = hash((original_image_size, mask2_inference_runtime.DEPTH_MAP_ALGORITHM_VERSION))
-        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-            self.image_mask_cache_hash = newhash
+        cache_key = cache_keys.depth_cache_key(original_image_size, mask2_inference_runtime.DEPTH_MAP_ALGORITHM_VERSION)
+        if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
+            self.image_mask_cache_key = cache_key
 
             depth_map_mask = wait_prosessing(self.draw_depth_map, original_image_size)
             #depth_map_mask = self.draw_depth_map(original_image_size)
@@ -3778,7 +3795,7 @@ class FaceMask(BaseMask):
         # マスクデータ保存
         if self.image_mask_cache is not None:
             dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+            dict['image_mask_cache_key'] = self.image_mask_cache_key
 
         return dict
 
@@ -3792,7 +3809,7 @@ class FaceMask(BaseMask):
         self.image_mask_cache = dict.get('image_mask_cache', None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
+            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
 
         # 描き直し
         self.create_control_points()     
@@ -3841,9 +3858,9 @@ class FaceMask(BaseMask):
                 exclude_names.extend(['ulip', 'llip'])
         faces_mask = None
 
-        newhash = hash((original_image_size, tuple(exclude_names)))
-        if (self.image_mask_cache is None or self.image_mask_cache_hash != newhash) and self.initializing == False:
-            self.image_mask_cache_hash = newhash
+        cache_key = cache_keys.face_cache_key(original_image_size, exclude_names)
+        if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
+            self.image_mask_cache_key = cache_key
 
             # 描画
             faces_mask = wait_prosessing(self.draw_face, original_image_size, exclude_names)
@@ -4000,7 +4017,7 @@ class TargetTextMask(BaseMask):
         # マスクデータ保存
         if self.image_mask_cache is not None:
             dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_hash'] = self.image_mask_cache_hash
+            dict['image_mask_cache_key'] = self.image_mask_cache_key
 
         return dict
 
@@ -4015,7 +4032,7 @@ class TargetTextMask(BaseMask):
         self.image_mask_cache = dict.get('image_mask_cache', None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = dict.get('image_mask_cache_hash', None)
+            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
 
         # 描き直し
         self.create_control_points()
@@ -4057,9 +4074,9 @@ class TargetTextMask(BaseMask):
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
-        newhash = hash((original_image_size, text, invert))
-        if (self.image_mask_cache_hash != newhash) and self.initializing == False:
-            self.image_mask_cache_hash = newhash
+        cache_key = cache_keys.target_text_cache_key(original_image_size, text, invert)
+        if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
+            self.image_mask_cache_key = cache_key
             
             # predict_sam3 に渡す box = [x, y, w, h]
             segment_mask = wait_prosessing(self._draw_segment, original_image_size, text, invert)

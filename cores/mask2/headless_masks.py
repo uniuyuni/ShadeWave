@@ -16,7 +16,7 @@ from cores.mask2 import mask_rasters
 from cores.mask2.mask_rasters import Line, draw_line_texture
 from cores.mask2.mask_rasters import Polyline as RasterPolyline, draw_polyline_texture
 from cores.mask2.exceptions import HeadlessMaskNotSupported
-from cores.mask2 import edge_refine, extended_params, inference_runtime
+from cores.mask2 import cache_keys, edge_refine, extended_params, inference_runtime
 from cores.mask2.mask_types import MaskTypeStr
 from cores.mask2 import mask_geometry as mask_geometry_mod
 from cores.mask2.mask_mesh import apply_mask_mesh_warp as _apply_mask_mesh_warp_shared
@@ -598,7 +598,7 @@ class HeadlessSegmentMask:
         self.corner = (0.0, 0.0)
         self.initializing = False
         self.image_mask_cache = None
-        self.image_mask_cache_hash = None
+        self.image_mask_cache_key = None
         self.segment_mask_cache = None
         self.segment_mask_cache_hash = None
         self.is_draw_mask = True
@@ -623,7 +623,7 @@ class HeadlessSegmentMask:
         self.image_mask_cache = d.get("image_mask_cache", None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = d.get("image_mask_cache_hash", None)
+            self.image_mask_cache_key = d.get("image_mask_cache_key", None)
 
     def get_hash_items(self):
         return extended_params.get_mask_hash_tuple(self.effects_param)
@@ -639,9 +639,11 @@ class HeadlessSegmentMask:
             invert = False
         segment_mask = None
 
-        newhash = hash((original_image_size, center, corner, invert))
-        if self.image_mask_cache_hash != newhash and not self.initializing:
-            self.image_mask_cache_hash = newhash
+        cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, invert)
+        if (
+            self.image_mask_cache is None or self.image_mask_cache_key != cache_key
+        ) and not self.initializing:
+            self.image_mask_cache_key = cache_key
             cx, cy = center
             crx, cry = corner
             min_x = min(cx, crx)
@@ -706,7 +708,7 @@ class HeadlessDepthMapMask:
         self.center = (0.0, 0.0)
         self.initializing = False
         self.image_mask_cache = None
-        self.image_mask_cache_hash = None
+        self.image_mask_cache_key = None
         self.depth_map_mask_cache = None
         self.depth_map_mask_cache_hash = None
         self.is_draw_mask = True
@@ -729,7 +731,7 @@ class HeadlessDepthMapMask:
         self.image_mask_cache = d.get("image_mask_cache", None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = d.get("image_mask_cache_hash", None)
+            self.image_mask_cache_key = d.get("image_mask_cache_key", None)
 
     def get_hash_items(self):
         return extended_params.get_mask_hash_tuple(self.effects_param)
@@ -739,11 +741,13 @@ class HeadlessDepthMapMask:
         original_image_size = tuple(self.ctx.get_image_size())
         depth_map_mask = None
 
-        newhash = hash((original_image_size, inference_runtime.DEPTH_MAP_ALGORITHM_VERSION))
+        cache_key = cache_keys.depth_cache_key(
+            original_image_size, inference_runtime.DEPTH_MAP_ALGORITHM_VERSION
+        )
         if (
-            self.image_mask_cache is None or self.image_mask_cache_hash != newhash
+            self.image_mask_cache is None or self.image_mask_cache_key != cache_key
         ) and not self.initializing:
-            self.image_mask_cache_hash = newhash
+            self.image_mask_cache_key = cache_key
             img = self.ctx.get_original_image_rgb()
             depth_map_mask = inference_runtime.predict_depth_map(img)
             self.image_mask_cache = depth_map_mask
@@ -797,7 +801,7 @@ class HeadlessFaceMask:
         self.center = (0.0, 0.0)
         self.initializing = False
         self.image_mask_cache = None
-        self.image_mask_cache_hash = None
+        self.image_mask_cache_key = None
         self.faces_mask_cache = None
         self.faces_mask_cache_hash = None
         self.is_draw_mask = True
@@ -820,7 +824,7 @@ class HeadlessFaceMask:
         self.image_mask_cache = d.get("image_mask_cache", None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = d.get("image_mask_cache_hash", None)
+            self.image_mask_cache_key = d.get("image_mask_cache_key", None)
 
     def get_hash_items(self):
         return extended_params.get_mask_hash_tuple(self.effects_param)
@@ -844,11 +848,11 @@ class HeadlessFaceMask:
                 exclude_names.extend(["ulip", "llip"])
         faces_mask = None
 
-        newhash = hash((original_image_size, tuple(exclude_names)))
+        cache_key = cache_keys.face_cache_key(original_image_size, exclude_names)
         if (
-            self.image_mask_cache is None or self.image_mask_cache_hash != newhash
+            self.image_mask_cache is None or self.image_mask_cache_key != cache_key
         ) and not self.initializing:
-            self.image_mask_cache_hash = newhash
+            self.image_mask_cache_key = cache_key
             img = self.ctx.get_original_image_rgb()
             faces_mask = inference_runtime.predict_face_mask(img, exclude_names)
             self.image_mask_cache = faces_mask
@@ -906,7 +910,7 @@ class HeadlessTargetTextMask:
         self.target_text = ""
         self.initializing = False
         self.image_mask_cache = None
-        self.image_mask_cache_hash = None
+        self.image_mask_cache_key = None
         self.segment_mask_cache = None
         self.segment_mask_cache_hash = None
         self.is_draw_mask = True
@@ -930,7 +934,7 @@ class HeadlessTargetTextMask:
         self.image_mask_cache = d.get("image_mask_cache", None)
         if self.image_mask_cache is not None:
             self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_hash = d.get("image_mask_cache_hash", None)
+            self.image_mask_cache_key = d.get("image_mask_cache_key", None)
 
     def get_hash_items(self):
         return extended_params.get_mask_hash_tuple(self.effects_param)
@@ -945,9 +949,11 @@ class HeadlessTargetTextMask:
         text = self.target_text
         segment_mask = None
 
-        newhash = hash((original_image_size, text, invert))
-        if self.image_mask_cache_hash != newhash and not self.initializing:
-            self.image_mask_cache_hash = newhash
+        cache_key = cache_keys.target_text_cache_key(original_image_size, text, invert)
+        if (
+            self.image_mask_cache is None or self.image_mask_cache_key != cache_key
+        ) and not self.initializing:
+            self.image_mask_cache_key = cache_key
             img = self.ctx.get_original_image_rgb()
             segment_mask = inference_runtime.predict_sam3_text(img, text, invert)
             self.image_mask_cache = segment_mask
