@@ -1,5 +1,6 @@
 import inspect
 import os
+import pathlib
 import sys
 import unittest
 
@@ -9,6 +10,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import params
 from cores.mask2 import headless_masks
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+MASK_EDITOR_PATH = PROJECT_ROOT / "widgets" / "mask_editor2.py"
 
 
 class DummyContext:
@@ -40,6 +44,15 @@ class HeadlessMaskFitTextureTest(unittest.TestCase):
         self.assertIn("_fit_image_mask_to_texture(self.ctx, depth_map_mask)", source)
         self.assertNotIn("np.pad", source)
         self.assertNotIn("crop_image_with_disp_info", source)
+
+    def test_depth_map_invert_is_applied_after_texture_fit(self):
+        headless_source = inspect.getsource(headless_masks.HeadlessDepthMapMask.get_mask_image)
+        ui_source = MASK_EDITOR_PATH.read_text()
+
+        self.assertIn("_fit_image_mask_to_texture(self.ctx, depth_map_mask)", headless_source)
+        self.assertIn("depth_map_mask = 1.0 - depth_map_mask", headless_source)
+        self.assertIn("depth_map_mask = self._fit_image_mask_to_texture(depth_map_mask)", ui_source)
+        self.assertIn("depth_map_mask = 1.0 - depth_map_mask", ui_source)
 
     def test_headless_inference_masks_no_longer_use_manual_pad(self):
         for cls in (

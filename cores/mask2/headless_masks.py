@@ -769,6 +769,9 @@ class HeadlessDepthMapMask:
                 depth_map_mask, rotate_rad, flip, np.array(matrix).reshape(3, 3)
             )
             depth_map_mask = _fit_image_mask_to_texture(self.ctx, depth_map_mask)
+            if effects.Mask2Effect.get_param(self.effects_param, "switch_mask2_settings") is True:
+                if effects.Mask2Effect.get_param(self.effects_param, "mask2_invert") is True:
+                    depth_map_mask = 1.0 - depth_map_mask
             depth_map_mask = extended_params.apply_extended_params(
                 self.ctx,
                 self.effects_param,

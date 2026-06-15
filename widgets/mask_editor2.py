@@ -3703,6 +3703,9 @@ class DepthMapMask(BaseMask):
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
             depth_map_mask = core.rotation(depth_map_mask, rotate_rad, flip, np.array(matrix).reshape(3, 3))
             depth_map_mask = self._fit_image_mask_to_texture(depth_map_mask)
+            if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
+                if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:
+                    depth_map_mask = 1.0 - depth_map_mask
 
             # ルミノシティマスクを作成
             depth_map_mask = self._apply_extened_params(depth_map_mask)
