@@ -3,7 +3,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-APP_DIR_NAME = "Platypus"
+APP_DIR_NAME = "Shade Wave"
+LEGACY_APP_DIR_NAME = "Platypus"
 CONFIG_FILE_NAME = "config.json"
 EXPORT_PRESETS_FILE_NAME = "export_presets.json"
 FILM_PRESETS_FILE_NAME = "film_presets.json"
@@ -30,7 +31,7 @@ def rel(*parts: str) -> str:
 
 def user_data_dir() -> Path:
     """
-    ユーザーが編集する Platypus 設定フォルダを返す。
+    ユーザーが編集する Shade Wave 設定フォルダを返す。
     """
     return Path.home() / "Pictures" / APP_DIR_NAME
 
@@ -66,12 +67,22 @@ def _rename_if_needed(folder: Path, old_name: str, new_name: str) -> None:
     old_path.rename(new_path)
 
 
+def _migrate_legacy_user_data_dir(folder: Path) -> Path:
+    legacy_folder = folder.parent / LEGACY_APP_DIR_NAME
+    if folder.exists() or not legacy_folder.is_dir():
+        return folder
+    legacy_folder.rename(folder)
+    return folder
+
+
 def ensure_user_data_dir() -> Path:
     """
-    ~/Pictures/Platypus を作成し、初回起動に必要な設定ファイルを内蔵リソースからコピーする。
+    ~/Pictures/Shade Wave を作成し、初回起動に必要な設定ファイルを内蔵リソースからコピーする。
+    旧バージョンの ~/Pictures/Platypus があれば、新名へ移行する。
     旧名の preset / export_preset.json があれば、新名へ移行する。
     """
     folder = user_data_dir()
+    folder = _migrate_legacy_user_data_dir(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
     _rename_if_needed(folder, LEGACY_PRESETS_DIR_NAME, PRESETS_DIR_NAME)

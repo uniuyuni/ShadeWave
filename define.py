@@ -1,6 +1,5 @@
 
-APPNAME = "Platypus"
-#APPNAME = "Shade Wave"
+APPNAME = "Shade Wave"
 VERSION = "2.2.4"
 
 # 画面リサイズ時にウィンドウ/プレビュー/テクスチャ等を表示（本番は False）

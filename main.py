@@ -1,6 +1,6 @@
 
 #from splashscreen import display_splash_screen, close_splash_screen
-#display_splash_screen("assets/platypus.png")
+#display_splash_screen("assets/Shade Wave.png")
 
 if __name__ == '__main__':
     import sys as _sys_early

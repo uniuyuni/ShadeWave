@@ -14,13 +14,13 @@ PyInstaller で macOS 用 .app をビルドする。
   python scripts/build_macos_app_pyinstaller.py
 
 出力:
-  dist/Platypus.app
+  dist/Shade Wave.app
 
 注意:
   - これは「依存を可能な限り取り込む」第一歩です。libvips・libomp・Torch 周辺など、
     ネイティブライブラリは環境によって追加の --add-binary / フックが必要になることがあります。
   - 署名・公証は別作業です。
-  - config.json などのユーザー編集設定は起動時に ~/Pictures/Platypus へコピーされます。
+  - config.json などのユーザー編集設定は起動時に ~/Pictures/Shade Wave へコピーされます。
 """
 
 from __future__ import annotations
@@ -38,16 +38,39 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _build_icns_from_png(png: Path, out_dir: Path, base_name: str = "Platypus") -> Path | None:
-    """assets/icon.png から .icns を生成して返す。失敗時は None。"""
+def _build_icns_with_pillow(png: Path, icns: Path) -> Path | None:
+    try:
+        from PIL import Image
+    except Exception as e:
+        print(f"警告: Pillow での .icns 生成を利用できません: {e}", file=sys.stderr)
+        return None
+
+    try:
+        with Image.open(png) as image:
+            image.save(
+                icns,
+                format="ICNS",
+                sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)],
+            )
+    except Exception as e:
+        print(f"警告: Pillow での .icns 生成に失敗: {e}", file=sys.stderr)
+        return None
+
+    print(f"アイコン生成(Pillow): {icns}", file=sys.stderr)
+    return icns
+
+
+def _build_icns_from_png(png: Path, out_dir: Path, base_name: str = "Shade Wave") -> Path | None:
+    """指定された PNG から .icns を生成して返す。失敗時は None。"""
     if not png.is_file():
         print(f"警告: アイコン PNG が見つかりません: {png}", file=sys.stderr)
         return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    icns = out_dir / f"{base_name}.icns"
     if not shutil.which("sips") or not shutil.which("iconutil"):
         print("警告: sips/iconutil が見つからないため .icns を生成しません。", file=sys.stderr)
-        return None
+        return _build_icns_with_pillow(png, icns)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     iconset = out_dir / f"{base_name}.iconset"
     if iconset.exists():
         shutil.rmtree(iconset)
@@ -79,7 +102,6 @@ def _build_icns_from_png(png: Path, out_dir: Path, base_name: str = "Platypus") 
             print(f"警告: sips でのリサイズに失敗 ({size}x{size}): {e}", file=sys.stderr)
             return None
 
-    icns = out_dir / f"{base_name}.icns"
     try:
         subprocess.run(
             ["iconutil", "-c", "icns", str(iconset), "-o", str(icns)],
@@ -87,7 +109,7 @@ def _build_icns_from_png(png: Path, out_dir: Path, base_name: str = "Platypus") 
         )
     except subprocess.CalledProcessError as e:
         print(f"警告: iconutil 失敗: {e}", file=sys.stderr)
-        return None
+        return _build_icns_with_pillow(png, icns)
 
     print(f"アイコン生成: {icns}", file=sys.stderr)
     return icns
@@ -366,16 +388,22 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PyInstaller で Platypus.app をビルドする")
+    parser = argparse.ArgumentParser(description="PyInstaller で Shade Wave.app をビルドする")
     parser.add_argument(
         "--name",
-        default="Platypus",
+        default="Shade Wave",
         help=".app の製品名（dist/<name>.app）",
     )
     parser.add_argument(
         "--bundle-id",
         default="com.uniuyuni.platypus",
-        help="CFBundleIdentifier に使う文字列",
+        help="CFBundleIdentifier に使う文字列（既定は内部互換のため platypus のまま）",
+    )
+    parser.add_argument(
+        "--icon-png",
+        type=Path,
+        default=None,
+        help="アプリアイコン元 PNG（既定: assets/Shade Wave icon.png）",
     )
     parser.add_argument(
         "--distpath",
@@ -393,6 +421,9 @@ def main() -> None:
 
     root = _repo_root()
     os.chdir(root)
+    kivy_home = root / "build" / "kivy_home"
+    kivy_home.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("KIVY_HOME", str(kivy_home))
 
     _ensure_pyinstaller()
 
@@ -405,7 +436,14 @@ def main() -> None:
     distpath = args.distpath or (root / "dist")
     workpath = args.workpath or (root / "build")
 
-    icon_path = _build_icns_from_png(root / "assets" / "icon.png", workpath, args.name)
+    icon_png = args.icon_png or (root / "assets" / "Shade Wave icon.png")
+    if not icon_png.is_absolute():
+        icon_png = root / icon_png
+    if not icon_png.is_file():
+        fallback_icon = root / "assets" / "icon.png"
+        print(f"警告: 指定アイコンが見つからないため旧アイコンを使用します: {fallback_icon}", file=sys.stderr)
+        icon_png = fallback_icon
+    icon_path = _build_icns_from_png(icon_png, workpath, args.name)
 
     pyi_args = _build_args(root, args.name, args.bundle_id, icon_path)
     pyi_args.extend(
