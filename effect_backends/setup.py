@@ -42,6 +42,13 @@ setup(
             extra_compile_args=["-O3"],
         ),
         Extension(
+            "effect_backends._tone_cpu",
+            ["tone_pybind.cpp", "tone_cpu.c"],
+            include_dirs=[pybind11.get_include()],
+            language="c++",
+            extra_compile_args=["-O3"],
+        ),
+        Extension(
             "effect_backends._cross_filter_metal",
             ["cross_filter_metal.mm"],
             include_dirs=[pybind11.get_include()],

@@ -1517,34 +1517,20 @@ def _kernel_white_neg_final(img, y_current, y_blur, y_orig, white_level, max_val
 def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_level=0, disp_scale=1.0, resolution_scale=1.0):
     """
     Lightroom風のシャドウ、ハイライト、白レベル、黒レベル調整を行う関数。
-    (Numba実装版 - JAX/Numpy依存なし, 高速化)
+    effect_backends.tone_adapter への互換 shim。
     """
-    # Step 1: Luminance
-    y_orig = get_luminance(img)
-    
-    # Step 2: Mid -> Shadow
-    current_y = _kernel_mid_shadow(y_orig, midtone, shadows)
-    
-    # Step 3: Highlight -> Black
-    if highlights < 0:
-        # 基底をより低域にして val-base に細かなハイライト起伏を載せやすくする
-        sigma = 0.5 * resolution_scale
-        y_blur = gaussian_blur_cv(current_y, sigma=sigma)
-        current_y = _kernel_high_neg_black(current_y, y_blur, highlights, black_level)
-    else:
-        current_y = _kernel_high_pos_black(current_y, highlights, black_level)
-        
-    # Step 4: White -> Final
-    if white_level < 0:
-        sigma = 0.5 * resolution_scale
-        y_blur = gaussian_blur_cv(current_y, sigma=sigma)
-        max_val_blur = np.max(y_blur)
-        res = _kernel_white_neg_final(img, current_y, y_blur, y_orig, white_level, float(max_val_blur))
-    else:
-        max_val = np.max(current_y)
-        res = _kernel_white_pos_final(img, current_y, y_orig, white_level, float(max_val))
-        
-    return res
+    from effect_backends import tone_adapter
+
+    return tone_adapter.adjust_tone(
+        img,
+        highlights,
+        shadows,
+        midtone,
+        white_level,
+        black_level,
+        disp_scale,
+        resolution_scale,
+    )
 
 
 # 画像のサイズを取得する関数

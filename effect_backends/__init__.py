@@ -11,4 +11,5 @@ __all__ = [
     "cross_filter_adapter",
     "image_transform_adapter",
     "colour_functions_adapter",
+    "tone_adapter",
 ]

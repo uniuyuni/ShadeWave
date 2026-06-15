@@ -25,6 +25,7 @@ from cores.distortion_correction import (
 )
 from effect_backends import cross_filter_adapter as cross_filter
 from effect_backends import image_transform_adapter
+from effect_backends import tone_adapter
 from effect_backends import vignette_adapter as backend_vignette
 import config
 import pipeline
@@ -2965,7 +2966,7 @@ class ToneEffect(Effect):
                 self.hash = param_hash
 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = core.adjust_tone(rgb, highlight, shadow, mt, white, black, disp_scale=efconfig.disp_info[4], resolution_scale=efconfig.resolution_scale)
+                self.diff = tone_adapter.adjust_tone(rgb, highlight, shadow, mt, white, black, disp_scale=efconfig.disp_info[4], resolution_scale=efconfig.resolution_scale)
 
         return self.diff
     
