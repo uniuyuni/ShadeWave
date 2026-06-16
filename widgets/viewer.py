@@ -15,6 +15,8 @@ from kivy.uix.label import Label as KVLabel
 from kivy.uix.floatlayout import FloatLayout
 from kivymd.uix.card import MDCard
 from kivy.graphics.texture import Texture as KVTexture
+from kivy.graphics import Color as KVColor, Rectangle as KVRectangle
+from kivy.metrics import dp as kvdp
 from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
 from kivy.clock import Clock as KVClock
 from kivy.clock import mainthread as kvmainthread
@@ -39,6 +41,153 @@ from utils import preset_utils
 _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
 _THUMBNAIL_CARD_WIDTH_RATIO = 0.7
+_HOVER_HINT_DELAY = 0.7
+
+
+def _first_value(data, *keys):
+    if not isinstance(data, dict):
+        return None
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _format_file_size(file_path):
+    try:
+        size = os.path.getsize(file_path)
+    except OSError:
+        return None
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size)
+    unit = units[0]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
+def _format_image_size(exif_data):
+    try:
+        _, _, width, height = core.get_exif_image_size_with_orientation(exif_data or {})
+    except Exception:
+        width = _first_value(exif_data, "ImageWidth", "ExifImageWidth")
+        height = _first_value(exif_data, "ImageHeight", "ExifImageHeight")
+    try:
+        width = int(str(width).split()[0])
+        height = int(str(height).split()[0])
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    mp = width * height / 1_000_000.0
+    return f"{width} x {height} · {mp:.1f} MP"
+
+
+def _format_aperture(value):
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    if text.lower().startswith("f/"):
+        return text
+    try:
+        return f"f/{float(text):g}"
+    except ValueError:
+        return text
+
+
+def _build_file_hint_text(file_path, exif_data):
+    exif_data = exif_data or {}
+    lines = [os.path.basename(file_path or "")]
+    directory = os.path.dirname(file_path or "")
+    if directory:
+        lines.append(directory)
+
+    date = _first_value(exif_data, "CreateDate", "DateCreated", "FileModifyDate", "ModifyDate")
+    size_text = _format_image_size(exif_data)
+    file_size = _format_file_size(file_path)
+    if date:
+        lines.extend(["", str(date)])
+    metrics = " · ".join(part for part in (size_text, file_size) if part)
+    if metrics:
+        lines.append(metrics)
+
+    make = _first_value(exif_data, "Make")
+    model = _first_value(exif_data, "Model")
+    camera = " ".join(str(part).strip() for part in (make, model) if part)
+    lens = _first_value(exif_data, "LensModel", "Lens", "LensInfo")
+    if camera or lens:
+        lines.append("")
+    if camera:
+        lines.append(camera)
+    if lens:
+        lines.append(str(lens))
+
+    exposure_parts = [
+        f"ISO {exif_data.get('ISO')}" if exif_data.get("ISO") not in (None, "") else None,
+        _first_value(exif_data, "ExposureTime", "ShutterSpeedValue"),
+        _format_aperture(_first_value(exif_data, "Aperture", "FNumber", "ApertureValue")),
+        _first_value(exif_data, "FocalLength"),
+    ]
+    exposure = " · ".join(str(part) for part in exposure_parts if part)
+    if exposure:
+        lines.append(exposure)
+    return "\n".join(line for line in lines if line is not None)
+
+
+class FileHint(FloatLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.opacity = 0
+        self.label = KVLabel(
+            text="",
+            color=(0.96, 0.96, 0.96, 1),
+            font_size="10pt",
+            halign="left",
+            valign="middle",
+            size_hint=(None, None),
+        )
+        self.add_widget(self.label)
+        with self.canvas.before:
+            KVColor(0.04, 0.04, 0.04, 0.94)
+            self._bg = KVRectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._update_bg, size=self._update_bg)
+
+    def _update_bg(self, *_args):
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+        pad = kvdp(8)
+        self.label.pos = (self.x + pad, self.y + pad)
+        self.label.size = (max(1, self.width - pad * 2), max(1, self.height - pad * 2))
+        self.label.text_size = self.label.size
+
+    def show(self, text, mouse_pos):
+        if not text:
+            self.hide()
+            return
+        pad = kvdp(8)
+        self.label.text = text
+        self.label.text_size = (kvdp(360), None)
+        self.label.texture_update()
+        width = min(max(kvdp(220), self.label.texture_size[0] + pad * 2), kvdp(420))
+        self.label.text_size = (width - pad * 2, None)
+        self.label.texture_update()
+        height = self.label.texture_size[1] + pad * 2
+        self.size = (width, height)
+        x = mouse_pos[0] + kvdp(14)
+        y = mouse_pos[1] - height - kvdp(14)
+        x = min(max(kvdp(4), x), max(kvdp(4), KVWindow.width - width - kvdp(4)))
+        y = min(max(kvdp(4), y), max(kvdp(4), KVWindow.height - height - kvdp(4)))
+        self.pos = (x, y)
+        self.opacity = 1
+
+    def hide(self):
+        self.opacity = 0
 
 class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     file_path = KVStringProperty()
@@ -168,6 +317,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.rating_row.card_index = index
         self.rating_row.ctx = data.get("ctx")
         self.rating_row.exif_pane = False
+        self.exif_data = data.get("exif_data")
         self.pmck_exists = bool(data.get("pmck_exists", False))
         self.load_pending = bool(data.get("load_pending", False))
         self.pmck_icon.opacity = 1.0 if self.pmck_exists else 0.0
@@ -224,14 +374,134 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self.data = []
         self.watch_directory = None
         self._card_width_layout_event = None
+        self._hover_recheck_event = None
+        self._hover_hint_event = None
+        self._hover_index = None
+        self._file_hint = None
+        self._file_hint_path = None
 
         threading.Thread(target=self._watchfiles_thread, daemon=True).start()
         KVWindow.bind(on_key_down=self.on_key_down)
+        KVWindow.bind(mouse_pos=self._on_window_mouse_pos)
         self.bind(height=self._schedule_card_width_sync)
+        self.bind(scroll_x=self._on_viewer_scroll_position)
         KVClock.schedule_once(lambda _dt: self._sync_card_width(), 0)
 
     def on_kv_post(self, base_widget):
         self._sync_card_width()
+
+    def show_file_hint(self, file_path, exif_data, mouse_pos):
+        if self._file_hint is None:
+            self._file_hint = FileHint()
+        if self._file_hint.parent is None:
+            KVWindow.add_widget(self._file_hint)
+        self._file_hint.show(_build_file_hint_text(file_path, exif_data), mouse_pos)
+        self._file_hint_path = file_path
+
+    def move_file_hint(self, mouse_pos):
+        if self._file_hint is not None and self._file_hint.opacity > 0:
+            self._file_hint.show(self._file_hint.label.text, mouse_pos)
+
+    def hide_file_hint(self, file_path=None):
+        if file_path is not None and self._file_hint_path != file_path:
+            return
+        if self._file_hint is not None:
+            self._file_hint.hide()
+        self._file_hint_path = None
+
+    def _visible_thumbnail_cards(self):
+        stack = list(self.children)
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, ThumbnailCard):
+                yield widget
+            try:
+                stack.extend(widget.children)
+            except Exception:
+                pass
+
+    def hover_index_at_window_pos(self, pos):
+        card = self.hover_card_at_window_pos(pos)
+        if card is None:
+            return None
+        try:
+            index = int(getattr(card, "index", -1))
+        except (TypeError, ValueError):
+            return None
+        if 0 <= index < len(self.data):
+            return index
+        return None
+
+    def hover_card_at_window_pos(self, pos):
+        if not self.collide_point(*pos):
+            return None
+
+        local_pos = self.to_local(pos[0], pos[1])
+        for card in self._visible_thumbnail_cards():
+            if card.collide_point(*local_pos):
+                return card
+        return None
+
+    def _cancel_hover_hint(self):
+        if self._hover_hint_event is not None:
+            self._hover_hint_event.cancel()
+            self._hover_hint_event = None
+
+    def _schedule_hover_hint(self, index, mouse_pos):
+        self._cancel_hover_hint()
+        if not (0 <= index < len(self.data)):
+            return
+        item = self.data[index]
+        if item.get("load_pending") or not item.get("file_path"):
+            return
+        expected_path = item.get("file_path")
+        self._hover_hint_event = KVClock.schedule_once(
+            lambda _dt: self._show_hover_hint(index, expected_path, mouse_pos),
+            _HOVER_HINT_DELAY,
+        )
+
+    def _show_hover_hint(self, index, expected_path, mouse_pos):
+        self._hover_hint_event = None
+        if self._hover_index != index or self.hover_index_at_window_pos(KVWindow.mouse_pos) != index:
+            return
+        if not (0 <= index < len(self.data)):
+            return
+        item = self.data[index]
+        if item.get("file_path") != expected_path or item.get("load_pending"):
+            return
+        self.show_file_hint(item.get("file_path"), item.get("exif_data"), KVWindow.mouse_pos or mouse_pos)
+
+    def _on_window_mouse_pos(self, _window, pos, force=False):
+        if force:
+            self._hover_index = None
+        index = self.hover_index_at_window_pos(pos)
+        if index is None:
+            self._hover_index = None
+            self._cancel_hover_hint()
+            self.hide_file_hint()
+            return
+        if self._hover_index != index:
+            self._hover_index = index
+            self.hide_file_hint()
+            self._schedule_hover_hint(index, pos)
+            return
+        if self._file_hint is not None and self._file_hint.opacity > 0:
+            self.move_file_hint(pos)
+
+    def _schedule_hover_recheck(self, delay=0.05):
+        if self._hover_recheck_event is not None:
+            self._hover_recheck_event.cancel()
+        self._hover_recheck_event = KVClock.schedule_once(self._recheck_hover_cards, delay)
+
+    def _recheck_hover_cards(self, _dt):
+        self._hover_recheck_event = None
+        self._on_window_mouse_pos(KVWindow, KVWindow.mouse_pos, force=True)
+
+    def _on_viewer_scroll_position(self, *_args):
+        self._hover_index = None
+        self._cancel_hover_hint()
+        self.hide_file_hint()
+        self._schedule_hover_recheck()
 
     def _schedule_card_width_sync(self, *_args):
         if self._card_width_layout_event is None:
@@ -338,6 +608,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
             break
 
     def set_path(self, directory):
+        self._hover_index = None
+        self._cancel_hover_hint()
+        self.hide_file_hint()
         preset_utils.cleanup_pmck_backup_files(directory)
         self.data = []
         self.selected_indices.clear()
@@ -433,9 +706,13 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     @kvmainthread
     def _apply_updates(self, updates):
+        self._hover_index = None
+        self._cancel_hover_hint()
+        self.hide_file_hint()
         for idx, item in updates.items():
             self.data[idx] = item
         self.refresh_from_data()
+        self._schedule_hover_recheck()
 
     @kvmainthread
     def _finish_failed_chunk(self, chunk, file_path_dict):
@@ -490,10 +767,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def process_exif_data(self, file_path_list, exif_data_list):
         thumb_data_list = []
-        try:
-            for i in range(len(file_path_list)):
+        for i in range(len(file_path_list)):
+            file_path = file_path_list[i]
+            try:
                 exif_data = exif_data_list[i]
-                file_path = file_path_list[i]
 
                 thumb = self._decode_embedded_thumbnail(exif_data)
                 if thumb is not None:
@@ -538,11 +815,11 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 
                 thumb_data_list.append(thumb)
 
-            return thumb_data_list
+            except Exception:
+                logging.exception("process_exif_data: thumbnail load failed for %s", file_path)
+                thumb_data_list.append(None)
 
-        except Exception as e:
-            print(f"Error processing file {file_path}: {e}")
-            return [None]*len(file_path_list)
+        return thumb_data_list
 
     def _decode_embedded_thumbnail(self, exif_data):
         for key in ("ThumbnailImage", "PreviewImage", "JpgFromRaw", 'PreviewTIFF'):
@@ -738,6 +1015,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
         # touch.buttonを一時的に書き換え、super()呼び出し後に元に戻す
         # （touchオブジェクトは共有のため、他のウィジェットへの副作用を防ぐ）
         if touch.is_mouse_scrolling:
+            self._hover_index = None
+            self._cancel_hover_hint()
+            self.hide_file_hint()
             original_button = touch.button
             if touch.button == 'scrolldown':
                 touch.button = 'scrollright'
@@ -745,8 +1025,28 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 touch.button = 'scrollleft'
             result = super().on_scroll_start(touch, check_children)
             touch.button = original_button  # 他のウィジェットのために元の値に戻す
+            self._schedule_hover_recheck()
             return result
         return super().on_scroll_start(touch, check_children)
+
+    def on_touch_move(self, touch):
+        if (
+            not touch.is_mouse_scrolling
+            and self.collide_point(*touch.pos)
+            and not self.dragging
+            and self.get_drag_files()
+        ):
+            self._hover_index = None
+            self._cancel_hover_hint()
+            self.hide_file_hint()
+            self.dragging = True
+            self.start_drag(touch)
+            return True
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        self.dragging = False
+        return super().on_touch_up(touch)
 
     def on_key_down(self, window, key, scancode, codepoint, modifier):
         if (key == 97 and ('ctrl' in modifier or 'meta' in modifier)):  # A
