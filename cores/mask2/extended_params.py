@@ -114,14 +114,17 @@ def render_freedraw_edge_refine_full_view(
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):
         return None
-    # Default ON (disable via PLATYPUS_DRAW_QS_FULL_VIEW=0). The guide is now built
-    # geometry-consistently with the strokes: _warp_original_to_render_region warps
-    # the original into the rotated render-rect space that ctx.tcg_to_full_image
-    # targets (see below), so straighten/rotation is followed. Runs only when the
-    # view is cropped/zoomed (_should_render_draw_refine_full_view); at full display
-    # it defers to the regular crop path, which already has the whole image.
+    # Default OFF (opt-in via PLATYPUS_DRAW_QS_FULL_VIEW=1). The guide build is now
+    # geometry-correct (_warp_original_to_render_region follows straighten/rotation),
+    # but this path takes its guide from the *raw linear* original
+    # (get_original_image_rgb) while the regular crop path takes the *processed*
+    # crop_image_rgb -- a different colour space. Since full-view runs only when
+    # cropped/zoomed and the regular path runs at full display, toggling zoom across
+    # that boundary flips the guide colour space and the selection jumps ("zoom
+    # changes the result completely"). Until full-view can get a processed full-image
+    # guide, default to the regular crop path everywhere for zoom consistency.
     full_view_flag = os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower()
-    if full_view_flag in {"0", "false", "no", "off"}:
+    if full_view_flag not in {"1", "true", "yes", "on"}:
         return None
     original = ctx.get_original_image_rgb()
     if original is None or getattr(original, "size", 0) == 0:
