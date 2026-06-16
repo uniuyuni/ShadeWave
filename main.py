@@ -163,6 +163,7 @@ import numpy as np
 import cv2
 
 import file_cache_system
+import memory_manager
 
 
 def _debug_display_stats(label, img):
@@ -369,6 +370,8 @@ if __name__ == '__main__':
             self.apply_thread.start()
             self.enabledelay = None
             self._actively_loading = False  # ファイル選択によるロード中フラグ（起動時のloading: Trueとは別管理）
+            self._memory_last_load_stage = None
+            self._memory_last_report_key = None
 
             self.history = history.History()
             self.current_op = None
@@ -379,6 +382,9 @@ if __name__ == '__main__':
             self.is_press_space = False
             # on_select で選んだパス。FCS の遅延コールバックが別ファイル向けなら無視する（primary_param と imgset の不整合防止）
             self._expected_file_path = None
+            self._deferred_select_card = None
+            self._deferred_select_event = None
+            KVClock.schedule_interval(self._check_memory_pressure, 5.0)
 
             self._export_cancel_event = threading.Event()
             self._export_thread = None
@@ -397,6 +403,47 @@ if __name__ == '__main__':
             #self.ids['preview_widget'].ref_size_hint_min = (config.get_config("preview_width"), config.get_config("preview_height"))
             #self.ids['preview_widget'].ref_size_hint_max = (config.get_config("preview_width") * 1.1, config.get_config("preview_height") * 1.1)
             pass
+
+        def _check_memory_pressure(self, dt=0):
+            try:
+                if self._draw_image_core_active or self._last_processed_pipeline_version < self.pipeline_version:
+                    return
+                self.cache_system.enforce_memory_policy(owner=self, reason="periodic")
+            except Exception:
+                logging.exception("memory pressure check failed")
+
+        def _log_display_ready_memory(self, file_path, stage, frame_version, img_shape, display_shape):
+            if not memory_manager.debug_enabled():
+                return
+            key = (file_path, str(stage), frame_version, tuple(display_shape or ()))
+            if self._memory_last_report_key == key:
+                return
+            self._memory_last_report_key = key
+            try:
+                self.cache_system.log_display_ready_memory(
+                    owner=self,
+                    file_path=file_path,
+                    stage=stage,
+                    extra={
+                        "pipeline_version": frame_version,
+                        "source_shape": tuple(img_shape or ()),
+                        "display_shape": tuple(display_shape or ()),
+                    },
+                )
+            except Exception:
+                logging.exception("display-ready memory report failed")
+
+        def _show_cached_final_display_image(self, file_path):
+            cached = self.cache_system.get_final_display_image(file_path)
+            if cached is None:
+                return False
+            try:
+                self.blit_image(cached, frame_version=self.pipeline_version, allow_stale=True)
+            except Exception:
+                logging.exception("cached final display blit failed for %s", file_path)
+                return False
+            logging.debug("displayed cached final image for %s", file_path)
+            return True
 
         def update_async_results(self, dt):
             if self.async_worker:
@@ -1277,6 +1324,21 @@ if __name__ == '__main__':
                             hist_ms = (time.perf_counter() - hist_t0) * 1000.0 if debug_mask_geom else 0.0
                             if frame_version == self.pipeline_version:
                                 self.draw_histogram_view(hist_data)
+                        if frame_version == self.pipeline_version and not fast_display and not self.is_press_space:
+                            self.cache_system.remember_final_display_image(
+                                getattr(self.imgset, "file_path", None),
+                                img_draw,
+                                stage=self._memory_last_load_stage,
+                                frame_version=frame_version,
+                            )
+                            self._log_display_ready_memory(
+                                getattr(self.imgset, "file_path", None),
+                                self._memory_last_load_stage,
+                                frame_version,
+                                getattr(self.imgset.img, "shape", None),
+                                getattr(img_draw, "shape", None),
+                            )
+                            self.cache_system.enforce_memory_policy(owner=self, reason="display_ready")
                         if debug_mask_geom:
                             logging.warning(
                                 "[MASK_GEOM] draw_image_core post timings frame_version=%s fast_display=%s skip_histogram=%s color_ms=%.1f preview_ms=%.1f hist_ms=%.1f total_ms=%.1f",
@@ -2138,6 +2200,8 @@ if __name__ == '__main__':
             logging.debug("[PERF] on_select: Start. Time: %s", time.time())
             perf_trace.select_start(card.file_path if card is not None else None)
             perf_trace.event("on_select.enter")
+            previous_file_path = self.imgset.file_path if self.imgset is not None else None
+            current_file_path = card.file_path if card is not None else None
             # ロード開始
             self.loading = True
             self.mask2_wait_full_load = True
@@ -2146,21 +2210,43 @@ if __name__ == '__main__':
                 self.ids['mask2'].state = 'normal'
             self.update_mask2_options_enabled()
             self._actively_loading = True  # アニメーション表示開始
-            with threads.primary_param_lock:
+            if not threads.primary_param_lock.acquire(blocking=False):
+                self._deferred_select_card = card
+                if self._deferred_select_event is None:
+                    logging.warning(
+                        "on_select deferred while draw/update owns primary_param_lock: %s",
+                        current_file_path,
+                    )
+
+                    def _retry_select(_dt):
+                        self._deferred_select_event = None
+                        retry_card = self._deferred_select_card
+                        self._deferred_select_card = None
+                        self.on_select(retry_card)
+
+                    self._deferred_select_event = KVClock.schedule_once(_retry_select, 0.05)
+                return
+            try:
                 # Mask1 edit uses temporary original-image geometry; restore it before saving/switching.
                 self._cancel_mask1_mode(redraw=False)
                 # 前の設定を保存
                 self.save_current_sidecar()
+                self.cache_system.on_image_selection_changed(
+                    owner=self,
+                    previous_file_path=previous_file_path,
+                    current_file_path=current_file_path,
+                )
                 # 前のエフェクトを終了
                 effects.finalize_all(self.primary_effects, self.primary_param, self)
                 # 空のイメージをセット
                 self.empty_image()
+            finally:
+                threads.primary_param_lock.release()
 
             if card is not None:
                 self._expected_file_path = card.file_path
                 self._clear_exif_data()
-                # 別ファイルへ切り替わるので前回の pmck キャッシュを破棄
-                self._last_pmck_dict = None
+                self._show_cached_final_display_image(card.file_path)
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
                 self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
             else:
@@ -2183,6 +2269,7 @@ if __name__ == '__main__':
                 return
             logging.debug("[PERF] on_fcs_get_file: Called. stage: %s, Time: %s", stage, time.time())
             perf_trace.event("on_fcs_get_file.enter", stage=str(stage))
+            self._memory_last_load_stage = stage
             _img = getattr(imgset, "img", None) if imgset is not None else None
             shape_str = getattr(_img, "shape", None) if _img is not None else None
             print(f"Load image SHAPE: {shape_str} fidelity: {getattr(imgset, 'fidelity', None)}, Proc: {stage}")

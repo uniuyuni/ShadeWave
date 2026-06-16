@@ -40,6 +40,7 @@
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
                 "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/.pixi/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
                 "PLATYPUS_RESIZE_DEBUG": "0",
+                "PLATYPUS_MEMORY_DEBUG": "1",
                 "QS_DRAW_V4": "1",
                 "QS_V4_EDGE_SNAP": "1",
                 //"PLATYPUS_DEBUG_PIPELINE_STATS": "1",

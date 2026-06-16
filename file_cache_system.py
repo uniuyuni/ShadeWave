@@ -7,12 +7,22 @@ import concurrent.futures
 from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 import logging
 import sys
+from collections import OrderedDict
 
 import imageset
 import config
+import memory_manager
 import utils.utils as utils
 from utils import perf_trace
 from enums import LoadStage, ImageFidelity
+
+
+def _load_stall_warn_seconds():
+    try:
+        return max(0.0, float(os.getenv("PLATYPUS_LOAD_STALL_WARN_SECONDS", "15")))
+    except ValueError:
+        return 15.0
+
 
 # warm-up用のダミー関数（pickle化可能なトップレベル関数）
 def _warmup_worker():
@@ -154,8 +164,32 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
             result = run_method(imgset, result[0].worker, config._config, None, file_path, exif_data, param)
             _task_callback(file_callbacks, shared_resources, result)
             
-            # 完了待ち
-            concurrent.futures.wait(futures)
+            # 完了待ち。RAW フルデコードなどが詰まった時に無音で待ち続けると
+            # UI 側では「ロード中で固まった」ようにしか見えないため、周期的に状況を出す。
+            if futures:
+                warn_seconds = _load_stall_warn_seconds()
+                if warn_seconds <= 0:
+                    concurrent.futures.wait(futures)
+                else:
+                    pending = set(futures)
+                    while pending:
+                        _, pending = concurrent.futures.wait(
+                            pending,
+                            timeout=warn_seconds,
+                            return_when=concurrent.futures.ALL_COMPLETED,
+                        )
+                        if pending:
+                            started_at = active_processes.get(file_path, time.time())
+                            logging.warning(
+                                "FCS load still waiting: file=%s elapsed=%.1fs pending_subtasks=%d "
+                                "active=%d preload=%d cache=%d",
+                                file_path,
+                                time.time() - started_at,
+                                len(pending),
+                                len(active_processes),
+                                len(preload_registry),
+                                len(cache),
+                            )
 
             # キャッシュに登録（すでにキャンセルされていたらスキップ）
             #if file_path in active_processes:
@@ -208,6 +242,7 @@ class FileCacheSystem:
             'process_queue_flag': False,
             'executor': self.ppe
         }
+        self.final_display_cache = OrderedDict()
         # ダミーを走らせる（プロセスのwarm-up）
         # アプリケーション起動時にワーカープロセスを起動しておくことで、
         # 最初の画像読み込み時のプロセス起動コストを回避
@@ -224,6 +259,10 @@ class FileCacheSystem:
         # その他の設定
         self.max_cache_size = max_cache_size
         self.max_concurrent_loads = max_concurrent_loads
+        try:
+            self.max_final_display_cache = int(os.getenv("PLATYPUS_FINAL_DISPLAY_CACHE_MAX", "8"))
+        except ValueError:
+            self.max_final_display_cache = 8
         
         # 監視スレッドの開始
         #self.monitor_thread = threading.Thread(target=self._monitor_processes, daemon=True)
@@ -331,6 +370,123 @@ class FileCacheSystem:
         if file_path in self.cache:
             imgset, exif_data, param, _ = self.cache[file_path]
             self.cache[file_path] = (imgset, exif_data, param, history)
+
+    def _entry_memory_bytes(self, entry):
+        try:
+            imgset, exif_data, param, history = entry
+        except Exception:
+            return 0
+        total = 0
+        total += memory_manager.bytes_of(getattr(imgset, "img", None))
+        total += memory_manager.bytes_of(param)
+        return total
+
+    def cache_memory_bytes(self):
+        total = 0
+        for entry in self.cache.values():
+            total += self._entry_memory_bytes(entry)
+        for entry in self.preload_registry.values():
+            total += self._entry_memory_bytes((entry[2], entry[0], entry[1], entry[3]))
+        total += self.final_display_cache_memory_bytes()
+        return total
+
+    def final_display_cache_memory_bytes(self):
+        total = 0
+        for entry in self.final_display_cache.values():
+            total += memory_manager.bytes_of(entry.get("image"))
+        return total
+
+    def remember_final_display_image(self, file_path, image, *, stage=None, frame_version=None):
+        if not file_path or image is None or self.max_final_display_cache <= 0:
+            return False
+        try:
+            cached_image = memory_manager.copy_image_for_cache(image)
+        except Exception:
+            logging.exception("FCS memory: failed to cache final display image for %s", file_path)
+            return False
+        self.final_display_cache[file_path] = {
+            "image": cached_image,
+            "stage": stage,
+            "frame_version": frame_version,
+            "created_at": time.time(),
+        }
+        self.final_display_cache.move_to_end(file_path)
+        while len(self.final_display_cache) > self.max_final_display_cache:
+            evicted, _ = self.final_display_cache.popitem(last=False)
+            logging.info("FCS memory: evicted final display cache by count %s", evicted)
+        return True
+
+    def get_final_display_image(self, file_path):
+        entry = self.final_display_cache.get(file_path)
+        if entry is None:
+            return None
+        self.final_display_cache.move_to_end(file_path)
+        return entry.get("image")
+
+    def clear_final_display_cache(self, keep_file_path=None):
+        removed = 0
+        for file_path in list(self.final_display_cache.keys()):
+            if keep_file_path is not None and file_path == keep_file_path:
+                continue
+            del self.final_display_cache[file_path]
+            removed += 1
+        return removed
+
+    def evict_final_display_cache_for_memory(self, keep_file_path=None):
+        removed = 0
+        for file_path in list(self.final_display_cache.keys()):
+            if keep_file_path is not None and file_path == keep_file_path and len(self.final_display_cache) > 1:
+                continue
+            del self.final_display_cache[file_path]
+            removed += 1
+            pressured, _ = memory_manager.memory_pressure()
+            if not pressured:
+                break
+        if removed:
+            logging.info("FCS memory: evicted final display caches for memory pressure count=%d", removed)
+        return removed
+
+    def release_pmck_payload(self, owner=None, *, reason="image_selection_changed"):
+        if owner is not None and hasattr(owner, "_last_pmck_dict"):
+            owner._last_pmck_dict = None
+        logging.info("FCS memory: released pmck payload reason=%s", reason)
+
+    def on_image_selection_changed(self, owner=None, previous_file_path=None, current_file_path=None):
+        if previous_file_path != current_file_path:
+            self.release_pmck_payload(owner, reason="image_selection_changed")
+        self.enforce_memory_policy(owner=owner, reason="image_selection_changed")
+
+    def enforce_memory_policy(self, owner=None, *, reason="check"):
+        effects = getattr(owner, "primary_effects", None) if owner is not None else None
+        processor = getattr(owner, "processor", None) if owner is not None else None
+        result = memory_manager.enforce_memory_policy(effects, processor, reason=reason)
+        if result.get("cleared"):
+            pressured, pressure_reason = memory_manager.memory_pressure()
+            if pressured:
+                keep_file_path = None
+                imgset = getattr(owner, "imgset", None) if owner is not None else None
+                if imgset is not None:
+                    keep_file_path = getattr(imgset, "file_path", None)
+                result["final_display_evicted"] = self.evict_final_display_cache_for_memory(
+                    keep_file_path=keep_file_path,
+                )
+                result["final_display_reason"] = pressure_reason
+        return result
+
+    def log_display_ready_memory(self, owner=None, *, file_path=None, stage=None, extra=None):
+        effects = getattr(owner, "primary_effects", None) if owner is not None else None
+        processor = getattr(owner, "processor", None) if owner is not None else None
+        report = memory_manager.build_memory_report(
+            file_path=file_path,
+            stage=stage,
+            cache_system=self,
+            effects=effects,
+            processor=processor,
+            extra=extra,
+        )
+        memory_manager.log_memory_report("display_ready", report)
+        return report
+
     def _start_loading_thread(self, file_path: str, exif_data: Dict[str, Any], param: Dict[str, Any] = None, imgset=None):
         """読み込みスレッドを開始する内部関数"""
         if param is None:
@@ -383,6 +539,7 @@ class FileCacheSystem:
         """
         self.delete_cache(self.cache, file_path)
         self.delete_cache(self.preload_registry, file_path)
+        self.final_display_cache.pop(file_path, None)
             
     def clear_cache(self, keep_files=None):
         """
@@ -440,6 +597,9 @@ class FileCacheSystem:
         # いっぱいなら古いものから削除
         while available_cache_slots <= 0:
             file_to_delete = list(self.cache)[:1]
+            if not file_to_delete:
+                break
+            file_to_delete = file_to_delete[0]
             self.delete_cache(self.cache, file_to_delete)
             available_cache_slots += 1
 
@@ -457,7 +617,7 @@ class FileCacheSystem:
         for file_path in files_to_load:
             if file_path not in self.active_processes:  # 既に進行中でないことを確認
                 exif_data, param, imgset, _ = self.preload_registry[file_path]
-                self._start_loading_process(file_path, exif_data, param, imgset)
+                self._start_loading_thread(file_path, exif_data, param, imgset)
                 logging.info(f"FCS Starting loading processes for {file_path}")
         
     def shutdown(self):

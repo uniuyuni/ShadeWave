@@ -555,6 +555,15 @@ class AsyncPipelineManager:
         self.worker.cancel_all()
         self.cache.clear()
 
+    def clear_completed_cache(self):
+        keys = [
+            key for key, value in self.cache.items()
+            if isinstance(value, dict) and value.get("status") == "COMPLETE"
+        ]
+        for key in keys:
+            del self.cache[key]
+        return len(keys)
+
 
 def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
     timing = _new_pipeline_timing(is_drag)
