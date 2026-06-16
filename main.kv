@@ -448,10 +448,10 @@
                         size_hint_x: 0.20
                         Image:
                             id: export_indicator
-                            source: 'assets/box.gif'
+                            source: 'assets/ball.gif'
                             anim_delay: 0.05
                             size_hint_x: None
-                            ref_width: 30
+                            ref_width: 40
                             pos_hint: {'center_y': 0.5}
                             opacity: 1 if root.export_in_progress else 0
                         Label:
@@ -512,7 +512,7 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Auto"
-                        disabled: root.image_loaded == False
+                        disabled: root.image_loaded == False or root.mask2_wait_full_load == True
                         on_release: root.on_auto_adjust_press()
 
 

@@ -542,6 +542,98 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     pass
             time.sleep(1)
 
+    def _new_image_item(self, file_path):
+        return {
+            'file_path': file_path,
+            'thumb_source': None,
+            'exif_data': None,
+            'load_pending': True,
+            'selected': False,
+            'ctx': self,
+            'rating': 0,
+            'pmck_exists': os.path.exists(file_path + ".pmck"),
+        }
+
+    def _data_index_for_path(self, file_path):
+        want = self._norm_path_key(file_path)
+        for i, d in enumerate(self.data):
+            if self._norm_path_key(d.get("file_path") or "") == want:
+                return i
+        return None
+
+    def _is_in_current_watch_directory(self, file_path):
+        if not self.watch_directory:
+            return False
+        try:
+            file_dir = os.path.dirname(os.path.abspath(file_path))
+            watch_dir = os.path.abspath(self.watch_directory)
+        except OSError:
+            return False
+        return self._norm_path_key(file_dir) == self._norm_path_key(watch_dir)
+
+    def _insert_image_item_sorted(self, file_path):
+        idx = self._data_index_for_path(file_path)
+        if idx is not None:
+            return idx, False
+
+        new_item = self._new_image_item(file_path)
+        file_key = self._norm_path_key(file_path)
+        idx = len(self.data)
+        for i, d in enumerate(self.data):
+            if self._norm_path_key(d.get('file_path') or "") > file_key:
+                idx = i
+                break
+
+        self.data.insert(idx, new_item)
+        self.selected_indices = {
+            selected_idx + 1 if selected_idx >= idx else selected_idx
+            for selected_idx in self.selected_indices
+        }
+        if self.last_selected_index is not None and self.last_selected_index >= idx:
+            self.last_selected_index += 1
+        self.cols = max(1, len(self.data))
+        return idx, True
+
+    def _mapped_or_current_index(self, file_path_dict, file_path):
+        idx = file_path_dict.get(file_path)
+        if idx is not None and idx < len(self.data):
+            if self._norm_path_key(self.data[idx].get('file_path') or "") == self._norm_path_key(file_path):
+                return idx
+        return self._data_index_for_path(file_path)
+
+    def refresh_exported_paths(self, file_paths):
+        paths = []
+        seen = set()
+        for file_path in file_paths or []:
+            if not file_path or not self.is_supported_image(file_path):
+                continue
+            if not self._is_in_current_watch_directory(file_path):
+                continue
+            key = self._norm_path_key(file_path)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(file_path)
+
+        if not paths:
+            return False
+
+        changed = False
+        for file_path in sorted(paths, key=self._norm_path_key):
+            _, inserted = self._insert_image_item_sorted(file_path)
+            changed = changed or inserted
+
+        file_path_dict = {}
+        for file_path in paths:
+            idx = self._data_index_for_path(file_path)
+            if idx is not None:
+                file_path_dict[self.data[idx]["file_path"]] = idx
+
+        if changed:
+            self.refresh_from_data()
+        self.load_images(file_path_dict)
+        return bool(file_path_dict)
+
     @kvmainthread
     def _added_file(self, file_path):
         pmck_image_path = self._image_path_for_pmck_sidecar(file_path)
@@ -549,31 +641,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             self.set_pmck_indicator_for_path(pmck_image_path, True)
             return
         if self.is_supported_image(file_path):
-            file_list = [d['file_path'] for d in self.data]
-            if file_path in file_list:
-                return
-            
-            new_item = {
-                'file_path': file_path,
-                'thumb_source': None,
-                'exif_data': None,
-                'load_pending': True,
-                'selected': False,
-                'ctx': self,
-                'rating': 0,
-                'pmck_exists': os.path.exists(file_path + ".pmck"),
-            }
-            
-            idx = 0
-            for i, d in enumerate(self.data):
-                if d['file_path'] > file_path:
-                    idx = i
-                    break
-                idx = i + 1
-            
-            self.data.insert(idx, new_item)
-            self.cols = max(1, len(self.data))
-            self.load_images({file_path: idx})
+            self.refresh_exported_paths([file_path])
 
     @kvmainthread
     def _deleted_file(self, file_path):
@@ -599,13 +667,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             return
         if not self.is_supported_image(file_path):
             return
-        want = self._norm_path_key(file_path)
-        for i, d in enumerate(self.data):
-            if self._norm_path_key(d.get("file_path") or "") != want:
-                continue
-            fp = d["file_path"]
-            self.load_images({fp: i})
-            break
+        self.refresh_exported_paths([file_path])
 
     def set_path(self, directory):
         self._hover_index = None
@@ -651,8 +713,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
     @kvmainthread
     def _set_load_pending(self, file_path_dict, pending):
         changed = False
-        for file_path, idx in file_path_dict.items():
-            if idx < len(self.data) and self.data[idx].get('file_path') == file_path:
+        for file_path in file_path_dict:
+            idx = self._mapped_or_current_index(file_path_dict, file_path)
+            if idx is not None and idx < len(self.data):
                 self.data[idx]['load_pending'] = bool(pending)
                 changed = True
         if changed:
@@ -684,9 +747,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 for k in range(len(chunk)):
                     file_path = chunk[k]
                     if file_path not in file_path_dict: continue
-                    idx = file_path_dict[file_path]
+                    idx = self._mapped_or_current_index(file_path_dict, file_path)
 
-                    if idx < len(self.data) and self.data[idx]['file_path'] == file_path:
+                    if idx is not None and idx < len(self.data):
                         item = self.data[idx]
                         item['thumb_source'] = thumb_data_list[k]
                         item['exif_data'] = exif_data_list[k]
@@ -717,10 +780,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
     @kvmainthread
     def _finish_failed_chunk(self, chunk, file_path_dict):
         for file_path in chunk:
-            idx = file_path_dict.get(file_path)
+            idx = self._mapped_or_current_index(file_path_dict, file_path)
             if idx is None:
                 continue
-            if idx < len(self.data) and self.data[idx].get('file_path') == file_path:
+            if idx < len(self.data):
                 self.data[idx]['load_pending'] = False
                 if self.data[idx].get('exif_data') is None:
                     self.data[idx]['exif_data'] = {}
@@ -920,18 +983,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def refresh_exif_for_exported_path(self, file_path: str) -> bool:
         """
-        エクスポート直後: ファイルには exiftool で星が入ったあと。watch より前に
-        サムネ取得が走ると 0 星のままになるため、該当行のメタ＆星を取り直す。
+        エクスポート直後: watch より前でも新規カードを追加し、メタ＆星を取り直す。
         """
-        if not file_path:
-            return False
-        want = self._norm_path_key(file_path)
-        for i, d in enumerate(self.data):
-            if self._norm_path_key(d.get("file_path") or "") != want:
-                continue
-            self.load_images({d["file_path"]: i})
-            return True
-        return False
+        return self.refresh_exported_paths([file_path])
 
     def _is_item_ready(self, index):
         return (

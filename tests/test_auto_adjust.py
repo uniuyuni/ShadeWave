@@ -113,7 +113,9 @@ class AutoAdjustTest(unittest.TestCase):
         )
 
         self.assertIn("id: auto_adjust", kv_source)
+        self.assertIn("disabled: root.image_loaded == False or root.mask2_wait_full_load == True", kv_source)
         self.assertIn("on_release: root.on_auto_adjust_press()", kv_source)
+        self.assertIn("if self.mask2_wait_full_load or getattr(self, \"_actively_loading\", False):", handler_source)
         self.assertIn("auto_adjust.compute_basic_auto_adjustment", handler_source)
         self.assertIn("self.begin_history_effect_ctrl(2, effect_list)", handler_source)
         self.assertIn("self.end_history_effect_ctrl(2, effect_list)", handler_source)

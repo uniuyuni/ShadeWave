@@ -1806,6 +1806,8 @@ if __name__ == '__main__':
             self.save_current_sidecar() # 要るかどうかは微妙。CropEditorの操作はHistoryに入るので、Undo/RedoでCrop状態も変わる。
 
         def on_auto_adjust_press(self):
+            if self.mask2_wait_full_load or getattr(self, "_actively_loading", False):
+                return
             if self.imgset is None or getattr(self.imgset, "img", None) is None:
                 return
             if not params.has_original_img_size(self.primary_param):
@@ -3918,10 +3920,8 @@ if __name__ == '__main__':
             self.export_total = 0
             self._export_thread = None
             viewer = self.ids['viewer']
-            # エクスポート直後: 先に vips 作成→のち exiftool で星、watch より前にサムネ載せが走ると 0 星のまま
-            for p in exported_ok or []:
-                if p:
-                    viewer.refresh_exif_for_exported_path(p)
+            # エクスポート直後: watchfiles の追加イベントより先に Viewer を明示同期する。
+            viewer.refresh_exported_paths(exported_ok or [])
             if exported_ok:
                 retry_paths = list(exported_ok)
                 KVClock.schedule_once(
@@ -3935,9 +3935,7 @@ if __name__ == '__main__':
 
         def _export_retry_viewer_exif(self, paths):
             v = self.ids["viewer"]
-            for p in paths or []:
-                if p:
-                    v.refresh_exif_for_exported_path(p)
+            v.refresh_exported_paths(paths or [])
 
         def on_export_bar_press(self):
             if self.export_in_progress:
