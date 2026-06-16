@@ -1585,6 +1585,19 @@ if __name__ == '__main__':
             else:
                 self.sync_draw_image()
 
+        def on_color_temperature_preset_value(self, preset):
+            values = effects.ColorTemperatureEffect.preset_values(preset, self.primary_param)
+            if values is None:
+                return
+            temp, tint = values
+            self.ids["slider_color_temperature"].set_slider_value(temp)
+            self.ids["slider_color_tint"].set_slider_value(tint)
+
+        def on_color_temperature_slider_changed(self):
+            spinner = self.ids.get("spinner_color_temperature_preset")
+            if spinner is not None:
+                spinner.set_text(effects.ColorTemperatureEffect.PRESET_CUSTOM)
+
         def apply_mask2_edge_refine_slider(self, settle=False):
             """Debounce expensive Quick Select slider redraws while dragging."""
             event = getattr(self, "_mask2_edge_refine_slider_event", None)
@@ -1797,7 +1810,17 @@ if __name__ == '__main__':
                 return
             if not params.has_original_img_size(self.primary_param):
                 return
-            effect_list = ['exposure', 'contrast', 'tone']
+            effect_list = [
+                'exposure',
+                'contrast',
+                'tone',
+                'dehaze',
+                'clarity',
+                'texture',
+                'microcontrast',
+                'vs_and_saturation',
+                'color_separation',
+            ]
             if not self.begin_history_effect_ctrl(2, effect_list):
                 return
             try:

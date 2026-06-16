@@ -36,8 +36,12 @@ class AutoAdjustTest(unittest.TestCase):
 
         self.assertGreater(adjustment["exposure"], 0.0)
         self.assertGreater(adjustment["contrast"], 0)
+        self.assertGreaterEqual(adjustment["clarity"], 0)
+        self.assertGreaterEqual(adjustment["vibrance"], 0)
         self.assertTrue(adjustment["switch_exposure_contrast"])
         self.assertTrue(adjustment["switch_tone"])
+        self.assertTrue(adjustment["switch_precence"])
+        self.assertTrue(adjustment["switch_saturation"])
 
     def test_bright_highlights_are_protected(self):
         image = np.ones((96, 128, 3), dtype=np.float32) * 0.22
@@ -47,6 +51,49 @@ class AutoAdjustTest(unittest.TestCase):
 
         self.assertLessEqual(adjustment["highlight"], 0)
         self.assertLessEqual(adjustment["white"], 0)
+
+    def test_desaturated_image_gets_color_and_presence_boost(self):
+        x = np.linspace(0.12, 0.62, 128, dtype=np.float32)
+        image = np.repeat(x[None, :, None], 96, axis=0)
+        image = np.repeat(image, 3, axis=2)
+        image[..., 0] *= 1.02
+        image[..., 2] *= 0.98
+
+        adjustment = auto_adjust.compute_basic_auto_adjustment(image)
+
+        self.assertGreater(adjustment["vibrance"], 0)
+        self.assertGreater(adjustment["saturation"], 0)
+        self.assertGreater(adjustment["color_density"], 0)
+        self.assertGreater(adjustment["color_separation"], 0)
+        self.assertGreater(adjustment["texture"], 0)
+        self.assertGreater(adjustment["microcontrast"], 0)
+
+    def test_already_saturated_image_avoids_overcooking_color(self):
+        x = np.linspace(0.12, 0.72, 128, dtype=np.float32)
+        image = np.zeros((96, 128, 3), dtype=np.float32)
+        image[..., 0] = x[None, :] * 1.25
+        image[..., 1] = x[None, :] * 0.18
+        image[..., 2] = x[None, :] * 0.08
+
+        adjustment = auto_adjust.compute_basic_auto_adjustment(image)
+
+        self.assertLessEqual(adjustment["saturation"], 5)
+        self.assertLessEqual(adjustment["vibrance"], 8)
+        self.assertLessEqual(adjustment["color_density"], 5)
+
+    def test_high_dynamic_dark_interior_keeps_tone_controls_moderate(self):
+        x = np.linspace(0.002, 0.10, 220, dtype=np.float32)
+        image = np.ones((160, 220, 3), dtype=np.float32) * x[None, :, None]
+        image[20:80, 150:210, :] = 0.75
+        image[80:150, 120:200, :] = 0.18
+
+        adjustment = auto_adjust.compute_basic_auto_adjustment(image)
+
+        self.assertLessEqual(adjustment["exposure"], 0.8)
+        self.assertLessEqual(abs(adjustment["highlight"]), 22)
+        self.assertLessEqual(adjustment["shadow"], 18)
+        self.assertLessEqual(abs(adjustment["contrast"]), 16)
+        self.assertLessEqual(adjustment["detail_tonemap"], 4)
 
     def test_crop_rect_limits_analysis_region(self):
         image = np.ones((80, 120, 3), dtype=np.float32) * 0.8
@@ -70,6 +117,9 @@ class AutoAdjustTest(unittest.TestCase):
         self.assertIn("auto_adjust.compute_basic_auto_adjustment", handler_source)
         self.assertIn("self.begin_history_effect_ctrl(2, effect_list)", handler_source)
         self.assertIn("self.end_history_effect_ctrl(2, effect_list)", handler_source)
+        self.assertIn("'vs_and_saturation'", handler_source)
+        self.assertIn("'color_separation'", handler_source)
+        self.assertIn("'microcontrast'", handler_source)
 
 
 if __name__ == "__main__":

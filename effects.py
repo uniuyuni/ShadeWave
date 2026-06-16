@@ -2623,10 +2623,57 @@ class FaceEffect(Effect):
         return self.diff
 
 class ColorTemperatureEffect(Effect):
+    PRESET_AS_SHOT = "As Shot"
+    PRESET_CUSTOM = "Custom"
+    PRESET_VALUES = {
+        "Daylight": (5500, 0),
+        "Cloudy": (6500, 0),
+        "Shade": (7500, 0),
+        "Tungsten": (2850, 0),
+        "Fluorescent": (4000, 20),
+        "Flash": (6000, 0),
+    }
+    PRESET_OPTIONS = (
+        PRESET_AS_SHOT,
+        "Daylight",
+        "Cloudy",
+        "Shade",
+        "Tungsten",
+        "Fluorescent",
+        "Flash",
+        PRESET_CUSTOM,
+    )
+
+    @classmethod
+    def preset_options(cls):
+        return list(cls.PRESET_OPTIONS)
+
+    @classmethod
+    def preset_values(cls, preset, param):
+        if preset == cls.PRESET_AS_SHOT:
+            return (
+                param.get('color_temperature_reset', 5000),
+                param.get('color_tint_reset', 0),
+            )
+        return cls.PRESET_VALUES.get(preset)
+
+    @classmethod
+    def infer_preset(cls, param):
+        preset = param.get('color_temperature_preset')
+        if preset in cls.PRESET_OPTIONS:
+            return preset
+        temp = param.get('color_temperature', param.get('color_temperature_reset', 5000))
+        tint = param.get('color_tint', param.get('color_tint_reset', 0))
+        reset_temp = param.get('color_temperature_reset', 5000)
+        reset_tint = param.get('color_tint_reset', 0)
+        if abs(float(temp) - float(reset_temp)) <= 1.0e-6 and abs(float(tint) - float(reset_tint)) <= 1.0e-6:
+            return cls.PRESET_AS_SHOT
+        return cls.PRESET_CUSTOM
 
     def get_param_dict(self, param):
         return {
             'switch_white_balance': True,
+            'color_temperature_preset': self.PRESET_AS_SHOT,
             'color_temperature_reset': 5000,
             'color_temperature': param.get('color_temperature_reset', 5000),
             'color_tint_reset': 0,
@@ -2636,6 +2683,10 @@ class ColorTemperatureEffect(Effect):
 
     def set2widget(self, widget, param):
         widget.ids['switch_white_balance'].enabled = self._get_param(param, 'switch_white_balance')
+        widget.ids["spinner_color_temperature_preset"].values = self.preset_options()
+        widget.ids["spinner_color_temperature_preset"].set_text(
+            self.infer_preset(param)
+        )
         widget.ids["slider_color_temperature"].set_slider_value(self._get_param(param, 'color_temperature'))
         widget.ids["slider_color_tint"].set_slider_value(self._get_param(param, 'color_tint'))
         self._set_bar_context(widget, param)
@@ -2644,8 +2695,16 @@ class ColorTemperatureEffect(Effect):
  
     def set2param(self, param, widget):
         param['switch_white_balance'] = widget.ids['switch_white_balance'].enabled
-        param['color_temperature'] = widget.ids["slider_color_temperature"].value
-        param['color_tint'] = widget.ids["slider_color_tint"].value
+        preset = widget.ids["spinner_color_temperature_preset"].text or self.PRESET_AS_SHOT
+        if preset not in self.PRESET_OPTIONS:
+            preset = self.PRESET_CUSTOM
+        values = self.preset_values(preset, param)
+        if values is not None:
+            param['color_temperature'], param['color_tint'] = values
+        else:
+            param['color_temperature'] = widget.ids["slider_color_temperature"].value
+            param['color_tint'] = widget.ids["slider_color_tint"].value
+        param['color_temperature_preset'] = preset
 
     def _set_bar_context(self, widget, param):
         reset_temp = self._get_param(param, 'color_temperature_reset')

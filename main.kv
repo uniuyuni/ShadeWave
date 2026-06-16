@@ -549,6 +549,21 @@
                                     on_active: root.apply_effects_lv(2, 'color_temperature')
                                     on_release: root.end_history_effect_ctrl(2, 'color_temperature')
 
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Preset"
+                                    VSpacer:
+                                        size_hint_x: 0.12
+                                    ParamSpinner:
+                                        id: spinner_color_temperature_preset
+                                        values: [ 'As Shot', 'Daylight', 'Cloudy', 'Shade', 'Tungsten', 'Fluorescent', 'Flash', 'Custom' ]
+                                        text: 'As Shot'
+                                        on_value:
+                                            root.begin_history_effect_ctrl(2, 'color_temperature')
+                                            root.on_color_temperature_preset_value(self.text)
+                                            root.apply_effects_lv(2, 'color_temperature')
+                                            root.end_history_effect_ctrl(2, 'color_temperature')
+
                                 ParamSlider:
                                     id: slider_color_temperature
                                     text: "Temperature"
@@ -560,7 +575,9 @@
                                     bar_saturation: 2.4
                                     bar_show_active_overlay: False
                                     bar_show_anchor_marker: True
-                                    on_slider: root.apply_effects_lv(2, 'color_temperature')
+                                    on_slider:
+                                        root.on_color_temperature_slider_changed()
+                                        root.apply_effects_lv(2, 'color_temperature')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'color_temperature')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'color_temperature')
 
@@ -575,7 +592,9 @@
                                     bar_saturation: 2.4
                                     bar_show_active_overlay: False
                                     bar_show_anchor_marker: True
-                                    on_slider: root.apply_effects_lv(2, 'color_temperature')
+                                    on_slider:
+                                        root.on_color_temperature_slider_changed()
+                                        root.apply_effects_lv(2, 'color_temperature')
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'color_temperature')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'color_temperature')
 

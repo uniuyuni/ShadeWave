@@ -8,9 +8,40 @@ from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivymd.uix.list import OneLineListItem as MDOneLineListItem
 from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.core.window import Window as KVWindow
 from utils import dialogutils, kvutils
 
 import re
+
+
+_ADD_MASK_POPUP_WIDTH_REF = 300
+_ADD_MASK_POPUP_BUTTON_HEIGHT_REF = 36
+_ADD_MASK_POPUP_PADDING_REF = 5
+_ADD_MASK_POPUP_SPACING_REF = 5
+_ADD_MASK_POPUP_CHROME_HEIGHT_REF = 76
+_ADD_MASK_POPUP_MIN_HEIGHT_REF = 420
+_ADD_MASK_POPUP_WINDOW_MARGIN_REF = 48
+
+
+def _add_mask_popup_ref_height(item_count):
+    content_height = (
+        _ADD_MASK_POPUP_PADDING_REF * 2
+        + _ADD_MASK_POPUP_BUTTON_HEIGHT_REF * item_count
+        + _ADD_MASK_POPUP_SPACING_REF * max(0, item_count - 1)
+    )
+    desired_height = max(
+        _ADD_MASK_POPUP_MIN_HEIGHT_REF,
+        content_height + _ADD_MASK_POPUP_CHROME_HEIGHT_REF,
+    )
+    try:
+        scale = max(1e-6, kvutils.dpi_scale_height(1))
+        max_height = max(
+            _ADD_MASK_POPUP_MIN_HEIGHT_REF,
+            (float(KVWindow.height or 0) / scale) - _ADD_MASK_POPUP_WINDOW_MARGIN_REF,
+        )
+        return min(desired_height, max_height)
+    except Exception:
+        return desired_height
 
 class Mask2CustomHeader(MDExpansionPanelOneLine):
     pass
@@ -78,14 +109,6 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         from functools import partial
         import widgets.mask_editor2 as me2
 
-        content = KVBoxLayout(orientation='vertical')
-        content.ref_padding = 5
-        content.ref_spacing = 5
-        popup = KVPopup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(None, None))
-        popup.ref_width = 300
-        popup.ref_height = 420
-        dialogutils.install_ref_scaling(popup)
-        
         types = [
             ('Circle', me2.MaskType.CIRCULAR),
             ('Line', me2.MaskType.GRADIENT),
@@ -98,9 +121,21 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
             ('Target Text', me2.MaskType.TARGET_TEXT)
         ]
 
+        content = KVBoxLayout(orientation='vertical')
+        content.ref_padding = _ADD_MASK_POPUP_PADDING_REF
+        content.ref_spacing = _ADD_MASK_POPUP_SPACING_REF
+        popup = KVPopup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(None, None))
+        popup.ref_width = _ADD_MASK_POPUP_WIDTH_REF
+
+        def _fit_popup_height():
+            popup.ref_height = _add_mask_popup_ref_height(len(types))
+
+        _fit_popup_height()
+        dialogutils.install_ref_scaling(popup, on_rescale=_fit_popup_height)
+
         for name, type_key in types:
             btn = KVButton(text=name, size_hint_y=None)
-            btn.ref_height = 36
+            btn.ref_height = _ADD_MASK_POPUP_BUTTON_HEIGHT_REF
             btn.bind(on_release=partial(self._add_child_mask, type_key, maskop, popup))
             content.add_widget(btn)
         

@@ -1,0 +1,92 @@
+import ast
+import pathlib
+import sys
+import unittest
+
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+import effects
+
+
+MAIN_PATH = PROJECT_ROOT / "main.py"
+MAIN_KV_PATH = PROJECT_ROOT / "main.kv"
+
+
+def _load_class_function(path, class_name, function_name):
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == function_name:
+                    return child
+    raise AssertionError(f"{class_name}.{function_name} was not found")
+
+
+class WhiteBalancePresetTest(unittest.TestCase):
+    def test_color_temperature_preset_values_include_common_wb_options(self):
+        options = effects.ColorTemperatureEffect.preset_options()
+
+        self.assertEqual(options[0], "As Shot")
+        self.assertIn("Daylight", options)
+        self.assertIn("Cloudy", options)
+        self.assertIn("Shade", options)
+        self.assertIn("Tungsten", options)
+        self.assertIn("Fluorescent", options)
+        self.assertIn("Flash", options)
+        self.assertEqual(options[-1], "Custom")
+        self.assertEqual(
+            effects.ColorTemperatureEffect.preset_values("Tungsten", {}),
+            (2850, 0),
+        )
+        self.assertEqual(
+            effects.ColorTemperatureEffect.preset_values(
+                "As Shot",
+                {"color_temperature_reset": 6120, "color_tint_reset": -4},
+            ),
+            (6120, -4),
+        )
+
+    def test_missing_preset_key_infers_as_shot_or_custom(self):
+        self.assertEqual(
+            effects.ColorTemperatureEffect.infer_preset({
+                "color_temperature_reset": 5300,
+                "color_tint_reset": 3,
+                "color_temperature": 5300,
+                "color_tint": 3,
+            }),
+            "As Shot",
+        )
+        self.assertEqual(
+            effects.ColorTemperatureEffect.infer_preset({
+                "color_temperature_reset": 5300,
+                "color_tint_reset": 3,
+                "color_temperature": 5600,
+                "color_tint": 3,
+            }),
+            "Custom",
+        )
+
+    def test_white_balance_preset_ui_is_connected(self):
+        kv_source = MAIN_KV_PATH.read_text()
+        main_source = MAIN_PATH.read_text()
+        preset_handler = ast.get_source_segment(
+            main_source,
+            _load_class_function(MAIN_PATH, "MainWidget", "on_color_temperature_preset_value"),
+        )
+        custom_handler = ast.get_source_segment(
+            main_source,
+            _load_class_function(MAIN_PATH, "MainWidget", "on_color_temperature_slider_changed"),
+        )
+
+        self.assertIn("id: spinner_color_temperature_preset", kv_source)
+        self.assertIn("values: [ 'As Shot', 'Daylight', 'Cloudy', 'Shade', 'Tungsten', 'Fluorescent', 'Flash', 'Custom' ]", kv_source)
+        self.assertIn("root.on_color_temperature_preset_value(self.text)", kv_source)
+        self.assertIn("root.on_color_temperature_slider_changed()", kv_source)
+        self.assertIn("effects.ColorTemperatureEffect.preset_values", preset_handler)
+        self.assertIn("effects.ColorTemperatureEffect.PRESET_CUSTOM", custom_handler)
+
+
+if __name__ == "__main__":
+    unittest.main()
