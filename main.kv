@@ -168,10 +168,10 @@
                                     Rectangle:
                                         size: self.size
                                         pos: self.pos
-                            
+
                             VSpacer:
                                 ref_height: 4
-                            
+
                             BoxLayout:
                                 orientation: 'horizontal'
                                 size_hint_y: None
@@ -354,14 +354,14 @@
                         Rectangle:
                             pos: self.pos
                             size: self.size
-                        
+
                         # Stencil Clip to Valid Content (Hide Reflect Padding)
                         StencilPush:
                         Rectangle:
                             pos: self.pos
                             size: self.size
                         StencilUse:
-                        
+
                     canvas.after:
                         StencilUnUse:
                         Rectangle:

@@ -64,6 +64,7 @@ if __name__ == '__main__':
     from kivy.uix.button import Button as KVButton
     from kivy.uix.popup import Popup as KVPopup
     from kivy.uix.textinput import TextInput as KVTextInput
+    from kivy.metrics import dp as kvdp
 
     import threading
     import threads
@@ -309,6 +310,7 @@ if __name__ == '__main__':
         PREVIEW_COL_FRAC_FOCUS = 0.75
         VIEWER_REF_HEIGHT_NORMAL = 160.0
         PREVIEW_BAR_REF_HEIGHT = 30.0
+        PREVIEW_CLICK_MARGIN_DP = 6.0
 
         def __init__(self, cache_system, **kwargs):
             super(MainWidget, self).__init__(**kwargs)
@@ -719,8 +721,11 @@ if __name__ == '__main__':
                 KVWindow.minimum_width = min(min_w, max(1, int(sw * 0.99)))
                 KVWindow.minimum_height = min(min_h, max(1, int(sh * 0.99)))
 
+        def _resize_debug_enabled(self):
+            return os.getenv("PLATYPUS_RESIZE_DEBUG", "0").strip().lower() in {"1", "true", "yes", "on"}
+
         def _update_resize_debug_display(self):
-            if not getattr(define, "RESIZE_DEBUG", False):
+            if not self._resize_debug_enabled():
                 return
             try:
                 ww, wh = int(KVWindow.size[0]), int(KVWindow.size[1])
@@ -807,7 +812,7 @@ if __name__ == '__main__':
             #self.ids['history_box'].ids['content'].add_widget(self.history_panel)
             self.update_load_dependent_panels_enabled()
 
-            if getattr(define, "RESIZE_DEBUG", False):
+            if self._resize_debug_enabled():
                 self._debug_resize_label = KVLabel(
                     text="",
                     size_hint=(None, None),
@@ -819,14 +824,79 @@ if __name__ == '__main__':
                 self.ids["preview_widget"].add_widget(self._debug_resize_label)
                 KVClock.schedule_once(lambda _dt: self._update_resize_debug_display(), 0.05)
 
+        def _preview_widget_logical_size(self, preview_widget):
+            dpi_scale = max(float(device.dpi_scale()), 1e-6)
+            margin = max(0.0, float(kvdp(self.PREVIEW_CLICK_MARGIN_DP)))
+            usable_width = max(1.0, float(preview_widget.width) - margin * 2.0)
+            usable_height = max(1.0, float(preview_widget.height) - margin * 2.0)
+            return (
+                usable_width / dpi_scale,
+                usable_height / dpi_scale,
+            )
+
+        def _preview_source_image_size(self):
+            original_img_size = self.primary_param.get('original_img_size')
+            if original_img_size and len(original_img_size) >= 2:
+                if not self._preview_uses_full_image_size():
+                    try:
+                        crop_rect = params.get_crop_rect(self.primary_param)
+                    except Exception:
+                        crop_rect = None
+                    if crop_rect is not None and len(crop_rect) >= 4:
+                        x1, y1, x2, y2 = crop_rect
+                        crop_width = max(1.0, float(x2) - float(x1))
+                        crop_height = max(1.0, float(y2) - float(y1))
+                        return (crop_width, crop_height)
+                return (float(original_img_size[0]), float(original_img_size[1]))
+            if self.imgset is not None and getattr(self.imgset, "img", None) is not None:
+                height, width = self.imgset.img.shape[:2]
+                return (float(width), float(height))
+            return None
+
+        def _preview_uses_full_image_size(self):
+            if getattr(self, "_mask1_full_preview_sources", None):
+                return True
+            return self._is_image_geometry_mode()
+
+        def _preview_texture_side_for_widget(self, preview_widget):
+            min_side = config.get_config('preview_size')
+            widget_width, widget_height = self._preview_widget_logical_size(preview_widget)
+            base_side = min(widget_width, widget_height)
+
+            image_size = self._preview_source_image_size()
+            if image_size is None:
+                return max(min_side, int(round(base_side)))
+
+            image_width, image_height = image_size
+            image_long = max(image_width, image_height)
+            image_short = min(image_width, image_height)
+            if image_short <= 0 or math.isclose(image_long, image_short):
+                return max(min_side, int(round(base_side)))
+
+            display_long = max(widget_width, widget_height)
+            display_short = min(widget_width, widget_height)
+            image_aspect = image_long / image_short
+            same_orientation = (image_width >= image_height) == (widget_width >= widget_height)
+            if same_orientation:
+                side = min(display_long, display_short * image_aspect)
+            else:
+                side = display_short
+            return max(min_side, int(round(side)))
+
         def get_preview_texture_size(self):
             preview_widget = self.ids.get('preview_widget')
             min_side = config.get_config('preview_size')
             if preview_widget is None:
                 return (min_side, min_side)
 
-            widget_side = min(preview_widget.width, preview_widget.height) / device.dpi_scale()
-            side = max(min_side, int(round(widget_side)))
+            if self.is_zoomed:
+                widget_width, widget_height = self._preview_widget_logical_size(preview_widget)
+                return (
+                    max(1, int(round(widget_width))),
+                    max(1, int(round(widget_height))),
+                )
+
+            side = self._preview_texture_side_for_widget(preview_widget)
             return (side, side)
 
         def update_preview_texture_size(self, force=False):
@@ -1095,7 +1165,8 @@ if __name__ == '__main__':
                             logging.warning("draw_image_core: original_img_size 未定義のため描画しません")
                             return
 
-                        self.update_preview_texture_size()
+                        if self.update_preview_texture_size():
+                            self.crop_image = None
                         self.refresh_preview_overlays()
 
                         frame_version = self.pipeline_version
@@ -2303,6 +2374,32 @@ if __name__ == '__main__':
                 return None
             return tex_x, tex_y
 
+        def _preview_texture_pos_to_image_pos(self, tex_pos):
+            disp_info = params.get_disp_info(self.primary_param)
+            if disp_info is None or tex_pos is None:
+                return None
+            preview = self.ids.get('preview')
+            if preview is not None:
+                texture_width, texture_height = getattr(preview, 'texture_size', config.get_preview_texture_size())
+            else:
+                texture_width, texture_height = config.get_preview_texture_size()
+            if texture_width <= 0 or texture_height <= 0:
+                return None
+            _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(
+                texture_width,
+                texture_height,
+                disp_info,
+            )
+            if disp_info[2] >= disp_info[3]:
+                scale = texture_width / max(1, disp_info[2])
+            else:
+                scale = texture_height / max(1, disp_info[3])
+            if scale <= 0:
+                return None
+            image_x = disp_info[0] + (tex_pos[0] - offset_x) / scale
+            image_y = disp_info[1] + (tex_pos[1] - offset_y) / scale
+            return image_x, image_y
+
         def _clamp_zoom_ratio(self, value):
             return min(4.0, max(0.1, float(value)))
 
@@ -2377,6 +2474,7 @@ if __name__ == '__main__':
             self.is_zoomed = False
             self.click_x, self.click_y = 0, 0
             self.drag_center_start = None
+            self.update_preview_texture_size()
             disp_info = core.convert_rect_to_info(
                 params.get_crop_rect(self.primary_param),
                 config.get_preview_texture_side() / max(self.primary_param['original_img_size']),
@@ -2524,7 +2622,10 @@ if __name__ == '__main__':
             self.click_x, self.click_y = tex_pos
             self.drag_center_start = None
             effects.reeffect_all(self.primary_effects, 1)
-            self.start_draw_image_and_crop(self.imgset)
+            self.start_draw_image_and_crop(
+                self.imgset,
+                center_pos=self._preview_texture_pos_to_image_pos(tex_pos),
+            )
             return True
 
         def _text_input_has_focus(self):
@@ -2633,7 +2734,10 @@ if __name__ == '__main__':
                     self.click_x, self.click_y = tex_pos
 
                     effects.reeffect_all(self.primary_effects, 1)
-                    self.start_draw_image_and_crop(self.imgset)
+                    self.start_draw_image_and_crop(
+                        self.imgset,
+                        center_pos=self._preview_texture_pos_to_image_pos(tex_pos),
+                    )
 
                 # ドラッグ操作
                 elif self.is_zoomed == True:
@@ -3063,6 +3167,7 @@ if __name__ == '__main__':
                         self.is_zoomed = False
                         self.click_x, self.click_y = 0, 0
                         self.drag_center_start = None
+                        self.update_preview_texture_size()
                         disp_info = core.convert_rect_to_info(
                             params.get_crop_rect(self.primary_param),
                             config.get_preview_texture_side() / max(self.primary_param['original_img_size']),
@@ -3520,6 +3625,9 @@ if __name__ == '__main__':
             else:
                 self.primary_effects[0]['geometry'].close_geometry_editor(self)
 
+            if self.update_preview_texture_size():
+                self.crop_image = None
+
             try:
                 self.ids['mask_editor2'].refresh_mask_geom_axes()
             except Exception:
@@ -3750,7 +3858,7 @@ if __name__ == '__main__':
             self.sync_preview_widget_min_size()
             self._clamp_window_to_preview_minimum()
             preview_changed = self.update_preview_texture_size()
-            if getattr(define, "RESIZE_DEBUG", False):
+            if self._resize_debug_enabled():
                 KVClock.schedule_once(lambda _dt: self._update_resize_debug_display(), 0.05)
             if self.imgset is not None and self.imgset.img is not None:
                 h, w = self.imgset.img.shape[:2]
