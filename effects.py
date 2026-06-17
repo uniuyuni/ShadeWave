@@ -46,13 +46,13 @@ def _ai_noise_blend_raw(raw, base, nr_intensity):
     """AI NR 素出力 raw とベース画像を強度でブレンド。"""
     if raw is None or base is None or raw.shape != base.shape:
         return None
-    raw = np.ascontiguousarray(raw, dtype=np.float32)
-    base = np.ascontiguousarray(base, dtype=np.float32)
     alpha = float(nr_intensity) / 100.0
     if alpha <= 0.0:
-        return base
+        return base if getattr(base, "dtype", None) == np.float32 else np.asarray(base, dtype=np.float32)
     if alpha >= 1.0:
-        return raw
+        return raw if getattr(raw, "dtype", None) == np.float32 else np.asarray(raw, dtype=np.float32)
+    raw = np.ascontiguousarray(raw, dtype=np.float32)
+    base = np.ascontiguousarray(base, dtype=np.float32)
     return cv2.addWeighted(raw, alpha, base, 1.0 - alpha, 0.0)
 
 
@@ -593,6 +593,21 @@ class InpaintDiff:
         self.type = kwargs.get('type', "mask")
         self.disp_info = kwargs.get('disp_info', None)
         self.image = kwargs.get('image', None)
+        self._image_key = kwargs.get('image_key', None)
+        self._image_key_source_id = id(self.image)
+
+    def image_key(self):
+        image = np.asarray(self.image)
+        if self._image_key is not None and self._image_key_source_id == id(self.image):
+            return self._image_key
+        contiguous = np.ascontiguousarray(image)
+        self._image_key = (
+            image.shape,
+            image.dtype.str,
+            hash(contiguous.tobytes()),
+        )
+        self._image_key_source_id = id(self.image)
+        return self._image_key
 
 class InpaintEffect(Effect):
 
@@ -608,25 +623,19 @@ class InpaintEffect(Effect):
     def _inpaint_mask_hash(self):
         mask_keys = []
         for inpaint_mask in self.inpaint_mask_list:
-            image = np.ascontiguousarray(inpaint_mask.image)
             mask_keys.append((
                 tuple(inpaint_mask.disp_info),
-                image.shape,
-                image.dtype.str,
-                hash(image.tobytes()),
+                inpaint_mask.image_key(),
             ))
         return hash(tuple(mask_keys))
 
     def _inpaint_diff_hash(self):
         diff_keys = []
         for inpaint_diff in self.inpaint_diff_list:
-            image = np.ascontiguousarray(inpaint_diff.image)
             diff_keys.append((
                 inpaint_diff.type,
                 tuple(inpaint_diff.disp_info),
-                image.shape,
-                image.dtype.str,
-                hash(image.tobytes()),
+                inpaint_diff.image_key(),
             ))
         return hash(tuple(diff_keys))
 
@@ -2191,9 +2200,9 @@ class AINoiseReductonEffect(Effect):
             content_key = _ai_noise_content_key(nr, efconfig.upstream_hash)
             render_hash = hash((content_key, nr_intensity))
 
-            print(
-                f"DEBUG: AINoiseReducton make_diff. nr={nr}, upstream={efconfig.upstream_hash}, "
-                f"content_key={content_key}, render_hash={render_hash}, self.hash={self.hash}"
+            logging.debug(
+                "AINoiseReducton make_diff nr=%s upstream=%s content_key=%s render_hash=%s self.hash=%s",
+                nr, efconfig.upstream_hash, content_key, render_hash, self.hash,
             )
 
             if self.hash == render_hash and self.diff is not None:
@@ -2221,9 +2230,10 @@ class AINoiseReductonEffect(Effect):
 
             handled, result = self.try_async_execution(img, param, efconfig, param_hash_async)
             if handled:
-                print(
-                    f"DEBUG: try_async handled. result={id(result) if result is not None else None}, "
-                    f"combined={hash((param_hash_async, efconfig.upstream_hash))}"
+                logging.debug(
+                    "AINoiseReducton try_async handled result=%s combined=%s",
+                    id(result) if result is not None else None,
+                    hash((param_hash_async, efconfig.upstream_hash)),
                 )
                 if result is not None:
                     raw = np.asarray(result, dtype=np.float32)
@@ -2270,7 +2280,6 @@ class AINoiseReductonEffect(Effect):
                 AINoiseReductonEffect.__net = scunet_helper.setup()
 
             raw_diff = scunet_helper.predict_helper(AINoiseReductonEffect.__net, img)
-            AINoiseReductonEffect.__net = None
             param["ai_noise_reduction_result"] = raw_diff
             param["ai_noise_reduction_content_key"] = content_key
             blended = _ai_noise_blend_raw(raw_diff, img, nr_intensity)

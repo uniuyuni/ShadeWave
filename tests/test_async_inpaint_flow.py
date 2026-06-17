@@ -1,14 +1,16 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import effects
 from async_worker import AsyncWorker
-from effects import InpaintDiff, InpaintEffect
+from effects import InpaintDiff, InpaintEffect, _ai_noise_blend_raw
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +60,23 @@ class AsyncInpaintFlowTest(unittest.TestCase):
 
         self.assertIn("helpers.runware_object_eraser_helper", source)
         self.assertNotIn("import helpers.qwen_image_helper as qih", source)
+
+    def test_inpaint_diff_reuses_cached_image_key(self):
+        diff = InpaintDiff(type="mask", disp_info=(0, 0, 2, 2), image=np.ones((2, 2), dtype=np.float32))
+
+        with patch("effects.np.ascontiguousarray", wraps=effects.np.ascontiguousarray) as wrapped:
+            first = diff.image_key()
+            second = diff.image_key()
+
+        self.assertEqual(first, second)
+        self.assertEqual(1, wrapped.call_count)
+
+    def test_ai_noise_blend_skips_full_array_conversion_at_extreme_intensities(self):
+        base = np.zeros((2, 2, 3), dtype=np.float32)
+        raw = np.ones((2, 2, 3), dtype=np.float32)
+
+        self.assertIs(base, _ai_noise_blend_raw(raw, base, 0))
+        self.assertIs(raw, _ai_noise_blend_raw(raw, base, 100))
 
 
 if __name__ == "__main__":

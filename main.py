@@ -372,6 +372,8 @@ if __name__ == '__main__':
             self._actively_loading = False  # ファイル選択によるロード中フラグ（起動時のloading: Trueとは別管理）
             self._memory_last_load_stage = None
             self._memory_last_report_key = None
+            self._pending_final_display_cache = None
+            self._last_display_memory_policy_at = 0.0
 
             self.history = history.History()
             self.current_op = None
@@ -1094,7 +1096,7 @@ if __name__ == '__main__':
             is_dither = config.get_config('display_output_dither')
             is_downscale = config.get_config('display_output_downscale')
             target_fmt = 'ubyte' if (is_dither or is_downscale) else 'float'
-            self.preview_sample_image = np.clip(img, 0, 1)
+            self.preview_sample_image = img
             self._preview_pixel_last_xy = None
 
             if self.texture is None or self.texture.size != (img.shape[1], img.shape[0]):
@@ -1175,12 +1177,50 @@ if __name__ == '__main__':
                 return
             self._preview_pixel_last_xy = (x, y)
 
-            r, g, b = [float(v) for v in sample[y, x, :3]]
+            r, g, b = [float(np.clip(v, 0, 1)) for v in sample[y, x, :3]]
             luminance = 0.299 * r + 0.587 * g + 0.114 * b
             r8, g8, b8, l8 = [int(round(np.clip(v, 0, 1) * 255)) for v in (r, g, b, luminance)]
             self.preview_pixel_color = [r, g, b, 1]
             self.preview_pixel_text = f"R {r8:3d}  G {g8:3d}  B {b8:3d}  L {l8:3d}"
             self.preview_pixel_visible = True
+
+        def _maybe_enforce_display_memory_policy(self, reason="display_ready"):
+            now = time.monotonic()
+            if now - self._last_display_memory_policy_at < 1.0:
+                return
+            self._last_display_memory_policy_at = now
+            self.cache_system.enforce_memory_policy(owner=self, reason=reason)
+
+        def _remember_final_display_image_or_defer(self, file_path, image, *, stage=None, frame_version=None):
+            if self.current_op is not None:
+                self._pending_final_display_cache = (file_path, image, stage, frame_version)
+                return False
+            remembered = self.cache_system.remember_final_display_image(
+                file_path,
+                image,
+                stage=stage,
+                frame_version=frame_version,
+            )
+            if remembered:
+                self._pending_final_display_cache = None
+                self._maybe_enforce_display_memory_policy()
+            return remembered
+
+        def _flush_pending_final_display_cache(self):
+            pending = self._pending_final_display_cache
+            if pending is None:
+                return False
+            self._pending_final_display_cache = None
+            file_path, image, stage, frame_version = pending
+            remembered = self.cache_system.remember_final_display_image(
+                file_path,
+                image,
+                stage=stage,
+                frame_version=frame_version,
+            )
+            if remembered:
+                self._maybe_enforce_display_memory_policy("display_ready_deferred")
+            return remembered
 
         @kvmainthread
         def draw_histogram_view(self, hist_data):
@@ -1264,7 +1304,7 @@ if __name__ == '__main__':
 
                         debug_mask_geom = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled()
                         post_t0 = time.perf_counter() if debug_mask_geom else None
-                        img = np.array(img)
+                        img = np.asarray(img)
                         utils.print_nan_inf(img, "output")
                         _debug_display_stats("input", img)
 
@@ -1325,7 +1365,7 @@ if __name__ == '__main__':
                             if frame_version == self.pipeline_version:
                                 self.draw_histogram_view(hist_data)
                         if frame_version == self.pipeline_version and not fast_display and not self.is_press_space:
-                            self.cache_system.remember_final_display_image(
+                            self._remember_final_display_image_or_defer(
                                 getattr(self.imgset, "file_path", None),
                                 img_draw,
                                 stage=self._memory_last_load_stage,
@@ -1338,7 +1378,6 @@ if __name__ == '__main__':
                                 getattr(self.imgset.img, "shape", None),
                                 getattr(img_draw, "shape", None),
                             )
-                            self.cache_system.enforce_memory_policy(owner=self, reason="display_ready")
                         if debug_mask_geom:
                             logging.warning(
                                 "[MASK_GEOM] draw_image_core post timings frame_version=%s fast_display=%s skip_histogram=%s color_ms=%.1f preview_ms=%.1f hist_ms=%.1f total_ms=%.1f",
@@ -1730,7 +1769,8 @@ if __name__ == '__main__':
             if self.current_op.set_update_layer(layer_ctrl, op, index) is not None:
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
-                self.current_op = None
+            self.current_op = None
+            self._flush_pending_final_display_cache()
 
         def begin_history_reset_all(self):
             self.current_op = history.Operation(type="All")
@@ -1747,7 +1787,8 @@ if __name__ == '__main__':
             if self.current_op.check_backup_all(self.primary_param, self.ids['mask_editor2']) == False:
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
-                self.current_op = None
+            self.current_op = None
+            self._flush_pending_final_display_cache()
 
         def reset_all(self):
             
@@ -1814,6 +1855,7 @@ if __name__ == '__main__':
                 self.history.append(self.current_op)
                 self.history_panel.set_history(self.history)
             self.current_op = None
+            self._flush_pending_final_display_cache()
             if redraw_full_after_edit:
                 self.start_draw_image()
 

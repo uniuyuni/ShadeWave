@@ -75,12 +75,29 @@ class MemoryManagementFlowTest(unittest.TestCase):
 
     def test_display_ready_memory_log_and_pressure_check_are_hooked_after_blit(self):
         source = _function_source(MAIN_PATH, "draw_image_core")
+        cache_helper = _function_source(MAIN_PATH, "_remember_final_display_image_or_defer")
+        pressure_helper = _function_source(MAIN_PATH, "_maybe_enforce_display_memory_policy")
 
-        self.assertIn("self.cache_system.remember_final_display_image(", source)
+        self.assertIn("self._remember_final_display_image_or_defer(", source)
         self.assertIn("self._log_display_ready_memory(", source)
-        self.assertIn("self.cache_system.enforce_memory_policy(owner=self, reason=\"display_ready\")", source)
-        self.assertLess(source.index("self.blit_image("), source.index("self.cache_system.remember_final_display_image("))
+        self.assertIn("self.cache_system.remember_final_display_image(", cache_helper)
+        self.assertIn("self.current_op is not None", cache_helper)
+        self.assertIn("self._pending_final_display_cache", cache_helper)
+        self.assertIn("self.cache_system.enforce_memory_policy(owner=self, reason=reason)", pressure_helper)
+        self.assertIn("now - self._last_display_memory_policy_at < 1.0", pressure_helper)
+        self.assertLess(source.index("self.blit_image("), source.index("self._remember_final_display_image_or_defer("))
         self.assertLess(source.index("self.blit_image("), source.index("self._log_display_ready_memory("))
+
+    def test_display_pixel_sampling_does_not_copy_full_clipped_preview(self):
+        blit_source = _function_source(MAIN_PATH, "blit_image")
+        pixel_source = _function_source(MAIN_PATH, "update_preview_pixel_info")
+        draw_source = _function_source(MAIN_PATH, "draw_image_core")
+
+        self.assertIn("self.preview_sample_image = img", blit_source)
+        self.assertNotIn("self.preview_sample_image = np.clip(img, 0, 1)", blit_source)
+        self.assertIn("np.clip(v, 0, 1)", pixel_source)
+        self.assertIn("img = np.asarray(img)", draw_source)
+        self.assertNotIn("img = np.array(img)", draw_source)
 
     def test_reselect_can_show_cached_final_image_before_loading_finishes(self):
         source = _function_source(MAIN_PATH, "on_select")

@@ -163,72 +163,6 @@ def _respect_soft_drawing_region(refined, drawn):
     return refined * drawn
 
 
-# Full-image guide proxy: the whole image warped into the rotated canvas space at a
-# fixed reduced resolution, perceptually encoded, cached per (image, geometry, side).
-# Using a *fixed* guide (independent of the stroke set and of zoom) is what keeps the
-# selection stroke-independent: the per-stroke band solve and the global percentile
-# normalisation inside _draw_snap_edge_strength both see the same guide every time,
-# so adding a stroke can't change previously drawn parts.
-_FULLVIEW_PROXY_CACHE: dict = {}  # {key: (proxy_rgb, valid_bool, proxy_scale, canvas_size)}
-
-
-def _full_view_proxy_side():
-    try:
-        return max(512, int(os.getenv("QS_FULLVIEW_PROXY_SIDE", "1800")))
-    except ValueError:
-        return 1800
-
-
-def _build_full_view_proxy(ctx, original):
-    tcg = getattr(ctx, "tcg_info", {}) or {}
-    angle_deg = float(np.degrees(float(tcg.get("rotation", 0.0)) + float(tcg.get("rotation2", 0.0))))
-    flip = int(tcg.get("flip_mode", 0))
-    matrix = tcg.get("matrix", None)
-    if matrix is not None and np.allclose(np.asarray(matrix, dtype=np.float64), np.eye(3), atol=1e-9):
-        matrix = None
-    side = _full_view_proxy_side()
-    try:
-        fp = edge_refine._guide_fingerprint(original)
-        mkey = np.asarray(matrix, dtype=np.float64).tobytes() if matrix is not None else None
-        key = (fp, round(angle_deg, 4), flip, mkey, side)
-    except Exception:
-        fp = None
-        key = None
-    if key is not None and key in _FULLVIEW_PROXY_CACHE:
-        return _FULLVIEW_PROXY_CACHE[key]
-
-    trans, size, ttype = core.combined_rotation_canvas_matrix(
-        np.asarray(original).shape, angle_deg, flip, matrix)
-    trans3 = np.eye(3, dtype=np.float64)
-    if ttype == "perspective":
-        trans3 = np.asarray(trans, dtype=np.float64)
-    else:
-        trans3[:2, :] = np.asarray(trans, dtype=np.float64)
-    proxy_scale = min(1.0, float(side) / float(max(1, size)))
-    psize = max(1, int(round(size * proxy_scale)))
-    scale_m = np.array([[proxy_scale, 0.0, 0.0], [0.0, proxy_scale, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
-    m = scale_m @ trans3  # original -> proxy (rotated canvas, downscaled)
-
-    src = np.asarray(original, dtype=np.float32)
-    ones = np.ones(src.shape[:2], dtype=np.float32)
-    if ttype == "perspective":
-        proxy = cv2.warpPerspective(src, m, (psize, psize), flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-        valid = cv2.warpPerspective(ones, m, (psize, psize), flags=cv2.INTER_NEAREST,
-                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    else:
-        proxy = cv2.warpAffine(src, m[:2], (psize, psize), flags=cv2.INTER_LINEAR,
-                               borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-        valid = cv2.warpAffine(ones, m[:2], (psize, psize), flags=cv2.INTER_NEAREST,
-                               borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    proxy = _perceptual_encode_region(proxy, _full_view_exposure_ref(original))
-    result = (np.asarray(proxy, dtype=np.float32), valid > 0.5, float(proxy_scale), int(size))
-    if key is not None:
-        _FULLVIEW_PROXY_CACHE.clear()  # 1-slot: only the current image/geometry
-        _FULLVIEW_PROXY_CACHE[key] = result
-    return result
-
-
 def render_freedraw_edge_refine_full_view(
     ctx,
     effects_param,
@@ -263,25 +197,32 @@ def render_freedraw_edge_refine_full_view(
     if orig_w <= 0 or orig_h <= 0:
         return None
 
-    render_image, valid_proxy, total_scale, canvas_size = _build_full_view_proxy(ctx, original)
-    render_h, render_w = render_image.shape[:2]
-    if render_w <= 0 or render_h <= 0:
+    disp_info = params.get_disp_info(ctx.tcg_info)
+    render_rect = _freedraw_refine_render_rect(ctx, original, disp_info, effects_param, source_lines)
+    if render_rect is None:
         return None
-    # Validity: real image content (eroded) so the trace stays off the rotated-canvas
-    # border beyond the image edge.
+    rx0, ry0, rx1, ry1 = render_rect
+    # Geometry-correct guide: warp the original into the rotated render region at FULL
+    # resolution (sharp edges), then perceptually encode with a full-image exposure
+    # reference so edges match the display and are consistent across zoom.
+    source_region, valid_region = _warp_original_to_render_region(ctx, original, render_rect)
+    if source_region is None:
+        return None
+    source_region = _perceptual_encode_region(source_region, _full_view_exposure_ref(original))
+    region_h, region_w = source_region.shape[:2]
+    if region_w <= 0 or region_h <= 0:
+        return None
+    render_image, render_scale = _scale_freedraw_refine_region(source_region)
+    render_h, render_w = render_image.shape[:2]
+    total_scale = float(render_scale)
     valid_render = None
-    if valid_proxy is not None and bool(np.any(valid_proxy)) and not bool(np.all(valid_proxy)):
-        valid_render = cv2.erode(valid_proxy.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2) > 0
+    if valid_region is not None and bool(np.any(valid_region)) and not bool(np.all(valid_region)):
+        vr = cv2.resize(valid_region.astype(np.float32), (render_w, render_h),
+                        interpolation=cv2.INTER_NEAREST) > 0.5
+        valid_render = cv2.erode(vr.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2) > 0
 
-    render_ctx = _make_region_view_context(
-        ctx,
-        render_image,
-        (canvas_size, canvas_size),
-        total_scale,
-    )
-    # Strokes into proxy coordinates: the proxy covers the whole rotated canvas, so
-    # the origin is (0,0) and the only scale is the proxy downscale.
-    render_lines = _freedraw_lines_to_region_texture(ctx, source_lines, (0, 0), total_scale)
+    render_ctx = _make_region_view_context(ctx, render_image, (rx1 - rx0, ry1 - ry0), total_scale)
+    render_lines = _freedraw_lines_to_region_texture(ctx, source_lines, (rx0, ry0), total_scale)
     if not render_lines:
         return None
 
@@ -299,7 +240,7 @@ def render_freedraw_edge_refine_full_view(
     refined, render_support = edge_refine.refine_mask_edge_aware(
         render_image,
         render_mask,
-        guide_point=_safe_tcg_to_region_texture(ctx, center_tcg, (0, 0), total_scale),
+        guide_point=_safe_tcg_to_region_texture(ctx, center_tcg, (rx0, ry0), total_scale),
         mode=mode,
         radius=_edge_refine_radius_to_texture(
             render_ctx,
@@ -337,7 +278,7 @@ def render_freedraw_edge_refine_full_view(
         ctx,
         refined,
         tuple(mask_shape),
-        source_origin=(0, 0),
+        source_origin=(rx0, ry0),
         source_scale=total_scale,
     )
     support = (
@@ -345,7 +286,7 @@ def render_freedraw_edge_refine_full_view(
             ctx,
             render_support,
             tuple(mask_shape),
-            source_origin=(0, 0),
+            source_origin=(rx0, ry0),
             source_scale=total_scale,
         )
         if render_support is not None
