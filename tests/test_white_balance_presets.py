@@ -85,7 +85,21 @@ class WhiteBalancePresetTest(unittest.TestCase):
         self.assertIn("root.on_color_temperature_preset_value(self.text)", kv_source)
         self.assertIn("root.on_color_temperature_slider_changed()", kv_source)
         self.assertIn("effects.ColorTemperatureEffect.preset_values", preset_handler)
+        self.assertIn("effects.ColorTemperatureEffect.PRESET_AS_SHOT", preset_handler)
+        self.assertIn('self.ids["slider_color_temperature"].reset_value', preset_handler)
+        self.assertIn('self.ids["slider_color_tint"].reset_value', preset_handler)
         self.assertIn("effects.ColorTemperatureEffect.PRESET_CUSTOM", custom_handler)
+
+    def test_as_shot_param_write_uses_widget_reset_values(self):
+        source = pathlib.Path(effects.__file__).read_text()
+        set2param = ast.get_source_segment(
+            source,
+            _load_class_function(pathlib.Path(effects.__file__), "ColorTemperatureEffect", "set2param"),
+        )
+
+        self.assertIn("preset == self.PRESET_AS_SHOT", set2param)
+        self.assertIn('widget.ids["slider_color_temperature"].reset_value', set2param)
+        self.assertIn('widget.ids["slider_color_tint"].reset_value', set2param)
 
 
 if __name__ == "__main__":

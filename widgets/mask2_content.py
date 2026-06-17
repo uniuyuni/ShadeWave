@@ -122,8 +122,8 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         ]
 
         content = KVBoxLayout(orientation='vertical')
-        content.ref_padding = _ADD_MASK_POPUP_PADDING_REF
-        content.ref_spacing = _ADD_MASK_POPUP_SPACING_REF
+        content.ref_layout_padding = _ADD_MASK_POPUP_PADDING_REF
+        content.ref_layout_spacing = _ADD_MASK_POPUP_SPACING_REF
         popup = KVPopup(title=f'Select Mask Type ({maskop})', content=content, size_hint=(None, None))
         popup.ref_width = _ADD_MASK_POPUP_WIDTH_REF
 
@@ -175,6 +175,8 @@ class Mask2ContentPanel(KVBoxLayout):
         # mask_editor2.pyでは reversed(self.mask_list) でループして処理している（下から順に描画処理等）。
         # ここではリストの上を「一番上のレイヤー」とするなら、reversed する。
 
+        active_mask = self.editor.active_mask
+        created_mask = self.editor.get_created_mask()
         for mask in self.editor.get_mask_list():
             # CompositMask (Root)
             is_composit = mask.is_composit()
@@ -193,7 +195,7 @@ class Mask2ContentPanel(KVBoxLayout):
                 'indent': 0 if is_composit else 1,
                 'mask_ref': mask,
                 'mask_op': maskop,
-                'active': mask == self.editor.active_mask
+                'active': mask == active_mask or mask == created_mask
             })
         self.ids['mask2_rv'].data = data
 

@@ -50,3 +50,4 @@ libvips = ">=8.17.2,<9"
 radiance_denoise = { path = "radiance_denoise", editable = true }
 webcolors = ">=25.10.0, <26"
 llama-cpp-python = ">=0.3.28, <0.4"
+coremltools = ">=9.0, <10"

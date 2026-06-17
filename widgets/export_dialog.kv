@@ -11,21 +11,21 @@
 
     BoxLayout:
         orientation: 'vertical'
-        ref_padding: 5
-        ref_spacing: 5
+        ref_layout_padding: 5
+        ref_layout_spacing: 5
 
         GridLayout:
             size_hint_y: None
             height: self.minimum_height
             cols: 1
-            ref_spacing: 5
-            ref_padding: 5
+            ref_layout_spacing: 5
+            ref_layout_padding: 5
 
             # プリセットセクション
             BoxLayout:
                 size_hint_y: None
                 ref_height: 20
-                ref_spacing: 5
+                ref_layout_spacing: 5
                 
                 ParamLabel:
                     text: 'Preset'
@@ -44,7 +44,7 @@
                 orientation: 'horizontal'
                 size_hint_y: None
                 ref_height: 20
-                ref_spacing: 5
+                ref_layout_spacing: 5
 
                 ParamLabel:
                     text: 'Output Format'
@@ -76,7 +76,7 @@
                 orientation: 'horizontal'
                 size_hint_y: None
                 ref_height: 25
-                ref_spacing: 5
+                ref_layout_spacing: 5
 
                 ParamLabel:
                     text: 'Output Location'
@@ -84,7 +84,7 @@
                 BoxLayout:
                     size_hint_y: None
                     ref_height: 25
-                    ref_spacing: 5
+                    ref_layout_spacing: 5
 
                     TextInput:
                         text: root.output_path
@@ -104,7 +104,7 @@
                 orientation: 'horizontal'
                 size_hint_y: None
                 ref_height: 20
-                ref_spacing: 5
+                ref_layout_spacing: 5
 
                 ParamLabel:
                     text: 'Output Size'
@@ -138,7 +138,7 @@
             BoxLayout:
                 size_hint_y: None
                 ref_height: 20
-                ref_spacing: 5
+                ref_layout_spacing: 5
 
                 ParamLabel:
                     text: "Metadata"
@@ -171,7 +171,7 @@
             BoxLayout:
                 size_hint_y: None
                 ref_height: 20
-                ref_spacing: 5
+                ref_layout_spacing: 5
 
                 ParamLabel:
                     text: "ICC Profile"
@@ -188,7 +188,7 @@
             BoxLayout:
                 size_hint_y: None
                 ref_height: 20
-                ref_spacing: 5
+                ref_layout_spacing: 5
 
                 Button:
                     text: 'Save Preset'

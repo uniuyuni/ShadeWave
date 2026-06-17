@@ -1272,12 +1272,10 @@ class EdgeRefineTest(unittest.TestCase):
             rect_for((25, 25, 50, 50, 2.0)),
         )
 
-    def test_freedraw_full_view_defers_at_full_display(self):
-        """When the whole image is displayed (initial full rect), full-view must
-        defer (return None) so the regular crop path -- which already has the full
-        image as its guide -- handles it. The previous dx==0,dy==0 skip check
-        missed the centered letterbox of non-square images (a 160x100 image's
-        initial rect is (0,30,160,130) -> dy=30), wrongly running full-view there."""
+    def test_freedraw_full_view_runs_at_every_zoom_including_full(self):
+        """B1: full-view is the single draw edge-refine path at every zoom, including
+        full display, so the guide source / colour space never flips between fit and
+        zoom. It must produce a result here (not defer to the regular crop path)."""
         original = np.zeros((100, 160, 3), dtype=np.float32)
         original[:, :80] = (0.2, 0.7, 0.2)
         original[:, 80:] = (0.4, 0.7, 1.0)
@@ -1310,9 +1308,14 @@ class EdgeRefineTest(unittest.TestCase):
         mask_shape = (80, 80)
 
         old_full_view = os.environ.get("PLATYPUS_DRAW_QS_FULL_VIEW")
-        os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "1"  # even when enabled, defers at full display
+        os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)  # default ON
         try:
             full = extended_params.render_freedraw_edge_refine_full_view(
+                ctx, effects_param, [line], line.points[1], mask_shape,
+            )
+            # disabled explicitly -> None (escape hatch still works)
+            os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = "0"
+            disabled = extended_params.render_freedraw_edge_refine_full_view(
                 ctx, effects_param, [line], line.points[1], mask_shape,
             )
         finally:
@@ -1321,7 +1324,9 @@ class EdgeRefineTest(unittest.TestCase):
             else:
                 os.environ["PLATYPUS_DRAW_QS_FULL_VIEW"] = old_full_view
 
-        self.assertIsNone(full)
+        self.assertIsNotNone(full)
+        self.assertEqual(tuple(full.shape[:2]), mask_shape)
+        self.assertIsNone(disabled)
 
     def test_freedraw_full_view_guide_follows_image_rotation(self):
         """The full-view guide must be geometry-correct: its region equals the
@@ -1358,6 +1363,52 @@ class EdgeRefineTest(unittest.TestCase):
                 float(np.abs(region[4:-4, 4:-4] - unrot[4:-4, 4:-4]).mean()), 0.02,
                 f"warped guide is the unrotated crop at {ang} deg (rotation ignored)")
             self.assertTrue(bool(np.all(valid)))  # rect inside the image -> all valid
+
+    def test_freedraw_full_view_strokes_are_independent(self):
+        """Adding a second stroke must not change the selection of the first
+        (regression: the old stroke-local region grew with the stroke set, shifting
+        the global edge-strength percentile and re-solving earlier strokes). The
+        fixed full-image proxy keeps the guide constant, so earlier strokes are
+        byte-identical when a far-away stroke is added."""
+        os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)  # default on
+        W, H = 900, 700
+        original = np.zeros((H, W, 3), dtype=np.float32)
+        original[:, :450] = (0.20, 0.70, 0.20)
+        original[:, 450:] = (0.40, 0.50, 1.00)
+        disp_info = core.convert_rect_to_info((250, 150, 650, 550), 0.8)  # a zoomed crop
+
+        def solve(lines):
+            ctx = Mask2CoordinateContext()
+            ctx.set_texture_size(400, 400)
+            primary = {
+                "original_img_size": (W, H), "img_size": (W, H), "disp_info": disp_info,
+                "rotation": 0, "rotation2": 0, "flip_mode": 0, "matrix": np.eye(3),
+            }
+            ctx.set_primary_param(primary, disp_info)
+            ctx.set_ref_image(original, original)
+            extended_params._FULLVIEW_PROXY_CACHE.clear()
+            out = extended_params.render_freedraw_edge_refine_full_view(
+                ctx, {
+                    "switch_mask2_options": True, "mask2_edge_refine_mode": "Quick Select",
+                    "mask2_edge_refine_radius": 16, "mask2_edge_refine_strength": 80,
+                }, lines, lines[0].points[1], (400, 400))
+            return np.asarray(out, dtype=np.float32)
+
+        def stroke(cx):
+            L = mask_rasters.Line(False, 40, 100)
+            for ty in (-30, 0, 30):
+                L.add_point(cx, ty)
+            return L
+
+        s1 = stroke(-150)   # left of the colour edge
+        s2 = stroke(150)    # right, far away
+        only_s1 = solve([s1])
+        with_s2 = solve([s1, s2])
+        # s1 lives in the left half of the texture; it must be unchanged by adding s2.
+        half = only_s1.shape[1] // 2
+        d = np.abs(only_s1[:, :half] - with_s2[:, :half])
+        self.assertLess(int((d > 0.05).sum()), 5,
+                        f"adding a far stroke changed the first stroke's area ({int((d > 0.05).sum())} px)")
 
     def test_freedraw_full_view_off_image_margin_marked_invalid(self):
         """A render rect extending beyond the image must mark the off-image part

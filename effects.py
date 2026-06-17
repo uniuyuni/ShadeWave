@@ -39,11 +39,11 @@ from image_fidelity import heavy_ai_allowed
 
 def _ai_noise_content_key(nr, upstream_hash):
     """NR 入力に効く upstream（loading_wait までのハッシュ）と nr オンオフ。強度は含めない。"""
-    return hash((hash(nr), upstream_hash))
+    return hash(("nafnet_applesilicon_fast_v1", hash(nr), upstream_hash))
 
 
 def _ai_noise_blend_raw(raw, base, nr_intensity):
-    """SCUNet 素出力 raw とベース画像を強度でブレンド。"""
+    """AI NR 素出力 raw とベース画像を強度でブレンド。"""
     if raw is None or base is None or raw.shape != base.shape:
         return None
     raw = np.ascontiguousarray(raw, dtype=np.float32)
@@ -2207,7 +2207,7 @@ class AINoiseReductonEffect(Effect):
             raw_stored = param.get("ai_noise_reduction_result")
             key_stored = param.get("ai_noise_reduction_content_key")
 
-            # 保存済み raw + upstream 未変化なら SCUNet／ワーカーを呼ばずブレンドのみ
+            # 保存済み raw + upstream 未変化なら AI NR／ワーカーを呼ばずブレンドのみ
             if isinstance(raw_stored, np.ndarray) and raw_stored.shape == img.shape:
                 if key_stored is None or key_stored == content_key:
                     if key_stored is None:
@@ -2269,13 +2269,12 @@ class AINoiseReductonEffect(Effect):
                     self.hash = render_hash
                     return self.diff
 
-            import helpers.scunet_helper as scunet_helper
+            import helpers.nafnet_applesilicon_helper as nafnet_helper
 
             if AINoiseReductonEffect.__net is None:
-                AINoiseReductonEffect.__net = scunet_helper.setup_scunet(device=config.get_config("gpu_device"))
+                AINoiseReductonEffect.__net = nafnet_helper.setup(mode="fast")
 
-            raw_diff = scunet_helper.predict_scunet_helper(AINoiseReductonEffect.__net, img)
-            AINoiseReductonEffect.__net = None
+            raw_diff = nafnet_helper.predict_helper(AINoiseReductonEffect.__net, img)
             param["ai_noise_reduction_result"] = raw_diff
             param["ai_noise_reduction_content_key"] = content_key
             blended = _ai_noise_blend_raw(raw_diff, img, nr_intensity)
@@ -2698,7 +2697,13 @@ class ColorTemperatureEffect(Effect):
         preset = widget.ids["spinner_color_temperature_preset"].text or self.PRESET_AS_SHOT
         if preset not in self.PRESET_OPTIONS:
             preset = self.PRESET_CUSTOM
-        values = self.preset_values(preset, param)
+        if preset == self.PRESET_AS_SHOT:
+            values = (
+                widget.ids["slider_color_temperature"].reset_value,
+                widget.ids["slider_color_tint"].reset_value,
+            )
+        else:
+            values = self.preset_values(preset, param)
         if values is not None:
             param['color_temperature'], param['color_tint'] = values
         else:
@@ -4547,16 +4552,22 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_depth_max"].set_slider_value(self._get_param(param, 'mask2_depth_max'))
         widget.ids["switch_mask2_hue"].active = self._get_param(param, 'switch_mask2_hue')
         widget.ids["slider_mask2_hue_distance"].set_slider_value(self._get_param(param, 'mask2_hue_distance'))
-        widget.ids["slider_mask2_hue_min"].set_slider_value(self._get_param(param, 'mask2_hue_min'))
-        widget.ids["slider_mask2_hue_max"].set_slider_value(self._get_param(param, 'mask2_hue_max'))
+        widget.ids["slider_mask2_hue_range"].set_slider_value([
+            self._get_param(param, 'mask2_hue_min'),
+            self._get_param(param, 'mask2_hue_max'),
+        ])
         widget.ids["switch_mask2_lum"].active = self._get_param(param, 'switch_mask2_lum')
         widget.ids["slider_mask2_lum_distance"].set_slider_value(self._get_param(param, 'mask2_lum_distance'))
-        widget.ids["slider_mask2_lum_min"].set_slider_value(self._get_param(param, 'mask2_lum_min'))
-        widget.ids["slider_mask2_lum_max"].set_slider_value(self._get_param(param, 'mask2_lum_max'))
+        widget.ids["slider_mask2_lum_range"].set_slider_value([
+            self._get_param(param, 'mask2_lum_min'),
+            self._get_param(param, 'mask2_lum_max'),
+        ])
         widget.ids["switch_mask2_sat"].active = self._get_param(param, 'switch_mask2_sat')
         widget.ids["slider_mask2_sat_distance"].set_slider_value(self._get_param(param, 'mask2_sat_distance'))
-        widget.ids["slider_mask2_sat_min"].set_slider_value(self._get_param(param, 'mask2_sat_min'))
-        widget.ids["slider_mask2_sat_max"].set_slider_value(self._get_param(param, 'mask2_sat_max'))
+        widget.ids["slider_mask2_sat_range"].set_slider_value([
+            self._get_param(param, 'mask2_sat_min'),
+            self._get_param(param, 'mask2_sat_max'),
+        ])
         widget.ids["switch_mask2_options"].active = self._get_param(param, 'switch_mask2_options')
         widget.ids["slider_mask2_blur"].set_slider_value(self._get_param(param, 'mask2_blur'))
         widget.ids["slider_mask2_open_space"].set_slider_value(self._get_param(param, 'mask2_open_space'))
@@ -4596,16 +4607,31 @@ class Mask2Effect(Effect):
         param['mask2_depth_max'] = widget.ids["slider_mask2_depth_max"].value
         param['switch_mask2_hue'] = widget.ids["switch_mask2_hue"].active
         param['mask2_hue_distance'] = widget.ids["slider_mask2_hue_distance"].value
-        param['mask2_hue_min'] = widget.ids["slider_mask2_hue_min"].value
-        param['mask2_hue_max'] = widget.ids["slider_mask2_hue_max"].value
+        hue_values = list(widget.ids["slider_mask2_hue_range"].ids["slider"].values)
+        if len(hue_values) >= 2:
+            param['mask2_hue_min'] = hue_values[0]
+            param['mask2_hue_max'] = hue_values[-1]
+        else:
+            param['mask2_hue_min'] = widget.ids["slider_mask2_hue_range"].value
+            param['mask2_hue_max'] = widget.ids["slider_mask2_hue_range"].value
         param['switch_mask2_lum'] = widget.ids["switch_mask2_lum"].active
         param['mask2_lum_distance'] = widget.ids["slider_mask2_lum_distance"].value
-        param['mask2_lum_min'] = widget.ids["slider_mask2_lum_min"].value
-        param['mask2_lum_max'] = widget.ids["slider_mask2_lum_max"].value
+        lum_values = list(widget.ids["slider_mask2_lum_range"].ids["slider"].values)
+        if len(lum_values) >= 2:
+            param['mask2_lum_min'] = lum_values[0]
+            param['mask2_lum_max'] = lum_values[-1]
+        else:
+            param['mask2_lum_min'] = widget.ids["slider_mask2_lum_range"].value
+            param['mask2_lum_max'] = widget.ids["slider_mask2_lum_range"].value
         param['switch_mask2_sat'] = widget.ids["switch_mask2_sat"].active
         param['mask2_sat_distance'] = widget.ids["slider_mask2_sat_distance"].value
-        param['mask2_sat_min'] = widget.ids["slider_mask2_sat_min"].value
-        param['mask2_sat_max'] = widget.ids["slider_mask2_sat_max"].value
+        sat_values = list(widget.ids["slider_mask2_sat_range"].ids["slider"].values)
+        if len(sat_values) >= 2:
+            param['mask2_sat_min'] = sat_values[0]
+            param['mask2_sat_max'] = sat_values[-1]
+        else:
+            param['mask2_sat_min'] = widget.ids["slider_mask2_sat_range"].value
+            param['mask2_sat_max'] = widget.ids["slider_mask2_sat_range"].value
         param['switch_mask2_options'] = widget.ids["switch_mask2_options"].active
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
         param['mask2_open_space'] = widget.ids["slider_mask2_open_space"].value

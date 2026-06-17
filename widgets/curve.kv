@@ -1,14 +1,24 @@
 
 #:import kvutils utils.kvutils
+#:import ScaledButton widgets.scaled_button.ScaledButton
 
-<CurveResetButton@MDRoundFlatButton>:
+<CurveResetButton@ScaledButton>:
     size_hint: None, None
     ref_width: 60
     ref_height: 20
-    _min_width: kvutils.dpi_scale_width(self.ref_width)
-    _min_height: kvutils.dpi_scale_height(self.ref_height)
+    width: kvutils.dpi_scale_width(self.ref_width)
+    height: kvutils.dpi_scale_height(self.ref_height)
     padding: kvutils.dpi_scale_width(6), 0, kvutils.dpi_scale_width(6), 0
     font_size: '9pt'
+    bg_color_normal: 0.08, 0.09, 0.11, 0.45
+    bg_color_down: 0.13, 0.23, 0.74, 0.65
+    bg_color_disabled: 0.08, 0.08, 0.08, 0.25
+    canvas.after:
+        Color:
+            rgba: 1, 1, 1, 0.55 if not self.disabled else 0.25
+        Line:
+            rectangle: [self.x, self.y, self.width, self.height]
+            width: 1
 
 <CurveWidget>:
     orientation: 'vertical'

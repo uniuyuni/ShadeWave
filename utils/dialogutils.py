@@ -1,29 +1,7 @@
 from kivy.clock import Clock as KVClock
 from kivy.core.window import Window as KVWindow
 
-import macos as device
 from utils import kvutils
-
-
-def _window_state():
-    try:
-        scale = float(device.dpi_scale())
-    except Exception:
-        scale = 1.0
-    try:
-        x, y, w, h, display = device.get_self_window_position()
-    except Exception:
-        x, y, w, h, display = (0, 0, 0, 0, None)
-    return (
-        scale,
-        float(KVWindow.width or 0),
-        float(KVWindow.height or 0),
-        float(x or 0),
-        float(y or 0),
-        float(w or 0),
-        float(h or 0),
-        display,
-    )
 
 
 def apply_ref_scaling(dialog, center=True):
@@ -46,7 +24,7 @@ def install_ref_scaling(dialog, center=True, poll_interval=0.25, on_rescale=None
     }
 
     def _scale(force=False):
-        current = _window_state()
+        current = kvutils.get_window_state()
         changed = force or current != state["last"]
         if not changed:
             return

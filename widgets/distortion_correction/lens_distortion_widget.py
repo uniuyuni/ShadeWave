@@ -1,7 +1,5 @@
 """
 レンズ歪み補正Widget
-
-KivyMDベースのGUIウィジェット
 """
 
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
@@ -10,7 +8,6 @@ from kivy.properties import (
 )
 from kivy.graphics import Color, Line, PushMatrix, PopMatrix, Scale
 from kivy.clock import mainthread as kvmainthread
-from kivymd.uix.button import MDRaisedButton
 from kivy.uix.image import Image as KVImage
 import numpy as np
 import cv2
@@ -39,7 +36,7 @@ class LensDistortionWidget(KVFloatLayout):
         
         # 自動検出ボタン
         """
-        self.auto_detect_btn = MDRaisedButton(
+        self.auto_detect_btn = Button(
             text="Auto",
             size_hint=(None, None),
             size=(120, 48),

@@ -850,7 +850,33 @@ class BaseMask(KVWidget):
             draw_strokes=edge_refine_draw_strokes,
             return_support=True,
         )
+        if self._edge_refine_selection_strategy() == edge_refine.STRATEGY_DRAW:
+            refined = self._respect_soft_drawing(refined, image)
         return refined, support
+
+    def _respect_soft_drawing(self, refined, drawn):
+        """Respect the user's actual painted alpha for a soft-brush drawing.
+
+        Quick Select fills its grown/snapped region as a hard (binary) support, so a
+        mask painted with a low Brush Hardness came out fully hard. Instead of
+        synthesising softness, modulate the result by the *original drawn mask* so the
+        true brush falloff is preserved (result = quick_select x drawing). A
+        near-binary (hard-brush) drawing is left untouched, so the grow-to-edge
+        behaviour for rough dabs is unchanged; softness is detected from the drawn
+        alpha itself, no extra parameter."""
+        drawn = np.clip(np.asarray(drawn, dtype=np.float32), 0.0, 1.0)
+        refined = np.asarray(refined, dtype=np.float32)
+        if drawn.shape != refined.shape:
+            return refined
+        painted = drawn > 0.02
+        n = int(np.count_nonzero(painted))
+        if n == 0:
+            return refined
+        # fraction of painted pixels that are partial alpha => soft brush
+        partial = np.count_nonzero(painted & (drawn < 0.9)) / float(n)
+        if partial < 0.2:
+            return refined  # essentially hard: keep grow-to-edge
+        return refined * drawn
 
     def _edge_refine_enabled_for_mask(self):
         return True
@@ -3701,7 +3727,7 @@ class DepthMapMask(BaseMask):
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
-            depth_map_mask = core.rotation(depth_map_mask, rotate_rad, flip, np.array(matrix).reshape(3, 3))
+            depth_map_mask = core.rotation(depth_map_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
             depth_map_mask = self._fit_image_mask_to_texture(depth_map_mask)
             if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings') == True:
                 if effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert') == True:

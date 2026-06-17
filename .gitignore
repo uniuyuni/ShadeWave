@@ -14,6 +14,7 @@ SAM3/
 SCUNet/
 demosaicnet_torch/
 Real-ESRGAN/
+NAFNet_AppleSilicon/
 splitimage/**build/**
 splitimage/*.egg*/**
 

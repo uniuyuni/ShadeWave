@@ -1,29 +1,21 @@
 """
 ラインガイド補正Widget
-
-KivyMDベースのGUIウィジェット
 """
 
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.widget import Widget as KVWidget
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import ListProperty as KVListProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty
 from kivy.graphics import Color as KVColor, Line as KVLine
 from kivy.clock import mainthread as kvmainthread
-from kivymd.uix.button import MDRaisedButton, MDFlatButton
-from kivymd.uix.boxlayout import MDBoxLayout
 from kivy.uix.image import Image as KVImage
 import numpy as np
 import cv2
 
 from cores.distortion_correction.warp_correction import correct_with_lines
 import params
-from .ui_metrics import (
-    apply_geom_button_metrics,
-    apply_geom_layout_metrics,
-    geom_button_size,
-    geom_scaled,
-    install_geom_ref_scaling,
-)
+from utils import kvutils
+from widgets.scaled_button import ScaledButton
 
 
 class LineGuideCorrectionWidget(KVFloatLayout):
@@ -63,34 +55,30 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         )
 
         # UIコントロール
-        button_layout = MDBoxLayout(
+        button_layout = KVBoxLayout(
             orientation='horizontal',
             size_hint=(None, None),
-            size=geom_button_size(180),
-            pos_hint={'center_x': 0.5, 'y': 0.02},
-            adaptive_size=True,
-            spacing=geom_scaled(10),
-            padding=geom_scaled(5)
+            pos_hint={'center_x': 0.5, 'y': 0.035},
         )
-        apply_geom_layout_metrics(
-            button_layout,
-            width_ref=180,
-            spacing_ref=10,
-            padding_ref=5,
-        )
+        button_layout.ref_width = 180
+        button_layout.ref_height = 22
+        button_layout.ref_layout_spacing = 10
+        button_layout.ref_layout_padding = 5
+        button_layout.bind(minimum_height=button_layout.setter('height'))
+        kvutils.traverse_widget(button_layout)
         
-        self.clear_btn = MDRaisedButton(text="Reset")
-        apply_geom_button_metrics(self.clear_btn)
+        self.clear_btn = ScaledButton(text="Reset")
+        self.clear_btn.set_ref_metrics()
         self.clear_btn.bind(on_press=self.clear_lines)
         button_layout.add_widget(self.clear_btn)
 
-        self.apply_btn = MDRaisedButton(text="Apply")
-        apply_geom_button_metrics(self.apply_btn)
+        self.apply_btn = ScaledButton(text="Apply")
+        self.apply_btn.set_ref_metrics()
         self.apply_btn.bind(on_press=lambda x: self.apply_lines())
         button_layout.add_widget(self.apply_btn)
 
-        self.revert_btn = MDRaisedButton(text="Revert")
-        apply_geom_button_metrics(self.revert_btn)
+        self.revert_btn = ScaledButton(text="Revert")
+        self.revert_btn.set_ref_metrics()
         self.revert_btn.bind(on_press=self.revert_lines)
         button_layout.add_widget(self.revert_btn)
         
@@ -102,7 +90,7 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         self.bind(pos=self._redraw_lines)
 
         self._redraw_lines()
-        install_geom_ref_scaling(self)
+        kvutils.install_ref_scaling(self)
 
     def set_callback(self, callback):
         self.on_callback = callback

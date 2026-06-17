@@ -15,6 +15,18 @@
 #:include widgets/compact_switch.kv
 #:include widgets/define.kv
 #:import iconutils utils.iconutils
+#:import md_icons kivymd.icon_definitions.md_icons
+#:import ScaledButton widgets.scaled_button.ScaledButton
+#:import ScaledToggleButton widgets.scaled_button.ScaledToggleButton
+#:import LongPressScaledButton widgets.scaled_button.LongPressScaledButton
+
+<Button>:
+    background_down: ''
+    background_color: dark_blue if self.state == 'down' else [0.48, 0.48, 0.48, 1]
+
+<ToggleButton>:
+    background_down: ''
+    background_color: dark_blue if self.state == 'down' else [0.48, 0.48, 0.48, 1]
 
 <DistortionEffectButton@ToggleButton>:
     group: 'effect'
@@ -22,23 +34,40 @@
     pos_hint: {'center_x': .5, 'center_y': .5}
     ref_height: 20
 
-<ParamChip@MDChip>:
-    type: 'filter'
+<ParamChip@LongPressScaledButton>:
     pos_hint: {"center_x": .5, "center_y": .5}
+    size_hint: None, None
+    ref_width: 60
     size_hint_y: None
     ref_height: 20
-    radius: 40
-    line_color: 'grey'
-
-<ParamChipText@MDChipText>:
     font_size: '9pt'
     color: 'b0b0b0'
+    bg_color_normal: 0.08, 0.09, 0.11, 0.42
+    bg_color_down: 0.13, 0.23, 0.74, 0.68
+    canvas.after:
+        Color:
+            rgba: 1, 1, 1, 0.55 if not self.disabled else 0.25
+        Line:
+            rectangle: [self.x, self.y, self.width, self.height]
+            width: 1
+
+<ParamChipText@Label>:
+    font_size: '9pt'
+    color: 'b0b0b0'
+    text_size: self.size
+    halign: 'center'
+    valign: 'middle'
+    opacity: 0
+    size_hint: None, None
+    size: 0, 0
+    on_parent: if self.parent: self.parent.text = self.text
+    on_text: if self.parent: self.parent.text = self.text
 
 <ParamToggleButton@ToggleButton>:
     pos_hint: {"center_x": .5, "center_y": .5}
     size_hint: None, None
     ref_width: 60
-    ref_height: 20
+    ref_height: 22
     font_size: '9pt'
 
 <ParamSwitch@CompactSwitch>:
@@ -89,7 +118,7 @@
     height: self.parent.width
     ref_tab_width: 70
     ref_tab_height: 20
-    ref_padding: 8
+    ref_layout_padding: 8
     do_default_tab: False
     on_kv_post: self.switch_to(root.tab_list[0]) if root.tab_list else None
 
@@ -112,14 +141,17 @@
     background_normal: 'gray'
     md_bg_color: 'gray'
 
-<IconToggleButton@MDIconButton+ToggleButtonBehavior>:
-    _no_ripple_effect: True
-    canvas.before:
+<IconToggleButton@ScaledToggleButton>:
+    text: md_icons.get(self.icon, "")
+    font_name: "Icons"
+    font_size: self.icon_size if self.icon_size else '21dp'
+    color: [0.78, 0.78, 0.78, 1] if self.state == 'normal' else [0.1, 0.1, 0.1, 1]
+    canvas.after:
         Color:
             rgba: [0.4, 0.4, 0.4, 1] if self.state == 'normal' else [1, 1, 1, 1]
         Line:
-            rectangle: [self.x, self.y, self.width, self.height]
-            width: 1   
+            rectangle: [self.x + 0.5, self.y + 0.5, max(0, self.width - 1), max(0, self.height - 1)]
+            width: 1
 
 <MainWidget>:
     loading: False
@@ -145,7 +177,7 @@
                     size_hint_y: None
                     height: self.minimum_height
                     ref_margin: 8
-                    ref_spacing: 8
+                    ref_layout_spacing: 8
 
                     CollapsibleBox:
                         title: " Histogram"
@@ -161,7 +193,7 @@
                                 id: histogram
                                 size_hint: 1, None
                                 ref_height: 128-32
-                                ref_padding: 4
+                                ref_layout_padding: 4
                                 canvas:
                                     Color:
                                         rgba: dark_color
@@ -185,7 +217,7 @@
                                     size_hint: None, None
                                     ref_width: 30
                                     ref_height: 22
-                                    ref_padding: 8, 4, 8, 6
+                                    ref_layout_padding: 8, 4, 8, 6
                                     on_state: root.start_draw_image()
 
                                 HSpacer:
@@ -199,7 +231,7 @@
                                     size_hint: None, None
                                     ref_width: 30
                                     ref_height: 22
-                                    ref_padding: 8, 4, 8, 6
+                                    ref_layout_padding: 8, 4, 8, 6
                                     on_state: root.start_draw_image()
 
                                 HSpacer:
@@ -210,7 +242,7 @@
                                     size_hint: 1, 1
                                     opacity: 1 if root.preview_pixel_visible else 0
                                     disabled: not root.preview_pixel_visible
-                                    ref_spacing: 4
+                                    ref_layout_spacing: 4
 
                                     Label:
                                         text: root.preview_pixel_text
@@ -410,7 +442,7 @@
 
                     Button:
                         size_hint: 0.1, None
-                        ref_padding: 3
+                        ref_layout_padding: 3
                         ref_height: 24
                         text: "Select"
                         disabled: root.loading == True
@@ -432,7 +464,7 @@
                     ToggleButton:
                         id: mask2
                         size_hint: 0.1, None
-                        ref_padding: 3
+                        ref_layout_padding: 3
                         ref_height: 24
                         text: "Mask2"
                         # image_loaded==False の間は loading==True の局面を内包するので loading 判定は不要。
@@ -466,7 +498,7 @@
                             color: 1, 1, 1, 1
                         Button:
                             size_hint: 0.8, None
-                            ref_padding: 3
+                            ref_layout_padding: 3
                             ref_height: 24
                             text: 'Cancel' if root.export_in_progress else 'Export'
                             # image_loaded==False は loading==True を内包するので 1 条件で十分。
@@ -540,7 +572,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_white_balance
@@ -1456,7 +1488,7 @@
                                         ref_width: 256
                                         ref_height: 20
                                         cols: 6
-                                        ref_spacing: 2
+                                        ref_layout_spacing: 2
 
                                         ParamLabel:
                                             text: "Color"
@@ -1501,7 +1533,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_tone_curves
@@ -1751,7 +1783,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_ai_noise_reduction
@@ -1831,16 +1863,18 @@
                                         size_hint_x: 0.25
                                     ParamToggleButton:
                                         id: switch_inpaint
+                                        size_hint_x: None
+                                        ref_width: 80
                                         disabled: root.ai_inpaint_processing
                                         on_press: root.begin_history_effect_ctrl(0, 'inpaint')
                                         on_state: root.apply_effects_lv(0, 'inpaint')
                                         on_release: root.end_history_effect_ctrl(0, 'inpaint')
-                                        text: "Mask"
+                                        text: "Make mask"
                                     ParamChip:
                                         type: 'assist'
                                         id: button_inpaint_predict
                                         size_hint_x: None
-                                        ref_width: 60
+                                        ref_width: 40
                                         disabled: root.ai_inpaint_processing
                                         on_press: root.begin_history_effect_ctrl(0, 'inpaint')
                                         on_press: root.apply_effects_lv(0, 'inpaint')
@@ -1863,15 +1897,17 @@
                                         size_hint_x: 0.25
                                     ParamToggleButton:
                                         id: switch_patchmatch_inpaint
+                                        size_hint_x: None
+                                        ref_width: 80
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
                                         on_state: root.apply_effects_lv(0, 'patchmatch_inpaint')
                                         on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
-                                        text: "Mask"
+                                        text: "Make mask"
                                     ParamChip:
                                         type: 'assist'
                                         id: button_patchmatch_inpaint_predict
                                         size_hint_x: None
-                                        ref_width: 60
+                                        ref_width: 40
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
                                         on_press: root.apply_effects_lv(0, 'patchmatch_inpaint')
                                         #on_release: root._set_diff_list_to_patchmatch_inpaint_edit()
@@ -2192,7 +2228,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_film_simulation
@@ -2652,7 +2688,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
 
                                 GeModePanel:
@@ -2790,6 +2826,7 @@
                                         ToggleButton:
                                             id: btn_lens
                                             pos_hint: {'center_x': .5, 'center_y': .5}
+                                            size_hint_x: 0.3
                                             ref_height: 20
                                             text: "Lens"
                                             group: 'distortion'
@@ -2798,6 +2835,7 @@
                                         ToggleButton:
                                             id: btn_trapezoid
                                             pos_hint: {'center_x': .5, 'center_y': .5}
+                                            size_hint_x: 0.4
                                             ref_height: 20
                                             text: "Trapezoid"
                                             group: 'distortion'
@@ -2806,6 +2844,7 @@
                                         ToggleButton:
                                             id: btn_lines
                                             pos_hint: {'center_x': .5, 'center_y': .5}
+                                            size_hint_x: 0.3
                                             ref_height: 20
                                             text: "Lines"
                                             group: 'distortion'
@@ -2932,7 +2971,7 @@
                                             ref_width: 256
                                             ref_height: 20
                                             cols: 4
-                                            ref_spacing: 2
+                                            ref_layout_spacing: 2
 
                                             ParamLabel:
                                                 text: "Flip H"
@@ -3031,7 +3070,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_mask2_draw_effects
@@ -3183,7 +3222,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_mask2_settings
@@ -3203,7 +3242,7 @@
                                         ref_width: 256
                                         ref_height: 20
                                         cols: 6
-                                        ref_spacing: 2
+                                        ref_layout_spacing: 2
 
                                         ParamLabel:
                                             text: "Invert"
@@ -3285,25 +3324,20 @@
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
                                 ParamSlider:
-                                    id: slider_mask2_hue_min
-                                    text: "Min"
+                                    id: slider_mask2_hue_range
+                                    text: "Range"
                                     min: 0
                                     max: 359
-                                    value: 0
                                     step: 1
+                                    slider_values: [0, 359]
+                                    allow_overlap: True
+                                    multi_value_edit_mode: "active"
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
-                                ParamSlider:
-                                    id: slider_mask2_hue_max
-                                    text: "Max"
-                                    min: 0
-                                    max: 359
-                                    value: 359
-                                    step: 1
-                                    on_slider: root.apply_effects_lv(3, 'mask2')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                VSpacer:
+                                    ref_height: 2
 
                                 ParamBoxLayout:
                                     ParamLabel:
@@ -3381,22 +3415,13 @@
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
                                 ParamSlider:
-                                    id: slider_mask2_lum_min
-                                    text: "Min"
+                                    id: slider_mask2_lum_range
+                                    text: "Range"
                                     min: 0
                                     max: 255
-                                    value: 0
                                     step: 1
-                                    on_slider: root.apply_effects_lv(3, 'mask2')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
-                                ParamSlider:
-                                    id: slider_mask2_lum_max
-                                    text: "Max"
-                                    min: 0
-                                    max: 255
-                                    value: 255
-                                    step: 1
+                                    slider_values: [0, 255]
+                                    multi_value_edit_mode: "active"
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
@@ -3419,22 +3444,13 @@
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
                                 ParamSlider:
-                                    id: slider_mask2_sat_min
-                                    text: "Min"
+                                    id: slider_mask2_sat_range
+                                    text: "Range"
                                     min: 0
                                     max: 255
-                                    value: 0
                                     step: 1
-                                    on_slider: root.apply_effects_lv(3, 'mask2')
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
-                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
-                                ParamSlider:
-                                    id: slider_mask2_sat_max
-                                    text: "Max"
-                                    min: 0
-                                    max: 255
-                                    value: 255
-                                    step: 1
+                                    slider_values: [0, 255]
+                                    multi_value_edit_mode: "active"
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
@@ -3503,7 +3519,7 @@
                                         ref_width: 256
                                         ref_height: 20
                                         cols: 2
-                                        ref_spacing: 2
+                                        ref_layout_spacing: 2
 
                                         ParamLabel:
                                             text: "Polyline Fill"
@@ -3663,7 +3679,7 @@
                                 size_hint_y: None
                                 height: self.minimum_height
                                 md_bg_color: dark_color
-                                ref_padding: 4
+                                ref_layout_padding: 4
 
                                 HeadLabel:
                                     id: switch_distortion

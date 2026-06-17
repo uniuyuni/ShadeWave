@@ -1,4 +1,12 @@
 
+<Button>:
+    background_down: ''
+    background_color: [0.13, 0.23, 0.74, 1] if self.state == 'down' else [0.48, 0.48, 0.48, 1]
+
+<ToggleButton>:
+    background_down: ''
+    background_color: [0.13, 0.23, 0.74, 1] if self.state == 'down' else [0.48, 0.48, 0.48, 1]
+
 <EffectButton@ToggleButton>:
     group: 'effect'
     size_hint_x: None

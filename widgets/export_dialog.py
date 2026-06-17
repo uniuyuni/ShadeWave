@@ -38,15 +38,15 @@ class PresetNameDialog(KVPopup):
         
         layout = KVBoxLayout(orientation='vertical')
         #layout.pos_hint = {'left': 0, 'top': 0}
-        layout.ref_padding = 5
-        layout.ref_spacing = 5
+        layout.ref_layout_padding = 5
+        layout.ref_layout_spacing = 5
 
         self.preset_name = KVTextInput(multiline=False, size_hint_y=None)
         self.preset_name.ref_height = 28
 
         button_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None)
         button_layout.ref_height = 30
-        button_layout.ref_spacing = 5
+        button_layout.ref_layout_spacing = 5
 
         cancel_button = KVButton(text='Cancel', size_hint_y=None)
         cancel_button.ref_height = 30
@@ -82,8 +82,8 @@ class ExportConfirmDialog(KVPopup):
         self.ref_height = 300
         
         layout = KVBoxLayout(orientation='vertical')
-        layout.ref_padding = 5
-        layout.ref_spacing = 5
+        layout.ref_layout_padding = 5
+        layout.ref_layout_spacing = 5
         rename_button = KVButton(text='Rename')
         rename_button.bind(on_press=lambda x: self._on_callback(callback('Rename', preset)))
         layout.add_widget(rename_button)
@@ -315,10 +315,10 @@ class Export_DialogApp(MDApp):
                     child.width = kvutils.dpi_scale_width(child.ref_width)
                 if hasattr(child, 'ref_height'):
                     child.height = kvutils.dpi_scale_height(child.ref_height)
-                if hasattr(child, 'ref_padding'):
-                    child.padding = kvutils.dpi_scale_width(child.ref_padding)
-                if hasattr(child, 'ref_spacing'):
-                    child.spacing = kvutils.dpi_scale_width(child.ref_spacing)
+                if hasattr(child, 'ref_layout_padding'):
+                    child.padding = kvutils.dpi_scale_width(child.ref_layout_padding)
+                if hasattr(child, 'ref_layout_spacing'):
+                    child.spacing = kvutils.dpi_scale_width(child.ref_layout_spacing)
                 if hasattr(child, 'ref_tab_width'):
                     child.tab_width = kvutils.dpi_scale_width(child.ref_tab_width)
                 if hasattr(child, 'ref_tab_height'):

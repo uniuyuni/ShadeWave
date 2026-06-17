@@ -211,7 +211,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.elevation = 2
 
         vbox = MDBoxLayout(orientation='vertical')
-        vbox.ref_padding = 8
+        vbox.ref_layout_padding = 8
 
         # サムネイル表示
         self.image_box = FloatLayout(size_hint_y=0.62)
@@ -841,7 +841,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 else:
                     if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
                         with lre.imread(file_path) as raw:
-                            thumb = raw.postprocess(output_bps=8)
+                            thumb = raw.postprocess(demosaic_algorithm=lre.DemosaicAlgorithm.Linear, output_bps=8)
                     elif file_path.lower().endswith(define.SUPPORTED_FORMATS_EXR):
                         # EXR は pyvips 非対応。OpenEXR で読み、表示用にトーンマップ済み float32[0,1] を得る。
                         import cores.exr_io as exr_io

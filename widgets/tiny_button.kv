@@ -1,24 +1,24 @@
 
 <TinyButton>:
-    # デフォルトの背景画像（角丸や枠線付き）を無効化
-    background_normal: ''
-    background_down: ''
-    background_disabled_normal: ''
-    background_disabled_down: ''
-    
-    # 標準の背景色は透明にしておく
-    background_color: 0, 0, 0, 0
-
-    canvas.before:
+    canvas.after:
         # 色の決定ロジック
         Color:
             rgba:
                 self.bg_color_disabled if self.disabled else \
                 (self.bg_color_down if self.state == 'down' else self.bg_color_normal)
-        
-        # 上下左右に1ドットの隙間を作る描画
+
+        # ボタン列を入力欄になじませるため、通常時は面だけを描き、縁取りは描かない。
         Rectangle:
-            # 位置を 右・上に +1 ずらす
-            pos: int(self.x + 1), int(self.y + 1)
-            # 幅・高さを -2 (左右で1ずつ、上下で1ずつ) 減らす
-            size: max(0, self.width - 2), max(0, self.height - 2)
+            pos: self.x, self.y
+            size: self.width, self.height
+
+        Color:
+            rgba: 0.36, 0.36, 0.38, 1 if not self.disabled else 0.25
+        Line:
+            rectangle: [self.x + 0.5, self.y + 0.5, max(0, self.width - 1), max(0, self.height - 1)]
+            width: 1
+
+        Color:
+            rgba: 0.62, 0.62, 0.64, 1 if not self.disabled else 0.35
+        Triangle:
+            points: self.triangle_points

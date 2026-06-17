@@ -1454,31 +1454,40 @@ if __name__ == '__main__':
                     self.end_history_effect_ctrl(0, 'crop')
 
         def _get_active_effects(self, mask_id=None, lv=None, subname=None):
+            editor = self.ids['mask_editor2']
             if mask_id is None:
-                mask = self.ids['mask_editor2'].get_active_mask()
+                mask = editor.get_created_mask() or editor.get_active_mask()
             else:
-                mask = self.ids['mask_editor2'].find_mask(mask_id)
+                mask = editor.find_mask(mask_id)
 
             if mask is None:
                 return (self.primary_effects, self.primary_param, None)
 
             # マスクパラメータの振り分け
+            if mask.is_composit():
+                composit_mask = mask
+            else:
+                try:
+                    mask_index = editor.get_mask_list().index(mask)
+                except ValueError:
+                    mask_index = 0
+                composit_mask = editor.find_composit_mask(mask, mask_index)
             if lv is not None:
-                composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
                 if lv == 3:
-                    if subname == 'mask2_draw_effects' and not mask.is_composit():
+                    if subname == 'mask2_draw_effects' and not mask.is_composit() and composit_mask is not None:
                         mask = composit_mask
-                    elif subname == 'mask_geometry' and not mask.is_composit():
+                    elif subname == 'mask_geometry' and not mask.is_composit() and composit_mask is not None:
                         # マスク自身の Geometry 変形は Composit 直下に保存・適用する
                         mask = composit_mask
                 else:
                     # それ以外は親のCompositMaskへ（自分がCompositMaskなら自分へ）
                     if not mask.is_composit():
-                        composit_mask = self.ids['mask_editor2'].find_composit_mask(mask)
+                        composit_mask = editor.find_composit_mask(mask)
                         if composit_mask is not None:
                             mask = composit_mask
 
-            return (composit_mask.effects, mask.effects_param, mask.mask_id)
+            effects_owner = composit_mask if composit_mask is not None else mask
+            return (effects_owner.effects, mask.effects_param, mask.mask_id)
         
         def apply_effects_lv(self, lv, effect, sync=False, subname=None, defer_draw=False, overlay_reason="param_change"):
             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and (
@@ -1586,7 +1595,13 @@ if __name__ == '__main__':
                 self.sync_draw_image()
 
         def on_color_temperature_preset_value(self, preset):
-            values = effects.ColorTemperatureEffect.preset_values(preset, self.primary_param)
+            if preset == effects.ColorTemperatureEffect.PRESET_AS_SHOT:
+                values = (
+                    self.ids["slider_color_temperature"].reset_value,
+                    self.ids["slider_color_tint"].reset_value,
+                )
+            else:
+                values = effects.ColorTemperatureEffect.preset_values(preset, self.primary_param)
             if values is None:
                 return
             temp, tint = values
@@ -2105,8 +2120,8 @@ if __name__ == '__main__':
 
         def show_warning_dialog(self, message):
             layout = KVBoxLayout(orientation="vertical")
-            layout.ref_padding = 10
-            layout.ref_spacing = 10
+            layout.ref_layout_padding = 10
+            layout.ref_layout_spacing = 10
             layout.add_widget(KVLabel(text=message))
             btn = KVButton(text="OK", size_hint_y=None)
             btn.ref_height = 40
@@ -2135,13 +2150,13 @@ if __name__ == '__main__':
 
         def _open_preset_name_dialog(self, partial_param):
             layout = KVBoxLayout(orientation="vertical")
-            layout.ref_padding = 10
-            layout.ref_spacing = 10
+            layout.ref_layout_padding = 10
+            layout.ref_layout_spacing = 10
             text_input = KVTextInput(multiline=False, hint_text="Preset name", size_hint_y=None)
             text_input.ref_height = 32
             buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None)
             buttons.ref_height = 40
-            buttons.ref_spacing = 8
+            buttons.ref_layout_spacing = 8
             cancel_btn = KVButton(text="Cancel")
             ok_btn = KVButton(text="OK")
             buttons.add_widget(cancel_btn)
@@ -2189,12 +2204,12 @@ if __name__ == '__main__':
             if self.mask2_wait_full_load:
                 return
             layout = KVBoxLayout(orientation="vertical")
-            layout.ref_padding = 10
-            layout.ref_spacing = 10
+            layout.ref_layout_padding = 10
+            layout.ref_layout_spacing = 10
             layout.add_widget(KVLabel(text=f'Delete preset "{preset_name}"?'))
             buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None)
             buttons.ref_height = 40
-            buttons.ref_spacing = 8
+            buttons.ref_layout_spacing = 8
             cancel_btn = KVButton(text="Cancel")
             delete_btn = KVButton(text="Delete")
             buttons.add_widget(cancel_btn)
@@ -3148,16 +3163,13 @@ if __name__ == '__main__':
                     'slider_mask2_depth_max',
                     'switch_mask2_hue',
                     'slider_mask2_hue_distance',
-                    'slider_mask2_hue_min',
-                    'slider_mask2_hue_max',
+                    'slider_mask2_hue_range',
                     'switch_mask2_lum',
                     'slider_mask2_lum_distance',
-                    'slider_mask2_lum_min',
-                    'slider_mask2_lum_max',
+                    'slider_mask2_lum_range',
                     'switch_mask2_sat',
                     'slider_mask2_sat_distance',
-                    'slider_mask2_sat_min',
-                    'slider_mask2_sat_max',
+                    'slider_mask2_sat_range',
                     'switch_mask2_options',
                     'slider_mask2_blur',
                     'slider_mask2_open_space',
@@ -3298,8 +3310,11 @@ if __name__ == '__main__':
 
         def set_mask2_hue_range(self, color_str):
             # イベント発火させる代入
-            self.ids['slider_mask2_hue_min'].ids['slider'].value = core.HLS_COLOR_SETTING[color_str]['center'] - core.HLS_COLOR_SETTING[color_str]['width'][0] - core.HLS_COLOR_SETTING[color_str]['fade_width'][0]
-            self.ids['slider_mask2_hue_max'].ids['slider'].value = core.HLS_COLOR_SETTING[color_str]['center'] + core.HLS_COLOR_SETTING[color_str]['width'][1] + core.HLS_COLOR_SETTING[color_str]['fade_width'][1]
+            hmin = core.HLS_COLOR_SETTING[color_str]['center'] - core.HLS_COLOR_SETTING[color_str]['width'][0] - core.HLS_COLOR_SETTING[color_str]['fade_width'][0]
+            hmax = core.HLS_COLOR_SETTING[color_str]['center'] + core.HLS_COLOR_SETTING[color_str]['width'][1] + core.HLS_COLOR_SETTING[color_str]['fade_width'][1]
+            slider = self.ids['slider_mask2_hue_range'].ids['slider']
+            slider.active_index = 0
+            slider.values = [hmin, hmax]
 
         #--------------------------------
 
@@ -3488,7 +3503,12 @@ if __name__ == '__main__':
             # 段階 (= widget.size=default(100,100)) で実行すると初回描画が画面外になる。
             # Mask Mesh editor は拡大/スクロール中の preview crop 上で操作するため、
             # attach 後に MaskEditor2.tcg_info (実表示と同期済み) を入れて viewport を合わせる。
-            mw = MeshWarpWidget(texture_size, self.primary_param, force_square_disp_info=False)
+            mw = MeshWarpWidget(
+                texture_size,
+                self.primary_param,
+                force_square_disp_info=False,
+                show_shift_reset_hint=True,
+            )
             mw.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
             self.mask_mesh_editor = mw
             self._mask_mesh_target_composit = composit

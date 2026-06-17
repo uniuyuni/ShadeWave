@@ -3,32 +3,43 @@
 #:include widgets/multi_slider.kv
 #:include widgets/tiny_button.kv
 #:include widgets/define.kv
+#:import kvutils utils.kvutils
 
-<RectangleToggleButton@MDRectangleFlatButton+MDToggleButton>:
-    _no_ripple_effect: True
-    background_normal: 'black'
-    background_down: 0.3, 0.3, 0.3, 1
-    line_color: 1, 1, 1, 0.8
+<HeadToggleButton>:
+    canvas.before:
+        Color:
+            rgba: (0.3, 0.3, 0.3, 1) if self.active else (0, 0, 0, 1)
+        Rectangle:
+            pos: self.x + 1, self.y + 1
+            size: max(0, self.width - 2), max(0, self.height - 2)
+    canvas.after:
+        Color:
+            rgba: 1, 1, 1, 0.85 if not self.disabled else 0.35
+        Line:
+            rectangle: [self.x + 0.5, self.y + 0.5, max(0, self.width - 1), max(0, self.height - 1)]
+            width: 1
 
 <HeadLabel>:
     orientation: 'horizontal'
     size_hint_y: None
     ref_height: 18
     text: 'Label'
-    enabled: self.active
     button_enabled: True
 
-    RectangleToggleButton:
+    HeadToggleButton:
         id: toggle
+        active: root.active
         disabled: not root.button_enabled
         pos_hint: {'center_y': 0.5}
         size_hint: None, None
         ref_width: 12
         ref_height: 12
-        state: 'down' if root.enabled else 'normal'
-        on_state: root.press = self.state == 'down'
-        on_state: root.active = self.state == 'down'
-        on_release: root.release = self.state == 'down'
+        on_press:
+            root.press = not root.press
+        on_active:
+            root.active = self.active
+        on_release:
+            root.release = not root.release
 
     MDLabel:
         text: root.text
@@ -52,64 +63,223 @@
 
 <ParamSlider>:
     text: 'Label'
-    orientation: 'horizontal'
+    orientation: 'vertical'
     size_hint_y: None
-    ref_height: 24
+    ref_height: 48 if root.show_multi_value_boxes else 24
+    height: kvutils.dpi_scale_height(48) if root.show_multi_value_boxes else kvutils.dpi_scale_height(24)
     label_width: 100
     for_float: False
     on_text: root.on_label_text()
     on_for_float: self.ids.input.set_float_mode(self.for_float)
 
-    ParamLabel:
-        id: label
-        ref_width: self.parent.label_width
-        width: self.parent.label_width
-        
-    MultiSlider:
-        id: slider
-        hint: False
-        pos_hint: {'center_y': 0.5}
-        size_hint_x: 1
-        draw_from_anchor: True
-        track_color_inactive: gray_color
-        track_color_active:  dark_blue
-        thumb_color: light_blue
-        interaction_start_callback: root.on_slider_interaction_start
-        interaction_end_callback: root.on_slider_interaction_end
-        on_value: root.on_slider_value()
-        on_touch_down: root.on_slider_touch_down(args[1])
-        on_touch_up: root.on_slider_touch_up(args[1])
+    BoxLayout:
+        orientation: 'horizontal'
+        size_hint_y: None
+        ref_height: 24
+        height: kvutils.dpi_scale_height(24)
 
-    ParamFloatInput:
-        id: input
-        halign: 'right'
-        valign: 'middle'
-        font_size: '9pt'
-        background_normal: ''
-        background_active: ''
-        background_color: 0.18, 0.18, 0.18, 1
-        foreground_color: 0.82, 0.82, 0.82, 1
-        cursor_color: 0.82, 0.82, 0.82, 1
-        multiline: False
-        size_hint_x: None
-        ref_width: 40
-        for_float: root.for_float
-        on_text_validate: root.on_input_text_validate()
-        canvas.after:
-            Color:
-                rgba: 0.30, 0.30, 0.30, 1
-            Line:
-                points: self.x, self.y, self.x, self.y + self.height - 2, self.x + self.width, self.y + self.height - 2, self.x + self.width, self.y, self.x, self.y
-                width: 1
+        ParamLabel:
+            id: label
+            ref_width: self.parent.parent.label_width
+            width: self.parent.parent.label_width
+            on_touch_down: root.on_label_touch_down(args[1]) if self.collide_point(*args[1].pos) else False
+
+        MultiSlider:
+            id: slider
+            hint: False
+            pos_hint: {'center_y': 0.5}
+            size_hint_x: 1
+            draw_from_anchor: True
+            allow_overlap: root.allow_overlap
+            track_color_inactive: gray_color
+            track_color_active:  dark_blue
+            thumb_color: light_blue
+            interaction_start_callback: root.on_slider_interaction_start
+            interaction_end_callback: root.on_slider_interaction_end
+            on_value: root.on_slider_value()
+            on_values: root.on_multi_slider_values()
+            on_active_index: root.on_slider_active_index()
+            on_touch_down: root.on_slider_touch_down(args[1])
+            on_touch_up: root.on_slider_touch_up(args[1])
+
+        ParamFloatInput:
+            id: input
+            halign: 'right'
+            valign: 'middle'
+            font_size: '9pt'
+            background_normal: ''
+            background_active: ''
+            background_color: 0.18, 0.18, 0.18, 1
+            foreground_color: 0.82, 0.82, 0.82, 1
+            cursor_color: 0.82, 0.82, 0.82, 1
+            multiline: False
+            size_hint_x: None
+            ref_width: 40 if root.show_right_value_controls else 0
+            width: kvutils.dpi_scale_width(40) if root.show_right_value_controls else 0
+            opacity: 1 if root.show_right_value_controls else 0
+            disabled: not root.show_right_value_controls
+            for_float: root.for_float
+            on_text_validate: root.on_input_text_validate()
+            canvas.after:
+                Color:
+                    rgba: (0.30, 0.30, 0.30, 1) if root.show_right_value_controls else (0.30, 0.30, 0.30, 0)
+                Line:
+                    points: self.x, self.y, self.x, self.y + self.height - 3, self.x + self.width, self.y + self.height - 3, self.x + self.width, self.y, self.x, self.y
+                    width: 1
+
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_x: None
+            ref_width: 13 if root.show_right_value_controls else 0
+            width: kvutils.dpi_scale_width(13) if root.show_right_value_controls else 0
+            spacing: 1
+            padding: 0, 2, 0, 0
+            opacity: 1 if root.show_right_value_controls else 0
+            disabled: not root.show_right_value_controls
+
+            TinyButton:
+                direction: 'up'
+                bg_color_down: dark_blue
+                on_press: root.on_button_press(root.ids['slider'].step)
+            TinyButton:
+                direction: 'down'
+                bg_color_down: dark_blue
+                on_press: root.on_button_press(-root.ids['slider'].step)
 
     BoxLayout:
-        orientation: 'vertical'
-        size_hint_x: None
-        ref_width: 15
-        
-        TinyButton:
-            bg_color_down: 'black'
-            on_press: root.on_button_press(root.ids['slider'].step)
-        TinyButton:
-            bg_color_down: 'black'
-            on_press: root.on_button_press(-root.ids['slider'].step)
+        orientation: 'horizontal'
+        size_hint_y: None
+        ref_height: 24 if root.show_multi_value_boxes else 0
+        height: kvutils.dpi_scale_height(24) if root.show_multi_value_boxes else 0
+        opacity: 1 if root.show_multi_value_boxes else 0
+        disabled: not root.show_multi_value_boxes
+
+        Widget:
+            size_hint_x: None
+            ref_width: root.label_width
+
+        FloatLayout:
+            size_hint_x: 1
+
+            BoxLayout:
+                orientation: 'horizontal'
+                size_hint: None, None
+                ref_width: 55 if root.show_multi_value_boxes else 0
+                ref_height: 22 if root.show_multi_value_boxes else 0
+                width: kvutils.dpi_scale_width(55) if root.show_multi_value_boxes else 0
+                height: kvutils.dpi_scale_height(22) if root.show_multi_value_boxes else 0
+                x: self.parent.x if self.parent else 0
+                y: (self.parent.center_y - self.height / 2) if self.parent else 0
+                opacity: 1 if root.multi_point_count >= 1 else 0
+                disabled: root.multi_point_count < 1
+
+                ParamFloatInput:
+                    id: input_multi_0
+                    halign: 'right'
+                    valign: 'middle'
+                    font_size: '9pt'
+                    background_normal: ''
+                    background_active: ''
+                    background_color: 0.18, 0.18, 0.18, 1
+                    foreground_color: 0.82, 0.82, 0.82, 1
+                    cursor_color: 0.82, 0.82, 0.82, 1
+                    multiline: False
+                    size_hint_x: None
+                    ref_width: 40
+                    for_float: root.for_float
+                    on_text_validate: root.on_multi_input_text_validate(0)
+                BoxLayout:
+                    orientation: 'vertical'
+                    size_hint_x: None
+                    ref_width: 15
+                    spacing: 1
+                    TinyButton:
+                        direction: 'up'
+                        bg_color_down: dark_blue
+                        on_press: root.on_multi_button_press(0, root.ids['slider'].step)
+                    TinyButton:
+                        direction: 'down'
+                        bg_color_down: dark_blue
+                        on_press: root.on_multi_button_press(0, -root.ids['slider'].step)
+
+            BoxLayout:
+                orientation: 'horizontal'
+                size_hint: None, None
+                ref_width: 55 if root.show_multi_value_boxes else 0
+                ref_height: 22 if root.show_multi_value_boxes else 0
+                width: kvutils.dpi_scale_width(55) if root.show_multi_value_boxes else 0
+                height: kvutils.dpi_scale_height(22) if root.show_multi_value_boxes else 0
+                x: self.parent.center_x - self.width / 2 if self.parent else 0
+                y: (self.parent.center_y - self.height / 2) if self.parent else 0
+                opacity: 1 if root.multi_point_count == 3 else 0
+                disabled: root.multi_point_count != 3
+
+                ParamFloatInput:
+                    id: input_multi_1
+                    halign: 'right'
+                    valign: 'middle'
+                    font_size: '9pt'
+                    background_normal: ''
+                    background_active: ''
+                    background_color: 0.18, 0.18, 0.18, 1
+                    foreground_color: 0.82, 0.82, 0.82, 1
+                    cursor_color: 0.82, 0.82, 0.82, 1
+                    multiline: False
+                    size_hint_x: None
+                    ref_width: 40
+                    for_float: root.for_float
+                    on_text_validate: root.on_multi_input_text_validate(1)
+                BoxLayout:
+                    orientation: 'vertical'
+                    size_hint_x: None
+                    ref_width: 15
+                    spacing: 1
+                    TinyButton:
+                        direction: 'up'
+                        bg_color_down: dark_blue
+                        on_press: root.on_multi_button_press(1, root.ids['slider'].step)
+                    TinyButton:
+                        direction: 'down'
+                        bg_color_down: dark_blue
+                        on_press: root.on_multi_button_press(1, -root.ids['slider'].step)
+
+            BoxLayout:
+                orientation: 'horizontal'
+                size_hint: None, None
+                ref_width: 55 if root.show_multi_value_boxes else 0
+                ref_height: 22 if root.show_multi_value_boxes else 0
+                width: kvutils.dpi_scale_width(55) if root.show_multi_value_boxes else 0
+                height: kvutils.dpi_scale_height(22) if root.show_multi_value_boxes else 0
+                x: self.parent.right - self.width if self.parent else 0
+                y: (self.parent.center_y - self.height / 2) if self.parent else 0
+                opacity: 1 if root.multi_point_count >= 2 else 0
+                disabled: root.multi_point_count < 2
+
+                ParamFloatInput:
+                    id: input_multi_2
+                    halign: 'right'
+                    valign: 'middle'
+                    font_size: '9pt'
+                    background_normal: ''
+                    background_active: ''
+                    background_color: 0.18, 0.18, 0.18, 1
+                    foreground_color: 0.82, 0.82, 0.82, 1
+                    cursor_color: 0.82, 0.82, 0.82, 1
+                    multiline: False
+                    size_hint_x: None
+                    ref_width: 40
+                    for_float: root.for_float
+                    on_text_validate: root.on_multi_input_text_validate(2)
+                BoxLayout:
+                    orientation: 'vertical'
+                    size_hint_x: None
+                    ref_width: 15
+                    spacing: 1
+                    TinyButton:
+                        direction: 'up'
+                        bg_color_down: dark_blue
+                        on_press: root.on_multi_button_press(2, root.ids['slider'].step)
+                    TinyButton:
+                        direction: 'down'
+                        bg_color_down: dark_blue
+                        on_press: root.on_multi_button_press(2, -root.ids['slider'].step)

@@ -27,9 +27,11 @@ class MultiSlider(Widget):
     track_show_anchor_marker = BooleanProperty(False)
     thumb_color = ColorProperty([1, 1, 1, 1])
     thumb_colors = ListProperty([])
+    active_thumb_color = ColorProperty([0.72, 0.30, 0.28, 1])
     disabled_color = ColorProperty([0.6, 0.6, 0.6, 1])
     interaction_start_callback = ObjectProperty(None, allownone=True)
     interaction_end_callback = ObjectProperty(None, allownone=True)
+    active_index = NumericProperty(0)
     
     debug_mode = BooleanProperty(False)
     
@@ -38,13 +40,13 @@ class MultiSlider(Widget):
 
     def __init__(self, **kwargs): 
         super().__init__(**kwargs)
-        
+
         if not self.values:
             self.values = [self.value]
 
         self.bind(values=self._on_values_change)
         self.bind(value=self._on_value_change)
-        
+
         # 描画更新: 独自のスケール計算が入るため、レイアウト確定後に行うのが安全
         update_trigger = lambda *dt: Clock.schedule_once(self._refresh_view, 0)
         
@@ -52,7 +54,8 @@ class MultiSlider(Widget):
                   thumb_colors=update_trigger, disabled=update_trigger, debug_mode=update_trigger,
                   track_texture=update_trigger, track_source=update_trigger,
                   track_opacity=update_trigger, track_show_active_overlay=update_trigger,
-                  track_show_anchor_marker=update_trigger)
+                  track_show_anchor_marker=update_trigger, active_index=update_trigger,
+                  active_thumb_color=update_trigger)
         
         update_trigger()
 
@@ -62,6 +65,10 @@ class MultiSlider(Widget):
         self.values = [new_val]
 
     def _on_values_change(self, instance, new_list):
+        if new_list:
+            self.active_index = max(0, min(int(self.active_index), len(new_list) - 1))
+        else:
+            self.active_index = 0
         if len(new_list) == 1:
             if self.value != new_list[0]:
                 self.value = new_list[0]
@@ -98,27 +105,34 @@ class MultiSlider(Widget):
         value = ratio * (self.max - self.min) + self.min
         return max(self.min, min(self.max, value))
 
-    # --- タッチイベント ---
-    def on_touch_down(self, touch):
-        if self.disabled: return False
-        
-        # Kivy標準のcollide_pointを使う (pos/sizeは親レイアウトによって制御されている前提)
-        if not self.collide_point(*touch.pos):
-            return super().on_touch_down(touch)
-
+    def _closest_thumb_index_for_x(self, touch_x):
         closest_idx = -1
         min_dist = float('inf')
 
         for i, val in enumerate(self.values):
             thumb_x = self._get_x_from_value(val)
-            dist = abs(touch.x - thumb_x)
+            dist = abs(touch_x - thumb_x)
             if dist < min_dist:
                 min_dist = dist
                 closest_idx = i
+
+        return closest_idx, min_dist
+
+    # --- タッチイベント ---
+    def on_touch_down(self, touch):
+        if self.disabled: return False
+
+        # Kivy標準のcollide_pointを使う (pos/sizeは親レイアウトによって制御されている前提)
+        if not self.collide_point(*touch.pos):
+            return super().on_touch_down(touch)
+
+        closest_idx, _ = self._closest_thumb_index_for_x(touch.x)
         
         if closest_idx != -1:
             self._active_idx = closest_idx
+            self.active_index = closest_idx
             self._selection_locked = False
+            touch.grab(self)
             if callable(self.interaction_start_callback):
                 self.interaction_start_callback()
             self._update_value_from_touch_x(touch.x)
@@ -128,6 +142,8 @@ class MultiSlider(Widget):
 
     def on_touch_move(self, touch):
         if self.disabled: return False
+        if touch.grab_current is not None and touch.grab_current is not self:
+            return super().on_touch_move(touch)
         if self._active_idx is None: return super().on_touch_move(touch)
         self._update_value_from_touch_x(touch.x)
         return True
@@ -137,6 +153,8 @@ class MultiSlider(Widget):
         if self._active_idx is not None:
             if callable(self.interaction_end_callback):
                 self.interaction_end_callback()
+            if touch.grab_current is self:
+                touch.ungrab(self)
             self._active_idx = None
             self._selection_locked = False
             return True
@@ -160,6 +178,7 @@ class MultiSlider(Widget):
                         self._active_idx = max(overlaps)
                     else:
                         self._active_idx = min(overlaps)
+                    self.active_index = self._active_idx
 
         if not self.allow_overlap:
             if self._active_idx > 0:
@@ -269,6 +288,8 @@ class MultiSlider(Widget):
                 
                 if self.disabled:
                     c_thumb = self.disabled_color
+                elif len(self.values) > 1 and i == self.active_index:
+                    c_thumb = self.active_thumb_color
                 elif i < len(self.thumb_colors):
                     c_thumb = self.thumb_colors[i]
                 else:

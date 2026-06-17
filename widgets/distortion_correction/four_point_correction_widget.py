@@ -1,14 +1,12 @@
 """
 4点自由補正Widget
-
-KivyMDベースのGUIウィジェット
 """
 
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.scatter import Scatter as KVScatter
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import ListProperty as KVListProperty, StringProperty as KVStringProperty
 from kivy.graphics import Color as KVColor, Line as KVLine, PushMatrix as KVPushMatrix, PopMatrix as KVPopMatrix, Translate as KVTranslate, Ellipse as KVEllipse
-from kivymd.uix.button import MDRaisedButton
 from kivy.uix.image import Image as KVImage
 from kivy.clock import mainthread as kvmainthread
 import numpy as np
@@ -16,7 +14,8 @@ import cv2
 
 from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
 import params
-from .ui_metrics import apply_geom_button_metrics, install_geom_ref_scaling
+from utils import kvutils
+from widgets.scaled_button import ScaledButton
 
 class FourPointCorrectionWidget(KVFloatLayout):
     """4点自由補正Widget"""
@@ -36,36 +35,38 @@ class FourPointCorrectionWidget(KVFloatLayout):
 
         # ハンドルリスト
         self.handles = []
-        
-        # リセットボタン
-        self.reset_btn = MDRaisedButton(
-            text="Reset",
+
+        button_layout = KVBoxLayout(
+            orientation='horizontal',
             size_hint=(None, None),
-            pos_hint={'center_x': 0.35, 'y': 0.02},
+            pos_hint={'center_x': 0.5, 'y': 0.035},
         )
-        apply_geom_button_metrics(self.reset_btn)
+        button_layout.ref_width = 180
+        button_layout.ref_height = 22
+        button_layout.ref_layout_spacing = 10
+        button_layout.ref_layout_padding = 5
+        button_layout.bind(minimum_height=button_layout.setter('height'))
+        kvutils.traverse_widget(button_layout)
+
+        # リセットボタン
+        self.reset_btn = ScaledButton(text="Reset")
+        self.reset_btn.set_ref_metrics()
         self.reset_btn.bind(on_press=self.reset_corners)
-        self.add_widget(self.reset_btn)
+        button_layout.add_widget(self.reset_btn)
 
         # 適用ボタン
-        self.apply_btn = MDRaisedButton(
-            text="Apply",
-            size_hint=(None, None),
-            pos_hint={'center_x': 0.5, 'y': 0.02},
-        )
-        apply_geom_button_metrics(self.apply_btn)
+        self.apply_btn = ScaledButton(text="Apply")
+        self.apply_btn.set_ref_metrics()
         self.apply_btn.bind(on_press=self._apply_corners)
-        self.add_widget(self.apply_btn)
+        button_layout.add_widget(self.apply_btn)
 
         # 戻すボタン
-        self.revert_btn = MDRaisedButton(
-            text="Revert",
-            size_hint=(None, None),
-            pos_hint={'center_x': 0.65, 'y': 0.02},
-        )
-        apply_geom_button_metrics(self.revert_btn)
+        self.revert_btn = ScaledButton(text="Revert")
+        self.revert_btn.set_ref_metrics()
         self.revert_btn.bind(on_press=self._revert_corners)
-        self.add_widget(self.revert_btn)
+        button_layout.add_widget(self.revert_btn)
+
+        self.add_widget(button_layout)
 
         # プロパティの変更を監視
         self.updating_handles = False
@@ -76,7 +77,7 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.bind(size=self._sync_tcg_to_kivy, pos=self._sync_tcg_to_kivy)
 
         self._reset_corners()
-        install_geom_ref_scaling(self)
+        kvutils.install_ref_scaling(self)
 
     @staticmethod
     def _default_corners():

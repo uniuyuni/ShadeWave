@@ -1,9 +1,9 @@
 
 from kivymd.app import MDApp
-from kivymd.uix.button import MDRectangleFlatButton
-from kivymd.uix.behaviors.toggle_behavior import MDToggleButton
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
-from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, ObjectProperty as KVObjectProperty
+from kivy.uix.widget import Widget as KVWidget
+from kivy.properties import NumericProperty as KVNumericProperty, StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, ObjectProperty as KVObjectProperty, ListProperty as KVListProperty
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.metrics import dp
 import logging
@@ -263,10 +263,27 @@ class ParamFloatInput(widgets.float_input.FloatInput):
         return super().on_touch_up(touch)
 
 
+class HeadToggleButton(ButtonBehavior, KVWidget):
+    active = KVBooleanProperty(True)
+
+    def on_release(self):
+        if not self.disabled:
+            self.active = not self.active
+
+
 class HeadLabel(KVBoxLayout):
     press = KVBooleanProperty(True)
     active = KVBooleanProperty(True)
+    enabled = KVBooleanProperty(True)
     release = KVBooleanProperty(True)
+
+    def on_active(self, _instance, value):
+        if self.enabled != value:
+            self.enabled = value
+
+    def on_enabled(self, _instance, value):
+        if self.active != value:
+            self.active = value
 
     def on_label_touch_down(self, touch):
         if not touch.is_double_tap:
@@ -296,10 +313,17 @@ class ParamSlider(KVBoxLayout):
     bar_show_active_overlay = KVBooleanProperty(True)
     bar_show_anchor_marker = KVBooleanProperty(False)
     bar_context = KVObjectProperty(None, allownone=True)
+    multi_value_edit_mode = KVStringProperty("active")
+    slider_values = KVListProperty([])
+    allow_overlap = KVBooleanProperty(False)
+    multi_point_count = KVNumericProperty(1)
+    show_multi_value_boxes = KVBooleanProperty(False)
+    show_right_value_controls = KVBooleanProperty(True)
 
     def __init__(self, **kwargs):
         super(ParamSlider, self).__init__(**kwargs)
         self._editing = False
+        self.reset_values = None
     
     def on_kv_post(self, *args, **kwargs):
         super().on_kv_post(*args, **kwargs)
@@ -312,8 +336,13 @@ class ParamSlider(KVBoxLayout):
         self.ids['slider'].min = self.min
         self.ids['slider'].value = self.value
         self.ids['slider'].step = self.step
+        self.ids['slider'].allow_overlap = self.allow_overlap
         self.ids['input'].set_value(self.value)
+        if self.slider_values:
+            self.set_slider_reset(self.slider_values)
+            self.set_slider_value(self.slider_values)
         self._sync_bar_to_slider()
+        self._sync_multi_value_ui()
         self.bind(
             min=self._sync_bar_to_slider,
             max=self._sync_bar_to_slider,
@@ -325,31 +354,157 @@ class ParamSlider(KVBoxLayout):
             bar_show_active_overlay=self._sync_bar_to_slider,
             bar_show_anchor_marker=self._sync_bar_to_slider,
             bar_context=self._sync_bar_to_slider,
+            multi_value_edit_mode=self._sync_multi_value_ui,
+            slider_values=self._on_slider_values_property,
+            allow_overlap=self._sync_allow_overlap_to_slider,
         )
         self.disabled = False
+
+    def on_slider_values(self, *args):
+        self._on_slider_values_property(*args)
+
+    def _on_slider_values_property(self, *args):
+        if not hasattr(self, "ids") or "slider" not in self.ids:
+            return
+        if self.slider_values:
+            self.set_slider_value(self.slider_values)
+
+    def _sync_allow_overlap_to_slider(self, *args):
+        if not hasattr(self, "ids") or "slider" not in self.ids:
+            return
+        self.ids['slider'].allow_overlap = self.allow_overlap
+        self._sync_multi_value_ui()
     
     def on_label_text(self):
         self.ids['label'].text = self.text
 
     def on_slider_value(self):
+        if len(getattr(self.ids['slider'], "values", []) or []) > 1:
+            self._sync_multi_value_ui()
+            return
         self.value = self.ids['slider'].value
         self.ids['input'].set_value(self.value)
         if self.disabled == False:
-            v = self.value
-            s = self.slider
-            # set_slider_value 中に self.disabled が True だと self.slider を入れ替えておらず、
-            # 直前の s と今回の v が同じ数になると self.slider = v が等値扱いで
-            # on_slider(→ apply_effects) が1回も飛ばない。Ge の Lens など、ボタンで set_slider
-            # 同期が重なると出やすい。一度 inf に戻してから v を入れて on_slider を確実に出す。
-            if s != float("inf") and (
-                s == v
-                or (
-                    self.for_float
-                    and math.isclose(s, v, rel_tol=0.0, abs_tol=1e-5)
-                )
-            ):
-                self.slider = float("inf")
-            self.slider = v
+            self._emit_slider_value(self.value)
+
+    def on_multi_slider_values(self):
+        self._sync_multi_value_ui()
+        if self.disabled == False and self._is_multi_value_slider():
+            self._emit_slider_value(self._active_slider_value())
+
+    def on_slider_active_index(self):
+        self._sync_multi_value_ui()
+
+    def _emit_slider_value(self, value):
+        v = value
+        s = self.slider
+        # set_slider_value 中に self.disabled が True だと self.slider を入れ替えておらず、
+        # 直前の s と今回の v が同じ数になると self.slider = v が等値扱いで
+        # on_slider(→ apply_effects) が1回も飛ばない。Ge の Lens など、ボタンで set_slider
+        # 同期が重なると出やすい。一度 inf に戻してから v を入れて on_slider を確実に出す。
+        if s != float("inf") and (
+            s == v
+            or (
+                self.for_float
+                and math.isclose(s, v, rel_tol=0.0, abs_tol=1e-5)
+            )
+        ):
+            self.slider = float("inf")
+        self.slider = v
+
+    def _is_multi_value_slider(self):
+        return len(getattr(self.ids['slider'], "values", []) or []) > 1
+
+    def _active_slider_index(self):
+        slider = self.ids['slider']
+        values = list(getattr(slider, "values", []) or [slider.value])
+        if not values:
+            return 0
+        return max(0, min(int(getattr(slider, "active_index", 0)), len(values) - 1))
+
+    def _active_slider_value(self):
+        slider = self.ids['slider']
+        values = list(getattr(slider, "values", []) or [slider.value])
+        if not values:
+            return slider.value
+        return values[self._active_slider_index()]
+
+    def _format_input_value(self, value):
+        return round(value, 2) if self.for_float else int(value)
+
+    def _value_from_input(self, input_widget):
+        if self.for_float:
+            return round(input_widget.get_value(), 2)
+        return int(input_widget.get_value())
+
+    def _clamp_value_for_index(self, index, value, values):
+        value = min(self.max, max(self.min, value))
+        if not getattr(self.ids['slider'], "allow_overlap", False) and len(values) > 1:
+            if index > 0:
+                value = max(values[index - 1], value)
+            if index < len(values) - 1:
+                value = min(values[index + 1], value)
+        return value
+
+    def _set_slider_value_at(self, index, value):
+        slider = self.ids['slider']
+        values = list(getattr(slider, "values", []) or [slider.value])
+        if not values:
+            values = [slider.value]
+        index = max(0, min(int(index), len(values) - 1))
+        value = self._clamp_value_for_index(index, value, values)
+        if len(values) == 1:
+            slider.value = value
+        else:
+            values[index] = value
+            slider.active_index = index
+            slider.values = values
+            self._sync_multi_value_ui()
+
+    def _visual_value_indices(self, count=None):
+        slider = self.ids['slider']
+        values = list(getattr(slider, "values", []) or [slider.value])
+        if count is None:
+            count = len(values)
+        visual = sorted(
+            range(count),
+            key=lambda i: (slider._get_x_from_value(values[i]), i),
+        )
+        if count <= 3:
+            return visual
+        return [visual[0], visual[count // 2], visual[-1]]
+
+    def _multi_slot_value_index(self, slot, count=None):
+        if count is None:
+            count = len(getattr(self.ids['slider'], "values", []) or [self.ids['slider'].value])
+        visual = self._visual_value_indices(count)
+        if slot == 0 and count >= 1:
+            return visual[0]
+        if slot == 1 and count >= 3:
+            return visual[1]
+        if slot == 2 and count >= 2:
+            return visual[-1]
+        return None
+
+    def _sync_multi_value_ui(self, *args):
+        if not hasattr(self, "ids") or "slider" not in self.ids:
+            return
+        slider = self.ids['slider']
+        values = list(getattr(slider, "values", []) or [slider.value])
+        count = len(values)
+        self.multi_point_count = max(1, min(count, 3))
+        multi = count > 1
+        split = multi and self.multi_value_edit_mode == "split"
+        self.show_multi_value_boxes = split
+        self.show_right_value_controls = not split
+        active_value = self._active_slider_value()
+        self.value = active_value
+        self.ids['input'].set_value(self._format_input_value(active_value))
+        for slot, input_id in enumerate(("input_multi_0", "input_multi_1", "input_multi_2")):
+            input_widget = self.ids.get(input_id)
+            value_index = self._multi_slot_value_index(slot, count)
+            if input_widget is not None and value_index is not None:
+                input_widget.set_value(self._format_input_value(values[value_index]))
 
     def on_slider(self, *args):
         if _DEBUG_MASK_GEOMETRY and self.text in _MASK_GEOM_SLIDER_TEXTS:
@@ -363,23 +518,18 @@ class ParamSlider(KVBoxLayout):
 
     def on_input_text_validate(self):
         try:
-            if self.for_float:
-                val = round(self.ids['input'].get_value(), 2)
-            else:
-                val = int(self.ids['input'].get_value())
+            val = self._value_from_input(self.ids['input'])
         except ValueError:
             val = self.reset_value
         self._notify_before_edit()
         val = min(self.max, max(self.min, val))
         self.ids['input'].set_value(val)
-        self.value = val
-        self.ids['slider'].value = self.value
+        self._set_slider_value_at(self._active_slider_index(), val)
         self._notify_after_edit()
 
     def on_button_press(self, step):
         self._notify_before_edit()
-        self.value = min(self.max, max(self.min, self.ids['slider'].value + step))
-        self.ids['slider'].value = self.value
+        self._set_slider_value_at(self._active_slider_index(), self._active_slider_value() + step)
         self._notify_after_edit()
 
     def on_input_scrub_begin(self):
@@ -400,9 +550,48 @@ class ParamSlider(KVBoxLayout):
     def _apply_input_scrub_step(self, delta):
         if delta == 0:
             return
-        new_val = min(self.max, max(self.min, self.ids['slider'].value + delta))
-        if new_val != self.ids['slider'].value:
-            self.ids['slider'].value = new_val
+        self._set_slider_value_at(self._active_slider_index(), self._active_slider_value() + delta)
+
+    def on_multi_input_text_validate(self, index):
+        input_widget = self.ids.get(f"input_multi_{index}")
+        if input_widget is None:
+            return
+        value_index = self._multi_slot_value_index(index)
+        if value_index is None:
+            return
+        try:
+            val = self._value_from_input(input_widget)
+        except ValueError:
+            val = self.reset_value
+        self._notify_before_edit()
+        self._set_slider_value_at(value_index, val)
+        self._notify_after_edit()
+
+    def on_multi_button_press(self, index, step):
+        values = list(getattr(self.ids['slider'], "values", []) or [self.ids['slider'].value])
+        value_index = self._multi_slot_value_index(index, len(values))
+        if value_index is None:
+            return
+        self._notify_before_edit()
+        self._set_slider_value_at(value_index, values[value_index] + step)
+        self._notify_after_edit()
+
+    def _reset_slider_to_default(self):
+        self._notify_before_edit()
+        if self.reset_values and len(self.reset_values) > 1:
+            slider = self.ids['slider']
+            slider.active_index = min(slider.active_index, len(self.reset_values) - 1)
+            slider.values = list(self.reset_values)
+            self._sync_multi_value_ui()
+        else:
+            self._set_slider_value_at(self._active_slider_index(), self.reset_value)
+        self._notify_after_edit()
+
+    def on_label_touch_down(self, touch):
+        if not touch.is_double_tap:
+            return False
+        self._reset_slider_to_default()
+        return True
 
     def on_input_scrub_end(self):
         self._notify_after_edit()
@@ -417,8 +606,7 @@ class ParamSlider(KVBoxLayout):
     def on_slider_touch_down(self, touch):
         if touch.is_double_tap:
             if self.ids['label'].collide_point(*touch.pos):
-                self._notify_before_edit()
-                self.ids['slider'].value = self.reset_value
+                self._reset_slider_to_default()
                 return True
 
         # 以前ここで reset_value へ戻しており、MultiSlider の on_touch 後に
@@ -484,8 +672,17 @@ class ParamSlider(KVBoxLayout):
 
     def set_slider_value(self, value):
         self.disabled = True
-        self.ids['slider'].value = value
+        if isinstance(value, (list, tuple)):
+            values = list(value)
+            if values:
+                self.ids['slider'].values = values
+                if len(values) == 1:
+                    self.ids['slider'].value = values[0]
+                self.ids['slider'].active_index = min(self.ids['slider'].active_index, len(values) - 1)
+        else:
+            self.ids['slider'].value = value
         self.disabled = False
+        self._sync_multi_value_ui()
 
     def set_slider_range(self, min_value, max_value, step=None):
         self.disabled = True
@@ -496,15 +693,25 @@ class ParamSlider(KVBoxLayout):
             self.ids['slider'].step = step
         self.ids['slider'].min = min_value
         self.ids['slider'].max = max_value
-        self.ids['slider'].value = min(max(self.ids['slider'].value, min_value), max_value)
-        self.value = self.ids['slider'].value
-        self.ids['input'].set_value(self.ids['slider'].value)
+        values = list(getattr(self.ids['slider'], "values", []) or [self.ids['slider'].value])
+        if len(values) > 1:
+            self.ids['slider'].values = [min(max(v, min_value), max_value) for v in values]
+        else:
+            self.ids['slider'].value = min(max(self.ids['slider'].value, min_value), max_value)
+        self.value = self._active_slider_value()
+        self.ids['input'].set_value(self.value)
         self._sync_bar_to_slider()
         self.disabled = False
+        self._sync_multi_value_ui()
 
     def set_slider_reset(self, value):
-        self.reset_value = value
-        self.ids['slider'].anchor_value = value
+        if isinstance(value, (list, tuple)):
+            self.reset_values = list(value)
+            self.reset_value = self.reset_values[0] if self.reset_values else self.value
+        else:
+            self.reset_values = None
+            self.reset_value = value
+        self.ids['slider'].anchor_value = self.reset_value
         self._sync_bar_to_slider()
     
 class Param_SliderApp(MDApp):

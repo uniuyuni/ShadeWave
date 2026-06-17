@@ -30,17 +30,17 @@ KVBuilder.load_file(os.path.join(CUR_DIR, "effect_selector.kv"))
 
 _SWITCH_LABELS = {
     "switch_white_balance": "White balance",
-    "switch_exposure_contrast": "Exposure / contrast",
+    "switch_exposure_contrast": "Exposure & Contrast",
     "switch_tone": "Tone",
-    "switch_level": "Levels",
+    "switch_level": "Level",
     "switch_precence": "Presence",
-    "switch_saturation": "Saturation / vibrance",
-    "switch_color_mixer": "Color mixer / HSL",
+    "switch_saturation": "Saturation",
+    "switch_color_mixer": "Color Mixer",
     "switch_unsharp_mask": "Sharpening",
     "switch_vignette": "Vignette",
-    "switch_lens_modifier": "Lens corrections",
-    "switch_tone_curves": "Tone curves",
-    "switch_color_gradings": "Color grading curves",
+    "switch_lens_modifier": "Lens Modifier",
+    "switch_tone_curves": "Tone Curves",
+    "switch_color_gradings": "Color Gradings",
     "switch_hue_vs_hue": "Hue vs Hue",
     "switch_hue_vs_lum": "Hue vs Lum",
     "switch_hue_vs_sat": "Hue vs Sat",
@@ -53,11 +53,11 @@ _SWITCH_LABELS = {
     "switch_details": "Details",
     "switch_lut": "LUT",
     "switch_solid_color": "Solid color",
-    "switch_global": "Global",
-    "switch_fringe_removal": "Fringe removal",
-    "switch_film_simulation": "Film / develop",
-    "switch_lens_simulator": "Lens simulator",
-    "switch_filters": "Filters bundle",
+    "switch_global": "Global Color",
+    "switch_fringe_removal": "Fringe Removal",
+    "switch_film_simulation": "Film Simulation",
+    "switch_lens_simulator": "Lens Simulator",
+    "switch_filters": "Filters",
     "switch_orton_effect": "Orton",
     "switch_glow_effect": "Glow",
     "switch_grain": "Grain",
@@ -102,7 +102,7 @@ _VS_CHILD_SET = frozenset(_VS_DETAIL_SWITCH_KEYS)
 
 _SWITCH_SELECTION_SECTIONS = (
     (
-        "Tone & exposure",
+        "Basic",
         (
             "switch_white_balance",
             "switch_exposure_contrast",
@@ -125,7 +125,7 @@ _SWITCH_SELECTION_SECTIONS = (
     ),
     ("Color curves", _VS_DETAIL_SWITCH_KEYS),
     (
-        "Extended effects",
+        "Effects",
         (
             "switch_ai_noise_reduction",
             "switch_light_noise_reduction",
@@ -137,7 +137,7 @@ _SWITCH_SELECTION_SECTIONS = (
         ),
     ),
     (
-        "Filters",
+        "Looks",
         (
             "switch_film_simulation",
             "switch_lens_simulator",
@@ -187,8 +187,8 @@ class EffectSelectionItem(MDBoxLayout):
         self.ref_height = self.row_height
         self.height = _sh(self.row_height)
         self.padding = _sw([7, 0, 7, 0])
-        self.ref_spacing = 8
-        self.spacing = _sw(self.ref_spacing)
+        self.ref_layout_spacing = 8
+        self.spacing = _sw(self.ref_layout_spacing)
         if "row_chk" in self.ids:
             self.ids.row_chk.ref_width = _REF_CHECKBOX
             self.ids.row_chk.ref_height = _REF_CHECKBOX
@@ -235,7 +235,7 @@ class EffectSelector(KVPopup):
 
         box = self.ids.sections_box
         box.clear_widgets()
-        box.ref_spacing = _REF_SECTION_SPACING
+        box.ref_layout_spacing = _REF_SECTION_SPACING
         box.spacing = _sw(_REF_SECTION_SPACING)
         self._effect_items = []
         self._section_rows = []
@@ -270,7 +270,7 @@ class EffectSelector(KVPopup):
             md_bg_color=_HEADER_BG,
         )
         header.ref_height = _REF_SECTION_HEADER_H
-        header.ref_spacing = 8
+        header.ref_layout_spacing = 8
         section_checkbox = self._create_checkbox()
         header.add_widget(section_checkbox)
         header.add_widget(
@@ -301,7 +301,7 @@ class EffectSelector(KVPopup):
             row_default_height=_sh(_REF_ROW_H),
             row_force_default=True,
         )
-        grid._effect_selector_ref_spacing = (
+        grid._effect_selector_ref_layout_spacing = (
             _REF_SECTION_SPACING,
             _REF_GRID_ROW_SPACING,
         )
@@ -408,7 +408,7 @@ class EffectSelector(KVPopup):
             row._apply_layout()
         for section in self.ids.sections_box.children:
             for child in getattr(section, "children", []):
-                spacing = getattr(child, "_effect_selector_ref_spacing", None)
+                spacing = getattr(child, "_effect_selector_ref_layout_spacing", None)
                 if spacing is not None:
                     child.spacing = [_sw(spacing[0]), _sw(spacing[1])]
         self._sync_sections_height()
@@ -499,12 +499,12 @@ class EffectSelector(KVPopup):
 if __name__ == "__main__":
     from kivy.uix.anchorlayout import AnchorLayout
     from kivymd.app import MDApp
-    from kivymd.uix.button import MDRaisedButton
+    from widgets.scaled_button import ScaledButton
 
     class EffectSelectorDebugApp(MDApp):
         def build(self):
             root = AnchorLayout()
-            btn = MDRaisedButton(text="Open effect selector")
+            btn = ScaledButton(text="Open effect selector", size_hint=(None, None), size=(180, 32))
             btn.bind(on_release=self._open_selector)
             root.add_widget(btn)
             return root

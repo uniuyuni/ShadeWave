@@ -1,18 +1,14 @@
 """
 メッシュワープWidget
-
-KivyMDベースのGUIウィジェット
 """
 
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.uix.widget import Widget as KVWidget
-from kivy.uix.button import Button as KVButton
+from kivy.uix.label import Label as KVLabel
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import ListProperty as KVListProperty, DictProperty as KVDictProperty
 from kivy.graphics import Color, Line
 from kivy.clock import mainthread as kvmainthread
-from kivymd.uix.button import MDRaisedButton, MDIconButton, MDTextButton
-from kivymd.uix.label import MDLabel
-from kivymd.uix.boxlayout import MDBoxLayout
 import os
 import copy
 import numpy as np
@@ -20,12 +16,8 @@ import cv2
 
 from cores.distortion_correction.warp_correction import get_mesh_coordinates
 import params
-from .ui_metrics import (
-    apply_geom_button_metrics,
-    apply_geom_layout_metrics,
-    geom_scaled,
-    install_geom_ref_scaling,
-)
+from utils import kvutils
+from widgets.scaled_button import ScaledButton
 
 
 _MESH_DEBUG = os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on")
@@ -37,7 +29,13 @@ class MeshWarpWidget(KVFloatLayout):
     mesh_size = KVListProperty([4, 4]) # [rows, cols]
     control_offsets_tcg = KVDictProperty({}) # {(row, col): (off_x, off_y)}
     
-    def __init__(self, texture_size, param, force_square_disp_info=False, **kwargs):
+    def __init__(
+            self,
+            texture_size,
+            param,
+            force_square_disp_info=False,
+            show_shift_reset_hint=False,
+            **kwargs):
         """
         Args:
             texture_size: preview texture サイズ (W, H)
@@ -49,6 +47,7 @@ class MeshWarpWidget(KVFloatLayout):
                 このとき MeshWarpWidget 内部の座標計算スケールが画像 mesh と 2 倍違い、
                 CP 表示が右下に拡大するため、square 範囲の disp_info を明示する必要が
                 ある。画像 mesh editor (= 通常用途) では False のままで OK。
+            show_shift_reset_hint: True のとき Reset 下に Shift+ ヒントを表示する。
         """
         super().__init__(**kwargs)
 
@@ -78,70 +77,104 @@ class MeshWarpWidget(KVFloatLayout):
         self.dragging = False
         
         # UIコントロール（リセットボタンなど）
-        button_layout = MDBoxLayout(
+        button_layout = KVBoxLayout(
             orientation='horizontal',
-            pos_hint={'center_x': 0.5, 'y': 0.02},
-            adaptive_size=True,
-            spacing=geom_scaled(5),
-            padding=geom_scaled(5)
+            size_hint=(None, None),
+            pos_hint={'center_x': 0.5, 'y': 0.035},
         )
-        apply_geom_layout_metrics(
-            button_layout,
-            spacing_ref=5,
-            padding_ref=5,
+        button_layout.ref_layout_spacing = 5
+        button_layout.ref_layout_padding = 5
+        button_layout.bind(
+            minimum_width=button_layout.setter('width'),
+            minimum_height=button_layout.setter('height'),
         )
+        kvutils.traverse_widget(button_layout)
 
-        self.reset_btn = MDRaisedButton(text="Reset")
-        apply_geom_button_metrics(self.reset_btn)
+        self.reset_btn = ScaledButton(text="Reset")
+        self.reset_btn.set_ref_metrics()
         self.reset_btn.bind(on_press=self.reset_mesh)
-        button_layout.add_widget(self.reset_btn)
+
+        if show_shift_reset_hint:
+            hint_font_px = '12px'
+            hint_height_ref = 8
+            reset_layout_height_ref = 22
+            reset_layout = KVFloatLayout(
+                size_hint=(None, None),
+                width=kvutils.dpi_scale_width(50),
+                height=kvutils.dpi_scale_height(reset_layout_height_ref),
+            )
+            reset_layout.add_widget(self.reset_btn)
+
+            def _sync_reset_button_pos(*_args):
+                reset_layout.width = self.reset_btn.width
+                reset_layout.height = kvutils.dpi_scale_height(reset_layout_height_ref)
+                self.reset_btn.pos = reset_layout.pos
+
+            reset_shift_hint = KVLabel(
+                text="Shift+",
+                size_hint=(None, None),
+                width=kvutils.dpi_scale_width(50),
+                height=kvutils.dpi_scale_height(hint_height_ref),
+                halign='center',
+                valign='middle',
+                font_size=hint_font_px,
+                color=(1, 1, 1, 0.55),
+            )
+
+            def _sync_reset_shift_hint(*_args):
+                _sync_reset_button_pos()
+                reset_shift_hint.width = self.reset_btn.width
+                reset_shift_hint.height = kvutils.dpi_scale_height(hint_height_ref)
+                reset_shift_hint.pos = (
+                    reset_layout.x,
+                    reset_layout.y - reset_shift_hint.height,
+                )
+                reset_shift_hint.text_size = reset_shift_hint.size
+
+            _sync_reset_shift_hint()
+            self.reset_btn.bind(size=_sync_reset_shift_hint)
+            reset_layout.bind(pos=_sync_reset_shift_hint, size=_sync_reset_shift_hint)
+            reset_layout.add_widget(reset_shift_hint)
+            button_layout.add_widget(reset_layout)
+        else:
+            button_layout.add_widget(self.reset_btn)
 
         # Rows Control
-        button_layout.add_widget(MDLabel(text="Y:", size_hint_x=None, width=40, halign='right', theme_text_color="Custom", text_color=(1,1,1,1)))
-        btn_row_minus = MDTextButton(text="-", width=20, height=20, on_release=lambda x: self.change_mesh_size(-2, 0))
+        button_layout.add_widget(KVLabel(text="Y:", size_hint_x=None, width=40, halign='right', color=(1,1,1,1)))
+        btn_row_minus = ScaledButton(text="-", on_release=lambda x: self.change_mesh_size(-2, 0))
         btn_row_minus.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-        btn_row_minus.size_hint = (None, None)
-        btn_row_minus.ref_width = 20
-        btn_row_minus.ref_height = 20
-        btn_row_minus.font_size = "24sp"
+        btn_row_minus.set_ref_metrics(width_ref=20, height_ref=20, font_ref=14, padding_x_ref=1, padding_y_ref=0)
         button_layout.add_widget(btn_row_minus)
         
-        self.label_rows = MDLabel(text=str(self.mesh_size[0]), size_hint_x=None, width=40, halign='center', theme_text_color="Custom", text_color=(1,1,1,1))
+        self.label_rows = KVLabel(text=str(self.mesh_size[0]), size_hint_x=None, width=40, halign='center', color=(1,1,1,1))
         self.label_rows.size_hint_x = None
         self.label_rows.ref_width = 40
         button_layout.add_widget(self.label_rows)
         
-        btn_row_plus = MDTextButton(text="+", width=20, height=20, on_release=lambda x: self.change_mesh_size(2, 0))
+        btn_row_plus = ScaledButton(text="+", on_release=lambda x: self.change_mesh_size(2, 0))
         btn_row_plus.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-        btn_row_plus.size_hint = (None, None)
-        btn_row_plus.ref_width = 20
-        btn_row_plus.ref_height = 20
+        btn_row_plus.set_ref_metrics(width_ref=20, height_ref=20, font_ref=14, padding_x_ref=1, padding_y_ref=0)
         button_layout.add_widget(btn_row_plus)
 
         # Cols Control
-        button_layout.add_widget(MDLabel(text="X:", size_hint_x=None, width=40, halign='right', theme_text_color="Custom", text_color=(1,1,1,1)))
-        btn_col_minus = MDTextButton(text="-", width=20, height=20, on_release=lambda x: self.change_mesh_size(0, -2))
+        button_layout.add_widget(KVLabel(text="X:", size_hint_x=None, width=40, halign='right', color=(1,1,1,1)))
+        btn_col_minus = ScaledButton(text="-", on_release=lambda x: self.change_mesh_size(0, -2))
         btn_col_minus.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-        btn_col_minus.size_hint = (None, None)
-        btn_col_minus.ref_width = 20
-        btn_col_minus.ref_height = 20
-        btn_col_minus.font_size = "24sp"
+        btn_col_minus.set_ref_metrics(width_ref=20, height_ref=20, font_ref=14, padding_x_ref=1, padding_y_ref=0)
         button_layout.add_widget(btn_col_minus)
         
-        self.label_cols = MDLabel(text=str(self.mesh_size[1]), size_hint_x=None, width=40, halign='center', theme_text_color="Custom", text_color=(1,1,1,1))
+        self.label_cols = KVLabel(text=str(self.mesh_size[1]), size_hint_x=None, width=40, halign='center', color=(1,1,1,1))
         self.label_cols.size_hint_x = None
         self.label_cols.ref_width = 40
         button_layout.add_widget(self.label_cols)
         
-        btn_col_plus = MDTextButton(text="+", width=20, height=20, on_release=lambda x: self.change_mesh_size(0, 2))
+        btn_col_plus = ScaledButton(text="+", on_release=lambda x: self.change_mesh_size(0, 2))
         btn_col_plus.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-        btn_col_plus.size_hint = (None, None)
-        btn_col_plus.ref_width = 20
-        btn_col_plus.ref_height = 20
+        btn_col_plus.set_ref_metrics(width_ref=20, height_ref=20, font_ref=14, padding_x_ref=1, padding_y_ref=0)
         button_layout.add_widget(btn_col_plus)
         
-        self.apply_btn = MDRaisedButton(text="Apply")
-        apply_geom_button_metrics(self.apply_btn)
+        self.apply_btn = ScaledButton(text="Apply")
+        self.apply_btn.set_ref_metrics()
         self.apply_btn.bind(on_press=lambda x: self._apply())
         button_layout.add_widget(self.apply_btn)
 
@@ -162,7 +195,7 @@ class MeshWarpWidget(KVFloatLayout):
         self.bind(control_offsets_tcg=self._redraw_mesh)
         self.bind(size=self._redraw_mesh)
         self.bind(pos=self._redraw_mesh)
-        install_geom_ref_scaling(self)
+        kvutils.install_ref_scaling(self)
 
     def _update_labels(self, instance, value):
         self.label_rows.text = str(value[0])

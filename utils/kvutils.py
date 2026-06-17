@@ -1,4 +1,5 @@
 
+from kivy.clock import Clock as KVClock
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
 from kivymd.uix.scrollview import MDScrollView
@@ -76,14 +77,16 @@ def traverse_widget(root):
                 child.width = dpi_scale_width(child.ref_width)
             if hasattr(child, 'ref_height') and child.ref_height:
                 child.height = dpi_scale_height(child.ref_height)
-            if hasattr(child, 'ref_padding') and child.ref_padding:
-                child.padding = dpi_scale_width(child.ref_padding)
-            if hasattr(child, 'ref_spacing') and child.ref_spacing:
-                child.spacing = dpi_scale_width(child.ref_spacing)
+            if hasattr(child, 'ref_layout_padding') and child.ref_layout_padding:
+                child.padding = dpi_scale_width(child.ref_layout_padding)
+            if hasattr(child, 'ref_layout_spacing') and child.ref_layout_spacing:
+                child.spacing = dpi_scale_width(child.ref_layout_spacing)
             if hasattr(child, 'ref_tab_width') and child.ref_tab_width:
                 child.tab_width = dpi_scale_width(child.ref_tab_width)
             if hasattr(child, 'ref_tab_height') and child.ref_tab_height:
                 child.tab_height = dpi_scale_height(child.ref_tab_height)
+            if hasattr(child, 'ref_font_size') and child.ref_font_size:
+                child.font_size = dpi_scale_height(child.ref_font_size)
             #if hasattr(child, 'ref_size_hint_min') and child.ref_size_hint_min:
             #    child.size_hint_min = (dpi_scale_width(child.ref_size_hint_min[0]), dpi_scale_height(child.ref_size_hint_min[1]))
             #if hasattr(child, 'ref_size_hint_max') and child.ref_size_hint_max:
@@ -92,6 +95,59 @@ def traverse_widget(root):
         for child in get_entire_widget_tree(root):
             if isinstance(child, MDScrollView):
                 child.children[0].height = child.children[0].minimum_height
+
+
+def get_window_state():
+    try:
+        scale = float(device.dpi_scale())
+    except Exception:
+        scale = 1.0
+    try:
+        x, y, w, h, display = device.get_self_window_position()
+    except Exception:
+        x, y, w, h, display = (0, 0, 0, 0, None)
+    return (
+        scale,
+        float(KVWindow.width or 0),
+        float(KVWindow.height or 0),
+        float(x or 0),
+        float(y or 0),
+        float(w or 0),
+        float(h or 0),
+        display,
+    )
+
+
+def install_ref_scaling(root, poll_interval=0.25):
+    event = getattr(root, "_ref_scaling_event", None)
+    if event is not None:
+        return root
+
+    state = {"last": None, "event": None, "attached": False}
+
+    def _scale(force=False):
+        if getattr(root, "parent", None) is not None:
+            state["attached"] = True
+        elif state["attached"]:
+            if state["event"] is not None:
+                state["event"].cancel()
+                state["event"] = None
+                root._ref_scaling_event = None
+            return
+        else:
+            return
+        current = get_window_state()
+        if force or current != state["last"]:
+            state["last"] = current
+            traverse_widget(root)
+
+    KVClock.schedule_once(lambda _dt: _scale(force=True), 0)
+    state["event"] = KVClock.schedule_interval(
+        lambda _dt: _scale(force=False),
+        poll_interval,
+    )
+    root._ref_scaling_event = state["event"]
+    return root
 
 
 def dpi_scale_width(ref):
