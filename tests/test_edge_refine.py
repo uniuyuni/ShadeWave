@@ -1364,6 +1364,49 @@ class EdgeRefineTest(unittest.TestCase):
                 f"warped guide is the unrotated crop at {ang} deg (rotation ignored)")
             self.assertTrue(bool(np.all(valid)))  # rect inside the image -> all valid
 
+    def test_freedraw_full_view_strokes_are_independent(self):
+        """Adding a stroke must not change an earlier stroke's selection. Each add is
+        solved on its own stroke-local region, so its guide (and the global edge-
+        strength percentile within it) never changes when another stroke is added."""
+        os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)  # default on
+        W, H = 1400, 1100
+        original = np.zeros((H, W, 3), dtype=np.float32)
+        original[:, :700] = (0.20, 0.70, 0.20)
+        original[:, 700:] = (0.40, 0.50, 1.00)
+        disp_info = core.convert_rect_to_info((300, 200, 1100, 900), 0.8)
+
+        def solve(lines):
+            ctx = Mask2CoordinateContext()
+            ctx.set_texture_size(500, 500)
+            primary = {
+                "original_img_size": (W, H), "img_size": (W, H), "disp_info": disp_info,
+                "rotation": 0, "rotation2": 0, "flip_mode": 0, "matrix": np.eye(3),
+            }
+            ctx.set_primary_param(primary, disp_info)
+            ctx.set_ref_image(original, original)
+            extended_params._FULLVIEW_SOLVE_CACHE.clear()
+            extended_params._FULLVIEW_SOLVE_SESSION[0] = None
+            out = extended_params.render_freedraw_edge_refine_full_view(
+                ctx, {
+                    "switch_mask2_options": True, "mask2_edge_refine_mode": "Quick Select",
+                    "mask2_edge_refine_radius": 16, "mask2_edge_refine_strength": 80,
+                }, lines, lines[0].points[1], (500, 500))
+            return np.asarray(out, dtype=np.float32)
+
+        def stroke(cx):
+            L = mask_rasters.Line(False, 60, 100)
+            for ty in (-40, 0, 40):
+                L.add_point(cx, ty)
+            return L
+
+        s1 = stroke(-250)
+        s2 = stroke(250)  # far-away second add
+        only_s1 = solve([s1])
+        with_s2 = solve([s1, s2])
+        half = only_s1.shape[1] // 2  # s1 lives in the left half
+        changed = int((np.abs(only_s1[:, :half] - with_s2[:, :half]) > 0.05).sum())
+        self.assertLess(changed, 5, f"adding a far stroke changed the first stroke ({changed}px)")
+
     def test_freedraw_full_view_off_image_margin_marked_invalid(self):
         """A render rect extending beyond the image must mark the off-image part
         invalid so the trace cannot snap to the synthetic (zero) border."""

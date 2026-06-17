@@ -38,6 +38,19 @@ class LuminanceContrastTest(unittest.TestCase):
         self.assertLess(out[2], ramp[2])
         self.assertGreater(out[8], ramp[8])
 
+    def test_positive_contrast_softens_shadow_side_only(self):
+        ramp = np.linspace(0.0, 1.0, 11, dtype=np.float32)
+        img = np.repeat(ramp[:, None, None], 3, axis=2)
+
+        result = core.adjust_luminance_contrast(img, 20, c=0.5)
+        out = result[:, 0, 0]
+        old_linear = np.maximum(0.5 + (ramp - 0.5) * 1.2, 0.0)
+
+        self.assertGreater(out[1], old_linear[1])
+        self.assertGreater(out[2], old_linear[2])
+        self.assertAlmostEqual(float(out[5]), float(ramp[5]), places=5)
+        self.assertAlmostEqual(float(out[8]), float(old_linear[8]), places=5)
+
     def test_luminance_contrast_preserves_channel_ratios(self):
         img = np.array([[[0.2, 0.4, 0.8]]], dtype=np.float32)
 

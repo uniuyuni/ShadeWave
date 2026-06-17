@@ -177,13 +177,18 @@ def render_freedraw_edge_refine_full_view(
     if not edge_refine.is_enabled(mode):
         return None
     # Default ON (disable via PLATYPUS_DRAW_QS_FULL_VIEW=0). Single draw edge-refine
-    # path at *every* zoom (B1). The guide is a FIXED full-image proxy -- the whole
-    # image warped into the rotated canvas at a reduced, cached resolution and
-    # perceptually encoded. Being independent of both the stroke set and the zoom is
-    # what makes the result stroke-independent (adding a stroke can't change earlier
-    # ones, because the guide -- and its global edge-strength normalisation -- never
-    # changes) and zoom-invariant, while staying light (proxy cached, per-stroke solve
-    # is band-limited).
+    # path at *every* zoom. Each ADD stroke is solved on its OWN stroke-local region
+    # of the full image (image coordinates, full resolution, perceptually encoded);
+    # the per-stroke results are unioned. This gives all four properties at once:
+    #   * sharp     -- each region is a full-res local crop
+    #   * zoom-invariant -- regions are in image space, independent of the viewport
+    #   * stroke-independent -- each add solves on its own region, so its guide (and
+    #     the global edge-strength percentile inside it) never changes when another
+    #     stroke is added elsewhere
+    #   * fast      -- the per-stroke region solve is cached (zoom-invariant, so pan/
+    #     zoom reuse it; only a newly added stroke is recomputed)
+    # Erase semantics are reused unchanged: each add is solved with its future erases
+    # (compute_draw_support handles the carving/ordering), exactly as the V3 loop did.
     full_view_flag = os.getenv("PLATYPUS_DRAW_QS_FULL_VIEW", "").strip().lower()
     if full_view_flag in {"0", "false", "no", "off"}:
         return None
@@ -197,60 +202,140 @@ def render_freedraw_edge_refine_full_view(
     if orig_w <= 0 or orig_h <= 0:
         return None
 
-    disp_info = params.get_disp_info(ctx.tcg_info)
-    render_rect = _freedraw_refine_render_rect(ctx, original, disp_info, effects_param, source_lines)
-    if render_rect is None:
+    adds = [(i, s) for i, s in enumerate(source_lines or [])
+            if not bool(getattr(s, "is_erasing", False))]
+    if not adds:
         return None
-    rx0, ry0, rx1, ry1 = render_rect
-    # Geometry-correct guide: warp the original into the rotated render region at FULL
-    # resolution (sharp edges), then perceptually encode with a full-image exposure
-    # reference so edges match the display and are consistent across zoom.
-    source_region, valid_region = _warp_original_to_render_region(ctx, original, render_rect)
-    if source_region is None:
+
+    exposure_ref = _full_view_exposure_ref(original)
+    session_sig = _full_view_session_sig(ctx, effects_param, exposure_ref)
+    out = np.zeros(tuple(mask_shape), dtype=np.float32)
+    support_out = np.zeros(tuple(mask_shape), dtype=np.float32)
+    any_result = False
+    for i, add in adds:
+        # Only erases drawn AFTER this add can undo it (draw -> erase -> draw again).
+        future_erases = [s for s in source_lines[i + 1:]
+                         if bool(getattr(s, "is_erasing", False))]
+        stroke_set = [add] + future_erases
+        res = _solve_stroke_set_cached(
+            ctx, effects_param, stroke_set, original, exposure_ref, mode, debug_label, session_sig)
+        if res is None:
+            continue
+        refined_r, support_r, rect, scale = res
+        origin = (rect[0], rect[1])
+        out = np.maximum(out, _crop_full_view_to_texture(
+            ctx, refined_r, tuple(mask_shape), source_origin=origin, source_scale=scale))
+        if support_r is not None:
+            support_out = np.maximum(support_out, _crop_full_view_to_texture(
+                ctx, support_r, tuple(mask_shape), source_origin=origin, source_scale=scale))
+        any_result = True
+
+    if not any_result:
         return None
-    source_region = _perceptual_encode_region(source_region, _full_view_exposure_ref(original))
-    region_h, region_w = source_region.shape[:2]
-    if region_w <= 0 or region_h <= 0:
+    if (effects.Mask2Effect.get_param(effects_param, "switch_mask2_settings") is True
+            and effects.Mask2Effect.get_param(effects_param, "mask2_invert") is True):
+        out = 1.0 - out
+    support = support_out if bool(np.any(support_out)) else None
+    _debug_freedraw_refine_current_view(
+        ctx, effects_param, source_lines, center_tcg, tuple(mask_shape), out, support, debug_label)
+    return apply_post_edge_params(ctx, effects_param, out, center_tcg, edge_support=support)
+
+
+# Per-stroke solve cache. The region solve is zoom-independent (it ignores disp_info),
+# so panning/zooming reuses it and only a newly drawn stroke is recomputed. Keyed on
+# the stroke set; reset when the image/geometry/edge-params change (the session sig).
+_FULLVIEW_SOLVE_CACHE: dict = {}
+_FULLVIEW_SOLVE_SESSION = [None]
+
+
+def _stroke_fingerprint(line):
+    pts = getattr(line, "points", None) or []
+    return (
+        bool(getattr(line, "is_erasing", False)),
+        round(float(getattr(line, "size", 0.0)), 2),
+        round(float(getattr(line, "soft", 100.0)), 2),
+        tuple((round(float(p[0]), 2), round(float(p[1]), 2)) for p in pts),
+    )
+
+
+def _full_view_session_sig(ctx, effects_param, exposure_ref):
+    tcg = getattr(ctx, "tcg_info", {}) or {}
+    m = tcg.get("matrix")
+    gp = effects.Mask2Effect.get_param
+    return (
+        round(float(exposure_ref or 0.0), 5),
+        round(float(tcg.get("rotation", 0.0)), 6),
+        round(float(tcg.get("rotation2", 0.0)), 6),
+        int(tcg.get("flip_mode", 0)),
+        np.asarray(m, dtype=np.float64).tobytes() if m is not None else None,
+        round(float(gp(effects_param, "mask2_edge_refine_radius") or 0.0), 3),
+        round(float(gp(effects_param, "mask2_edge_refine_strength") or 0.0), 3),
+        round(float(gp(effects_param, "mask2_edge_refine_bias") or 0.0), 3),
+        round(float(gp(effects_param, "mask2_open_space") or 0.0), 3),
+        round(float(gp(effects_param, "mask2_close_space") or 0.0), 3),
+        os.environ.get("QS_EDGE_PERCEPTUAL", "1"),
+        os.environ.get("QS_FULLVIEW_VALIDITY", "1"),
+    )
+
+
+def _solve_stroke_set_cached(ctx, effects_param, stroke_set, original, exposure_ref, mode, debug_label, session_sig):
+    if _FULLVIEW_SOLVE_SESSION[0] != session_sig:
+        _FULLVIEW_SOLVE_CACHE.clear()
+        _FULLVIEW_SOLVE_SESSION[0] = session_sig
+    key = tuple(_stroke_fingerprint(s) for s in stroke_set)
+    if key in _FULLVIEW_SOLVE_CACHE:
+        return _FULLVIEW_SOLVE_CACHE[key]
+    res = _solve_stroke_set_region(ctx, effects_param, stroke_set, original, exposure_ref, mode, debug_label)
+    if len(_FULLVIEW_SOLVE_CACHE) > 512:  # bound memory for pathological stroke counts
+        _FULLVIEW_SOLVE_CACHE.clear()
+    _FULLVIEW_SOLVE_CACHE[key] = res
+    return res
+
+
+def _solve_stroke_set_region(ctx, effects_param, stroke_set, original, exposure_ref, mode, debug_label):
+    """Solve one add stroke (+ its future erases) on its own stroke-local, image-space
+    region. Returns (refined_region, support_region, rect, total_scale) in region space
+    (zoom-independent -> cacheable), or None. The caller maps it back to the texture."""
+    coord = max(int(original.shape[1]), int(original.shape[0]))
+    rect = _stroke_set_render_rect(ctx, stroke_set, coord, effects_param)
+    if rect is None:
         return None
-    render_image, render_scale = _scale_freedraw_refine_region(source_region)
+    rx0, ry0, rx1, ry1 = rect
+    region, valid = _warp_original_to_render_region(ctx, original, rect)
+    if region is None:
+        return None
+    region = _perceptual_encode_region(region, exposure_ref)
+    if region.shape[0] <= 0 or region.shape[1] <= 0:
+        return None
+    render_image, render_scale = _scale_freedraw_refine_region(region)
     render_h, render_w = render_image.shape[:2]
     total_scale = float(render_scale)
     valid_render = None
-    if valid_region is not None and bool(np.any(valid_region)) and not bool(np.all(valid_region)):
-        vr = cv2.resize(valid_region.astype(np.float32), (render_w, render_h),
+    if valid is not None and bool(np.any(valid)) and not bool(np.all(valid)):
+        vr = cv2.resize(valid.astype(np.float32), (render_w, render_h),
                         interpolation=cv2.INTER_NEAREST) > 0.5
         valid_render = cv2.erode(vr.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2) > 0
 
     render_ctx = _make_region_view_context(ctx, render_image, (rx1 - rx0, ry1 - ry0), total_scale)
-    render_lines = _freedraw_lines_to_region_texture(ctx, source_lines, (rx0, ry0), total_scale)
+    render_lines = _freedraw_lines_to_region_texture(ctx, stroke_set, (rx0, ry0), total_scale)
     if not render_lines:
         return None
-
     render_mask = mask_rasters.draw_line_texture(
-        (render_w, render_h),
-        render_lines,
-        allow_over_one=False,
-        allow_under_zero=False,
-    )
-    if effects.Mask2Effect.get_param(effects_param, "switch_mask2_settings") is True:
-        if effects.Mask2Effect.get_param(effects_param, "mask2_invert") is True:
-            render_mask = 1.0 - render_mask
-
+        (render_w, render_h), render_lines, allow_over_one=False, allow_under_zero=False)
     render_mask = _apply_mask_space(render_ctx, effects_param, render_mask)
-    refined, render_support = edge_refine.refine_mask_edge_aware(
+
+    pts = getattr(stroke_set[0], "points", None)
+    add_center = pts[len(pts) // 2] if pts else None
+    refined, support = edge_refine.refine_mask_edge_aware(
         render_image,
         render_mask,
-        guide_point=_safe_tcg_to_region_texture(ctx, center_tcg, (rx0, ry0), total_scale),
+        guide_point=_safe_tcg_to_region_texture(ctx, add_center, (rx0, ry0), total_scale),
         mode=mode,
         radius=_edge_refine_radius_to_texture(
-            render_ctx,
-            effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_radius"),
-        ),
+            render_ctx, effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_radius")),
         strength=effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_strength"),
         edge_bias=_edge_refine_edge_bias_to_texture(
-            render_ctx,
-            effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_bias"),
-        ),
+            render_ctx, effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_bias")),
         fill_grown_region=True,
         seed_from_guide=False,
         seed_mask=edge_refine.make_confident_seed(render_mask),
@@ -261,48 +346,33 @@ def render_freedraw_edge_refine_full_view(
         draw_pixel_scale=total_scale,
         return_support=True,
     )
-
-    # Keep the selection off the synthetic border beyond the image edge: clip the
-    # refined mask / support to where real image content exists.
     if valid_render is not None and os.environ.get("QS_FULLVIEW_VALIDITY", "1").strip().lower() not in {"0", "false", "no", "off"}:
         vmask = valid_render.astype(np.float32)
         refined = np.asarray(refined, dtype=np.float32) * vmask
-        if render_support is not None:
-            render_support = np.asarray(render_support, dtype=np.float32) * vmask
-
-    # Respect a soft-brush drawing (same as the regular crop path): keep the painted
-    # alpha instead of a hard fill. Hard/near-binary drawings are untouched.
+        if support is not None:
+            support = np.asarray(support, dtype=np.float32) * vmask
     refined = _respect_soft_drawing_region(refined, render_mask)
+    return refined, support, rect, total_scale
 
-    out = _crop_full_view_to_texture(
-        ctx,
-        refined,
-        tuple(mask_shape),
-        source_origin=(rx0, ry0),
-        source_scale=total_scale,
-    )
-    support = (
-        _crop_full_view_to_texture(
-            ctx,
-            render_support,
-            tuple(mask_shape),
-            source_origin=(rx0, ry0),
-            source_scale=total_scale,
-        )
-        if render_support is not None
-        else None
-    )
-    _debug_freedraw_refine_current_view(
-        ctx,
-        effects_param,
-        source_lines,
-        center_tcg,
-        tuple(mask_shape),
-        out,
-        support,
-        debug_label,
-    )
-    return apply_post_edge_params(ctx, effects_param, out, center_tcg, edge_support=support)
+
+def _stroke_set_render_rect(ctx, stroke_set, coord_size, effects_param):
+    """Stroke-local region rect in image (canvas) coordinates -- driven only by the
+    strokes (+ margin), NOT the viewport, so it is identical at every zoom."""
+    rects = list(_freedraw_line_full_image_rects(ctx, stroke_set, coord_size, coord_size))
+    if not rects:
+        return None
+    base = rects[0]
+    for r in rects[1:]:
+        base = _union_rect(base, r)
+    margin = _freedraw_refine_margin(effects_param, stroke_set)
+    base = _expand_rect(base, margin, coord_size, coord_size)
+    x0 = max(0, int(np.floor(base[0])))
+    y0 = max(0, int(np.floor(base[1])))
+    x1 = min(coord_size, int(np.ceil(base[2])))
+    y1 = min(coord_size, int(np.ceil(base[3])))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
 
 
 def _should_render_draw_refine_full_view(ctx, original):
@@ -459,10 +529,15 @@ def _crop_padded_image_region(image, rect, coordinate_scale=1.0):
 
 
 def _freedraw_refine_max_pixels():
+    # Region-solve resolution cap. Below this the stroke region is solved at full
+    # resolution (sharp edges); above it the region is downscaled (blurrier, visible
+    # when you zoom in). Raised so typical brush sizes stay full-res; the per-stroke
+    # min-cut is band-limited so the cost scales with the band, not the whole region.
+    # Tune with PLATYPUS_DRAW_REFINE_MAX_PIXELS.
     try:
-        return max(120_000, int(os.getenv("PLATYPUS_DRAW_REFINE_MAX_PIXELS", "1200000")))
+        return max(120_000, int(os.getenv("PLATYPUS_DRAW_REFINE_MAX_PIXELS", "2500000")))
     except ValueError:
-        return 1_200_000
+        return 2_500_000
 
 
 def _scale_freedraw_refine_region(image):

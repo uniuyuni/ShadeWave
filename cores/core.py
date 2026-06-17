@@ -447,7 +447,12 @@ def adjust_luminance_contrast(img, cf, c=None):
     if effective_cf < 0.0:
         effective_cf *= 0.5
     factor = np.float32(max(0.0, 1.0 + effective_cf / 100.0))
-    adjusted_y = pivot + (y - pivot) * factor
+    if effective_cf > 0.0:
+        shadow_weight = (0.2 + 0.8 * smoothstep(0.0, pivot, y)).astype(np.float32, copy=False)
+        local_factor = 1.0 + (factor - 1.0) * np.where(y < pivot, shadow_weight, 1.0)
+        adjusted_y = pivot + (y - pivot) * local_factor
+    else:
+        adjusted_y = pivot + (y - pivot) * factor
     adjusted_y = np.maximum(adjusted_y, 0.0).astype(np.float32, copy=False)
 
     if cf < 0:
