@@ -11,7 +11,6 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cores import subpixel_shift as core_subpixel_shift
 from effect_backends import subpixel_shift_adapter, subpixel_shift_reference
 from effects import SubpixelShiftEffect
 
@@ -47,14 +46,6 @@ class SubpixelShiftBackendTest(unittest.TestCase):
 
         self.assertEqual(actual.dtype, np.float32)
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
-
-    def test_core_module_is_compatibility_shim(self):
-        image = np.linspace(0.0, 1.0, 11 * 13 * 3, dtype=np.float32).reshape(11, 13, 3)
-
-        expected = subpixel_shift_adapter.create_enhanced_image(image)
-        actual = core_subpixel_shift.create_enhanced_image(image)
-
-        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
 
     def test_effect_dispatches_to_adapter(self):
         image = np.ones((6, 8, 3), dtype=np.float32)

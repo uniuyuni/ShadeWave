@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
+from effect_backends import low_frequency_transfer_adapter
+
 
 helpers_dir = Path(__file__).resolve().parent
 platypus_dir = helpers_dir.parent
@@ -38,7 +40,6 @@ package_src = project_root / "src"
 if package_src.exists() and str(package_src) not in sys.path:
     sys.path.insert(0, str(package_src))
 
-import utils.aiutils as aiutils
 from nafnet_applesilicon import DenoiseConfig, NAFNetAppleSilicon
 
 try:
@@ -57,8 +58,22 @@ def _set_wait_text(text: str) -> None:
         waitinfo.set_text("ai_noise_reduction", text)
 
 
+def _set_progress(done: int, total: int, phase: str) -> None:
+    label = "Patch" if phase else "NAFNet"
+    _set_wait_text(f"{label} {done} / {total}")
+
+
+def _restore_low_frequency_enabled(default: bool = True) -> bool:
+    value = os.environ.get("PLATYPUS_NAFNET_RESTORE_LOW_FREQUENCY", "").strip().lower()
+    if value in {"0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    return default
+
+
 def setup(
-    mode: str = "fast",
+    mode: str = "safe",
     input_space: str = "linear",
     output_space: str = "linear",
     overlap: int = 32,
@@ -67,8 +82,8 @@ def setup(
     """Create a reusable NAFNet AppleSilicon engine.
 
     mode:
-      fast    -> neuralnetwork CPU/NE-capable model, artifact patch enabled.
       safe    -> MLProgram CPU/GPU model, artifact patch enabled.
+      fast    -> experimental neuralnetwork CPU/NE-capable model.
     """
     mode = str(mode).lower()
     if mode == "fast":
@@ -97,7 +112,17 @@ def setup(
         patch_model_path=DEFAULT_PATCH_MODEL,
         patch_compute_units="cpu_and_gpu",
         patch_tile=512,
-        progress_every=64,
+        hf_threshold=0.060,
+        hf_gain=2.0,
+        chroma_threshold=0.050,
+        chroma_gain=2.0,
+        fine_hf_threshold=0.014,
+        fine_hf_gain=1.35,
+        fine_chroma_threshold=0.008,
+        checker_threshold=0.002,
+        checker_gain=1.25,
+        progress_every=8,
+        progress_callback=_set_progress,
         metadata={"mode": mode, "project_root": str(project_root)},
     )
     logging.info("Loading NAFNet AppleSilicon model: %s", model_path)
@@ -113,15 +138,14 @@ def predict(engine: NAFNetAppleSilicon, np_image: np.ndarray, restore_low_freque
     t0 = time.time()
     result, meta = engine.denoise(org_image)
 
-    if restore_low_frequency:
+    if restore_low_frequency and _restore_low_frequency_enabled(True):
         _set_wait_text("Finalizing...")
-        result = aiutils.apply_low_frequency_transfer(
+        result = low_frequency_transfer_adapter.apply_low_frequency_transfer(
             result,
             org_image,
             sigma=75,
-            highlight_threshold=0.70,
-            highlight_transition=0.40,
-            highlight_detail_strength=0.20,
+            highlight_threshold=None,
+            luminance_transfer_strength=0.0,
         )
 
     artifact_count = int(meta.get("artifact_count", 0))

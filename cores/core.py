@@ -867,19 +867,6 @@ def apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale=
 #    # 効果適用
 #    result = np.clip(image * vignette, 0, 1) if intensity < 0 else np.clip(image + (1-image)*(1-vignette), 0, 1)
 #    return result.astype(np.float32)
-def apply_vignette(image, intensity, radius_percent, disp_info, crop_rect, offset, gradient_softness=4.0):
-    from effect_backends import vignette_adapter
-
-    return vignette_adapter.apply_vignette(
-        image,
-        intensity,
-        radius_percent,
-        disp_info,
-        crop_rect,
-        offset,
-        gradient_softness,
-    )
-
 #--------------------------------------------------
 # テクスチャサイズとクロップ情報から、新しい描画サイズと余白の大きさを得る
 def crop_size_and_offset_from_texture(texture_width, texture_height, disp_info):

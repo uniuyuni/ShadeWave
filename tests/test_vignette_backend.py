@@ -8,7 +8,6 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cores import core
 from effect_backends import vignette_adapter, vignette_reference
 
 
@@ -31,17 +30,6 @@ class VignetteBackendTest(unittest.TestCase):
 
         self.assertEqual(actual.dtype, np.float32)
         np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
-
-    def test_core_apply_vignette_is_compatibility_shim(self):
-        image = np.ones((12, 16, 3), dtype=np.float32) * 0.5
-        disp_info = (0.0, 0.0, 16.0, 12.0, 1.0)
-        crop_rect = (0.0, 0.0, 16.0, 12.0)
-        offset = (0.0, 0.0)
-
-        expected = vignette_adapter.apply_vignette(image, 30.0, 75.0, disp_info, crop_rect, offset, 1.5)
-        actual = core.apply_vignette(image, 30.0, 75.0, disp_info, crop_rect, offset, 1.5)
-
-        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
 
 
 if __name__ == "__main__":

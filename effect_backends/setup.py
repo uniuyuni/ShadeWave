@@ -79,6 +79,23 @@ setup(
             extra_link_args=_openmp_link_args,
         ),
         Extension(
+            "effect_backends._low_frequency_transfer_cpu",
+            ["low_frequency_transfer_pybind.cpp", "low_frequency_transfer_cpu.c"],
+            include_dirs=[pybind11.get_include(), *_openmp_include_dirs],
+            library_dirs=_openmp_library_dirs,
+            language="c++",
+            extra_compile_args=_openmp_compile_args,
+            extra_link_args=_openmp_link_args,
+        ),
+        Extension(
+            "effect_backends._low_frequency_transfer_metal",
+            ["low_frequency_transfer_metal.mm"],
+            include_dirs=[pybind11.get_include()],
+            language="c++",
+            extra_compile_args=["-O3", "-std=c++17", "-fobjc-arc"],
+            extra_link_args=["-framework", "Metal", "-framework", "Foundation"],
+        ),
+        Extension(
             "effect_backends._cross_filter_metal",
             ["cross_filter_metal.mm"],
             include_dirs=[pybind11.get_include()],

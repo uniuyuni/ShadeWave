@@ -39,7 +39,7 @@ from image_fidelity import heavy_ai_allowed
 
 def _ai_noise_content_key(nr, upstream_hash):
     """NR 入力に効く upstream（loading_wait までのハッシュ）と nr オンオフ。強度は含めない。"""
-    return hash(("nafnet_applesilicon_fast_v1", hash(nr), upstream_hash))
+    return hash(("scunet_v2", hash(nr), upstream_hash))
 
 
 def _ai_noise_blend_raw(raw, base, nr_intensity):
@@ -1178,11 +1178,6 @@ class DistortionEffect(Effect):
             self.distortion_painter.set_brush_size(param['distortion_brush_size'])
             self.distortion_painter.set_strength(param['distortion_strength'])
 
-            # クロップ範囲をリセット
-            if widget.ids["button_distortion_reset"].state == "down":
-                widget.ids["button_distortion_reset"].state = "normal" # 無限ルーぷ防止
-                self.distortion_painter.reset_image()
-
 
     def set2param2(self, param, arg):
         if self.distortion_painter is not None:
@@ -2269,12 +2264,13 @@ class AINoiseReductonEffect(Effect):
                     self.hash = render_hash
                     return self.diff
 
-            import helpers.nafnet_applesilicon_helper as nafnet_helper
+            import helpers.scunet_coreml_helper as scunet_helper
 
             if AINoiseReductonEffect.__net is None:
-                AINoiseReductonEffect.__net = nafnet_helper.setup(mode="fast")
+                AINoiseReductonEffect.__net = scunet_helper.setup()
 
-            raw_diff = nafnet_helper.predict_helper(AINoiseReductonEffect.__net, img)
+            raw_diff = scunet_helper.predict_helper(AINoiseReductonEffect.__net, img)
+            AINoiseReductonEffect.__net = None
             param["ai_noise_reduction_result"] = raw_diff
             param["ai_noise_reduction_content_key"] = content_key
             blended = _ai_noise_blend_raw(raw_diff, img, nr_intensity)

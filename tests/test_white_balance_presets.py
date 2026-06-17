@@ -12,6 +12,7 @@ import effects
 
 MAIN_PATH = PROJECT_ROOT / "main.py"
 MAIN_KV_PATH = PROJECT_ROOT / "main.kv"
+HOVER_SPINNER_PATH = PROJECT_ROOT / "widgets" / "hover_spinner.py"
 
 
 def _load_class_function(path, class_name, function_name):
@@ -100,6 +101,16 @@ class WhiteBalancePresetTest(unittest.TestCase):
         self.assertIn("preset == self.PRESET_AS_SHOT", set2param)
         self.assertIn('widget.ids["slider_color_temperature"].reset_value', set2param)
         self.assertIn('widget.ids["slider_color_tint"].reset_value', set2param)
+
+    def test_hover_spinner_dispatches_same_user_value(self):
+        source = HOVER_SPINNER_PATH.read_text()
+        on_text = ast.get_source_segment(
+            source,
+            _load_class_function(HOVER_SPINNER_PATH, "HoverSpinner", "on_text"),
+        )
+
+        self.assertIn("if self.value == value", on_text)
+        self.assertIn("self.property('value').dispatch(self)", on_text)
 
 
 if __name__ == "__main__":

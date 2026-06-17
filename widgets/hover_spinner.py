@@ -20,7 +20,10 @@ class HoverSpinner(KVSpinner):
 
     def on_text(self, instance, value):
         if self.disabled == False:
-            self.value = value
+            if self.value == value:
+                self.property('value').dispatch(self)
+            else:
+                self.value = value
         
     def on_mouse_pos(self, window, pos):
         # ドロップダウンが開いている場合のアイテムホバー検出

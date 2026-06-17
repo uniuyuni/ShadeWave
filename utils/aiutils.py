@@ -30,6 +30,36 @@ def log1p_tonemap_inverse(result, k=LOG1P_TONEMAP_K_DEFAULT):
     return (np.expm1(np.log1p(k) * result) / k).astype(np.float32)
 
 
+def log1p_tonemap_forward_hdr(
+    x,
+    k=LOG1P_TONEMAP_K_DEFAULT,
+    clip_nonnegative=True,
+    white_point=None,
+    white_percentile=99.9,
+):
+    """HDR入力をSCUNet向けの概ね[0,1] log空間へ写す。戻り値は(output, white_point)。"""
+    y = np.asarray(x, dtype=np.float32)
+    y = np.nan_to_num(y, nan=0.0, posinf=1.0, neginf=0.0)
+    if clip_nonnegative:
+        y = np.clip(y, 0.0, None)
+    if white_point is None:
+        finite = y[np.isfinite(y)]
+        if finite.size == 0:
+            white_point = 1.0
+        else:
+            white_point = float(np.percentile(finite, white_percentile))
+    white_point = max(float(white_point), 1.0)
+    denom = np.log1p(k * white_point)
+    result = np.log1p(k * y) / max(float(denom), 1e-6)
+    return np.clip(result, 0.0, 1.0).astype(np.float32), white_point
+
+
+def log1p_tonemap_inverse_hdr(result, white_point, k=LOG1P_TONEMAP_K_DEFAULT):
+    """log1p_tonemap_forward_hdr の逆変換。"""
+    white_point = max(float(white_point), 1.0)
+    return (np.expm1(np.log1p(k * white_point) * result) / k).astype(np.float32)
+
+
 def calculate_expanded_crop(img_width, img_height, x, y, w, h, width, height):
     """
     関数のパラメータ説明:
@@ -190,76 +220,3 @@ def print_model_structure(model, indent=0):
         
         if len(list(module.children())) > 0:
             print_model_structure(module, indent + 1)
-
-
-def apply_low_frequency_transfer(
-    restored_img,
-    reference_img,
-    sigma=30,
-    highlight_threshold=None,
-    highlight_transition=0.35,
-    highlight_detail_strength=0.25,
-):
-    """
-    復元画像（restored_img）の高周波成分（ディテール）と、
-    参照画像（reference_img）の低周波成分（色・明るさ）を合成します。
-    
-    これにより、NAFNet/Restormer等のタイル推論で発生した色ズレを
-    元画像の色味に強制的に合わせることで補正します。
-
-    Args:
-        restored_img (numpy.ndarray): タイル推論などで復元された高解像度画像
-        reference_img (numpy.ndarray): 色味の基準となる元画像
-                                      ※サイズが異なる場合は自動でリサイズされます
-        sigma (int): ガウシアンブラーの強度（奇数推奨）。
-                     値が大きいほど「広い範囲の色」を参照し、
-                     値が小さいほど「細かい模様」まで参照画像からコピーします。
-                     通常は 20〜100 程度で調整します。
-        highlight_threshold (float | None): 指定時、参照画像の明部ほどAI由来の高周波を弱めます。
-        highlight_transition (float): 明部保護マスクが最大になるまでの幅。
-        highlight_detail_strength (float): 明部で残すAI高周波の割合。
-
-    Returns:
-        numpy.ndarray: 色補正された画像
-    """
-    
-    # 1. 参照画像を復元画像のサイズに合わせる
-    # （超解像タスクの場合、入力画像は小さいので拡大する必要があります）
-    h, w = restored_img.shape[:2]
-    if reference_img.shape[:2]!= (h, w):
-        reference_img = cv2.resize(reference_img, (w, h), interpolation=cv2.INTER_LINEAR)
-
-    # 2. 計算のためにfloat型に変換（オーバーフロー/アンダーフロー防止）
-    restored_float = restored_img
-    reference_float = reference_img
-
-    # 3. 低周波成分（ぼかした画像）を抽出
-    # カーネルサイズ(ksize)は(0,0)指定でsigmaから自動計算させます
-    low_freq_restored = cv2.GaussianBlur(restored_float, (0, 0), sigmaX=sigma, sigmaY=sigma)
-    low_freq_reference = cv2.GaussianBlur(reference_float, (0, 0), sigmaX=sigma, sigmaY=sigma)
-
-    # 4. 高周波成分（ディテール）を抽出
-    # 復元画像 - その低周波 = 復元されたテクスチャやエッジのみの情報
-    high_freq_restored = restored_float - low_freq_restored
-
-    if highlight_threshold is not None:
-        if reference_float.ndim == 2:
-            luminance = reference_float
-            mask = np.clip((luminance - highlight_threshold) / highlight_transition, 0.0, 1.0)
-            mask = mask * mask * (3.0 - 2.0 * mask)
-            detail_scale = 1.0 - mask * (1.0 - highlight_detail_strength)
-        else:
-            luminance = np.max(reference_float, axis=2)
-            mask = np.clip((luminance - highlight_threshold) / highlight_transition, 0.0, 1.0)
-            mask = mask * mask * (3.0 - 2.0 * mask)
-            detail_scale = 1.0 - mask[..., np.newaxis] * (1.0 - highlight_detail_strength)
-        high_freq_restored = high_freq_restored * detail_scale
-
-    # 5. 合成（低周波転送）
-    # 参照画像の低周波（正しい色） + 復元画像の高周波（高精細なディテール）
-    result_float = low_freq_reference + high_freq_restored
-
-    # 6. 0-255の範囲にクリップしてuint8に戻す
-    result = result_float
-
-    return result

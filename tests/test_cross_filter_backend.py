@@ -8,7 +8,6 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cores import cross_filter as core_cross_filter
 from effect_backends import cross_filter_adapter, cross_filter_reference
 
 
@@ -62,9 +61,6 @@ class CrossFilterBackendTest(unittest.TestCase):
         self.assertEqual(actual.shape, image.shape)
         self.assertGreaterEqual(float(actual[20, 24, 2]), 9.0)
         self.assertGreaterEqual(float(actual[50, 70, 2]), 9.0)
-
-    def test_core_cross_filter_is_compatibility_shim(self):
-        self.assertIs(core_cross_filter.apply_cross_filter, cross_filter_adapter.apply_cross_filter)
 
     def test_reference_remains_available(self):
         image = self._peak_image()

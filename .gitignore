@@ -15,6 +15,7 @@ SCUNet/
 demosaicnet_torch/
 Real-ESRGAN/
 NAFNet_AppleSilicon/
+SCUNet_CoreML/
 splitimage/**build/**
 splitimage/*.egg*/**
 

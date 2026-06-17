@@ -3749,9 +3749,7 @@
                                         id: button_distortion_reset
                                         size_hint_x: None
                                         ref_width: 60
-                                        on_press: root.begin_history_effect_ctrl(1, 'distortion')
-                                        on_press: root.apply_effects_lv(1, 'distortion')
-                                        on_release: root.end_history_effect_ctrl(1, 'distortion')
+                                        on_press: root.reset_distortion_painter_action()
                                         ParamChipText:
                                             text: "Reset"
 

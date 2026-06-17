@@ -6,6 +6,7 @@ import unittest
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DISTORTION_PAINTER_PATH = PROJECT_ROOT / "widgets" / "distortion_painter.py"
 MAIN_PATH = PROJECT_ROOT / "main.py"
+MAIN_KV_PATH = PROJECT_ROOT / "main.kv"
 EFFECTS_PATH = PROJECT_ROOT / "effects.py"
 
 
@@ -96,6 +97,23 @@ class DistortionPainterScrollFlowTest(unittest.TestCase):
         self.assertIn("self.distortion_painter.set_ref_image(img, True)", sync_source)
         self.assertIn("self._sync_distortion_painter_ref(img, param, efconfig)", make_diff_source)
         self.assertIn("self._painter_ref_key", make_diff_source)
+
+    def test_liquify_reset_button_calls_painter_directly(self):
+        kv_source = MAIN_KV_PATH.read_text()
+        main_source_text = MAIN_PATH.read_text()
+        reset_source = ast.get_source_segment(
+            main_source_text,
+            _load_class_function(MAIN_PATH, "MainWidget", "reset_distortion_painter_action"),
+        )
+        set2param_source = ast.get_source_segment(
+            EFFECTS_PATH.read_text(),
+            _load_class_function(EFFECTS_PATH, "DistortionEffect", "set2param"),
+        )
+
+        self.assertIn("id: button_distortion_reset", kv_source)
+        self.assertIn("on_press: root.reset_distortion_painter_action()", kv_source)
+        self.assertIn("painter.reset_image()", reset_source)
+        self.assertNotIn('button_distortion_reset"].state == "down"', set2param_source)
 
 
 if __name__ == "__main__":

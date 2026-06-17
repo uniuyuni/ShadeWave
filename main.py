@@ -1432,6 +1432,12 @@ if __name__ == '__main__':
                     self.primary_param['distortion_brush_size'] = widget.brush_size
                     self.ids["slider_distortion_brush_size"].set_slider_value(widget.brush_size)
 
+        def reset_distortion_painter_action(self):
+            effect = self.primary_effects[1].get('distortion')
+            painter = getattr(effect, 'distortion_painter', None) if effect is not None else None
+            if painter is not None:
+                painter.reset_image()
+
         def geometry_callback(self, proc, widget):
             match proc:
                 case 'start':

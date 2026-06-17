@@ -7,6 +7,8 @@ import cv2
 import time
 import logging
 
+from effect_backends import low_frequency_transfer_adapter
+
 import splitimage
 import waitinfo
 import cores.hlsrgb as hlsrgb
@@ -105,7 +107,7 @@ def predict_scunet_helper(model, np_image):
     """
 
     k = aiutils.LOG1P_TONEMAP_K_DEFAULT
-    np_image = aiutils.log1p_tonemap_forward(np_image, k=k, clip_nonnegative=True)
+    np_image, hdr_white = aiutils.log1p_tonemap_forward_hdr(np_image, k=k, clip_nonnegative=True)
     split_images, split_info = splitimage.split_image_with_overlap(np_image, _TILE_SIZE, _TILE_SIZE, _TILE_OVERLAP)
 
     t1 = time.time()
@@ -123,17 +125,18 @@ def predict_scunet_helper(model, np_image):
     if scale_back != 1.0:
         result = np.asarray(result * scale_back, dtype=np.float32)
     """
-    result = aiutils.log1p_tonemap_inverse(result, k=k)
+    result = aiutils.log1p_tonemap_inverse_hdr(result, hdr_white, k=k)
 
     logging.info("SCUNet Finalizing...")
     waitinfo.set_text("ai_noise_reduction", "Finalizing...")
-    result = aiutils.apply_low_frequency_transfer(
+    result = low_frequency_transfer_adapter.apply_low_frequency_transfer(
         result,
         org_image,
         sigma=75,
-        highlight_threshold=0.70,
-        highlight_transition=0.40,
+        highlight_threshold=0.70 * hdr_white,
+        highlight_transition=0.40 * hdr_white,
         highlight_detail_strength=0.20,
+        luminance_transfer_strength=0.0,
     )
 
     logging.info(f"SCUNet Completed. {time.time() - t1:.2f} seconds")
