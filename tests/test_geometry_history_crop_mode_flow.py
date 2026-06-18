@@ -10,6 +10,7 @@ PIPELINE_PATH = PROJECT_ROOT / "pipeline.py"
 MAIN_PATH_TEXT = MAIN_PATH.read_text()
 CORE_PATH = PROJECT_ROOT / "cores" / "core.py"
 PARAMS_PATH = PROJECT_ROOT / "params.py"
+MASK_EDITOR2_PATH = PROJECT_ROOT / "widgets" / "mask_editor2.py"
 
 
 def _load_function(path, name):
@@ -127,11 +128,23 @@ class GeometryHistoryCropModeFlowTest(unittest.TestCase):
 
         self.assertIn("crop_editing=False", source)
         self.assertIn("if not crop_editing:", source)
+        self.assertNotIn("count_nonzero", source)
         self.assertNotIn("crop_enable", source)
         draw_image_core = _load_function(MAIN_PATH, "draw_image_core")
         draw_source = ast.get_source_segment(MAIN_PATH.read_text(), draw_image_core)
         self.assertIn('crop_editing = current_tab == "Ge"', draw_source)
         self.assertIn("crop_editing=crop_editing", draw_source)
+
+    def test_mask_overlay_is_clipped_to_zero_wrap_image_area(self):
+        draw_mask_image = _load_class_function(MASK_EDITOR2_PATH, "MaskEditor2", "draw_mask_image")
+        draw_source = ast.get_source_segment(MASK_EDITOR2_PATH.read_text(), draw_mask_image)
+        clip_overlay = _load_class_function(MASK_EDITOR2_PATH, "MaskEditor2", "_clip_mask_overlay_to_image_area")
+        clip_source = ast.get_source_segment(MASK_EDITOR2_PATH.read_text(), clip_overlay)
+
+        self.assertIn("_clip_mask_overlay_to_image_area(glayimg, disp_info)", draw_source)
+        self.assertIn("core.crop_size_and_offset_from_texture", clip_source)
+        self.assertIn("np.zeros_like(glayimg)", clip_source)
+        self.assertNotIn("control_points", clip_source)
 
     def test_crop_enable_is_not_copied_into_history_runtime_special(self):
         source = PARAMS_PATH.read_text()

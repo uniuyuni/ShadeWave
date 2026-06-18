@@ -2243,6 +2243,7 @@ def apply_zero_wrap(img, param, crop_editing=False):
     # マスクは常に img と同じ形に合わせる（config の preview_* は使わない）。
     out_w, out_h = int(img.shape[1]), int(img.shape[0])
     offset_x, offset_y = (out_w - wrap.shape[1]) // 2, (out_h - wrap.shape[0]) // 2
+    zero_count = out_w * out_h - wrap.shape[1] * wrap.shape[0]
     wrap = np.pad(
         wrap,
         (
@@ -2257,7 +2258,7 @@ def apply_zero_wrap(img, param, crop_editing=False):
     if not crop_editing:
         img = img * wrap[..., np.newaxis]
 
-    return (img, wrap.size - np.count_nonzero(wrap))
+    return (img, zero_count)
 
 def apply_out_of_range_exposure(img, overexposure, underexposure):
 

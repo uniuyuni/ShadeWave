@@ -4323,6 +4323,18 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         marginy = (self.size[1] - texture_size[1] * scale) / 2
         return (px + marginx, py + marginy), (texture_size[0] * scale, texture_size[1] * scale)
 
+    def _clip_mask_overlay_to_image_area(self, glayimg, disp_info):
+        if disp_info is None:
+            return glayimg
+        h, w = glayimg.shape[:2]
+        new_w, new_h, offset_x, offset_y = core.crop_size_and_offset_from_texture(w, h, disp_info)
+        if new_w >= w and new_h >= h:
+            return glayimg
+
+        clipped = np.zeros_like(glayimg)
+        clipped[offset_y:offset_y + new_h, offset_x:offset_x + new_w] = glayimg[offset_y:offset_y + new_h, offset_x:offset_x + new_w]
+        return clipped
+
     def window_point_in_image_rect(self, x, y):
         if not self.collide_point(x, y):
             return False
@@ -4622,6 +4634,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             with self.mask_container.canvas.before:
                 # マスクをアルファとして扱い、ルミナンスを白(1.0)にする
                 glayimg = np.clip(glayimg, 0, 1)
+                glayimg = self._clip_mask_overlay_to_image_area(glayimg, disp_info)
                 h, w = glayimg.shape[:2]
                 la_img = np.empty((h, w, 2), dtype=np.float32)
                 la_img[..., 0] = 1.0  # Luminance = White
