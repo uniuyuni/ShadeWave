@@ -1,7 +1,9 @@
 
+import importlib
+
 import cv2
 import numpy as np
-import mediapipe as mp
+
 
 EXCLUDE_POINT_INDICES_FOR_JAWLINE = [0, 25, 22, 24, 20, 19, 26, 18, 32, 26, 35, 5, 7, 4, 6, 2, 1, 15, 8]
 EXCLUDE_POINT_INDICES_FOR_JAW = [0, 25, 22, 24, 20, 19, 26, 18, 32, 26, 35, 5, 7, 4, 6, 2, 1, 15, 8, 5, 9, 3, 16, 10, 13, 23, 27, 21, 33, 28, 31, 30, 12]
@@ -11,20 +13,27 @@ FIX_POINT_SCALES_FOR_EYES = [-0.8, 0.4, 0.8, 1.6]
 FIX_POINT_SCALES_FOR_LIPS = [-0.5, 0.8, 1.6]
 
 
-def setup_face_mesh(image):
-
-    # ランドマーク取得
-    mp_face_mesh = mp.solutions.face_mesh
+def _setup_legacy_face_mesh(image):
+    try:
+        mp_face_mesh = importlib.import_module("mediapipe.solutions.face_mesh")
+    except ModuleNotFoundError:
+        try:
+            mp_face_mesh = importlib.import_module("mediapipe.python.solutions.face_mesh")
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "MediaPipe legacy FaceMesh API が見つかりません。setup.sh を実行して対応版の mediapipe をインストールしてください。"
+            ) from exc
     face_mesh = mp_face_mesh.FaceMesh(
         min_detection_confidence=0,  # 検出閾値（低くするとFPS↑）
         static_image_mode=True,        # 静止画モードで最適化
         refine_landmarks=True,          # ランドマークの精度を高める
     )
-    
-    # 検出
     results = face_mesh.process((image * 255).astype(np.uint8))
-
     return (mp_face_mesh, face_mesh, results)
+
+
+def setup_face_mesh(image):
+    return _setup_legacy_face_mesh(image)
 
 def clear_face_mesh(fms):
     mp_face_mesh, face_mesh, results = fms

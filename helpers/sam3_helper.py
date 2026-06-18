@@ -1,4 +1,5 @@
 import logging
+from threading import RLock
 
 import torch
 import numpy as np
@@ -6,11 +7,11 @@ import cv2
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.box_ops import box_xywh_to_cxcywh
 from sam3.model.sam3_image_processor import Sam3Processor
-from sam3.visualization_utils import normalize_bbox
 
 RESIZE_FACTOR = 1.0
 
 __model = None
+__model_lock = RLock()
 
 _logger = logging.getLogger(__name__)
 
@@ -27,21 +28,31 @@ def _device_equal(a: torch.device, b: torch.device) -> bool:
     return a_idx == b_idx
 
 
+def _normalize_bbox(bbox_xywh, img_w, img_h):
+    normalized_bbox = bbox_xywh.clone()
+    normalized_bbox[..., 0] /= img_w
+    normalized_bbox[..., 1] /= img_h
+    normalized_bbox[..., 2] /= img_w
+    normalized_bbox[..., 3] /= img_h
+    return normalized_bbox
+
+
 def setup_sam3(device="cpu"):
     global __model
     if isinstance(device, str):
         device = device.strip().lower()
     torch_device = torch.device(device)
-    if __model is None:
-        # bpe_path 省略時は公式パッケージ同梱の
-        # sam3/assets/bpe_simple_vocab_16e6.txt.gz が pkg_resources で解決される
-        __model = build_sam3_image_model(
-            checkpoint_path="checkpoints/sam3.1_multiplex.pt",
-            device=device,
-        )
-    elif not _device_equal(next(__model.parameters()).device, torch_device):
-        # config の gpu_device が変わったときにモデルと入力のデバイスを揃える
-        __model = __model.to(torch_device)
+    with __model_lock:
+        if __model is None:
+            # bpe_path 省略時は公式パッケージ同梱の
+            # sam3/assets/bpe_simple_vocab_16e6.txt.gz が pkg_resources で解決される
+            __model = build_sam3_image_model(
+                checkpoint_path="checkpoints/sam3.1_multiplex.pt",
+                device=device,
+            )
+        elif not _device_equal(next(__model.parameters()).device, torch_device):
+            # config の gpu_device が変わったときにモデルと入力のデバイスを揃える
+            __model = __model.to(torch_device)
     # device を省略すると get_default_device() が MPS を選び、モデルが CPU のときに不一致になる
     processor = Sam3Processor(__model, device=torch_device)
     param_dev = next(__model.parameters()).device
@@ -95,19 +106,20 @@ def predict_sam3_for_bbox(sam3_dict, image, bbox):
     processor = sam3_dict["processor"]
     org_h, org_w = image.shape[0:2]
 
-    if sam3_dict["image"] is not image:
-        sam3_dict["image"] = image
-        image = cv2.resize(image, (int(org_w * RESIZE_FACTOR), int(org_h * RESIZE_FACTOR)))
-        sam3_dict["inference_state"] = processor.set_image(image)
-        _log_backbone_device_once(sam3_dict)
-    inference_state = sam3_dict["inference_state"]
+    with torch.inference_mode():
+        if sam3_dict["image"] is not image:
+            sam3_dict["image"] = image
+            image = cv2.resize(image, (int(org_w * RESIZE_FACTOR), int(org_h * RESIZE_FACTOR)))
+            sam3_dict["inference_state"] = processor.set_image(image)
+            _log_backbone_device_once(sam3_dict)
+        inference_state = sam3_dict["inference_state"]
 
-    box_input_xywh = torch.tensor(bbox).view(-1, 4)
-    box_input_cxcywh = box_xywh_to_cxcywh(box_input_xywh)
-    norm_box_cxcywh = normalize_bbox(box_input_cxcywh, org_w, org_h).flatten().tolist()
+        box_input_xywh = torch.tensor(bbox).view(-1, 4)
+        box_input_cxcywh = box_xywh_to_cxcywh(box_input_xywh)
+        norm_box_cxcywh = _normalize_bbox(box_input_cxcywh, org_w, org_h).flatten().tolist()
 
-    processor.reset_all_prompts(inference_state)
-    results = processor.add_geometric_prompt(state=inference_state, box=norm_box_cxcywh, label=True)
+        processor.reset_all_prompts(inference_state)
+        results = processor.add_geometric_prompt(state=inference_state, box=norm_box_cxcywh, label=True)
     if len(results["masks"]) == 0:
         return np.zeros((org_h, org_w), dtype=np.float32)
 
@@ -121,15 +133,16 @@ def predict_sam3_for_text(sam3_dict, image, text):
     processor = sam3_dict["processor"]
     org_h, org_w = image.shape[0:2]
 
-    if sam3_dict["image"] is not image:
-        sam3_dict["image"] = image
-        image = cv2.resize(image, (int(org_w * RESIZE_FACTOR), int(org_h * RESIZE_FACTOR)))
-        sam3_dict["inference_state"] = processor.set_image(image)
-        _log_backbone_device_once(sam3_dict)
-    inference_state = sam3_dict["inference_state"]
+    with torch.inference_mode():
+        if sam3_dict["image"] is not image:
+            sam3_dict["image"] = image
+            image = cv2.resize(image, (int(org_w * RESIZE_FACTOR), int(org_h * RESIZE_FACTOR)))
+            sam3_dict["inference_state"] = processor.set_image(image)
+            _log_backbone_device_once(sam3_dict)
+        inference_state = sam3_dict["inference_state"]
 
-    processor.reset_all_prompts(inference_state)
-    results = processor.set_text_prompt(state=inference_state, prompt=text)
+        processor.reset_all_prompts(inference_state)
+        results = processor.set_text_prompt(state=inference_state, prompt=text)
     if len(results["masks"]) == 0:
         return np.zeros((org_h, org_w), dtype=np.float32)
 

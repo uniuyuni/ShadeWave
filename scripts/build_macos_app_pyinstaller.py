@@ -227,6 +227,17 @@ def _conda_lib_dylib_bundle_args() -> list[str]:
     return out
 
 
+def _add_tree_files(datas: list[str], root: Path, source: Path, dest_root: str) -> None:
+    if not source.is_dir():
+        print(f"注意: {source} が見つからないため同梱しません。", file=sys.stderr)
+        return
+    for f in sorted(source.rglob("*")):
+        if f.is_file():
+            rel = f.relative_to(source)
+            dest = str(Path(dest_root) / rel.parent) if rel.parent != Path(".") else dest_root
+            datas.append(_add_data_mac(f, dest))
+
+
 def _ensure_pyinstaller() -> None:
     if importlib.util.find_spec("PyInstaller") is None:
         print(
@@ -320,6 +331,28 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
             file=sys.stderr,
         )
 
+    # Runtime resources referenced through relative paths after main.py chdirs to sys._MEIPASS.
+    _add_tree_files(datas, root, root / "icc", "icc")
+    _add_tree_files(datas, root, root / "checkpoints", "checkpoints")
+    _add_tree_files(
+        datas,
+        root,
+        root / "external" / "depth_pro" / "checkpoints",
+        "external/depth_pro/checkpoints",
+    )
+    _add_tree_files(
+        datas,
+        root,
+        root / "external" / "SCUNet_CoreML" / "src",
+        "external/SCUNet_CoreML/src",
+    )
+    _add_tree_files(
+        datas,
+        root,
+        root / "external" / "SCUNet_CoreML" / "models",
+        "external/SCUNet_CoreML/models",
+    )
+
     # 重複除去（同一ファイルの複数指定を防ぐ）
     seen: set[str] = set()
     uniq_datas: list[str] = []
@@ -332,6 +365,8 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
         "kivymd",
         "PIL",
         "PIL._imagingtk",
+        "mediapipe.python.solutions.face_mesh",
+        "radiance_denoise.native",
     ]
 
     rth_libintl = root / "scripts" / "pyinstaller" / "rth_darwin_libintl.py"
@@ -350,6 +385,10 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
         "--osx-bundle-identifier",
         bundle_id,
         f"--paths={root}",
+        f"--paths={root / 'external' / 'radiance_denoise'}",
+        f"--paths={root / 'external' / 'SAM3'}",
+        f"--paths={root / 'external' / 'depth_pro' / 'src'}",
+        f"--paths={root / 'external' / 'SCUNet_CoreML' / 'src'}",
         "--noupx",
     ]
 
@@ -380,6 +419,12 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # OpenEXR: .EXR export uses the official Python bindings directly.
     args.extend(["--collect-all", "OpenEXR"])
     args.extend(["--hidden-import", "OpenEXR"])
+
+    # External ML/native packages used through dynamic imports or editable installs.
+    args.extend(["--collect-data", "mediapipe"])
+    args.extend(["--collect-submodules", "mediapipe.python.solutions"])
+    for package in ("radiance_denoise", "sam3", "depth_pro", "scunet_coreml", "coremltools"):
+        args.extend(["--collect-all", package])
 
     for d in uniq_datas:
         args.extend(["--add-data", d])
@@ -435,6 +480,8 @@ def main() -> None:
 
     distpath = args.distpath or (root / "dist")
     workpath = args.workpath or (root / "build")
+    pyinstaller_config_dir = workpath / "pyinstaller_config"
+    pyinstaller_config_dir.mkdir(parents=True, exist_ok=True)
 
     icon_png = args.icon_png or (root / "assets" / "Shade Wave icon.png")
     if not icon_png.is_absolute():
@@ -460,7 +507,12 @@ def main() -> None:
 
     # python -m PyInstaller として実行（現在の環境の site-packages を確実に使う）
     cmd = [sys.executable, "-m", "PyInstaller", *pyi_args]
-    result = subprocess.run(cmd, cwd=root)
+    env = os.environ.copy()
+    env["PYINSTALLER_CONFIG_DIR"] = str(pyinstaller_config_dir)
+    env.setdefault("KIVY_DPI", "160")
+    env.setdefault("KIVY_METRICS_DENSITY", "1")
+    env.setdefault("KIVY_METRICS_FONTSCALE", "1")
+    result = subprocess.run(cmd, cwd=root, env=env)
     if result.returncode != 0:
         sys.exit(result.returncode)
 

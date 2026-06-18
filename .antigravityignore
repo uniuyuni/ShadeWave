@@ -1,7 +1,0 @@
-brain/
-*.resolved
-*.tmp
-node_modules/
-dist/
-build/
-.next/

@@ -4,12 +4,13 @@
 # - libraw_enhanced needs Apple clang and --no-build-isolation.
 # - depth_pro is installed with --no-deps so Apple's numpy<2 pin does not
 #   downgrade the app environment.
-# macOS .app ビルド用（任意）: pip install "pyinstaller>=6"
+# - mediapipe is installed by setup.sh with --no-deps so the legacy FaceMesh API
+#   can be used without downgrading numpy.
+# macOS .app ビルド用
 
 -e ./external/libraw_enhanced
 -e ./external/SAM3
 -e ./external/radiance_denoise
--e ./external/SCUNet_CoreML
 
 basicsr
 color-matcher
@@ -28,7 +29,6 @@ kivymd
 lensfunpy
 llama-cpp-python
 matplotlib
-mediapipe
 msgpack
 numba
 numpy
@@ -37,12 +37,14 @@ OpenEXR
 pandas
 Pillow
 pillow-heif
+protobuf<5
 psutil
 pycocotools
 pyexiftool
 pyopencl
 pyobjc-framework-Cocoa
 pyobjc-framework-Quartz
+pyinstaller>=6
 pyvips
 regex
 requests

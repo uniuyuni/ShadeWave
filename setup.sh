@@ -30,12 +30,31 @@ else
 fi
 unset _sys_git_exec
 
+retry() {
+  local attempt=1
+  local max_attempts="${SETUP_RETRY_ATTEMPTS:-3}"
+  local delay="${SETUP_RETRY_DELAY_SECONDS:-5}"
+
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "エラー: $attempt 回試しましたが失敗しました: $*" >&2
+      return 1
+    fi
+    echo "警告: 失敗しました。${delay}秒後に再試行します ($attempt/$max_attempts): $*" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 clone_if_missing() {
   local repo_url="$1"
   local target_dir="$2"
 
   if [ ! -d "$target_dir" ]; then
-    git clone --depth 1 "$repo_url" "$target_dir"
+    retry git clone --depth 1 "$repo_url" "$target_dir"
   fi
 }
 
@@ -44,8 +63,45 @@ download_file() {
   local output="$2"
   shift 2
 
-  env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u REQUESTS_CA_BUNDLE \
+  retry env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u REQUESTS_CA_BUNDLE \
     /usr/bin/curl -fSL "$@" "$url" -o "$output"
+}
+
+valid_icc_profiles() {
+  pixi run python - <<'PY'
+from pathlib import Path
+import sys
+
+from PIL import ImageCms
+
+expected = [
+    "ACES2065-1.icc",
+    "ACEScg.icc",
+    "Adobe RGB (1998).icc",
+    "Display P3.icc",
+    "ITU-R BT.2020.icc",
+    "ITU-R BT.709.icc",
+    "ProPhoto RGB.icc",
+    "WideGamut RGB.icc",
+    "XYZD65.icc",
+    "sRGB IEC61966-2.1.icc",
+]
+
+icc_dir = Path("icc")
+if not icc_dir.is_dir():
+    sys.exit(1)
+
+for name in expected:
+    path = icc_dir / name
+    if not path.is_file() or path.stat().st_size <= 0:
+        sys.exit(1)
+    try:
+        ImageCms.ImageCmsProfile(str(path))
+    except Exception:
+        sys.exit(1)
+
+sys.exit(0)
+PY
 }
 
 ensure_libraw_enhanced() {
@@ -65,8 +121,20 @@ ensure_libraw_enhanced() {
     mv "$repo_dir/external/LibRaw-${ver}" "$repo_dir/external/LibRaw-master"
   fi
 
+  local metal_src="$repo_dir/core/metal"
+  if [ ! -d "$metal_src" ]; then
+    echo "エラー: Metal shader ディレクトリが見つかりません: $metal_src" >&2
+    exit 1
+  fi
+  if [ -L "metal" ] && [ ! -d "metal" ]; then
+    rm -f "metal"
+  fi
+  if [ -e "metal" ] && [ ! -d "metal" ]; then
+    echo "エラー: metal は存在しますがディレクトリではありません。退避してから再実行してください。" >&2
+    exit 1
+  fi
   if [ ! -e "metal" ]; then
-    ln -sfn "external/libraw_enhanced/core/metal" "metal"
+    ln -sfn "$metal_src" "metal"
   fi
 }
 
@@ -78,7 +146,7 @@ ensure_sam3() {
   local repo_dir="$EXTERNAL_DIR/SAM3"
 
   if [ ! -d "$repo_dir" ]; then
-    git clone https://github.com/facebookresearch/sam3.git "$repo_dir"
+    retry git clone https://github.com/facebookresearch/sam3.git "$repo_dir"
     git -C "$repo_dir" checkout --quiet "$pin"
   elif [ ! -d "$repo_dir/.git" ]; then
     echo "エラー: $repo_dir は存在しますが Git リポジトリではありません。" >&2
@@ -86,13 +154,9 @@ ensure_sam3() {
   fi
 
   git -C "$repo_dir" checkout --quiet "$pin"
-  # 既に適用済みでない場合のみ当てる（再実行の冪等性）
-  if git -C "$repo_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
-    echo "SAM3: macOS パッチは適用済みです ($patch)"
-  else
-    git -C "$repo_dir" apply "$patch"
-    echo "SAM3: macOS パッチを適用しました ($patch)"
-  fi
+  git -C "$repo_dir" reset --hard --quiet "$pin"
+  git -C "$repo_dir" apply "$patch"
+  echo "SAM3: macOS パッチを適用しました ($patch)"
 }
 
 ensure_external_repos() {
@@ -120,8 +184,8 @@ ensure_depth_pro
 
 pixi run python -m pip install --upgrade pip "setuptools>=70,<82" wheel
 # requirements.txt を pip 依存の正本にする。libraw_enhanced は Apple clang と
-# --no-build-isolation、depth_pro は NumPy 2 系を維持するため --no-deps で
-# 入れるので、どちらも専用コマンドに分ける。
+# --no-build-isolation、depth_pro と mediapipe は NumPy 2 系を維持するため
+# --no-deps で入れるので、それぞれ専用コマンドに分ける。
 REQ_NO_LOCAL="$(mktemp)"
 cleanup_requirements_tmp() {
   rm -f "$REQ_NO_LOCAL"
@@ -132,6 +196,14 @@ pixi run python -m pip install -r "$REQ_NO_LOCAL"
 cleanup_requirements_tmp
 trap - EXIT
 pixi run python -m pip install -e ./external/depth_pro --no-deps
+pixi run python -m pip install "mediapipe==0.10.15" --force-reinstall --no-deps
+
+if [ ! -d "external/SCUNet_CoreML/models/scunet_color_real_psnr_448_fp16.mlpackage" ]; then
+  (
+    cd "external/SCUNet_CoreML"
+    retry pixi run scunet-coreml-setup --root . --skip-clone
+  )
+fi
 
 # libraw_enhanced は pixi 内でビルドした LibRaw（third_party/libraw-install）にリンクする（システム LibRaw 不要）
 echo "LibRaw を third_party/libraw-install にビルドしています..."
@@ -147,13 +219,19 @@ CC=/usr/bin/clang CXX=/usr/bin/clang++ \
 pixi run build-denoise-native
 pixi run install-effect-backends
 
-if [ ! -d "icc" ] || [ ! -d "dcp" ] || [ ! -d "luts" ]; then
-  pixi run python -m gdown --folder --remaining-ok "https://drive.google.com/drive/folders/1dWrL7ciw5DWlk9zFEBf63Gz9uKsWjJ_W?usp=sharing"
+if valid_icc_profiles; then
+  echo "ICC profiles are already valid; skipping download."
+else
+  retry pixi run python -m gdown --folder --remaining-ok "https://drive.google.com/drive/folders/1dWrL7ciw5DWlk9zFEBf63Gz9uKsWjJ_W?usp=sharing"
+  if ! valid_icc_profiles; then
+    echo "エラー: ICC profile の取得または検証に失敗しました。" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p checkpoints/SCUNet
 if [ ! -f "checkpoints/SCUNet/scunet_color_real_psnr.pth" ]; then
-  pixi run python external/SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
+  retry pixi run python external/SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
 fi
 
 if [ ! -f "checkpoints/sam3.1_multiplex.pt" ]; then
@@ -184,7 +262,7 @@ EOF
     export HF_TOKEN="${HF_TOKEN_INPUT}"
     unset HF_TOKEN_INPUT
   fi
-  if ! pixi run python -c 'from huggingface_hub import hf_hub_download; hf_hub_download(repo_id="facebook/sam3.1", filename="sam3.1_multiplex.pt", local_dir="checkpoints")'; then
+  if ! retry pixi run python -c 'from huggingface_hub import hf_hub_download; hf_hub_download(repo_id="facebook/sam3.1", filename="sam3.1_multiplex.pt", local_dir="checkpoints")'; then
     echo '警告: sam3.1_multiplex.pt を取得できませんでした。モデルページでアクセス権を確認し、トークンを再確認してください。' >&2
   fi
 fi
@@ -192,14 +270,10 @@ fi
 if [ ! -f "external/depth_pro/checkpoints/depth_pro.pt" ]; then
   (
     cd "external/depth_pro"
-    env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u REQUESTS_CA_BUNDLE pixi run bash get_pretrained_models.sh
+    retry env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u REQUESTS_CA_BUNDLE pixi run bash get_pretrained_models.sh
   )
 fi
 
 if [ ! -f "checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf" ]; then
   download_file 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true' 'checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf' -C -
-fi
-
-if [ ! -f "checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
-  download_file 'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true' 'checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf' -C -
 fi

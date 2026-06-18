@@ -9,7 +9,7 @@ version = "0.1.0"
 scripts = ["scripts/pixi_env_libraw.sh"]
 
 [tasks]
-# PyInstaller で macOS .app を生成（要: pip install pyinstaller）。現在の pixi 環境のパッケージを参照
+# PyInstaller で macOS .app を生成。現在の pixi 環境のパッケージを参照
 build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
 # GitHub から最新 LibRaw を取得して .pixi/libraw-install にビルドします
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
@@ -21,8 +21,10 @@ setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_
 test-hls-color-adjust = { cmd = "python tests/test_hls_color_adjust.py" }
 check-exr-export-env = { cmd = "python scripts/check_exr_export_env.py" }
 build-denoise-native = """
-cmake -G Ninja -S external/radiance_denoise/native -B external/radiance_denoise/native/build -DCMAKE_BUILD_TYPE=Release && \
-cmake --build external/radiance_denoise/native/build
+PYBIND11_DIR="$(python -m pybind11 --cmakedir)" && \
+cmake -G Ninja -S external/radiance_denoise/native -B external/radiance_denoise/native/build -DCMAKE_BUILD_TYPE=Release -Dpybind11_DIR="$PYBIND11_DIR" -DPYBIND11_FINDPYTHON=ON && \
+cmake --build external/radiance_denoise/native/build && \
+python -c 'from radiance_denoise.native import HAVE_NATIVE; assert HAVE_NATIVE, "radiance_denoise native extension was not built"'
 """
 install-effect-backends = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip --disable-pip-version-check install -e effect_backends --no-build-isolation --force-reinstall --no-deps --no-cache-dir" }
 # radiance_denoise を未取得なら clone し、ネイティブ拡張をビルドして配置（初回セットアップ用）

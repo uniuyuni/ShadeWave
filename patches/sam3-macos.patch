@@ -1499,15 +1499,66 @@ index 1ff2380..01755db 100644
              self.freqs_cis_real = self.freqs_cis.real
              self.freqs_cis_imag = self.freqs_cis.imag
 diff --git a/sam3/visualization_utils.py b/sam3/visualization_utils.py
-index c007c38..7f7e5c5 100644
+index c007c38..129837f 100644
 --- a/sam3/visualization_utils.py
 +++ b/sam3/visualization_utils.py
-@@ -41,7 +41,7 @@ def generate_colors(n_colors=256, n_samples=5000):
+@@ -5,2 +5,3 @@ import os
+ import subprocess
++import importlib
+ from pathlib import Path
+@@ -10,3 +11 @@ import cv2
+-import matplotlib.patches as patches
+-import matplotlib.pyplot as plt
+ import numpy as np
+@@ -15,3 +14,2 @@ import pycocotools.mask as mask_utils
+ import torch
+-from matplotlib.colors import to_rgb
+ from PIL import Image
+@@ -21,4 +19,32 @@ from torchvision.ops import masks_to_boxes
+ from tqdm import tqdm
+-
+-
++
++
++class _LazyModule:
++    def __init__(self, module_name):
++        self.module_name = module_name
++        self.module = None
++
++    def _load(self):
++        if self.module is None:
++            self.module = importlib.import_module(self.module_name)
++        return self.module
++
++    def __getattr__(self, name):
++        return getattr(self._load(), name)
++
++
++class _LazyCallable:
++    def __init__(self, module_name, attr_name):
++        self.module = _LazyModule(module_name)
++        self.attr_name = attr_name
++
++    def __call__(self, *args, **kwargs):
++        return getattr(self.module, self.attr_name)(*args, **kwargs)
++
++
++patches = _LazyModule("matplotlib.patches")
++plt = _LazyModule("matplotlib.pyplot")
++to_rgb = _LazyCallable("matplotlib.colors", "to_rgb")
++
++
+ def generate_colors(n_colors=256, n_samples=5000):
+@@ -41,7 +67,7 @@ def generate_colors(n_colors=256, n_samples=5000):
      return colors_rgb
- 
- 
+-
+-
 -COLORS = generate_colors(n_colors=128, n_samples=5000)
++
++
 +#COLORS = generate_colors(n_colors=128, n_samples=5000)
- 
- 
+-
+-
++
++
  def show_img_tensor(img_batch, vis_img_idx=0):

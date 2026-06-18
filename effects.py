@@ -2362,7 +2362,7 @@ class LightNoiseReductionEffect(Effect):
             param_hash = hash((its, col))
             if self.hash != param_hash:  
                 self.hash = param_hash
-                from radiance_denoise import denoise_native
+                from radiance_denoise.native import denoise_native
 
                 self.diff = denoise_native(img, its * efconfig.disp_info[4], col * efconfig.disp_info[4])
 

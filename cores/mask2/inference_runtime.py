@@ -3,18 +3,19 @@ Mask2 の推論モデルキャッシュ。UI（mask_editor2）とヘッドレス
 """
 from __future__ import annotations
 
+from threading import RLock
+
 import config
 import numpy as np
 
 import cores.mask2.cutout_guided as cutout_guided
 
-_sam3_bbox_processor = None
-_sam3_text_processor = None
+_sam3_processor = None
+_sam3_lock = RLock()
 _depth_model = None
 _faces = None
 
 DEPTH_MAP_ALGORITHM_VERSION = 2
-
 
 def delete_faces():
     global _faces
@@ -22,17 +23,18 @@ def delete_faces():
 
 
 def predict_sam3_bbox(img: np.ndarray, bbox, invert: bool) -> np.ndarray:
-    global _sam3_bbox_processor
-    import helpers.sam3_helper as sam3_helper
-
-    if _sam3_bbox_processor is None:
-        _sam3_bbox_processor = sam3_helper.setup_sam3(config.get_config("gpu_device"))
+    global _sam3_processor
+    from helpers import sam3_helper
 
     bbox = [int(x) for x in bbox]
     if bbox[0] == bbox[0] + bbox[2] or bbox[1] == bbox[1] + bbox[3]:
         return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
 
-    mask_original = sam3_helper.predict_sam3_for_bbox(_sam3_bbox_processor, img, bbox)
+    with _sam3_lock:
+        if _sam3_processor is None:
+            _sam3_processor = sam3_helper.setup_sam3(config.get_config("gpu_device"))
+        mask_original = sam3_helper.predict_sam3_for_bbox(_sam3_processor, img, bbox)
+
     mask_original = cutout_guided.create_cutout_mask_guided(
         img, mask_original, radius=60, eps=0.0001
     )
@@ -42,13 +44,14 @@ def predict_sam3_bbox(img: np.ndarray, bbox, invert: bool) -> np.ndarray:
 
 
 def predict_sam3_text(img: np.ndarray, text: str, invert: bool) -> np.ndarray:
-    global _sam3_text_processor
-    import helpers.sam3_helper as sam3_helper
+    global _sam3_processor
+    from helpers import sam3_helper
 
-    if _sam3_text_processor is None:
-        _sam3_text_processor = sam3_helper.setup_sam3(config.get_config("gpu_device"))
+    with _sam3_lock:
+        if _sam3_processor is None:
+            _sam3_processor = sam3_helper.setup_sam3(config.get_config("gpu_device"))
+        mask_original = sam3_helper.predict_sam3_for_text(_sam3_processor, img, text)
 
-    mask_original = sam3_helper.predict_sam3_for_text(_sam3_text_processor, img, text)
     mask_original = cutout_guided.create_cutout_mask_guided(
         img, mask_original, radius=60, eps=0.0001
     )
@@ -59,7 +62,7 @@ def predict_sam3_text(img: np.ndarray, text: str, invert: bool) -> np.ndarray:
 
 def predict_depth_map(img: np.ndarray) -> np.ndarray:
     global _depth_model
-    import helpers.depth_pro_helper as depth_pro_helper
+    from helpers import depth_pro_helper
 
     if _depth_model is None:
         _depth_model = depth_pro_helper.setup_model(device=config.get_config("gpu_device"))
@@ -68,7 +71,7 @@ def predict_depth_map(img: np.ndarray) -> np.ndarray:
 
 def predict_face_mask(img: np.ndarray, exclude_names: list) -> np.ndarray:
     global _faces
-    import helpers.facer_helper as facer_helper
+    from helpers import facer_helper
 
     if _faces is None:
         _faces = facer_helper.create_faces(img, device="cpu")
