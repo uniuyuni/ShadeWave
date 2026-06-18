@@ -12,6 +12,10 @@ cd "$ROOT_DIR"
 EXTERNAL_DIR="$ROOT_DIR/external"
 mkdir -p "$EXTERNAL_DIR"
 
+# 古い clone / pixi 環境の証明書パスが残っていると curl/wget/requests が
+# 別ディレクトリの cacert.pem を見に行って失敗する。
+unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE
+
 # pixi 環境の conda git は git-remote-https を欠き、HTTPS clone が
 #   "remote helper 'https' aborted session"
 # で失敗する。pip が内部で git clone https を呼ぶ場合も同じ。
@@ -40,7 +44,7 @@ download_file() {
   local output="$2"
   shift 2
 
-  SSL_CERT_FILE= CURL_CA_BUNDLE= REQUESTS_CA_BUNDLE= \
+  env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u REQUESTS_CA_BUNDLE \
     /usr/bin/curl -fSL "$@" "$url" -o "$output"
 }
 
@@ -181,7 +185,7 @@ fi
 if [ ! -f "external/depth_pro/checkpoints/depth_pro.pt" ]; then
   (
     cd "external/depth_pro"
-    SSL_CERT_FILE= CURL_CA_BUNDLE= REQUESTS_CA_BUNDLE= pixi run bash get_pretrained_models.sh
+    env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u REQUESTS_CA_BUNDLE pixi run bash get_pretrained_models.sh
   )
 fi
 
