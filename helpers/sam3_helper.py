@@ -83,7 +83,7 @@ def _log_backbone_device_once(sam3_dict):
             exp,
             torch.backends.mps.is_available(),
         )
-        if vf.device != exp:
+        if not _device_equal(vf.device, exp):
             _logger.warning(
                 "SAM3: backbone output device %s != processor %s",
                 vf.device,

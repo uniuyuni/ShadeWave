@@ -80,11 +80,18 @@ ensure_sam3() {
   if [ ! -d "$repo_dir" ]; then
     git clone https://github.com/facebookresearch/sam3.git "$repo_dir"
     git -C "$repo_dir" checkout --quiet "$pin"
-    # 既に適用済みでない場合のみ当てる（再実行の冪等性）
-    if ! git -C "$repo_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
-      git -C "$repo_dir" apply "$patch"
-      echo "SAM3: macOS パッチを適用しました ($patch)"
-    fi
+  elif [ ! -d "$repo_dir/.git" ]; then
+    echo "エラー: $repo_dir は存在しますが Git リポジトリではありません。" >&2
+    exit 1
+  fi
+
+  git -C "$repo_dir" checkout --quiet "$pin"
+  # 既に適用済みでない場合のみ当てる（再実行の冪等性）
+  if git -C "$repo_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
+    echo "SAM3: macOS パッチは適用済みです ($patch)"
+  else
+    git -C "$repo_dir" apply "$patch"
+    echo "SAM3: macOS パッチを適用しました ($patch)"
   fi
 }
 
