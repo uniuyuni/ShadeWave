@@ -59,11 +59,11 @@ def predict_sam3_text(img: np.ndarray, text: str, invert: bool) -> np.ndarray:
 
 def predict_depth_map(img: np.ndarray) -> np.ndarray:
     global _depth_model
-    import depth_pro
+    import helpers.depth_pro_helper as depth_pro_helper
 
     if _depth_model is None:
-        _depth_model = depth_pro.setup_model(device=config.get_config("gpu_device"))
-    return depth_pro.predict_model(_depth_model, img)
+        _depth_model = depth_pro_helper.setup_model(device=config.get_config("gpu_device"))
+    return depth_pro_helper.predict_model(_depth_model, img)
 
 
 def predict_face_mask(img: np.ndarray, exclude_names: list) -> np.ndarray:

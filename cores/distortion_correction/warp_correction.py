@@ -6,6 +6,7 @@
 
 import numpy as np
 import cv2
+import logging
 from typing import Dict, Tuple, List, Optional
 from scipy.interpolate import Rbf
 
@@ -219,8 +220,8 @@ def warp_mesh_with_mapper(
         try:
             rbf_x = Rbf(dst_px[:, 0], dst_px[:, 1], src_px[:, 0], **rbf_kw)
             rbf_y = Rbf(dst_px[:, 0], dst_px[:, 1], src_px[:, 1], **rbf_kw)
-        except Exception as e:
-            print(f"RBF Fitting Error: {e}")
+        except Exception:
+            logging.exception("RBF Fitting Error")
             return image
         flat_cx = coarse_x_mesh.ravel()
         flat_cy = coarse_y_mesh.ravel()
@@ -735,4 +736,3 @@ def _validate_image(image: np.ndarray):
         or image.ndim == 2
     ):
         raise TypeError(f"image must have shape (H, W, 3) or (H, W), got {image.shape}")
-

@@ -10,6 +10,7 @@ from kivy.uix.button import Button as KVButton
 from kivy.metrics import dp as kv_dp
 from functools import partial
 import json
+import logging
 
 import utils.dialogutils as dialogutils
 import utils.kvutils as kvutils
@@ -200,16 +201,20 @@ class ExportDialog(KVModalView):
 
     def export(self):
         # エクスポート処理の実装
-        print(f"Exporting with settings:")
-        print(f"Format: {self.format_value}")
-        print(f"Quality: {self.quality_value}")
-        print(f"Size: {self.size_mode} - {self.size_value}")
-        print(f"Sharpen: {self.sharpen_value}")
-        print(f"Metadata: {self.include_metadata}")
-        print(f"GPS: {self.include_gps}")
-        print(f"Dithering: {self.dithering}")
-        print(f"Output: {self.output_path}")
-        print(f"ICC Profile: {self.icc_profile}")
+        logging.info(
+            "Exporting with settings: format=%s quality=%s size=%s-%s sharpen=%s "
+            "metadata=%s gps=%s dithering=%s output=%s icc_profile=%s",
+            self.format_value,
+            self.quality_value,
+            self.size_mode,
+            self.size_value,
+            self.sharpen_value,
+            self.include_metadata,
+            self.include_gps,
+            self.dithering,
+            self.output_path,
+            self.icc_profile,
+        )
 
         self.dismiss()
         if self.callback is not None:

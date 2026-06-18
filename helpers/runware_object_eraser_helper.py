@@ -22,6 +22,7 @@ Response handling:
 """
 
 import base64
+import logging
 import os
 import uuid
 
@@ -29,7 +30,7 @@ import cv2
 import numpy as np
 import requests
 
-import splitimage
+import cores.splitimage as splitimage
 import utils.aiutils as aiutils
 
 
@@ -95,7 +96,7 @@ def _extract_result_image(response_json):
     items = response_json
     if isinstance(response_json, dict):
         if response_json.get("errors"):
-            print("Runware error:", response_json["errors"])
+            logging.warning("Runware error: %s", response_json["errors"])
             return None
         items = response_json.get("data", response_json.get("result", response_json))
     if isinstance(items, dict):
@@ -106,7 +107,7 @@ def _extract_result_image(response_json):
         image = _decode_image_data(item.get("imageBase64Data") or item.get("imageDataURI"))
         if image is not None:
             if item.get("cost") is not None:
-                print(f"Runware cost: ${item['cost']}")
+                logging.info("Runware cost: $%s", item['cost'])
             return image
         if item.get("imageURL"):
             return _download_image(item["imageURL"])
@@ -164,7 +165,7 @@ def _context_match_result(result, original, mask, ring_px=32):
 
 def predict(api_key, image, mask, prompt=None):
     if not api_key:
-        print("RUNWARE_API_KEY is not set.")
+        logging.warning("RUNWARE_API_KEY is not set.")
         return None
 
     payload = [{
@@ -192,8 +193,8 @@ def predict(api_key, image, mask, prompt=None):
         response = requests.post(API_URL, json=payload, headers=headers, timeout=_request_timeout())
         response.raise_for_status()
         return _extract_result_image(response.json())
-    except Exception as e:
-        print(f"Runware object erase failed: {e}")
+    except Exception:
+        logging.exception("Runware object erase failed")
         return None
 
 
@@ -213,7 +214,7 @@ def predict_helper(api_key, image, mask, bbox, prompt=None):
     for i, block in enumerate(blocks):
         block_mask = mask_blocks[i][..., 0]
         if np.any(block_mask > 0):
-            print(f"Runware object erase {i + 1}/{len(blocks)} {block.shape}.")
+            logging.info("Runware object erase %s/%s %s.", i + 1, len(blocks), block.shape)
             result = _ensure_result_size(predict(api_key, block, block_mask, prompt), block.shape)
             if result is None:
                 predict_blocks.append(block)

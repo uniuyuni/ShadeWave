@@ -164,7 +164,7 @@ def predict_helper(engine: NAFNetAppleSilicon, np_image: np.ndarray) -> np.ndarr
 
 
 if __name__ == "__main__":
-    print("NAFNet AppleSilicon helper")
-    print(f"project_root={project_root}")
-    print(f"fast_model={DEFAULT_FAST_MODEL.exists()} {DEFAULT_FAST_MODEL}")
-    print(f"patch_model={DEFAULT_PATCH_MODEL.exists()} {DEFAULT_PATCH_MODEL}")
+    logging.info("NAFNet AppleSilicon helper")
+    logging.info("project_root=%s", project_root)
+    logging.info("fast_model=%s %s", DEFAULT_FAST_MODEL.exists(), DEFAULT_FAST_MODEL)
+    logging.info("patch_model=%s %s", DEFAULT_PATCH_MODEL.exists(), DEFAULT_PATCH_MODEL)

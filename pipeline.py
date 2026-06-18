@@ -89,8 +89,20 @@ def _debug_pipeline_param_summary(effect_name, param, effect=None):
         "film_emulation": ("film_simulation", "film_simulation_intensity"),
         "solid_color": ("solid_color", "solid_color_intensity"),
         "unsharp_mask": ("unsharp_mask", "unsharp_mask_radius", "unsharp_mask_amount"),
-        "grain": ("grain", "grain_radius", "grain_amount"),
-        "vignette": ("vignette", "vignette_radius", "vignette_softness"),
+        "grain": (
+            "switch_grain",
+            "grain_intensity",
+            "grain_size",
+            "grain_blue_bias",
+            "grain_shadow_boost",
+            "grain_color_noise_ratio",
+        ),
+        "vignette": (
+            "switch_vignette",
+            "vignette_intensity",
+            "vignette_radius_percent",
+            "vignette_softness",
+        ),
     }
     keys = keys_by_effect.get(effect_name)
     if not keys:
@@ -433,6 +445,21 @@ def _finalize_pipeline_timing(timing):
     except Exception as e:
         logger.warning("pipeline timing write failed: %s", e)
 
+
+def _configure_preview_effect_config(efconfig, current_tab, mask2_active):
+    is_geometry_tab = current_tab == "Ge"
+    mask2_geometry_full_preview = is_geometry_tab and mask2_active
+
+    efconfig.current_tab = current_tab
+    efconfig.full_preview = is_geometry_tab
+    # Mask2 ON 中の Ge タブは「マスク Geometry モード」であって画像 crop の編集ではないので
+    # CropEffect には crop_editing=False を渡し、CropEditor を開く/disp_info を永続更新する
+    # 経路には入れない。表示だけは process_pipeline 内の local disp_info で full-preview にする。
+    efconfig.crop_editing = is_geometry_tab and not mask2_active
+
+    return mask2_geometry_full_preview
+
+
 class AsyncPipelineManager:
     def __init__(self, worker):
         self.worker = worker
@@ -597,13 +624,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     efconfig.zoom_ratio = zoom_ratio
     efconfig.mode = EffectMode.PREVIEW
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
-    efconfig.current_tab = current_tab
-    mask2_geometry_full_preview = current_tab == "Ge" and mask2_active
-    efconfig.full_preview = current_tab == "Ge"
-    # Mask2 ON 中の Ge タブは「マスク Geometry モード」であって画像 crop の編集ではないので
-    # CropEffect には crop_editing=False を渡し、CropEditor を開く/disp_info を永続更新する
-    # 経路には入れない。表示だけはこの関数内の local disp_info で full-preview にする。
-    efconfig.crop_editing = (current_tab == "Ge") and not mask2_active
+    mask2_geometry_full_preview = _configure_preview_effect_config(efconfig, current_tab, mask2_active)
     
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag

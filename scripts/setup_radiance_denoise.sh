@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # radiance_denoise を platypus に取り込むセットアップ。
-#   1) radiance_denoise/ が無ければ GitHub から clone
+#   1) external/radiance_denoise/ が無ければ GitHub から clone
 #   2) ネイティブ拡張 (_native*.so) を cmake/ninja でビルドし、Python パッケージ内に配置
 #
 # pixi 環境内のツールチェーン (cmake / ninja / pybind11 / cxx-compiler / llvm-openmp)
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_DIR="${ROOT_DIR}/radiance_denoise"
+REPO_DIR="${ROOT_DIR}/external/radiance_denoise"
 REPO_URL="https://github.com/uniuyuni/radiance_denoise.git"
 
 if [[ ! -d "${REPO_DIR}/.git" ]]; then

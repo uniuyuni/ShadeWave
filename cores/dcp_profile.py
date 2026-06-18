@@ -1,5 +1,6 @@
 
 import os
+import logging
 import struct
 import numpy as np
 from typing import List, Tuple, Optional, Dict, BinaryIO
@@ -204,7 +205,7 @@ class DCPReader:
         elif entry.tag == TiffTag.PROFILE_LOOK_TABLE_DIMS:
             self.profile.look_table_dims = self._read_look_table_dims(entry)
         else:
-            print(f"Unknown tag: {entry.tag}")
+            logging.debug("Unknown DCP tag: %s", entry.tag)
 
     def _read_illuminant(self, entry: TiffIFDEntry) -> DCPIlluminant:
         """照明光源情報を読み込む"""
@@ -447,12 +448,12 @@ class DCPProcessor:
         
         h_div, s_div, v_div = dims
 
-        print(f"Hue min:{np.min(hsv[..., 0])}, max:{np.max(hsv[..., 0])}")
-        print(f"Sat min:{np.min(hsv[..., 1])}, max:{np.max(hsv[..., 1])}")
-        print(f"Val min:{np.min(hsv[..., 2])}, max:{np.max(hsv[..., 2])}")
-        print(f"Hue min:{np.min(hue_sat_map[..., 0])}, max:{np.max(hue_sat_map[..., 0])}")
-        print(f"Sat min:{np.min(hue_sat_map[..., 1])}, max:{np.max(hue_sat_map[..., 1])}")
-        print(f"Val min:{np.min(hue_sat_map[..., 2])}, max:{np.max(hue_sat_map[..., 2])}")
+        logging.debug("Hue min:%s, max:%s", np.min(hsv[..., 0]), np.max(hsv[..., 0]))
+        logging.debug("Sat min:%s, max:%s", np.min(hsv[..., 1]), np.max(hsv[..., 1]))
+        logging.debug("Val min:%s, max:%s", np.min(hsv[..., 2]), np.max(hsv[..., 2]))
+        logging.debug("Hue map min:%s, max:%s", np.min(hue_sat_map[..., 0]), np.max(hue_sat_map[..., 0]))
+        logging.debug("Sat map min:%s, max:%s", np.min(hue_sat_map[..., 1]), np.max(hue_sat_map[..., 1]))
+        logging.debug("Val map min:%s, max:%s", np.min(hue_sat_map[..., 2]), np.max(hue_sat_map[..., 2]))
         
         # インデックス計算 (境界処理改善)
         h_val = np.clip(hsv[..., 0] / 360 * (h_div - 1), 0, h_div - 1)

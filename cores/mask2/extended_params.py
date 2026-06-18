@@ -262,12 +262,14 @@ def _full_view_session_sig(ctx, effects_param, exposure_ref):
     tcg = getattr(ctx, "tcg_info", {}) or {}
     m = tcg.get("matrix")
     gp = effects.Mask2Effect.get_param
+    # Round everything (esp. the matrix) so tiny per-frame float jitter cannot reset
+    # the session and force a re-solve of every stroke on each redraw.
     return (
-        round(float(exposure_ref or 0.0), 5),
-        round(float(tcg.get("rotation", 0.0)), 6),
-        round(float(tcg.get("rotation2", 0.0)), 6),
+        round(float(exposure_ref or 0.0), 4),
+        round(float(tcg.get("rotation", 0.0)), 5),
+        round(float(tcg.get("rotation2", 0.0)), 5),
         int(tcg.get("flip_mode", 0)),
-        np.asarray(m, dtype=np.float64).tobytes() if m is not None else None,
+        tuple(np.round(np.asarray(m, dtype=np.float64).ravel(), 4).tolist()) if m is not None else None,
         round(float(gp(effects_param, "mask2_edge_refine_radius") or 0.0), 3),
         round(float(gp(effects_param, "mask2_edge_refine_strength") or 0.0), 3),
         round(float(gp(effects_param, "mask2_edge_refine_bias") or 0.0), 3),
@@ -530,14 +532,12 @@ def _crop_padded_image_region(image, rect, coordinate_scale=1.0):
 
 def _freedraw_refine_max_pixels():
     # Region-solve resolution cap. Below this the stroke region is solved at full
-    # resolution (sharp edges); above it the region is downscaled (blurrier, visible
-    # when you zoom in). Raised so typical brush sizes stay full-res; the per-stroke
-    # min-cut is band-limited so the cost scales with the band, not the whole region.
-    # Tune with PLATYPUS_DRAW_REFINE_MAX_PIXELS.
+    # resolution (sharp); above it it is downscaled (blurrier when zoomed in). Higher
+    # = sharper but slower per stroke. Tune with PLATYPUS_DRAW_REFINE_MAX_PIXELS.
     try:
-        return max(120_000, int(os.getenv("PLATYPUS_DRAW_REFINE_MAX_PIXELS", "2500000")))
+        return max(120_000, int(os.getenv("PLATYPUS_DRAW_REFINE_MAX_PIXELS", "1200000")))
     except ValueError:
-        return 2_500_000
+        return 1_200_000
 
 
 def _scale_freedraw_refine_region(image):

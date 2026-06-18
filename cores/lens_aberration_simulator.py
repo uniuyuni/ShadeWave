@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 from scipy.ndimage import gaussian_filter, shift
 from typing import Tuple, Optional
@@ -381,4 +383,4 @@ if __name__ == "__main__":
     # 5. 結果を保存
     save_hdr_image(full_result, "output_with_aberrations.exr")
     
-    print("収差シミュレーション完了！")
+    logging.info("収差シミュレーション完了！")

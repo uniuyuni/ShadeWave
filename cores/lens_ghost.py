@@ -1,4 +1,5 @@
 import cv2
+import logging
 import numpy as np
 import math
 import time
@@ -282,13 +283,13 @@ if __name__ == "__main__":
             cv2.circle(img, (lp_x, lp_y), 15, (1.0, 1.0, 1.0), -1)
         return img
 
-    print("Generating various ghost effects with improved irregularities and shapes:")
+    logging.info("Generating various ghost effects with improved irregularities and shapes:")
 
     # サンプル1: 添付画像のような半円・欠けのあるギザギザゴースト
     light_pos_for_sample1 = (600, 100) # 右上
     base_image_sample1 = create_base_image([light_pos_for_sample1], img_height, img_width)
 
-    print("\n--- Sample 1: Half-circle/Partial Ghost with Sharp Radial Irregularities (like DSC01878.jpg) ---")
+    logging.info("\n--- Sample 1: Half-circle/Partial Ghost with Sharp Radial Irregularities (like DSC01878.jpg) ---")
     start_time = time.time()
     ghosted_image_sample1 = create_ghost(
         base_image_sample1,
@@ -322,8 +323,8 @@ if __name__ == "__main__":
     cv2.imshow('Sample 1: Half-circle/Partial Ghost with Sharp Radial Irregularities (like DSC01878.jpg)', ghosted_image_sample1_display)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    print(f"Processing time: {end_time - start_time:.2f} seconds")
-    print("-" * 50)
+    logging.info("Processing time: %.2f seconds", end_time - start_time)
+    logging.info("-" * 50)
 
     # サンプル2: 複数の光源と異なる形状のゴースト
     light_positions_multi = [
@@ -333,7 +334,7 @@ if __name__ == "__main__":
     ]
     base_image_multi = create_base_image(light_positions_multi, img_height, img_width)
 
-    print("\n--- Sample 2: Multiple Ghosts with Varied Radial Irregularities and Shapes ---")
+    logging.info("\n--- Sample 2: Multiple Ghosts with Varied Radial Irregularities and Shapes ---")
     start_time = time.time()
 
     final_multi_ghost_image = base_image_multi.copy()
@@ -378,8 +379,8 @@ if __name__ == "__main__":
     cv2.imshow('Sample 2: Multiple Ghosts with Varied Radial Irregularities and Shapes', final_multi_ghost_image_display)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    print(f"Processing time: {end_time - start_time:.2f} seconds")
-    print("-" * 50)
+    logging.info("Processing time: %.2f seconds", end_time - start_time)
+    logging.info("-" * 50)
 
     # --- 追加サンプル 3-13 ---
     sample_params = {
@@ -545,7 +546,7 @@ if __name__ == "__main__":
     }
 
     for name, params in sample_params.items():
-        print(f"\n--- {name} ---\n")
+        logging.info("\n--- %s ---\n", name)
         current_light_coords = params.pop("light_source_coords")
         current_lens_center = params.pop("lens_center", None)
         current_random_seed = params.pop("random_seed", None)
@@ -567,5 +568,5 @@ if __name__ == "__main__":
         cv2.imshow(name, ghosted_image_display)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
-        print(f"Processing time: {end_time - start_time:.2f} seconds")
-        print("-" * 50)
+        logging.info("Processing time: %.2f seconds", end_time - start_time)
+        logging.info("-" * 50)

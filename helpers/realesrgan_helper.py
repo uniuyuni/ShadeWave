@@ -1,6 +1,7 @@
 
 import sys
 import types
+import logging
 
 try:
     # Check if `torchvision.transforms.functional_tensor` and `rgb_to_grayscale` are missing
@@ -169,8 +170,8 @@ def inference_realesrgan(
             output, _ = upsampler.enhance(img, outscale=outscale)
             
     except RuntimeError as error:
-        print(f"Error during processing: {error}")
-        print("If you encounter CUDA out of memory, try reducing the tile size.")
+        logging.exception("Error during Real-ESRGAN processing")
+        logging.warning("If you encounter CUDA out of memory, try reducing the tile size.")
         raise RuntimeError from error
 
     return output
@@ -197,7 +198,7 @@ if __name__ == '__main__':
         
         # 4. 結果の保存
         cv2.imwrite('output.jpg', output_img)
-        print("Processing completed successfully!")
+        logging.info("Processing completed successfully!")
         
     except RuntimeError:
-        print("Processing failed due to a runtime error.")
+        logging.exception("Processing failed due to a runtime error.")

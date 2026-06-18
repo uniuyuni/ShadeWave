@@ -1,21 +1,27 @@
-# Copyright (C) 2024 Apple Inc. All Rights Reserved.
-"""Depth Pro package."""
+from dataclasses import replace
 
-import torch
 import numpy as np
 
-from .depth_pro import create_model_and_transforms  # noqa
-from .utils import load_rgb  # noqa
+from utils.external_paths import add_external_path, external_path
 
-def setup_model(device='cpu'):
+add_external_path("depth_pro", "src")
 
-    model, transform = create_model_and_transforms(device=device)
+
+def setup_model(device="cpu"):
+    import depth_pro
+    from depth_pro.depth_pro import DEFAULT_MONODEPTH_CONFIG_DICT
+
+    checkpoint_path = external_path("depth_pro", "checkpoints", "depth_pro.pt")
+    config = replace(
+        DEFAULT_MONODEPTH_CONFIG_DICT,
+        checkpoint_uri=str(checkpoint_path),
+    )
+    model, transform = depth_pro.create_model_and_transforms(config=config, device=device)
     model.eval()
-
     return (model, transform)
 
 
-def _normalize_depth_for_mask(depth, lower_percentile=1.0, upper_percentile=99.0):
+def normalize_depth_for_mask(depth, lower_percentile=1.0, upper_percentile=99.0):
     depth = np.asarray(depth, dtype=np.float32)
     while depth.ndim > 2 and depth.shape[0] == 1:
         depth = depth[0]
@@ -43,14 +49,13 @@ def _normalize_depth_for_mask(depth, lower_percentile=1.0, upper_percentile=99.0
 
 
 def predict_model(mt, image):
-    model, transform = mt
+    import torch
 
+    model, transform = mt
     image = transform(image)
 
-    # Run inference.
     with torch.no_grad():
         prediction = model.infer(image, f_px=None)
 
-    depth = prediction["depth"]  # Depth in [m].
-    depth_cpu = depth.cpu().numpy()
-    return _normalize_depth_for_mask(depth_cpu)
+    depth = prediction["depth"]
+    return normalize_depth_for_mask(depth.cpu().numpy())

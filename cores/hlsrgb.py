@@ -1,3 +1,4 @@
+import logging
 
 import numpy as np
 import cv2
@@ -239,11 +240,11 @@ def test_basic_colors_detailed():
         ('マゼンタ (Magenta)', 1.0, 0.0, 1.0),
     ]
     
-    print("="*80)
-    print("Pure Colors Test with Gain = max(R,G,B)")
-    print("="*80)
-    print(f"{'Color':<20} {'RGB Input':<15} {'H':<10} {'L':<8} {'C':<8} {'Gain':<8} {'RGB Restored':<15} {'Error'}")
-    print("-"*80)
+    logging.info("="*80)
+    logging.info("Pure Colors Test with Gain = max(R,G,B)")
+    logging.info("="*80)
+    logging.info(f"{'Color':<20} {'RGB Input':<15} {'H':<10} {'L':<8} {'C':<8} {'Gain':<8} {'RGB Restored':<15} {'Error'}")
+    logging.info("-"*80)
     
     for name, r, g, b in colors:
         # 変換
@@ -258,11 +259,11 @@ def test_basic_colors_detailed():
         rgb_in = f"({r:.1f},{g:.1f},{b:.1f})"
         rgb_out_str = f"({r_out:.3f},{g_out:.3f},{b_out:.3f})"
         
-        print(f"{name:<20} {rgb_in:<15} {H:>7.2f}° {L:>7.3f} {C:>7.3f} {G:>7.3f} {rgb_out_str:<15} {error:.2e}")
+        logging.info(f"{name:<20} {rgb_in:<15} {H:>7.2f}° {L:>7.3f} {C:>7.3f} {G:>7.3f} {rgb_out_str:<15} {error:.2e}")
     
-    print("\n" + "="*80)
-    print("Hue Ranges (based on midpoints)")
-    print("="*80)
+    logging.info("\n" + "="*80)
+    logging.info("Hue Ranges (based on midpoints)")
+    logging.info("="*80)
     
     hues = []
     for name, r, g, b in colors:
@@ -291,9 +292,9 @@ def test_basic_colors_detailed():
             end = (curr_h + next_h) / 2
         
         if start > end:
-            print(f"{name:<20} {start:>7.2f}° ~ 360° / 0° ~ {end:>7.2f}°")
+            logging.info(f"{name:<20} {start:>7.2f}° ~ 360° / 0° ~ {end:>7.2f}°")
         else:
-            print(f"{name:<20} {start:>7.2f}° ~ {end:>7.2f}°")
+            logging.info(f"{name:<20} {start:>7.2f}° ~ {end:>7.2f}°")
 
 
 def rgb_to_hlc_gain_single(r, g, b):
@@ -398,13 +399,13 @@ def linear_ycbcr_to_rgb(img_ycbcr):
 
 def test_saturation_linearity():
     """彩度の線形性テスト"""
-    print("\n" + "="*80)
-    print("Saturation Linearity Test")
-    print("="*80)
-    print("Testing: Red (1,0,0) with varying saturation")
-    print("-"*80)
-    print(f"{'Original C':<15} {'RGB Output':<25} {'Restored C':<15} {'Error'}")
-    print("-"*80)
+    logging.info("\n" + "="*80)
+    logging.info("Saturation Linearity Test")
+    logging.info("="*80)
+    logging.info("Testing: Red (1,0,0) with varying saturation")
+    logging.info("-"*80)
+    logging.info(f"{'Original C':<15} {'RGB Output':<25} {'Restored C':<15} {'Error'}")
+    logging.info("-"*80)
     
     r, g, b = 1.0, 0.0, 0.0
     H, L, C_orig, G = rgb_to_hlc_gain_single(r, g, b)
@@ -420,14 +421,14 @@ def test_saturation_linearity():
         error = abs(C_test - C_back)
         rgb_str = f"({r_out:.3f},{g_out:.3f},{b_out:.3f})"
         
-        print(f"{C_test:<15.3f} {rgb_str:<25} {C_back:<15.3f} {error:.2e}")
+        logging.info(f"{C_test:<15.3f} {rgb_str:<25} {C_back:<15.3f} {error:.2e}")
 
 
 def test_gradient_quality():
     """グラデーションの品質テスト"""
-    print("\n" + "="*80)
-    print("Gradient Quality Test")
-    print("="*80)
+    logging.info("\n" + "="*80)
+    logging.info("Gradient Quality Test")
+    logging.info("="*80)
     
     # 微妙なグラデーション
     h, w = 1024, 256
@@ -436,7 +437,7 @@ def test_gradient_quality():
         val = 0.5 + 0.1 * (i / h)
         gradient[i, :] = val
     
-    print(f"Input: {h}x{w} gradient from 0.5 to 0.6")
+    logging.info("Input: %sx%s gradient from 0.5 to 0.6", h, w)
     
     # 変換
     start = time.time()
@@ -450,9 +451,9 @@ def test_gradient_quality():
     # エラー
     error = np.abs(gradient - restored)
     
-    print(f"Timing: Forward {t1*1000:.2f}ms, Backward {t2*1000:.2f}ms")
-    print(f"Max error: {error.max():.2e}")
-    print(f"Mean error: {error.mean():.2e}")
+    logging.info("Timing: Forward %.2fms, Backward %.2fms", t1*1000, t2*1000)
+    logging.info("Max error: %.2e", error.max())
+    logging.info("Mean error: %.2e", error.mean())
     
     # グラデーションの滑らかさ
     center_col = gradient[:, w//2, 0]
@@ -461,20 +462,20 @@ def test_gradient_quality():
     diff_orig = np.diff(center_col)
     diff_rest = np.diff(restored_col)
     
-    print(f"\nGradient smoothness:")
-    print(f"  Original diff std: {diff_orig.std():.2e}")
-    print(f"  Restored diff std: {diff_rest.std():.2e}")
-    print(f"  Ratio: {diff_rest.std() / diff_orig.std():.6f}")
+    logging.info("\nGradient smoothness:")
+    logging.info("  Original diff std: %.2e", diff_orig.std())
+    logging.info("  Restored diff std: %.2e", diff_rest.std())
+    logging.info("  Ratio: %.6f", diff_rest.std() / diff_orig.std())
     
     # HLCの連続性
     H_col = hlcg[:, w//2, 0]
     L_col = hlcg[:, w//2, 1]
     C_col = hlcg[:, w//2, 2]
     
-    print(f"\nHLC continuity:")
-    print(f"  H diff std: {np.diff(H_col).std():.2e}")
-    print(f"  L diff std: {np.diff(L_col).std():.2e}")
-    print(f"  C diff std: {np.diff(C_col).std():.2e}")
+    logging.info("\nHLC continuity:")
+    logging.info("  H diff std: %.2e", np.diff(H_col).std())
+    logging.info("  L diff std: %.2e", np.diff(L_col).std())
+    logging.info("  C diff std: %.2e", np.diff(C_col).std())
 
 
 if __name__ == "__main__":
@@ -487,6 +488,6 @@ if __name__ == "__main__":
     # グラデーション品質テスト
     test_gradient_quality()
     
-    print("\n" + "="*80)
-    print("✓ All tests completed")
-    print("="*80)
+    logging.info("\n" + "="*80)
+    logging.info("✓ All tests completed")
+    logging.info("="*80)

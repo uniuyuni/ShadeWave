@@ -1,4 +1,5 @@
 import os
+import logging
 from io import BytesIO
 
 import cv2
@@ -7,7 +8,7 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
-import splitimage
+import cores.splitimage as splitimage
 import utils.aiutils as aiutils
 import cores.core as core
 
@@ -95,7 +96,7 @@ def _iter_response_parts(response):
 
 def _part_to_image(part):
     if getattr(part, "text", None) is not None:
-        print(part.text)
+        logging.debug("%s", part.text)
         return None
 
     as_image = getattr(part, "as_image", None)
@@ -216,7 +217,7 @@ def predict_helper(client, image, mask, bbox, prompt=None):
     for i, block in enumerate(blocks):
         block_mask = mask_blocks[i][..., 0]
         if np.any(block_mask > 0):
-            print(f"Nano banana inpainting predict {i + 1}/{len(blocks)} {block.shape}.")
+            logging.info("Nano banana inpainting predict %s/%s %s.", i + 1, len(blocks), block.shape)
             pre_image = predict(client, block, block_mask, prompt=prompt)
             pre_image = _ensure_result_size(pre_image, block.shape)
             if pre_image is None:
@@ -276,7 +277,7 @@ def predict_edit_image(client, fp32_image, mask, prompt=None, model=None):
     if result_image is None:
         return None
     result = np.asarray(result_image).astype(np.float32) / 255.0
-    print(f"Nano banana edit_image done with {model_name}. Output size: {result.shape}")
+    logging.info("Nano banana edit_image done with %s. Output size: %s", model_name, result.shape)
     return result
 
 
@@ -297,13 +298,13 @@ def predict_generate_content(client, fp32_image, mask=None, prompt=None, model=N
             )
             result_image = _extract_image(response)
             if result_image is None:
-                print(f"Nano banana returned no image for model {model_name}.")
+                logging.warning("Nano banana returned no image for model %s.", model_name)
                 continue
             result = np.asarray(result_image).astype(np.float32) / 255.0
-            print(f"Nano banana done with {model_name}. Output size: {result.shape}")
+            logging.info("Nano banana done with %s. Output size: %s", model_name, result.shape)
             return result
-        except Exception as e:
-            print(f"Nano banana failed with {model_name}: {e}")
+        except Exception:
+            logging.exception("Nano banana failed with %s", model_name)
 
     return fp32_image
 

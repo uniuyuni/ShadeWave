@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # upstream LibRaw を取得して autotools でビルドし .pixi/libraw-install に入れる
 # デフォルトで GitHub の最新リリースを取得する。オフライン時は
-# libraw_enhanced/external/LibRaw-master を置けばそれを使う。
+# external/libraw_enhanced/external/LibRaw-master を置けばそれを使う。
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Source directory: prefer workspace copy for offline dev, otherwise fetch into .pixi
-LOCAL_SRC="${ROOT_DIR}/libraw_enhanced/external/LibRaw-master"
+LOCAL_SRC="${ROOT_DIR}/external/libraw_enhanced/external/LibRaw-master"
 FETCH_DIR="${ROOT_DIR}/.pixi/libraw-src"
 PREFIX="${ROOT_DIR}/.pixi/libraw-install"
 PIXI_ENV="${ROOT_DIR}/.pixi/envs/default"

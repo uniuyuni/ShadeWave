@@ -1,5 +1,6 @@
 
 from kivy.clock import Clock as KVClock
+from kivy.app import App as KVApp
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
 from kivymd.uix.scrollview import MDScrollView
@@ -7,9 +8,17 @@ from kivymd.uix.scrollview import MDScrollView
 import macos as device
 
 def get_root_widget(widget):
-    while widget.parent is not widget:
+    app = KVApp.get_running_app()
+    root = getattr(app, "root", None)
+    if root is not None:
+        return root
+
+    while getattr(widget, "parent", None) is not None and widget.parent is not widget:
         widget = widget.parent
-    return widget.children[0]
+    children = getattr(widget, "children", None)
+    if children:
+        return children[-1]
+    return widget
 
 """
 def get_current_display():

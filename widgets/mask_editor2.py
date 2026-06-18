@@ -1004,7 +1004,7 @@ class BaseMask(KVWidget):
                 #print(f"point: {cx}, {cy}, {oimg[int(cy), int(cx)]}")
                 #center_n = oimg[int(cy), int(cx)]
                 cx, cy = self.editor.tcg_to_crop_image(*self.center)
-                print(f"point: {cx}, {cy}, {cimg[int(cy), int(cx)]}")
+                logging.debug("point: %s, %s, %s", cx, cy, cimg[int(cy), int(cx)])
                 center_n = cimg[int(cy), int(cx)] 
                 
                 if hls_str == 'hue':

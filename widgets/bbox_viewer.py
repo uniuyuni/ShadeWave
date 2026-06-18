@@ -1,4 +1,6 @@
 
+import logging
+
 from kivy.app import App as KVApp
 from kivy.uix.widget import Widget as KVWidget
 from kivy.graphics import Color, Line, PopMatrix, PushMatrix
@@ -218,11 +220,11 @@ class BoundingBoxViewer(KVWidget):
             world_x, world_y = self._display_to_world(display_x, display_y)
             
             # デバッグ出力
-            print(f"Touch: ({touch.x}, {touch.y})")
-            print(f"Relative: ({relative_x}, {relative_y})")
-            print(f"Display: ({display_x}, {display_y})")
-            print(f"World: ({world_x}, {world_y})")
-            print(f"Widget pos/size: ({self.x}, {self.y}) / ({self.width}, {self.height})")
+            logging.debug("Touch: (%s, %s)", touch.x, touch.y)
+            logging.debug("Relative: (%s, %s)", relative_x, relative_y)
+            logging.debug("Display: (%s, %s)", display_x, display_y)
+            logging.debug("World: (%s, %s)", world_x, world_y)
+            logging.debug("Widget pos/size: (%s, %s) / (%s, %s)", self.x, self.y, self.width, self.height)
             
             # 重なるボックスを検索
             overlapping = self._find_overlapping_boxes(world_x, world_y)
@@ -283,7 +285,7 @@ class BoundingBoxApp(KVApp):
         from kivy.uix.button import Button as KVButton
         
         def on_delete(index, box):
-            print(f"Deleted box {index}: {box}")
+            logging.info("Deleted box %s: %s", index, box)
             
         # テスト用のバウンディングボックス
         test_boxes = [
@@ -318,8 +320,8 @@ class BoundingBoxApp(KVApp):
         
         def change_view_button(instance):
             viewer.set_view(100, 100, 300, 200, 1.5)
-            print("View changed to: (100, 100, 300, 200, 1.5)")
-            print(f"Viewer pos: {viewer.pos}, size: {viewer.size}")
+            logging.info("View changed to: (100, 100, 300, 200, 1.5)")
+            logging.info("Viewer pos: %s, size: %s", viewer.pos, viewer.size)
             
         btn.bind(on_press=change_view_button)
         

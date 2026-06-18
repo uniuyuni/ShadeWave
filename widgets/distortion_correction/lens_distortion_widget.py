@@ -2,6 +2,8 @@
 レンズ歪み補正Widget
 """
 
+import logging
+
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout
 from kivy.properties import (
     ObjectProperty as KVObjectProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, StringProperty as KVStringProperty
@@ -86,8 +88,8 @@ class LensDistortionWidget(KVFloatLayout):
             detected_strength = detect_lens_distortion(self.source_image)
             self.strength = detected_strength
             
-        except Exception as e:
-            print(f"Error in auto detection: {e}")
+        except Exception:
+            logging.exception("Error in auto detection")
     
     def get_correction_params(self) -> dict:
         """

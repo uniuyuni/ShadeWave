@@ -20,8 +20,12 @@ class InpaintMaskButtonFlowTest(unittest.TestCase):
     def test_inpaint_effect_reads_toggle_state(self):
         source = (ROOT / "effects.py").read_text(encoding="utf-8")
 
-        self.assertIn('widget.ids["switch_inpaint"].state == "down"', source)
-        self.assertIn('widget.ids["switch_patchmatch_inpaint"].state == "down"', source)
+        self.assertIn('StateBinding(\'inpaint\', False, "switch_inpaint")', source)
+        self.assertIn('StateBinding(\'patchmatch_inpaint\', False, "switch_patchmatch_inpaint")', source)
+        self.assertIn('StateBinding(\'inpaint_predict\', False, "button_inpaint_predict")', source)
+        self.assertIn('StateBinding(\'patchmatch_inpaint_predict\', False, "button_patchmatch_inpaint_predict")', source)
+        self.assertIn("def get_state_widget(self, widget, param, state_config):", source)
+        self.assertIn("return widget.ids[widget_id].state == true_state", source)
 
 
 if __name__ == "__main__":

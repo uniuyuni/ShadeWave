@@ -74,28 +74,28 @@ def split_orientation(orientation):
     rad, flip = 0, 0
     if orientation == 1:
         rad, flip = 0, 0
-        print("Horizontal (normal)")
+        logging.debug("Horizontal (normal)")
     elif orientation == 2:
         rad, flip = 0, 1
-        print("Mirror horizontal")
+        logging.debug("Mirror horizontal")
     elif orientation == 3:
         rad, flip = math.radians(180), 0
-        print("Rotate 180")
+        logging.debug("Rotate 180")
     elif orientation == 4:
         rad, flip = 0, 2
-        print("Mirror vertical")
+        logging.debug("Mirror vertical")
     elif orientation == 5:
         rad, flip = math.radians(-90), 1
-        print("Mirror horizontal and rotate 90 CW")
+        logging.debug("Mirror horizontal and rotate 90 CW")
     elif orientation == 6:
         rad, flip = math.radians(-90), 0
-        print("Rotate 90 CW")
+        logging.debug("Rotate 90 CW")
     elif orientation == 7:
         rad, flip = math.radians(-270), 1
-        print("Mirror horizontal and rotate 270 CW")
+        logging.debug("Mirror horizontal and rotate 270 CW")
     elif orientation == 8:
         rad, flip = math.radians(-270), 0
-        print("Rotate 270 CW")
+        logging.debug("Rotate 270 CW")
 
     return rad, flip
 

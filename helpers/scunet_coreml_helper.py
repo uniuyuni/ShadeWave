@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from effect_backends import low_frequency_transfer_adapter
+from utils.external_paths import external_path
 
 
 helpers_dir = Path(__file__).resolve().parent
@@ -23,6 +24,7 @@ def _first_existing_project_root() -> Path:
         candidates.append(Path(env_root).expanduser())
     candidates.extend(
         [
+            external_path("SCUNet_CoreML"),
             platypus_dir / "SCUNet_CoreML",
             platypus_dir / "scunet_coreml",
             platypus_dir / "SCUNetCoreML",
@@ -118,6 +120,6 @@ def predict_helper(engine: SCUNetCoreML, np_image: np.ndarray) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    print("SCUNet CoreML helper")
-    print(f"project_root={project_root}")
-    print(f"model={DEFAULT_MODEL.exists()} {DEFAULT_MODEL}")
+    logging.info("SCUNet CoreML helper")
+    logging.info("project_root=%s", project_root)
+    logging.info("model=%s %s", DEFAULT_MODEL.exists(), DEFAULT_MODEL)

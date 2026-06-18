@@ -1,15 +1,14 @@
-
-import os
 import numpy as np
 import torch
-import torch.nn as nn
-import cv2
 import time
 import logging
 
 from effect_backends import low_frequency_transfer_adapter
+from utils.external_paths import add_external_path
 
-import splitimage
+add_external_path()
+
+import cores.splitimage as splitimage
 import waitinfo
 import cores.hlsrgb as hlsrgb
 import utils.aiutils as aiutils

@@ -1,13 +1,19 @@
 # NOTE:
-# SAM3, SCUNet, demosaicnet_torch, libraw_enhanced are cloned and prepared by setup.sh (LibRaw sources for the editable install).
-# SAM3 / libraw_enhanced は setup.sh が clone 後に pip install -e する（このファイルからは grep で除外してから一括 install）。
+# External modules are cloned/prepared by setup.sh under external/.
+# libraw_enhanced and depth_pro are installed by setup.sh with special flags:
+# - libraw_enhanced needs Apple clang and --no-build-isolation.
+# - depth_pro is installed with --no-deps so Apple's numpy<2 pin does not
+#   downgrade the app environment.
 # macOS .app ビルド用（任意）: pip install "pyinstaller>=6"
 
--e ./libraw_enhanced
--e ./SAM3
+-e ./external/libraw_enhanced
+-e ./external/SAM3
+-e ./external/radiance_denoise
+-e ./external/SCUNet_CoreML
 
 basicsr
 color-matcher
+coremltools
 dashscope
 decord2
 einops
@@ -20,6 +26,7 @@ iopath
 kivy
 kivymd
 lensfunpy
+llama-cpp-python
 matplotlib
 mediapipe
 msgpack
@@ -50,5 +57,6 @@ torch
 torchvision
 tqdm
 watchfiles
+webcolors
 wheel
 zstandard

@@ -1,3 +1,4 @@
+import logging
 import os
 
 from kivy.clock import Clock
@@ -514,12 +515,12 @@ if __name__ == "__main__":
 
         def _open_selector(self, *_args):
             popup = EffectSelector()
-            popup.bind(on_cancel=lambda *_a: print("[effect_selector debug] cancel"))
+            popup.bind(on_cancel=lambda *_a: logging.info("[effect_selector debug] cancel"))
 
             def _on_decide(inst, flattened):
-                print("[effect_selector debug] pipeline ids:", flattened)
-                print(
-                    "[effect_selector debug] switch keys:",
+                logging.info("[effect_selector debug] pipeline ids: %s", flattened)
+                logging.info(
+                    "[effect_selector debug] switch keys: %s",
                     inst.last_selected_switch_keys,
                 )
 

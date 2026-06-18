@@ -17,7 +17,7 @@ import base64
 
 from effect_backends import colour_functions_adapter as colour_functions
 import cores.sigmoid as sigmoid
-import dng_sdk.dng_temperature
+import cores.dng_temperature as dng_temperature
 import utils.utils as utils
 import params
 import config
@@ -58,7 +58,7 @@ def convert_RGB2TempTint(rgb):
 
     xy = colour_functions.XYZ_to_xy(xyz)
 
-    dng = dng_sdk.dng_temperature.DngTemperature()
+    dng = dng_temperature.DngTemperature()
     dng.set_xy_coord(xy)
 
     return (float(dng.fTemperature), float(dng.fTint), float(xyz[1]))
@@ -85,7 +85,7 @@ def invert_RGB2TempTint(rgb, ref_temp=5000.0):
 
 def convert_TempTint2RGB(temp, tint, Y):
 
-    dng = dng_sdk.dng_temperature.DngTemperature()
+    dng = dng_temperature.DngTemperature()
     dng.fTemperature = temp
     dng.fTint = tint
 
@@ -100,7 +100,7 @@ def convert_TempTint2RGB(temp, tint, Y):
 
 def invert_TempTint2RGB(temp, tint, Y, reference_temp=5000.0):
 
-    inverted_temp, inverted_tint = __invert_temp_tint(temp, tint, reference_temp)
+    inverted_temp, inverted_tint = _invert_temp_tint(temp, tint, reference_temp)
     
     # DNG SDKの関数を使用して元のRGB値を取得
     r, g, b = convert_TempTint2RGB(inverted_temp, inverted_tint, Y)
@@ -204,49 +204,6 @@ def gaussian_blur_cv(src, ksize=(3, 3), sigma=0.0):
 
 def gaussian_blur(src, ksize=(3, 3), sigma=0.0):
     return gaussian_blur_cv(src, (int(ksize[0]) | 1, int(ksize[1]) | 1), sigma)
-
-@lock_numba
-@njit('f4[:,:,:](f4[:,:,:],f4[:,:,:])', parallel=True, fastmath=True, cache=True)
-def _lucy_ratio_step(srcf, bdest):
-    eps = np.finfo(np.float32).eps
-    h, w, c = srcf.shape
-    ratio = np.empty_like(srcf)
-    for i in prange(h):
-        for j in range(w):
-            for k in range(c):
-                ratio[i, j, k] = srcf[i, j, k] / (bdest[i, j, k] + eps)
-    return ratio
-
-@lock_numba
-@njit('f4[:,:,:](f4[:,:,:],f4[:,:,:])', parallel=True, fastmath=True, cache=True)
-def _lucy_update_step(destf, ratio_blur):
-    h, w, c = destf.shape
-    res = np.empty_like(destf)
-    for i in prange(h):
-        for j in range(w):
-            for k in range(c):
-                val = destf[i, j, k] * ratio_blur[i, j, k]
-                res[i, j, k] = val
-    return res
-
-def lucy_richardson_gauss(srcf, iteration):
-    # 出力用の画像を初期化
-    destf = srcf
-
-    for i in range(iteration):
-        # ガウスぼかしを適用してぼけをシミュレーション (OpenCV)
-        bdest = gaussian_blur(destf, ksize=(9, 9), sigma=0)
-
-        # 元画像とぼけた画像の比を計算 (Numba)
-        ratio = _lucy_ratio_step(srcf, bdest)
-
-        # 誤差の分配のために再びガウスぼかしを適用 (OpenCV)
-        ratio_blur = gaussian_blur(ratio, ksize=(9, 9), sigma=0)
-
-        # 元の出力画像に誤差を乗算 (Numba)
-        destf = _lucy_update_step(destf, ratio_blur)
-    
-    return destf
 
 @lock_numba
 @njit(parallel=True, fastmath=True, cache=True)
@@ -2603,113 +2560,6 @@ def auto_contrast_tonemap(image):
     
     return corrected
 
-from skimage.restoration import denoise_bilateral
-
-def chromatic_aberration_correction(
-    image: np.ndarray, 
-    intensity: float = 1.0,
-    edge_threshold: float = 0.05,
-    channel_align_iter: int = 3
-) -> np.ndarray:
-    """
-    製品レベルの倍率色収差補正
-    
-    パラメータ:
-        image: 入力画像 (H×W×3, float32 [0,1]形式)
-        intensity: 補正強度 (0.0 ~ 2.0)
-        edge_threshold: エッジ検出閾値 (0.01 ~ 0.1)
-        channel_align_iter: チャンネルアライメント反復回数
-        
-    戻り値:
-        補正済み画像 (入力と同じ形式)
-    """
-    # 入力検証
-    assert image.dtype == np.float32, "Input must be float32"
-    assert image.ndim == 3 and image.shape[2] == 3, "Input must be RGB"
-    assert np.max(image) <= 1.0 and np.min(image) >= 0.0, "Range must be [0,1]"
-    
-    # 元画像をコピー
-    corrected = image.copy()
-    h, w, _ = image.shape
-    
-    # グレースケール変換 (輝度ベース)
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    
-    # エッジマスク生成 (Canny + 拡張)
-    edges = cv2.Canny((gray * 255).astype(np.uint8), 50, 150) / 255
-    kernel = np.ones((3, 3), np.uint8)
-    edge_mask = cv2.dilate(edges, kernel, iterations=1)
-    
-    # チャンネルアライメント (緑チャンネル基準)
-    aligned_rgb = np.zeros_like(image)
-    aligned_rgb[:, :, 1] = image[:, :, 1]  # 緑チャンネルは基準
-    
-    # マルチスケール位相相関によるアライメント
-    for channel in [0, 2]:  # Red and Blue channels
-        chan_img = image[:, :, channel]
-        ref_img = image[:, :, 1]  # Green channel reference
-        
-        total_dx, total_dy = 0.0, 0.0
-        
-        # マルチスケールアライメント
-        for scale in range(channel_align_iter, 0, -1):
-            scale_factor = 1 / (2 ** (scale - 1))
-            scaled_ref = cv2.resize(ref_img, (0,0), fx=scale_factor, fy=scale_factor)
-            scaled_chan = cv2.resize(chan_img, (0,0), fx=scale_factor, fy=scale_factor)
-            
-            # 位相相関によるシフト検出
-            shift, _ = cv2.phaseCorrelate(
-                scaled_ref.astype(np.float32), 
-                scaled_chan.astype(np.float32)
-            )
-            
-            total_dx += shift[0] * scale_factor
-            total_dy += shift[1] * scale_factor
-        
-        # 平均シフト量計算
-        dx = total_dx / channel_align_iter
-        dy = total_dy / channel_align_iter
-        
-        # シフト適用
-        M = np.float32([[1, 0, dx * intensity], [0, 1, dy * intensity]])
-        aligned_rgb[:, :, channel] = cv2.warpAffine(
-            chan_img, M, (w, h), flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP
-        )
-    
-    # 色収差マスク生成 (色差ベース)
-    r_diff = np.abs(aligned_rgb[:, :, 0] - image[:, :, 1])
-    b_diff = np.abs(aligned_rgb[:, :, 2] - image[:, :, 1])
-    chroma_mask = np.clip((r_diff + b_diff) * 5.0, 0, 1)
-    chroma_mask = np.where(edge_mask > 0, chroma_mask, 0)
-    
-    # 適応型バイラテラルフィルタリング
-    for c in range(3):
-        # エッジ領域のみを選択的に補正
-        corrected_channel = corrected[:, :, c]
-        aligned_channel = aligned_rgb[:, :, c]
-        
-        # バイラテラルフィルタパラメータ調整
-        sigma_color = 0.05 + (0.1 * intensity)
-        sigma_spatial = max(1.0, 3.0 * intensity)
-        
-        # マスク領域のみフィルタ適用
-        filtered = denoise_bilateral(
-            aligned_channel,
-            win_size=5,
-            sigma_color=sigma_color,
-            sigma_spatial=sigma_spatial,
-            channel_axis=None
-        )
-        
-        # マスクに基づいてブレンド
-        corrected[:, :, c] = np.where(
-            chroma_mask > edge_threshold,
-            filtered,
-            corrected_channel
-        )
-    
-    return corrected
-
 #-------------------------------------------------
 
 _lensfun_db_instance = None
@@ -2832,268 +2682,6 @@ def get_lensfun_capability(mod, img):
     return (is_cm, is_sd, is_gd)
 
 #-------------------------------------------------
-
-def side_window_variance_filter(src, r=3):
-    """
-    Side Window Filteringの概念を応用した、
-    8方向のうち「最も平坦な（分散が小さい）領域」の平均値を採用するフィルタ。
-    エッジとコーナーを完璧に保存しつつ強力にノイズを潰します。
-    
-    Args:
-        src (np.ndarray): 入力画像 (H, W) float32推奨
-        r (int): フィルタ半径
-    """
-    src = src.astype(np.float32)
-    h, w = src.shape[:2]
-    
-    # 積分画像(boxFilter)を使って、ある窓内の「平均」と「二乗の平均」を計算する関数
-    # shift_x, shift_y で窓の位置を中心からずらす
-    def get_mean_var(img, r, shift_x, shift_y):
-        ksize = (2*r + 1, 2*r + 1)
-        # 1. アンカー（基準点）をずらしてフィルタリングすることで「Side Window」を再現
-        # OpenCVのfilter2D/boxFilterの anchor 引数を使う
-        anchor = (r - shift_x, r - shift_y) 
-        
-        mean = cv2.boxFilter(img, -1, ksize, anchor=anchor, borderType=cv2.BORDER_REFLECT)
-        mean_sq = cv2.boxFilter(img * img, -1, ksize, anchor=anchor, borderType=cv2.BORDER_REFLECT)
-        
-        # 分散 = E[X^2] - (E[X])^2
-        var = mean_sq - mean * mean
-        return mean, var
-
-    # 8方向（+中心）のシフト量
-    # (x, y): (-r, 0)なら左側、(r, 0)なら右側、など
-    shifts = [
-        (-r, -r), (0, -r), (r, -r), # 上3つ
-        (-r,  0), (0,  0), (r,  0), # 中3つ（(0,0)は中心）
-        (-r,  r), (0,  r), (r,  r)  # 下3つ
-    ]
-    
-    # 候補を格納するリスト
-    means = []
-    vars = []
-    
-    for sx, sy in shifts:
-        # シフト量が0でない場合だけ処理（中心だけの窓も含めたい場合はここを調整）
-        # SWFの厳密な定義では「エッジをまたがない窓」を探すため、
-        # 厳密には「窓の端」に画素が来るようにanchorを設定するが、
-        # ここでは簡易的に「rだけずらした位置」を中心とするboxFilterで代用実装
-        
-        # 正確なSide Windowの実装:
-        # 半径rのボックスフィルタだが、注目画素が「四隅」や「辺」に来るようにする。
-        # boxFilterのカーネルサイズは (2r+1) ではなく (r+1) にして、シフトさせるのが一般的だが、
-        # ここではノイズ除去性能を重視して「2r+1の窓をrだけずらす（オーバーラップさせる）」方式を採用。
-        # これにより参照画素数が増え、ノイズ除去力が上がる。
-        
-        m, v = get_mean_var(src, r, sx, sy)
-        means.append(m)
-        vars.append(v)
-
-    # numpy配列にスタック (Channel数, H, W, 候補数9)
-    means_stack = np.stack(means, axis=-1)
-    vars_stack = np.stack(vars, axis=-1)
-    
-    # 分散が最小になるインデックスを探す
-    # varが負になる計算誤差を防ぐためabs
-    min_indices = np.argmin(np.abs(vars_stack), axis=-1)
-    
-    # ファンシーインデックスで最小分散の平均値を選択
-    # (H, W) のインデックスグリッドを作成
-    h_grid, w_grid = np.indices((h, w))
-    result = means_stack[h_grid, w_grid, min_indices]
-    
-    return result
-
-def light_denoise(img, its, col):
-    """Luma / chroma denoise. Chroma path uses guided filters; sanitize non-finite values to avoid NaN cascades."""
-
-    def _finite32(a):
-        """Remove NaN/Inf introduced by filters or extreme HDR before blend / mean."""
-        if a is None:
-            return a
-        if not np.isfinite(a).all():
-            a = np.nan_to_num(np.asarray(a, dtype=np.float32), nan=0.0, posinf=65504.0, neginf=-65504.0)
-        # NumPy<2 は asarray に copy 引数なし（2.0+ の copy=False と同等で十分）
-        return np.asarray(a, dtype=np.float32)
-
-    def _safe_guided_filter(guide, src, radius, eps):
-        eps = max(float(eps), 1e-12)
-        if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'guidedFilter'):
-            out = cv2.ximgproc.guidedFilter(
-                guide=guide, src=src, radius=int(radius), eps=eps, dDepth=-1
-            )
-            return _finite32(out)
-        # Fallback path if ximgproc is unavailable.
-        sigma = max(0.55, float(radius) * 0.45)
-        return cv2.GaussianBlur(src, (0, 0), sigma)
-
-    def _filter_cr_cb_with_shared_model(guide, cr_src, cb_src, radius, eps):
-        eps = max(float(eps), 1e-12)
-        if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'createGuidedFilter'):
-            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), eps)
-            return _finite32(gf.filter(cr_src)), _finite32(gf.filter(cb_src))
-        return (
-            _safe_guided_filter(guide, cr_src, radius, eps),
-            _safe_guided_filter(guide, cb_src, radius, eps),
-        )
-
-    def _filter_single_with_shared_model(guide, src, radius, eps):
-        eps = max(float(eps), 1e-12)
-        if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'createGuidedFilter'):
-            gf = cv2.ximgproc.createGuidedFilter(guide, int(radius), eps)
-            return _finite32(gf.filter(src))
-        return _safe_guided_filter(guide, src, radius, eps)
-
-    def _noise_sigma_estimate(channel):
-        hp = channel - cv2.GaussianBlur(channel, (0, 0), 0.8)
-        mad = float(np.median(np.abs(hp)))
-        if not np.isfinite(mad):
-            mad = 1e-6
-        return max(1e-6, 1.4826 * mad)
-
-    img = np.asarray(img, dtype=np.float32, order="C")
-    if not np.isfinite(img).all():
-        img = np.nan_to_num(img, nan=0.0, posinf=50.0, neginf=-50.0)
-
-    ycbcr = hlsrgb.linear_rgb_to_ycbcr(img).astype(np.float32, copy=False)
-    y, cb, cr = cv2.split(ycbcr)
-    y, cb, cr = _finite32(y), _finite32(cb), _finite32(cr)
-    y_orig = y.copy()
-    cb_orig = cb.copy()
-    cr_orig = cr.copy()
-
-    # Slider [0, 100] -> [0, 1]. The effect is intentionally softened in low range.
-    lum_strength = float(np.clip(its * 0.01, 0.0, 1.0))
-    chr_strength = float(np.clip(col * 0.01, 0.0, 1.0))
-    lum_curve = lum_strength ** 1.8
-    chr_curve = chr_strength ** 1.9
-    # スライダー100相当の抑圧力を調整前比1.5倍（NaN対策後の弱さの補正）
-    _dn_gain = 1.5
-
-    # Precompute edge map for edge/detail protection.
-    y_for_edge = np.sqrt(np.maximum(y, 0.0)).astype(np.float32, copy=False)
-    gx = cv2.Sobel(y_for_edge, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(y_for_edge, cv2.CV_32F, 0, 1, ksize=3)
-    edge_mag = cv2.magnitude(gx, gy)
-    edge_mag = np.nan_to_num(edge_mag, nan=0.0, posinf=1e30, neginf=0.0)
-    edge_ref = float(np.percentile(edge_mag, 85.0)) + 1e-6
-    edge_mask = np.exp(-((edge_mag / edge_ref) ** 2)).astype(np.float32, copy=False)
-
-    # ----- Phase 1 & 3: luminance denoise with soft blend + detail protection -----
-    if lum_strength > 0.0:
-        lum_sigma = _noise_sigma_estimate(y_for_edge)
-        radius_y = max(1, int(round(1.0 + 6.0 * (lum_curve ** 0.8) * _dn_gain)))
-        eps_y = max(float((lum_sigma * (1.15 + 2.4 * lum_curve * _dn_gain)) ** 2), 1e-12)
-
-        sigma_guide = min(4.0, 0.35 + 0.75 * lum_curve * _dn_gain)
-        guide_y = cv2.GaussianBlur(y_for_edge, (0, 0), sigma_guide)
-        y_filtered = _safe_guided_filter(guide_y, y_for_edge, radius_y, eps_y)
-        y_filtered = np.maximum(y_filtered, 0.0) ** 2
-
-        # Strength blend is reduced on edges so small details survive.
-        alpha_y = np.minimum(1.0, (0.08 + 0.82 * lum_curve) * _dn_gain) * edge_mask
-        y = y + (y_filtered - y) * alpha_y
-
-        # Mild detail compensation to avoid "plastic" flat look.
-        lum_f = float(np.minimum(1.0, lum_curve * _dn_gain))
-        detail_residual = y_orig - y
-        detail_gain = (0.18 * (1.0 - lum_f) + 0.07) * (1.0 - edge_mask * 0.7)
-        y += detail_residual * detail_gain
-
-    # ----- Phase 2 & 4: chroma denoise, neutral protection, drift correction, faster path -----
-    if chr_strength > 0.0:
-        sigma_cb = _noise_sigma_estimate(cb)
-        sigma_cr = _noise_sigma_estimate(cr)
-
-        radius_c = max(1, int(round(1.0 + 10.0 * (chr_curve ** 0.85) * _dn_gain)))
-        eps_cb = max(float((sigma_cb * (2.0 + 4.2 * chr_curve * _dn_gain)) ** 2), 1e-12)
-        eps_cr = max(float((sigma_cr * (1.8 + 3.4 * chr_curve * _dn_gain)) ** 2), 1e-12)
-
-        y_guide = y.astype(np.float32, copy=False)
-        if lum_strength <= 1e-6:
-            y_guide = cv2.GaussianBlur(y_guide, (0, 0), min(4.0, 0.45 + 0.75 * chr_curve * _dn_gain))
-
-        h, w = y.shape[:2]
-        use_half_res = (h * w >= 700 * 700) and (radius_c >= 3)
-        if use_half_res:
-            size_half = (max(1, w // 2), max(1, h // 2))
-            y_half = cv2.resize(y_guide, size_half, interpolation=cv2.INTER_AREA)
-            cb_half = cv2.resize(cb, size_half, interpolation=cv2.INTER_AREA)
-            cr_half = cv2.resize(cr, size_half, interpolation=cv2.INTER_AREA)
-
-            cb_half_f = _filter_single_with_shared_model(
-                y_half, cb_half, max(1, radius_c // 2), eps_cb
-            )
-            cr_half_f = _filter_single_with_shared_model(
-                y_half, cr_half, max(1, radius_c // 2), eps_cr
-            )
-
-            cb_filtered = cv2.resize(cb_half_f, (w, h), interpolation=cv2.INTER_LINEAR)
-            cr_filtered = cv2.resize(cr_half_f, (w, h), interpolation=cv2.INTER_LINEAR)
-            cb_filtered = _finite32(cb_filtered)
-            cr_filtered = _finite32(cr_filtered)
-        else:
-            cb_filtered, _ = _filter_cr_cb_with_shared_model(y_guide, cb, cb, radius_c, eps_cb)
-            cr_filtered, _ = _filter_cr_cb_with_shared_model(y_guide, cr, cr, radius_c, eps_cr)
-
-        cb_filtered = _finite32(cb_filtered)
-        cr_filtered = _finite32(cr_filtered)
-
-        # Neutral-color preservation: reduce chroma denoise around low-saturation pixels.
-        chroma = np.sqrt(np.maximum(cb_orig * cb_orig + cr_orig * cr_orig, 0.0))
-        y_safe = np.maximum(y_orig, 0.0)
-        rel_sat = chroma / np.maximum(y_safe, 1e-4)
-        rel_sat = np.clip(rel_sat, 0.0, 80.0)
-        neutral_mask = np.exp(-rel_sat * 7.5).astype(np.float32, copy=False)  # near-gray -> 1.0
-
-        alpha_c_base = np.minimum(1.0, (0.06 + 0.88 * chr_curve) * _dn_gain)
-        alpha_cb = alpha_c_base * (1.0 - 0.55 * neutral_mask)
-        alpha_cr = (alpha_c_base * 0.88) * (1.0 - 0.65 * neutral_mask)
-        cb = cb + (cb_filtered - cb) * alpha_cb
-        cr = cr + (cr_filtered - cr) * alpha_cr
-        cb, cr = _finite32(cb), _finite32(cr)
-
-        # Drift correction: preserve global chroma means to avoid color cast (e.g. reddish tint).
-        mcb_o, mcb = float(np.nanmean(cb_orig)), float(np.nanmean(cb))
-        mcr_o, mcr = float(np.nanmean(cr_orig)), float(np.nanmean(cr))
-        if np.isfinite(mcb_o) and np.isfinite(mcb):
-            cb += mcb_o - mcb
-        if np.isfinite(mcr_o) and np.isfinite(mcr):
-            cr += mcr_o - mcr
-        cb, cr = _finite32(cb), _finite32(cr)
-
-    # Channel merge
-    y = _finite32(y)
-    filtered_ycbcr = cv2.merge((y, cb, cr))
-    out = hlsrgb.linear_ycbcr_to_rgb(filtered_ycbcr)
-    return _finite32(out)
-
-
-def evaluate_light_denoise_metrics(rgb_before, rgb_after):
-    """
-    Compute quick quality metrics for tuning light_denoise parameters.
-
-    Returns:
-        dict with:
-            detail_retention: ratio of high-frequency luma energy (1.0 is neutral)
-            chroma_drift_cb: global Cb mean shift
-            chroma_drift_cr: global Cr mean shift
-    """
-    ycbcr_before = hlsrgb.linear_rgb_to_ycbcr(rgb_before.astype(np.float32, copy=False))
-    ycbcr_after = hlsrgb.linear_rgb_to_ycbcr(rgb_after.astype(np.float32, copy=False))
-    y0, cb0, cr0 = cv2.split(ycbcr_before)
-    y1, cb1, cr1 = cv2.split(ycbcr_after)
-
-    hf0 = y0 - cv2.GaussianBlur(y0, (0, 0), 1.0)
-    hf1 = y1 - cv2.GaussianBlur(y1, (0, 0), 1.0)
-    e0 = float(np.mean(hf0 * hf0) + 1e-8)
-    e1 = float(np.mean(hf1 * hf1))
-
-    return {
-        'detail_retention': e1 / e0,
-        'chroma_drift_cb': float(np.mean(cb1) - np.mean(cb0)),
-        'chroma_drift_cr': float(np.mean(cr1) - np.mean(cr0)),
-    }
 
 #-------------------------------------------------
 

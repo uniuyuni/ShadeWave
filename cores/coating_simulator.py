@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import cv2
 from typing import Dict, Tuple, Optional
@@ -243,5 +245,5 @@ if __name__ == "__main__":
     # imageio.imwrite("vintage.exr", (vintage_img * 65535).astype(np.uint16))
     # imageio.imwrite("leica.exr", (leica_img * 65535).astype(np.uint16))
     
-    print("コーティングシミュレーション完了！")
-    print(f"利用可能なプリセット：{list(simulator.presets.keys())}")
+    logging.info("コーティングシミュレーション完了！")
+    logging.info("利用可能なプリセット：%s", list(simulator.presets.keys()))

@@ -150,10 +150,11 @@ if __name__ != '__main__':
         """子プロセス初期化時に実行される"""
         import sys
         import multiprocessing
+        import logging
         # インポートフックを設定
         blocker = ImportBlocker(['kivy', 'kivymd', 'matplotlib', 'tkinter'])
         sys.meta_path.insert(0, blocker)
-        print(f"子プロセス {multiprocessing.current_process().name}: インポートブロッカー設定完了")
+        logging.debug("子プロセス %s: インポートブロッカー設定完了", multiprocessing.current_process().name)
     
     #init_worker()
 
@@ -826,8 +827,6 @@ if __name__ == '__main__':
             line2 = (
                 f"Kmin {wkmin}x{wkhmin}  pmin {pminw}x{pminh}  |  previewWgt {pww}x{pwh}  |  {texpart}"
             )
-            print(f"[RESIZE-DEBUG] {line1}", flush=True)
-            print(f"[RESIZE-DEBUG] {line2}", flush=True)
             logging.info("RESIZE-DEBUG %s  %s", line1, line2)
             if self._debug_resize_label is not None and pw is not None:
                 self._debug_resize_label.text = f"{line1}\n{line2}"
@@ -1707,10 +1706,6 @@ if __name__ == '__main__':
                 return
             self.ids['mask_editor2'].set_draw_mask(policy == "show", refresh=refresh)
 
-        def _should_draw_mask_overlay(self, lv, subname=None):
-            effect = (subname or "mask2") if lv == 3 else None
-            return self._mask_overlay_policy(lv, effect, subname=subname) == "show"
-
         def apply_rotation_flip_for_wrapper(self):
             # Calculate Rotation/Flip for Hardware
             #if self.ids["effects"].current_tab.text == "Ge":
@@ -2360,7 +2355,12 @@ if __name__ == '__main__':
             self._memory_last_load_stage = stage
             _img = getattr(imgset, "img", None) if imgset is not None else None
             shape_str = getattr(_img, "shape", None) if _img is not None else None
-            print(f"Load image SHAPE: {shape_str} fidelity: {getattr(imgset, 'fidelity', None)}, Proc: {stage}")
+            logging.debug(
+                "Load image SHAPE: %s fidelity: %s, Proc: %s",
+                shape_str,
+                getattr(imgset, 'fidelity', None),
+                stage,
+            )
 
             if imgset is None or getattr(imgset, "img", None) is None:
                 logging.error(f"画像データがありません: {file_path} (stage={stage})")

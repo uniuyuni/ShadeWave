@@ -6,6 +6,7 @@ import colorsys
 import os
 import atexit
 import sys
+import logging
 import webcolors
 from difflib import get_close_matches
 from functools import lru_cache
@@ -26,10 +27,10 @@ try:
     text = re.sub(r',(\s*[}\]])', r'\1', text)  # trailing-comma tolerance
     RAW = json.loads(text)
 except FileNotFoundError:
-    print(f"❌ 色辞書ファイルが見つかりません: {DATA_PATH}", file=sys.stderr)
+    logging.error("色辞書ファイルが見つかりません: %s", DATA_PATH)
     sys.exit(1)
 except json.JSONDecodeError as e:
-    print(f"❌ JSONのパース失敗: {e}", file=sys.stderr)
+    logging.error("JSONのパース失敗: %s", e)
     sys.exit(1)
 
 
@@ -68,16 +69,20 @@ def _build_unified():
         if k not in u:
             u[k] = rgb
     if broken:
-        print(f"[WARN] {len(broken)} unresolved metaphors (first 5): {broken[:5]}",
-              file=sys.stderr)
+        logging.warning("%s unresolved metaphors (first 5): %s", len(broken), broken[:5])
     return u
 
 
 UNIFIED_DB = _build_unified()
 _UNIFIED_KEYS_SORTED = sorted(UNIFIED_DB.keys(), key=len, reverse=True)
 
-print(f"[INFO] DB Load: COLOR={len(COLOR_DB)}, META={len(METAPHOR_DB)}, "
-      f"UNIFIED={len(UNIFIED_DB)}, MOD={len(MODIFIER_DB)}", file=sys.stderr)
+logging.info(
+    "DB Load: COLOR=%s, META=%s, UNIFIED=%s, MOD=%s",
+    len(COLOR_DB),
+    len(METAPHOR_DB),
+    len(UNIFIED_DB),
+    len(MODIFIER_DB),
+)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -258,10 +263,10 @@ def _get_llm():
     if _llm is None:
         if not os.path.exists(GGUF_PATH):
             raise FileNotFoundError(f"❌ GGUF未発見: {GGUF_PATH}")
-        print(f"[INFO] モデル読み込み: {GGUF_PATH}", file=sys.stderr)
+        logging.info("モデル読み込み: %s", GGUF_PATH)
         _llm = Llama(model_path=GGUF_PATH, n_ctx=N_CTX, n_gpu_layers=0,
                      n_threads=N_THREADS, n_batch=256, verbose=False, logits_all=False)
-        print("[INFO] LLM準備完了", file=sys.stderr)
+        logging.info("LLM準備完了")
     return _llm
 
 
@@ -352,8 +357,7 @@ def _llm_fallback(text):
         rgb = _extract_color_from_llm(raw2)
 
     if DEBUG_LLM:
-        print(f"[LLM] {text!r} → raw1={raw[:40]!r} raw2={raw2[:40]!r} → {rgb}",
-              file=sys.stderr)
+        logging.debug("[LLM] %r -> raw1=%r raw2=%r -> %s", text, raw[:40], raw2[:40], rgb)
 
     if rgb is not None:
         return apply_modifiers(rgb, text)
@@ -365,8 +369,7 @@ def _llm_fallback(text):
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if os.environ.get("COLORTERM") != "truecolor":
-        print("⚠️  警告: ターミナルがTrueColor非対応の場合、色ブロックが白くなります。",
-              file=sys.stderr)
+        logging.warning("⚠️  警告: ターミナルがTrueColor非対応の場合、色ブロックが白くなります。")
 
     tests = [
         "橙色と白と青を混ぜた色",
@@ -401,18 +404,18 @@ if __name__ == "__main__":
         "そうです、私が変なおじさんです", "無の境地の色", "希望の光の色",
         "面白いを表す色", "怖いを表す色", "美しいを表す色",
     ]
-    print("🔵 色解決テスト (Qwen2.5 / UNIFIED最長一致 / sentinel撤廃)")
-    print("-" * 70)
+    logging.info("🔵 色解決テスト (Qwen2.5 / UNIFIED最長一致 / sentinel撤廃)")
+    logging.info("-" * 70)
     hex_counts = {}
     for t in tests:
         rgb = resolve_color(t)
         h = rgb_to_hex(*rgb)
         hex_counts[h] = hex_counts.get(h, 0) + 1
-        print(f"{t:38} → {h} {get_ansi_block(*rgb)}")
-    print("\n" + "-" * 70)
+        logging.info(f"{t:38} → {h} {get_ansi_block(*rgb)}")
+    logging.info("\n" + "-" * 70)
     dup = {k: v for k, v in hex_counts.items() if v > 1}
-    print(f"重複色: {dup or 'なし'}")
+    logging.info("重複色: %s", dup or 'なし')
     if "#64646E" in hex_counts:
-        print(f"❌ #64646E が {hex_counts['#64646E']} 件残っています")
+        logging.info("❌ #64646E が %s 件残っています", hex_counts['#64646E'])
     else:
-        print("✅ #64646E はゼロ")
+        logging.info("✅ #64646E はゼロ")

@@ -6,6 +6,7 @@ Supports: Sony S-Log3, ARRI LogC4, Canon Log3, RED Log3G10, Panasonic V-Log,
 """
 
 import numpy as np
+import logging
 from typing import Literal, Optional
 import warnings
 
@@ -363,17 +364,17 @@ def process_image(
     converter = LogConverter()
     log_image = converter.convert(linear_rgb, log_format)
     
-    print(f"Converted to {log_format.upper()}")
-    print(f"  Input range: [{linear_rgb.min():.4f}, {linear_rgb.max():.4f}]")
-    print(f"  Log range: [{log_image.min():.4f}, {log_image.max():.4f}]")
+    logging.debug("Converted to %s", log_format.upper())
+    logging.debug("Input range: [%.4f, %.4f]", linear_rgb.min(), linear_rgb.max())
+    logging.debug("Log range: [%.4f, %.4f]", log_image.min(), log_image.max())
     
     # Apply LUT if provided
     if lut_path:
         applicator = LUTApplicator()
         lut_data, lut_size = applicator.read_cube_lut(lut_path)
         result = applicator.apply_lut_trilinear(log_image, lut_data, lut_size)
-        print(f"Applied LUT from {lut_path} (size: {lut_size}x{lut_size}x{lut_size})")
-        print(f"  Output range: [{result.min():.4f}, {result.max():.4f}]")
+        logging.debug("Applied LUT from %s (size: %sx%sx%s)", lut_path, lut_size, lut_size, lut_size)
+        logging.debug("Output range: [%.4f, %.4f]", result.min(), result.max())
         return result
     
     return log_image
@@ -388,20 +389,20 @@ if __name__ == "__main__":
     # Available formats
     formats = ['slog3', 'logc4', 'clog3', 'redlog3g10', 'vlog']
     
-    print("Linear to Log Converter - Example")
-    print("=" * 60)
+    logging.info("Linear to Log Converter - Example")
+    logging.info("=" * 60)
     
     for fmt in formats:
-        print(f"\nProcessing with {fmt.upper()}...")
+        logging.info("\nProcessing with %s...", fmt.upper())
         log_output = process_image(linear_rgb, fmt)
         
         # If you have a LUT file, you can apply it like this:
         # log_with_lut = process_image(linear_rgb, fmt, lut_path='path/to/lut.cube')
     
-    print("\n" + "=" * 60)
-    print("Supported Log formats:")
-    print("  - slog3: Sony S-Log3")
-    print("  - logc4: ARRI LogC4") 
-    print("  - clog3: Canon Log3")
-    print("  - redlog3g10: RED Log3G10")
-    print("  - vlog: Panasonic V-Log")
+    logging.info("\n" + "=" * 60)
+    logging.info("Supported Log formats:")
+    logging.info("  - slog3: Sony S-Log3")
+    logging.info("  - logc4: ARRI LogC4")
+    logging.info("  - clog3: Canon Log3")
+    logging.info("  - redlog3g10: RED Log3G10")
+    logging.info("  - vlog: Panasonic V-Log")

@@ -1,15 +1,10 @@
-import sys
-import os
+import logging
 import torch as th
 import numpy as np
 
-# Add demosaicnet_torch to sys.path
-helpers_dir = os.path.dirname(os.path.abspath(__file__))
-platypus_dir = os.path.dirname(helpers_dir)
-demosaicnet_dir = os.path.join(platypus_dir, 'demosaicnet_torch')
+from utils.external_paths import add_external_path
 
-if demosaicnet_dir not in sys.path:
-    sys.path.append(demosaicnet_dir)
+add_external_path("demosaicnet_torch")
 
 import utils.aiutils as aiutils
 
@@ -36,10 +31,10 @@ def init_demosaicnet(mosaic_type='bayer', noiselevel=0.0, tile_size=512, device=
     
     # デバイスの可用性チェックとフォールバック
     if device == 'mps' and not th.backends.mps.is_available():
-        print("Warning: MPS is not available. Falling back to CPU.")
+        logging.warning("MPS is not available. Falling back to CPU.")
         device = 'cpu'
     elif device == 'cuda' and not th.cuda.is_available():
-        print("Warning: CUDA is not available. Falling back to CPU.")
+        logging.warning("CUDA is not available. Falling back to CPU.")
         device = 'cpu'
         
     dev = th.device(device)
@@ -220,7 +215,7 @@ def find_xtrans_offset(model_info, raw, patch_size=256):
 
 # 使用例・テスト用コード
 if __name__ == '__main__':
-    print("Testing DemosaicNet Helper...")
+    logging.info("Testing DemosaicNet Helper...")
     try:
         # テスト用のダミーRAW画像(Bayer)を作成
         h, w = 128, 128
@@ -228,23 +223,23 @@ if __name__ == '__main__':
         
         # モデル初期化 (Apple Silicon であれば 'mps' を優先的に使用してテスト)
         device = 'mps' if th.backends.mps.is_available() else ('cuda' if th.cuda.is_available() else 'cpu')
-        print(f"Initializing with device: {device}")
+        logging.info("Initializing with device: %s", device)
         
         model_info = init_demosaicnet(mosaic_type='bayer', noiselevel=0.0, tile_size=64, device=device)
-        print("Model initialized.")
+        logging.info("Model initialized.")
         
         # 推論実行 (デフォルト挙動)
-        print("Running inference (default output dtype)...")
+        logging.info("Running inference (default output dtype)...")
         output_img = inference_demosaicnet(model_info, dummy_raw, crop=16)
         
         # 推論実行 (float32指定)
-        print("Running inference (float32 output dtype)...")
+        logging.info("Running inference (float32 output dtype)...")
         output_float = inference_demosaicnet(model_info, dummy_raw, crop=16, out_dtype=np.float32)
         
-        print("Inference completed successfully!")
-        print(f"Input shape: {dummy_raw.shape}, dtype: {dummy_raw.dtype}")
-        print(f"Output (default) shape: {output_img.shape}, dtype: {output_img.dtype}")
-        print(f"Output (float32) shape: {output_float.shape}, dtype: {output_float.dtype}")
+        logging.info("Inference completed successfully!")
+        logging.info("Input shape: %s, dtype: %s", dummy_raw.shape, dummy_raw.dtype)
+        logging.info("Output (default) shape: %s, dtype: %s", output_img.shape, output_img.dtype)
+        logging.info("Output (float32) shape: %s, dtype: %s", output_float.shape, output_float.dtype)
         
-    except Exception as e:
-        print(f"Testing failed with error: {e}")
+    except Exception:
+        logging.exception("Testing failed")

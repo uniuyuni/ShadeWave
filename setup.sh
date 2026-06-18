@@ -9,6 +9,8 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
+EXTERNAL_DIR="$ROOT_DIR/external"
+mkdir -p "$EXTERNAL_DIR"
 
 # pixi 環境の conda git は git-remote-https を欠き、HTTPS clone が
 #   "remote helper 'https' aborted session"
@@ -33,24 +35,34 @@ clone_if_missing() {
   fi
 }
 
-ensure_libraw_enhanced() {
-  clone_if_missing https://github.com/uniuyuni/libraw_enhanced.git libraw_enhanced
+download_file() {
+  local url="$1"
+  local output="$2"
+  shift 2
 
-  local marker="libraw_enhanced/external/LibRaw-master/src/metadata/identify.cpp"
+  SSL_CERT_FILE= CURL_CA_BUNDLE= REQUESTS_CA_BUNDLE= \
+    /usr/bin/curl -fSL "$@" "$url" -o "$output"
+}
+
+ensure_libraw_enhanced() {
+  local repo_dir="$EXTERNAL_DIR/libraw_enhanced"
+  clone_if_missing https://github.com/uniuyuni/libraw_enhanced.git "$repo_dir"
+
+  local marker="$repo_dir/external/LibRaw-master/src/metadata/identify.cpp"
   if [ ! -f "$marker" ]; then
-    mkdir -p libraw_enhanced/external
+    mkdir -p "$repo_dir/external"
     local ver="0.22.1"
     local t
     t="$(mktemp)"
-    pixi run curl -fSL "https://github.com/LibRaw/LibRaw/archive/refs/tags/${ver}.tar.gz" -o "$t"
-    tar -xzf "$t" -C libraw_enhanced/external
+    download_file "https://github.com/LibRaw/LibRaw/archive/refs/tags/${ver}.tar.gz" "$t"
+    tar -xzf "$t" -C "$repo_dir/external"
     rm -f "$t"
-    rm -rf libraw_enhanced/external/LibRaw-master
-    mv "libraw_enhanced/external/LibRaw-${ver}" libraw_enhanced/external/LibRaw-master
+    rm -rf "$repo_dir/external/LibRaw-master"
+    mv "$repo_dir/external/LibRaw-${ver}" "$repo_dir/external/LibRaw-master"
   fi
 
   if [ ! -e "metal" ]; then
-    ln -sfn "libraw_enhanced/core/metal" "metal"
+    ln -sfn "external/libraw_enhanced/core/metal" "metal"
   fi
 }
 
@@ -59,19 +71,31 @@ ensure_libraw_enhanced() {
 ensure_sam3() {
   local pin="8e451d5eb43c817b64ae7577fb7b9ae223db88a9"
   local patch="$ROOT_DIR/patches/sam3-macos.patch"
+  local repo_dir="$EXTERNAL_DIR/SAM3"
 
-  if [ ! -d "SAM3" ]; then
-    git clone https://github.com/facebookresearch/sam3.git SAM3
-    git -C SAM3 checkout --quiet "$pin"
+  if [ ! -d "$repo_dir" ]; then
+    git clone https://github.com/facebookresearch/sam3.git "$repo_dir"
+    git -C "$repo_dir" checkout --quiet "$pin"
     # 既に適用済みでない場合のみ当てる（再実行の冪等性）
-    if ! git -C SAM3 apply --reverse --check "$patch" >/dev/null 2>&1; then
-      git -C SAM3 apply "$patch"
+    if ! git -C "$repo_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
+      git -C "$repo_dir" apply "$patch"
       echo "SAM3: macOS パッチを適用しました ($patch)"
     fi
   fi
 }
 
-mkdir -p checkpoints depth_pro/checkpoints
+ensure_external_repos() {
+  clone_if_missing https://github.com/uniuyuni/radiance_denoise.git "$EXTERNAL_DIR/radiance_denoise"
+  clone_if_missing https://github.com/cszn/SCUNet.git "$EXTERNAL_DIR/SCUNet"
+  clone_if_missing https://github.com/gfacciol/demosaicnet_torch.git "$EXTERNAL_DIR/demosaicnet_torch"
+  clone_if_missing https://github.com/uniuyuni/SCUNet_CoreML.git "$EXTERNAL_DIR/SCUNet_CoreML"
+}
+
+ensure_depth_pro() {
+  clone_if_missing https://github.com/apple/ml-depth-pro.git "$EXTERNAL_DIR/depth_pro"
+}
+
+mkdir -p checkpoints
 
 pixi install
 
@@ -79,27 +103,38 @@ ensure_libraw_enhanced
 
 ensure_sam3
 
+ensure_external_repos
+
+ensure_depth_pro
+
+pixi run python -m pip install --upgrade pip "setuptools>=70,<82" wheel
+# requirements.txt を pip 依存の正本にする。libraw_enhanced は Apple clang と
+# --no-build-isolation、depth_pro は NumPy 2 系を維持するため --no-deps で
+# 入れるので、どちらも専用コマンドに分ける。
+REQ_NO_LOCAL="$(mktemp)"
+cleanup_requirements_tmp() {
+  rm -f "$REQ_NO_LOCAL"
+}
+trap cleanup_requirements_tmp EXIT
+grep -v -E '^[[:space:]]*-e[[:space:]].*external/(libraw_enhanced|depth_pro)' requirements.txt >"$REQ_NO_LOCAL"
+pixi run python -m pip install -r "$REQ_NO_LOCAL"
+cleanup_requirements_tmp
+trap - EXIT
+pixi run python -m pip install -e ./external/depth_pro --no-deps
+
 # libraw_enhanced は pixi 内でビルドした LibRaw（third_party/libraw-install）にリンクする（システム LibRaw 不要）
 echo "LibRaw を third_party/libraw-install にビルドしています..."
 pixi run build-libraw
 
-pixi run python -m pip install --upgrade pip "setuptools>=70,<82" wheel
-# libraw_enhanced / SAM3 は editable のため別途 install（llvm-openmp / ローカル LibRaw 向けに libraw は --no-build-isolation）
-REQ_NO_LOCAL="$(mktemp)"
-grep -v '^[[:space:]]*-e[[:space:]].*libraw_enhanced' requirements.txt | \
-  grep -v '^[[:space:]]*-e[[:space:]].*SAM3' >"$REQ_NO_LOCAL"
-pixi run python -m pip install -r "$REQ_NO_LOCAL"
-rm -f "$REQ_NO_LOCAL"
 # pixi の conda clang (arm64-apple-darwin20.0.0-clang++) は新しい macOS SDK (26.x)
 # と組み合わせると "could not build module 'Darwin'" および pixi ncurses ヘッダと
 # macOS SDK curses.h の "conflicting types for 'unctrl'" でビルドが失敗する。
 # system clang (Apple Clang) は SDK を完全に認識するためこれらの問題が起きない。
 CC=/usr/bin/clang CXX=/usr/bin/clang++ \
-  pixi run python -m pip install -e ./libraw_enhanced --no-build-isolation
-pixi run python -m pip install -e ./SAM3
+  pixi run python -m pip install -e ./external/libraw_enhanced --no-build-isolation --force-reinstall --no-deps --no-cache-dir
 
-clone_if_missing https://github.com/cszn/SCUNet.git SCUNet
-clone_if_missing https://github.com/gfacciol/demosaicnet_torch.git demosaicnet_torch
+pixi run build-denoise-native
+pixi run install-effect-backends
 
 if [ ! -d "icc" ] || [ ! -d "dcp" ] || [ ! -d "luts" ]; then
   pixi run python -m gdown --folder --remaining-ok "https://drive.google.com/drive/folders/1dWrL7ciw5DWlk9zFEBf63Gz9uKsWjJ_W?usp=sharing"
@@ -107,7 +142,7 @@ fi
 
 mkdir -p checkpoints/SCUNet
 if [ ! -f "checkpoints/SCUNet/scunet_color_real_psnr.pth" ]; then
-  pixi run python SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
+  pixi run python external/SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
 fi
 
 if [ ! -f "checkpoints/sam3.1_multiplex.pt" ]; then
@@ -143,14 +178,17 @@ EOF
   fi
 fi
 
-if [ ! -f "depth_pro/checkpoints/depth_pro.pt" ]; then
-  pixi run curl -fSL -C - 'https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt' -o 'depth_pro/checkpoints/depth_pro.pt'
+if [ ! -f "external/depth_pro/checkpoints/depth_pro.pt" ]; then
+  (
+    cd "external/depth_pro"
+    SSL_CERT_FILE= CURL_CA_BUNDLE= REQUESTS_CA_BUNDLE= pixi run bash get_pretrained_models.sh
+  )
 fi
 
 if [ ! -f "checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf" ]; then
-  pixi run curl -fSL -C - 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true' -o 'checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf'
+  download_file 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true' 'checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf' -C -
 fi
 
 if [ ! -f "checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
-  pixi run curl -fSL -C - 'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true' -o 'checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'
+  download_file 'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true' 'checkpoints/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf' -C -
 fi

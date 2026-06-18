@@ -1,5 +1,6 @@
 
 import os
+import logging
 from kivy.app import App as KVApp
 from kivy.uix.widget import Widget as KVWidget
 from kivy.core.window import Window as KVWindow
@@ -141,9 +142,9 @@ class DraggableWidget(KVWidget):
     @objc_method
     def draggingSession_endedAtPoint_operation_(self, session, end_point, operation):    
         if operation == NSDragOperationNone:
-            print("ドロップ失敗")
+            logging.debug("ドロップ失敗")
         else:
-            print("ドロップ成功")
+            logging.debug("ドロップ成功")
 
 
 class DragDropApp(KVApp):

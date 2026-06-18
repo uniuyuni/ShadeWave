@@ -107,7 +107,7 @@ class DistortionPainterScrollFlowTest(unittest.TestCase):
         )
         set2param_source = ast.get_source_segment(
             EFFECTS_PATH.read_text(),
-            _load_class_function(EFFECTS_PATH, "DistortionEffect", "set2param"),
+            _load_class_function(EFFECTS_PATH, "DistortionEffect", "after_set2param"),
         )
 
         self.assertIn("id: button_distortion_reset", kv_source)

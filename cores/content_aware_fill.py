@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 
 from dataclasses import dataclass
+import logging
 import time
 
 @dataclass
@@ -58,7 +59,7 @@ class PatchMatchInpainting:
     def _log(self, msg: str):
         if self.verbose:
             now = time.strftime("%H:%M:%S")
-            print(f"[PatchMatch {now}] {msg}")
+            logging.info("[PatchMatch %s] %s", now, msg)
 
     @staticmethod
     def _resolve_device(device: str | None) -> torch.device:
@@ -733,4 +734,3 @@ def content_aware_fill(
         match_scale=match_scale,
         candidate_count=candidate_count,
     ).inpaint(image, mask)
-

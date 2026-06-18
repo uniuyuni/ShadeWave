@@ -295,7 +295,7 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # libraw_enhanced の Metal シェーダー（GPUパス）
     metal_dir = root / "metal"
     if not metal_dir.is_dir():
-        alt_metal = root / "libraw_enhanced" / "core" / "metal"
+        alt_metal = root / "external" / "libraw_enhanced" / "core" / "metal"
         if alt_metal.is_dir():
             metal_dir = alt_metal
     if metal_dir.is_dir():

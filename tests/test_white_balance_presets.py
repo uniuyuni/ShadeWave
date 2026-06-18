@@ -3,11 +3,14 @@ import pathlib
 import sys
 import unittest
 
+import numpy as np
+
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import effects
+from cores import core
 
 
 MAIN_PATH = PROJECT_ROOT / "main.py"
@@ -101,6 +104,12 @@ class WhiteBalancePresetTest(unittest.TestCase):
         self.assertIn("preset == self.PRESET_AS_SHOT", set2param)
         self.assertIn('widget.ids["slider_color_temperature"].reset_value', set2param)
         self.assertIn('widget.ids["slider_color_tint"].reset_value', set2param)
+
+    def test_invert_temp_tint_rgb_uses_existing_inversion_helper(self):
+        rgb = core.invert_TempTint2RGB(5500, 4, 1.0, reference_temp=5000.0)
+
+        self.assertEqual(len(rgb), 3)
+        self.assertTrue(np.isfinite(rgb).all())
 
     def test_hover_spinner_dispatches_same_user_value(self):
         source = HOVER_SPINNER_PATH.read_text()

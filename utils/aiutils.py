@@ -1,4 +1,5 @@
 
+import logging
 import numpy as np
 import cv2
 import torch
@@ -213,10 +214,10 @@ def print_model_structure(model, indent=0):
     モデルの構造を詳細に表示
     """
     for name, module in model.named_children():
-        print("  " * indent + f"├─ {name}: {module.__class__.__name__}")
+        logging.debug("%s├─ %s: %s", "  " * indent, name, module.__class__.__name__)
         
         if isinstance(module, nn.InstanceNorm2d):
-            print("  " * indent + f"   └─ ⚠️  InstanceNorm2d detected!")
+            logging.debug("%s   └─ InstanceNorm2d detected!", "  " * indent)
         
         if len(list(module.children())) > 0:
             print_model_structure(module, indent + 1)

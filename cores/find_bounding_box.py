@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import cv2
 try:
@@ -48,7 +49,7 @@ def find_bounding_box(image, threshold=None, margin_ratio=None, aspect_ratio=Non
         margin_ratio = 0.0
     
     if verbose:
-        print(f"[検出設定] threshold={threshold:.3f}, margin_ratio={margin_ratio:.3f}")
+        logging.info("[検出設定] threshold=%.3f, margin_ratio=%.3f", threshold, margin_ratio)
 
     
     h, w = image.shape[:2]
@@ -69,7 +70,13 @@ def find_bounding_box(image, threshold=None, margin_ratio=None, aspect_ratio=Non
     eff_threshold = threshold
         
     if verbose:
-        print(f"[検出設定] MaxVal={img_max:.2f}, Threshold={eff_threshold:.3f} (Original={threshold}), Margin={margin_ratio:.3f}")
+        logging.info(
+            "[検出設定] MaxVal=%.2f, Threshold=%.3f (Original=%s), Margin=%.3f",
+            img_max,
+            eff_threshold,
+            threshold,
+            margin_ratio,
+        )
 
     binary = ((gray > eff_threshold) * 255).astype(np.uint8)
     
@@ -96,7 +103,8 @@ def find_bounding_box(image, threshold=None, margin_ratio=None, aspect_ratio=Non
     contours, _ = cv2.findContours(binary_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
-        if verbose: print("[警告] 有効領域なし")
+        if verbose:
+            logging.warning("[警告] 有効領域なし")
         return (0, 0, w - 1, h - 1)
 
     # 最大面積の輪郭を採用
@@ -148,7 +156,7 @@ def find_bounding_box(image, threshold=None, margin_ratio=None, aspect_ratio=Non
         return (0, 0, w-1, h-1)
         
     if verbose:
-        print(f"[最終結果] 内接矩形座標: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        logging.info("[最終結果] 内接矩形座標: x1=%s, y1=%s, x2=%s, y2=%s", x1, y1, x2, y2)
     
     return (x1, y1, x2, y2)
 
@@ -168,7 +176,7 @@ def find_largest_inscribed_rectangle_in_mask(mask, aspect_ratio=None, threshold=
 
     if np.max(valid_mask) == 0:
         if verbose:
-            print("[警告] 有効マスク領域なし")
+            logging.warning("[警告] 有効マスク領域なし")
         return (0, 0, 0, 0)
 
     if aspect_ratio is not None:
@@ -182,7 +190,7 @@ def find_largest_inscribed_rectangle_in_mask(mask, aspect_ratio=None, threshold=
     y2 = max(y1, min(int(y2), h - 1))
 
     if verbose:
-        print(f"[有効マスク最大矩形] x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        logging.info("[有効マスク最大矩形] x1=%s, y1=%s, x2=%s, y2=%s", x1, y1, x2, y2)
 
     return (x1, y1, x2, y2)
 

@@ -35,6 +35,58 @@ _V2_EDGE_CACHE: dict = {}  # {(guide_fingerprint, shape): (edge_strength, stable
 # changes invalidate it while repeated painting strokes hit the cache.
 _V2_COST_CACHE: dict = {}  # {(guide_fingerprint, shape, str_key, bias_key): (edge_cost_all, solver_es)}
 
+# Strength/bias-INDEPENDENT prep cache: the stroke-local solve units (band geometry
+# + distance transforms) and the per-unit colour analysis (_color_score_and_luma_delta,
+# incl. the ~35ms shell-median) depend only on the guide, the stroke mask and the
+# radius -- NOT on strength/bias. Caching them means a strength/bias slider change
+# re-runs only the policy + min-cut, not the whole prep. This is what makes a param
+# change cheap even with the per-stroke full-view (where each stroke is its own solve).
+_V2_PREP_CACHE: dict = {}  # {prep_key: (solve_units, [ (color_roi, luma_delta) | None ])}
+
+# These caches now hold MANY entries (one per stroke region) instead of 1 slot, so a
+# param change finds every stroke's prep/edge already computed. Bounded by px budget.
+_V2_CACHE_PX_BUDGET = 24_000_000
+
+
+def _cache_px_size(value):
+    total = 0
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, np.ndarray):
+            total += v.size
+        elif isinstance(v, (tuple, list)):
+            stack.extend(v)
+        elif hasattr(v, "component"):  # a solve unit
+            for a in (getattr(v, "component", None), getattr(v, "core", None)):
+                if isinstance(a, np.ndarray):
+                    total += a.size
+    return total
+
+
+def _cache_put(cache, key, value, budget=_V2_CACHE_PX_BUDGET):
+    if key is None or key in cache:
+        return
+    cache[key] = value
+    # evict oldest (insertion order) until under the px budget
+    while len(cache) > 1 and sum(_cache_px_size(v) for v in cache.values()) > budget:
+        cache.pop(next(iter(cache)))
+
+
+def _strokes_fingerprint(draw_strokes):
+    out = []
+    for s in draw_strokes or []:
+        pts = getattr(s, "points", None)
+        if pts is None:
+            pts = []
+        out.append((
+            bool(getattr(s, "is_erasing", False)),
+            round(float(getattr(s, "size", 0.0)), 2),
+            round(float(getattr(s, "soft", 100.0)), 2),
+            tuple((round(float(p[0]), 2), round(float(p[1]), 2)) for p in pts),
+        ))
+    return tuple(out)
+
 
 # --- continuity helpers (Phase 1: de-cliff discrete control resolution) -------
 def _smoothstep(x, lo, hi):
@@ -180,9 +232,7 @@ def _compute_add_only_support(
         if edge_strength is None:
             edge_strength = np.zeros((h, w), dtype=np.float32)
         stable_edge_strength = _stable_edge_strength(guide, edge_strength)
-        if _edge_cache_key is not None:
-            _V2_EDGE_CACHE.clear()  # keep only 1 entry
-            _V2_EDGE_CACHE[_edge_cache_key] = (edge_strength, stable_edge_strength)
+        _cache_put(_V2_EDGE_CACHE, _edge_cache_key, (edge_strength, stable_edge_strength))
     use_stable_edge = os.environ.get("QS_V2_STABLE_EDGE", "").strip().lower() in {"1", "true", "yes", "on"}
     solve_edge_strength = stable_edge_strength if use_stable_edge else edge_strength
     strength, auto_strength, offset_strength, strength_mode = _resolve_edge_lock(
@@ -215,9 +265,7 @@ def _compute_add_only_support(
         solver_edge_strength = _v1._solver_edge_strength(solve_edge_strength, pixel_scale)
         resolved_policy = _v1._edge_policy(strength, edge_bias=edge_bias)
         edge_cost_all = _v1._edge_cost_map(solver_edge_strength, policy=resolved_policy)
-        if _cost_key is not None:
-            _V2_COST_CACHE.clear()  # keep only 1 entry
-            _V2_COST_CACHE[_cost_key] = (edge_cost_all, solver_edge_strength, resolved_policy)
+        _cache_put(_V2_COST_CACHE, _cost_key, (edge_cost_all, solver_edge_strength, resolved_policy))
     solver_edge_context_all = solver_edge_strength.copy()
 
     fg_stroke, bg_stroke, has_strokes = _er._draw_random_walker_stroke_seeds(
@@ -250,11 +298,41 @@ def _compute_add_only_support(
     resolved_auto_strength = float(auto_strength)
     resolved_effective_strength = float(strength)
 
-    solve_units = _stroke_local_solve_units(
-        mask_f, hint, hard_fg_core, draw_strokes, radius, has_strokes)
+    # Strength/bias-independent prep (solve units + per-unit colour): cached so a
+    # strength/bias slider change reuses it and only the policy + min-cut re-run.
+    _prep_key = (
+        _raw_guide_ptr, (h, w),
+        round(float(radius), 3), round(float(pixel_scale), 4),
+        bool(has_strokes),
+        _strokes_fingerprint(draw_strokes),
+        _er._guide_fingerprint(mask_f),
+    ) if _raw_guide_ptr is not None else None
+    _prep = _V2_PREP_CACHE.get(_prep_key) if _prep_key is not None else None
+    if _prep is None:
+        solve_units = _stroke_local_solve_units(
+            mask_f, hint, hard_fg_core, draw_strokes, radius, has_strokes)
+        _unit_colors = []
+        for unit in solve_units:
+            component = unit.component
+            component_scales = unit.scales
+            y0, y1, x0, x1 = _er._expanded_bbox(component, component_scales.roi_pad)
+            if y1 <= y0 or x1 <= x0:
+                _unit_colors.append(None)
+                continue
+            sl = np.s_[y0:y1, x0:x1]
+            comp = component[sl]
+            core_roi = unit.core[sl]
+            _unit_colors.append(_v1._color_score_and_luma_delta(
+                guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+                directional_bg=has_strokes))
+        _prep = (solve_units, _unit_colors)
+        _cache_put(_V2_PREP_CACHE, _prep_key, _prep)
+    solve_units, _unit_colors = _prep
     total_band = 0
     total_flow = 0
-    for unit in solve_units:
+    for unit, _unit_color in zip(solve_units, _unit_colors):
+        if _unit_color is None:
+            continue
         component = unit.component
         component_scales = unit.scales
         y0, y1, x0, x1 = _er._expanded_bbox(component, component_scales.roi_pad)
@@ -263,9 +341,7 @@ def _compute_add_only_support(
         sl = np.s_[y0:y1, x0:x1]
         comp = component[sl]
         core_roi = unit.core[sl]
-        color_roi, selected_luma_delta = _v1._color_score_and_luma_delta(
-            guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
-            directional_bg=has_strokes)
+        color_roi, selected_luma_delta = _unit_color
         unit_strength, unit_auto_strength = _v2_unit_edge_lock(
             strength,
             auto_strength,

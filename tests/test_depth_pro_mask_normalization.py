@@ -6,14 +6,14 @@ import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import depth_pro
+from helpers import depth_pro_helper
 
 
 class DepthProMaskNormalizationTest(unittest.TestCase):
     def test_depth_is_converted_to_near_white_mask(self):
         depth = np.array([[1.0, 2.0, 4.0]], dtype=np.float32)
 
-        mask = depth_pro._normalize_depth_for_mask(
+        mask = depth_pro_helper.normalize_depth_for_mask(
             depth,
             lower_percentile=0.0,
             upper_percentile=100.0,
@@ -26,7 +26,7 @@ class DepthProMaskNormalizationTest(unittest.TestCase):
     def test_depth_normalization_ignores_invalid_values(self):
         depth = np.array([[0.0, np.nan, 2.0, 8.0]], dtype=np.float32)
 
-        mask = depth_pro._normalize_depth_for_mask(
+        mask = depth_pro_helper.normalize_depth_for_mask(
             depth,
             lower_percentile=0.0,
             upper_percentile=100.0,
@@ -42,7 +42,7 @@ class DepthProMaskNormalizationTest(unittest.TestCase):
         depth[1] = 2.0
         depth[-1] = 100.0
 
-        mask = depth_pro._normalize_depth_for_mask(depth)
+        mask = depth_pro_helper.normalize_depth_for_mask(depth)
 
         self.assertEqual(1.0, float(mask[0]))
         self.assertGreater(mask[1], mask[-1])

@@ -16,6 +16,14 @@ demosaicnet_torch/
 Real-ESRGAN/
 NAFNet_AppleSilicon/
 SCUNet_CoreML/
+external/libraw_enhanced/
+external/radiance_denoise/
+external/SAM3/
+external/SCUNet/
+external/demosaicnet_torch/
+external/SCUNet_CoreML/
+external/depth_pro/
+external/depth_pro.local-backup/
 splitimage/**build/**
 splitimage/*.egg*/**
 

@@ -3,6 +3,7 @@ import dashscope
 from dashscope import ImageSynthesis
 from dashscope import MultiModalConversation
 import base64
+import logging
 from pathlib import Path
 import json
 import os
@@ -11,7 +12,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-import splitimage
+import cores.splitimage as splitimage
 import utils.aiutils as aiutils
 import cores.core as core
 
@@ -223,7 +224,7 @@ def predict_helper(image, mask, bbox, predict_func):
         #Image.fromarray((block * 255).astype(np.uint8)).save(f"../test/X-T5 Room input {i+1}.jpg")
         block_mask = mask_blocks[i][..., 0]
         if np.any(block_mask > 0):
-            print(f"Predicting block {i+1}/{len(blocks)}...")
+            logging.info("Predicting block %s/%s...", i + 1, len(blocks))
             try:
                 pre_image = predict_func(block, block_mask)
             except TypeError:
@@ -281,13 +282,13 @@ def predict_erace(image, mask=None):
 
 def predict_with_mask(image_array, mask, prompt, negative_prompt=""):
     try:
-        print("Encoding base image and mask...")
+        logging.info("Encoding base image and mask...")
         image_base64 = numpy_to_base64_png(image_array)
         mask_base64 = mask_to_base64_png(mask)
         base_image_url = f"data:image/png;base64,{image_base64}"
         mask_image_url = f"data:image/png;base64,{mask_base64}"
 
-        print("Masked image editing in progress...")
+        logging.info("Masked image editing in progress...")
         call_kwargs = {
             "api_key": dashscope.api_key,
             "model": "qwen-image-2.0",
@@ -304,23 +305,20 @@ def predict_with_mask(image_array, mask, prompt, negative_prompt=""):
 
         response = ImageSynthesis.call(**call_kwargs)
         if response.status_code != 200:
-            print(f"Masked edit error: {response.code} - {response.message}")
+            logging.warning("Masked edit error: %s - %s", response.code, response.message)
             return None
 
         for image_url in _extract_image_urls(response.output):
-            print(f"URL: {image_url}")
-            print("Downloading masked edit image...")
+            logging.debug("URL: %s", image_url)
+            logging.info("Downloading masked edit image...")
             result_array = download_image_to_numpy(image_url)
-            print(f"Done! Output size: {result_array.shape}")
+            logging.info("Masked edit done. Output size: %s", result_array.shape)
             return result_array
 
-        print("Masked edit image data not found.")
-        print("Response:", response.output)
+        logging.warning("Masked edit image data not found. Response: %s", response.output)
         return None
-    except Exception as e:
-        print(f"Masked edit failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logging.exception("Masked edit failed")
         return None
 
 def predict(image_array, prompt, negative_prompt=""):
@@ -337,11 +335,11 @@ def predict(image_array, prompt, negative_prompt=""):
     """
     try:
         # numpy配列をBase64 PNGに変換
-        print("Encoding image...")
+        logging.info("Encoding image...")
         image_base64 = numpy_to_base64_png(image_array)
         
         # APIリクエストを送信
-        print("Image editing in progress...")
+        logging.info("Image editing in progress...")
         messages = [
             {
                 "role": "user",
@@ -377,23 +375,20 @@ def predict(image_array, prompt, negative_prompt=""):
             
             if 'choices' in output and len(output['choices']) > 0:
                 for image_url in _extract_image_urls(output):
-                    print(f"URL: {image_url}")
-                    print("Downloading image...")
+                    logging.debug("URL: %s", image_url)
+                    logging.info("Downloading image...")
                     result_array = download_image_to_numpy(image_url)
-                    print(f"Done! Output size: {result_array.shape}")
+                    logging.info("Image edit done. Output size: %s", result_array.shape)
                     return result_array
             
-            print("Image data not found.")
-            print("Response:", output)
+            logging.warning("Image data not found. Response: %s", output)
             return None
         else:
-            print(f"Error: {response.code} - {response.message}")
+            logging.warning("Error: %s - %s", response.code, response.message)
             return None
             
-    except Exception as e:
-        print(f"An error has occurred.: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logging.exception("An error has occurred.")
         return None
 
 # 使用例

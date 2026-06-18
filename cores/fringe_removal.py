@@ -7,6 +7,8 @@ Failure-aware improvements:
 3. Replace hard channel swapping with gradual chroma attenuation
 """
 
+import logging
+
 import numpy as np
 import cv2
 from typing import Tuple
@@ -442,15 +444,15 @@ def remove_chromatic_aberration_advanced(image: np.ndarray,
 
 
 if __name__ == "__main__":
-    print("Chromatic Aberration Removal Module - v2.2 ULTRA FAST")
-    print("=" * 60)
-    print("\nNEW in v2.2:")
-    print("  ⚡ 5-10x FASTER than v2.1")
-    print("  ✅ Extended value range (> 1.0 allowed, auto-clipped)")
-    print("  ✅ Optimized memory usage")
-    print("  ✅ Vectorized operations throughout")
-    print("\nSpeed optimizations:")
-    print("  - np.gradient instead of scipy.sobel (5x faster)")
-    print("  - maximum_filter instead of binary_dilation (3x faster)")
-    print("  - Reduced blur sigma for speed")
-    print("  - Disabled lateral correction by default")
+    logging.info("Chromatic Aberration Removal Module - v2.2 ULTRA FAST")
+    logging.info("=" * 60)
+    logging.info("\nNEW in v2.2:")
+    logging.info("  ⚡ 5-10x FASTER than v2.1")
+    logging.info("  ✅ Extended value range (> 1.0 allowed, auto-clipped)")
+    logging.info("  ✅ Optimized memory usage")
+    logging.info("  ✅ Vectorized operations throughout")
+    logging.info("\nSpeed optimizations:")
+    logging.info("  - np.gradient instead of scipy.sobel (5x faster)")
+    logging.info("  - maximum_filter instead of binary_dilation (3x faster)")
+    logging.info("  - Reduced blur sigma for speed")
+    logging.info("  - Disabled lateral correction by default")

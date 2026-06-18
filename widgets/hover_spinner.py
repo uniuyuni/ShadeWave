@@ -1,4 +1,6 @@
 
+import logging
+
 from kivy.app import App as KVApp
 from kivy.uix.spinner import Spinner as KVSpinner
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
@@ -32,14 +34,14 @@ class HoverSpinner(KVSpinner):
                 if item.collide_point(*self._dropdown.to_widget(*pos)):
                     if self.hovered_item != item:
                         self.hovered_item = item
-                        print(f"Cursor entered Spinner: {item.text}")
+                        logging.debug("Cursor entered Spinner: %s", item.text)
                         return
                     else:
                         return
                     
         if self.hovered_item is not None:
             self.hovered_item = None
-            print(f"Cursor left Spinner")
+            logging.debug("Cursor left Spinner")
 
 class Hover_SpinnerApp(KVApp):
     def build(self):
