@@ -1,6 +1,6 @@
 # Shade Wave
 
-[日本語版](README.ja.md)
+[日本語版](README_JA.md)
 
 ![Shade Wave](assets/Shade%20Wave.png)
 
