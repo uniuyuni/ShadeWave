@@ -46,6 +46,15 @@ class FullDecodeCropLoadFlowTest(unittest.TestCase):
             "FULL_DECODE must not overwrite crop_rect/disp_info outside history.",
         )
 
+    def test_raw_preview_uses_fast_display_so_full_decode_cannot_hide_it(self):
+        source = MAIN_PATH.read_text()
+
+        self.assertIn("preview_fast_display = (", source)
+        self.assertIn("stage == LoadStage.FIRST_PAINTABLE", source)
+        self.assertIn("ImageFidelity.PREVIEW", source)
+        self.assertIn("fast_display=preview_fast_display", source)
+        self.assertIn("skip_histogram=preview_fast_display", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,12 +83,24 @@ class PreviewTextureAspectFlowTest(unittest.TestCase):
         mapper_source = _function_source("_preview_texture_pos_to_image_pos")
         touch_source = _function_source("on_image_touch_down")
         keyboard_source = _function_source("_zoom_preview_from_keyboard")
+        zoom_source = _function_source("_zoom_preview_to_texture_pos")
 
         self.assertIn("core.crop_size_and_offset_from_texture(", mapper_source)
         self.assertIn("image_x = disp_info[0] + (tex_pos[0] - offset_x) / scale", mapper_source)
         self.assertIn("image_y = disp_info[1] + (tex_pos[1] - offset_y) / scale", mapper_source)
-        self.assertIn("center_pos=self._preview_texture_pos_to_image_pos(tex_pos)", touch_source)
-        self.assertIn("center_pos=self._preview_texture_pos_to_image_pos(tex_pos)", keyboard_source)
+        self.assertIn("center_pos=self._preview_texture_pos_to_image_pos(tex_pos)", zoom_source)
+        self.assertIn("self._zoom_preview_to_texture_pos(tex_pos)", touch_source)
+        self.assertIn("tex_pos = self._preview_texture_pos_from_window_pos(KVWindow.mouse_pos)", keyboard_source)
+        self.assertIn("tex_pos = self._preview_texture_center_pos()", keyboard_source)
+        self.assertIn("return self._zoom_preview_to_texture_pos(tex_pos)", keyboard_source)
+
+    def test_zoom_start_invalidates_mask2_overlay_cache(self):
+        zoom_source = _function_source("_zoom_preview_to_texture_pos")
+        invalidation_source = _function_source("_invalidate_mask2_overlay_for_view_change")
+
+        self.assertIn("self._invalidate_mask2_overlay_for_view_change()", zoom_source)
+        self.assertIn("'mask_editor2'", invalidation_source)
+        self.assertIn("_invalidate_mask_render_family", invalidation_source)
 
     def test_preview_texture_size_change_invalidates_crop_cache(self):
         source = _function_source("draw_image_core")

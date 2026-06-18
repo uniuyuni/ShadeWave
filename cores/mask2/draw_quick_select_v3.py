@@ -50,10 +50,12 @@ def _get_guide_edge(guide, shape, perceptual=False):
     g = _er._prepare_guide_image(guide, shape)
     edge = _er._draw_snap_edge_strength(g, perceptual=perceptual) if g is not None else None
     if key is not None:
-        # Drop entries for a different guide; keep both encodings of this one.
-        for cached in [k for k in _GUIDE_EDGE_CACHE if k[0] != fp]:
-            del _GUIDE_EDGE_CACHE[cached]
+        # Keep many entries (one per per-stroke region) so a strength/bias change --
+        # which does not change the guide -- reuses each stroke's trace edge instead
+        # of recomputing it (the edge is param-independent). Bounded by entry count.
         _GUIDE_EDGE_CACHE[key] = edge
+        while len(_GUIDE_EDGE_CACHE) > 96:
+            _GUIDE_EDGE_CACHE.pop(next(iter(_GUIDE_EDGE_CACHE)))
     return edge
 
 
@@ -391,14 +393,19 @@ def _erase_reach(erase, brush_size, radius):
     """How far (px) outside the erase footprint the erase is allowed to move the
     boundary: just enough for a local edge snap, never a band-wide reroute."""
     try:
-        snap_r = float(np.clip(float(brush_size) * 0.30, 3.0, 10.0))
+        _snap_cap = float(os.environ.get("QS_ERASE_SNAP_MAX", "48") or 48)
     except Exception:
-        snap_r = 6.0
+        _snap_cap = 48.0
+    try:
+        snap_r = float(np.clip(float(brush_size) * 0.5, 3.0, _snap_cap))
+    except Exception:
+        snap_r = 12.0
     try:
         rpx = max(0.0, float(radius))
     except Exception:
         rpx = 0.0
-    return int(round(np.clip(snap_r + rpx, 3.0, 24.0)))
+    # Allow the erase-affected region to reach as far as the snap can pull it.
+    return int(round(np.clip(snap_r + rpx, 3.0, _snap_cap + 24.0)))
 
 
 def _localize_erase_effect(
@@ -471,9 +478,14 @@ def _snap_kept_boundary_to_edges(guide, support, erase, strength, brush_size):
         return support
 
     try:
-        snap_r = int(round(float(np.clip(float(brush_size) * 0.30, 3.0, 10.0))))
+        # Reach the erase boundary snaps back to an edge. The 10px cap left a big
+        # brush erasing as a near-circle (the edge sat far outside the 10px band);
+        # scale with the brush and allow a much larger reach so a roughly-drawn
+        # erase snaps to the object edge. Env QS_ERASE_SNAP_MAX overrides the cap.
+        _snap_cap = float(os.environ.get("QS_ERASE_SNAP_MAX", "48") or 48)
+        snap_r = int(round(float(np.clip(float(brush_size) * 0.5, 3.0, _snap_cap))))
     except Exception:
-        snap_r = 6
+        snap_r = 12
     kernel = np.ones((3, 3), dtype=np.uint8)
     near = cv2.dilate(support.astype(np.uint8), kernel, iterations=snap_r) > 0
     band = near & erase & ~support

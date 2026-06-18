@@ -387,6 +387,7 @@ class BaseMask(KVWidget):
         self.image_mask_cache_hash = None
         self.image_mask_cache_key = None
         self.do_draw_composit_mask = True
+        self._initial_touch_started = False
 
     def invalidate_render_cache(self):
         old_hash = self.image_mask_cache_hash
@@ -445,6 +446,22 @@ class BaseMask(KVWidget):
     def refresh_control_points_for_overlay(self):
         for cp in getattr(self, 'control_points', []):
             cp.property('center').dispatch(cp)
+
+    def _touch_in_initial_placement_area(self, touch):
+        return bool(self.editor.collide_point(*touch.pos))
+
+    def _begin_initial_touch_if_in_placement_area(self, touch):
+        if not self._touch_in_initial_placement_area(touch):
+            self._initial_touch_started = False
+            return False
+        self._initial_touch_started = True
+        return True
+
+    def _initial_touch_can_finish(self):
+        if not self._initial_touch_started:
+            return False
+        self._initial_touch_started = False
+        return True
 
     def on_active_changed(self, instance, value):
         if value:
@@ -1431,6 +1448,8 @@ class CircularGradientMask(BaseMask):
 
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.center_x = cx
             self.center_y = cy
@@ -1444,6 +1463,8 @@ class CircularGradientMask(BaseMask):
 
     def on_touch_move(self, touch):
         if self.initializing:
+            if not self._initial_touch_started:
+                return False
             # mask Geom の非一様 scale が ON のとき、TCG 距離 (window_to_tcg 後の
             # euclidean) を半径にすると render 時に matrix 由来の各軸 scale が
             # 乗って画面上で楕円になってしまう。配置時は画面上で「正円」になるよう、
@@ -1483,6 +1504,8 @@ class CircularGradientMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -1847,6 +1870,8 @@ class GradientMask(BaseMask):
     
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self._initial_anchor_set = True
             self.center = (cx, cy)
@@ -1857,6 +1882,8 @@ class GradientMask(BaseMask):
     
     def on_touch_move(self, touch):
         if self.initializing:
+            if not self._initial_touch_started:
+                return False
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.end_point = [cx, cy]
             self.center = [(self.start_point[0] + self.end_point[0]) / 2,
@@ -1871,6 +1898,8 @@ class GradientMask(BaseMask):
     
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -2276,6 +2305,8 @@ class FullMask(BaseMask):
 
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.editor.window_to_tcg(*touch.pos)
             self.center_x = cx
             self.center_y = cy
@@ -2288,6 +2319,8 @@ class FullMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -2982,11 +3015,14 @@ class PolylineMask(BaseMask):
         # 右クリックでの初期化は中心だけ残って polyline が始まらないので不可。
         was_initializing = self.initializing
         if was_initializing and touch.button == 'left' and not getattr(touch, 'is_double_tap', False):
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             self.center_x = tcg_x
             self.center_y = tcg_y
             self.create_control_points()
             self.editor.set_active_mask(self)
             self.initializing = False
+            self._initial_touch_started = False
 
         # 右クリック: 描画中のみ直近頂点を取消 (idle 右クリックは何もしない)
         if touch.button == 'right':
@@ -3366,6 +3402,8 @@ class SegmentMask(BaseMask):
 
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
             self.center_x = cx
             self.center_y = cy
@@ -3378,6 +3416,8 @@ class SegmentMask(BaseMask):
 
     def on_touch_move(self, touch):
         if self.initializing:
+            if not self._initial_touch_started:
+                return False
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
             self.corner = [cx, cy]
             self.update_mask()
@@ -3389,6 +3429,8 @@ class SegmentMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -3609,6 +3651,8 @@ class DepthMapMask(BaseMask):
 
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
             self.center_x = cx
             self.center_y = cy
@@ -3621,6 +3665,8 @@ class DepthMapMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -3774,6 +3820,8 @@ class FaceMask(BaseMask):
 
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
             self.center_x = cx
             self.center_y = cy
@@ -3786,6 +3834,8 @@ class FaceMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -3960,6 +4010,8 @@ class TargetTextMask(BaseMask):
 
     def on_touch_down(self, touch):
         if self.initializing:
+            if not self._begin_initial_touch_if_in_placement_area(touch):
+                return False
             cx, cy = self.window_to_tcg_for_interaction(*touch.pos)
             self.center_x = cx
             self.center_y = cy
@@ -3972,6 +4024,8 @@ class TargetTextMask(BaseMask):
 
     def on_touch_up(self, touch):
         if self.initializing:
+            if not self._initial_touch_can_finish():
+                return False
             #self.initializing = False
             self.create_control_points()
             self.editor.set_active_mask(self)
@@ -4724,6 +4778,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if self.disabled == True:
             return False
         if self._mask_mesh_editor_locks_input():
+            return False
+        if (self.created_mask is not None
+                and getattr(self.created_mask, 'initializing', False)
+                and not getattr(self.created_mask, '_initial_touch_started', False)):
             return False
 
         result = KVFloatLayout.on_touch_up(self, touch)

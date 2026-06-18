@@ -371,6 +371,15 @@ def apply_original_geometry_if_missing(param, img):
     param['img_size'] = (w, h)
 
 
+def ensure_initial_crop_rect(param):
+    """original_img_size があるなら、未初期化の crop_rect だけ全体表示で補完する。"""
+    if not has_original_img_size(param) or get_crop_rect(param) is not None:
+        return False
+    width, height = param['original_img_size']
+    set_crop_rect(param, core.get_initial_crop_rect(width, height))
+    return True
+
+
 # 画像の初期設定を設定する
 def set_image_param(param, img):
     height, width = img.shape[:2]

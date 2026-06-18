@@ -2737,10 +2737,6 @@ class RGB2HLSEffect(Effect):
 class HLS2RGBEffect(Effect):
 
     def make_diff(self, hls, param, efconfig):
-        if not RGB2HLSEffect._hls_pipeline_active(param):
-            self.diff = None
-            self.hash = None
-            return self.diff
         if getattr(hls, "ndim", 0) < 3 or hls.shape[2] < 4:
             self.diff = None
             self.hash = None

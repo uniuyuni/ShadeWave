@@ -204,8 +204,11 @@ def _get_guide_coh(guide, shape):
         return _GUIDE_COH_CACHE[key]
     coh = _edge_coherence(guide, shape)
     if key is not None:
-        _GUIDE_COH_CACHE.clear()  # keep only 1 entry
+        # Multi-entry (one per per-stroke region) so coherence -- which is
+        # param-independent -- is reused across strength/bias changes.
         _GUIDE_COH_CACHE[key] = coh
+        while len(_GUIDE_COH_CACHE) > 64:
+            _GUIDE_COH_CACHE.pop(next(iter(_GUIDE_COH_CACHE)))
     return coh
 
 

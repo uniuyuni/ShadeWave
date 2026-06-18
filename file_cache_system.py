@@ -7,6 +7,7 @@ import concurrent.futures
 from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 import logging
 import sys
+import multiprocessing
 from collections import OrderedDict
 
 import imageset
@@ -28,6 +29,21 @@ def _load_stall_warn_seconds():
 def _warmup_worker():
     """ProcessPoolExecutor warm-up用の空関数"""
     pass
+
+
+def _load_pool_context():
+    start_method = os.getenv("PLATYPUS_LOAD_POOL_START_METHOD", "").strip().lower()
+    if not start_method and getattr(sys, "frozen", False) and sys.platform == "darwin":
+        # PyInstaller/macOS の frozen app では spawn 子プロセスがアプリ本体を再初期化して
+        # 落ちることがあるため、重いRAWロードだけ fork でUIプロセスから隔離する。
+        start_method = "fork"
+    if not start_method:
+        return None
+    try:
+        return multiprocessing.get_context(start_method)
+    except ValueError:
+        logging.warning("FCS: invalid PLATYPUS_LOAD_POOL_START_METHOD=%r", start_method)
+        return None
 
 # メインプロセスで実行されるコールバック関数
 def _task_callback(file_callbacks, shared_resources, future):
@@ -158,8 +174,21 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
             futures = []
             for i, task in enumerate(result):
                 if i > 0:
-                    future = executor.submit(run_method, imgset, task.worker, config._config, None, file_path, exif_data, param)
-                    future.add_done_callback(lambda f: _task_callback(file_callbacks, shared_resources, f))  # コールバック登録
+                    try:
+                        task_imgset = type(imgset)()
+                    except Exception:
+                        task_imgset = imageset.ImageSet()
+                    task_imgset.file_path = file_path
+                    future = executor.submit(
+                        run_method,
+                        task_imgset,
+                        task.worker,
+                        config._config,
+                        None,
+                        file_path,
+                        exif_data.copy() if isinstance(exif_data, dict) else exif_data,
+                        param.copy() if isinstance(param, dict) else param,
+                    )
                     futures.append(future)
             result = run_method(imgset, result[0].worker, config._config, None, file_path, exif_data, param)
             _task_callback(file_callbacks, shared_resources, result)
@@ -190,6 +219,8 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
                                 len(preload_registry),
                                 len(cache),
                             )
+                for future in futures:
+                    _task_callback(file_callbacks, shared_resources, future)
 
             # キャッシュに登録（すでにキャンセルされていたらスキップ）
             #if file_path in active_processes:
@@ -227,13 +258,29 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
 class FileCacheSystem:
     def __init__(self, max_cache_size: int = 10, max_concurrent_loads: int = 4):
         # 共有リソースを初期化
-        # frozen 配布版では cv2 のネイティブ依存競合を避けるため ProcessPool を使わない
-        if getattr(sys, "frozen", False):
+        # 重いRAWフルデコードはUIプロセスから隔離する。frozenでも main.py の
+        # freeze_support() によりProcessPool子プロセスとして起動できる。
+        force_thread_pool = os.getenv("PLATYPUS_FORCE_THREAD_LOAD_POOL", "0").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        if force_thread_pool:
             self.ppe = ThreadPoolExecutor(max_workers=2)
             self._use_process_pool = False
+            logging.info("FCS load executor: ThreadPoolExecutor forced by PLATYPUS_FORCE_THREAD_LOAD_POOL")
         else:
-            self.ppe = ProcessPoolExecutor(max_workers=2)
+            mp_context = _load_pool_context()
+            ppe_kwargs = {"mp_context": mp_context} if mp_context is not None else {}
+            self.ppe = ProcessPoolExecutor(max_workers=2, **ppe_kwargs)
             self._use_process_pool = True
+            if mp_context is not None:
+                start_method = mp_context.get_start_method()
+            else:
+                start_method = multiprocessing.get_start_method(allow_none=True) or "default"
+            logging.info(
+                "FCS load executor: ProcessPoolExecutor start_method=%s frozen=%s",
+                start_method,
+                getattr(sys, "frozen", False),
+            )
 
         self.shared_resources = {
             'cache': {},

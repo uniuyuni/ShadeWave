@@ -386,6 +386,7 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
         bundle_id,
         f"--paths={root}",
         f"--paths={root / 'external' / 'radiance_denoise'}",
+        f"--paths={root / 'external' / 'libraw_enhanced'}",
         f"--paths={root / 'external' / 'SAM3'}",
         f"--paths={root / 'external' / 'depth_pro' / 'src'}",
         f"--paths={root / 'external' / 'SCUNet_CoreML' / 'src'}",
@@ -423,7 +424,7 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # External ML/native packages used through dynamic imports or editable installs.
     args.extend(["--collect-data", "mediapipe"])
     args.extend(["--collect-submodules", "mediapipe.python.solutions"])
-    for package in ("radiance_denoise", "sam3", "depth_pro", "scunet_coreml", "coremltools"):
+    for package in ("libraw_enhanced", "radiance_denoise", "sam3", "depth_pro", "scunet_coreml", "coremltools"):
         args.extend(["--collect-all", package])
 
     for d in uniq_datas:

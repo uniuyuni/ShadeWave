@@ -605,6 +605,8 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     if timing is not None:
         _timing_add_section_ms(timing, "guard", (time.perf_counter() - _t0) * 1000.0)
 
+    params.ensure_initial_crop_rect(primary_param)
+
     # クロップ情報を得る、ない場合元のクロップ情報から展開
     if timing is not None:
         _t0 = time.perf_counter()
@@ -773,6 +775,8 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     if not params.has_original_img_size(primary_param):
         logging.error("export_pipeline: original_img_size 未定義のため処理しません")
         return None
+
+    params.ensure_initial_crop_rect(primary_param)
 
     # 環境設定
     disp_info = core.convert_rect_to_info(params.get_crop_rect(primary_param), 1) # 倍率１で作成

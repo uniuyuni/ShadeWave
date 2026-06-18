@@ -2081,8 +2081,8 @@ HLS_COLOR_SETTING = {
     },
     'skin': {
         'center': 135.0,
-        'width': [15.0, 8.0],
-        'fade_width': [20.0, 10.0],
+        'width': [15.0, 16.0],
+        'fade_width': [20.0, 16.3],
         'l_range': (0.01, 1.0),
         's_range': (0.02, 1.0),
         'adjust': [-2, 0.1, -0.05],

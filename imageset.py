@@ -198,6 +198,46 @@ class ImageSet:
         except Exception as e:
             logging.warning(f"Failed to override EXIF size from raw geometry: {e}")
 
+    def _fuji_layout_requests_geometry_probe(self, exif_data):
+        """
+        ExifTool の RAF:FujiLayout から LibRaw の fuji_width 判定を再現する。
+        LibRaw parse_fuji(): fuji_width = !(second_layout_byte & 8)
+        """
+        layout = exif_data.get("FujiLayout")
+        if layout is None:
+            return None
+        if isinstance(layout, str):
+            parts = layout.replace(",", " ").split()
+        elif isinstance(layout, (list, tuple)):
+            parts = list(layout)
+        else:
+            return None
+        if len(parts) < 2:
+            return None
+        try:
+            second = int(parts[1])
+        except (TypeError, ValueError):
+            return None
+        return (second & 8) == 0
+
+    def _needs_raw_preview_geometry_probe(self, exif_data):
+        """
+        EXIFだけでRAW出力サイズが確定できない場合にだけ、重いLibRaw geometry probeを行う。
+        Fuji Super CCD honeycomb は RAF:FujiLayout から判別し、該当時だけ probe する。
+        """
+        make = str(exif_data.get('Make', '') or '').upper()
+        if 'FUJI' in make:
+            fuji_layout_probe = self._fuji_layout_requests_geometry_probe(exif_data)
+            if fuji_layout_probe is not None:
+                return fuji_layout_probe
+        if any(exif_data.get(tag) for tag in ("RawImageCroppedSize", "RawImageSize", "FullImageSize")):
+            return False
+        try:
+            core.get_exif_image_size(exif_data)
+            return False
+        except Exception:
+            return True
+
     def _delete_exif_orientation(self, exif_data):
         top, left, width, height = core.get_exif_image_size_with_orientation(exif_data)
         core.set_exif_image_size(exif_data, top, left, width, height)
@@ -215,7 +255,7 @@ class ImageSet:
             # Fuji 機のみ。他社機では _override_exif_size_from_raw_geometry が早期 return するだけ
             # なので、ここで lre.imread を呼ぶ価値はない。Make を見て Fuji の場合だけ raw を開く。
             make = str(exif_data.get('Make', '') or '').upper()
-            if 'FUJI' in make:
+            if 'FUJI' in make and self._needs_raw_preview_geometry_probe(exif_data):
                 if raw is not None:
                     self._override_exif_size_from_raw_geometry(raw, exif_data, half_size=False)
                 else:
@@ -287,6 +327,7 @@ class ImageSet:
             # 情報の設定
             params.set_image_param(param, img_array)
             param['lens_modifier'] = False
+            param['exif_data'] = exif_data
 
             # 正方形にする
             #img_array = core.adjust_shape_to_square(img_array)

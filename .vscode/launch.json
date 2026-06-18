@@ -50,8 +50,8 @@
                 //"PLATYPUS_DEBUG_MASK_GEOMETRY": "0",
                 //"PLATYPUS_DEBUG_MESH_WARP": "0",
                 //"PLATYPUS_DEBUG_MASK_ZOOM_SYNC": "0",
-                //"PLATYPUS_DEBUG_EDGE_REFINE": "1",
-                //"PLATYPUS_DEBUG_EDGE_REFINE_DIR": "./edge_refine_debug",
+                "PLATYPUS_DEBUG_EDGE_REFINE": "1",
+                "PLATYPUS_DEBUG_EDGE_REFINE_DIR": "./edge_refine_debug",
                 //"PLATYPUS_DEBUG_EDGE_REFINE_LIMIT": "100"
                 //"PLATYPUS_DRAW_QS_FULL_VIEW": "0",
                 //"QS_DUMP_INPUT": "./edge_refine_debug",

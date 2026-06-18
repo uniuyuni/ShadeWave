@@ -168,6 +168,8 @@ class HeadlessRealPipelineFlowTest(unittest.TestCase):
         self.assertIsNotNone(param.get("original_img_size"))
         self.assertEqual(imgset.img.dtype, np.float32)
         self.assertGreater(imgset.img.shape[0], self.preview_size)
+        param.pop("crop_rect", None)
+        param.pop("disp_info", None)
         assert_real_pipeline_output(self, imgset, param, self.preview_size)
 
 

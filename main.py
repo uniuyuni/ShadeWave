@@ -6,6 +6,45 @@ if __name__ == '__main__':
     import sys as _sys_early
     import os as _os_early
     import multiprocessing as _mp_early
+    import logging as _logging_early
+
+    def _install_frozen_startup_logging():
+        if not getattr(_sys_early, "frozen", False):
+            return None
+        try:
+            log_dir = _os_early.path.join(
+                _os_early.path.expanduser("~/Library/Logs"),
+                "Shade Wave",
+            )
+            _os_early.makedirs(log_dir, exist_ok=True)
+            log_path = _os_early.path.join(log_dir, "startup.log")
+            root_logger = _logging_early.getLogger()
+            root_logger.setLevel(min(root_logger.level or _logging_early.INFO, _logging_early.INFO))
+            has_startup_handler = any(
+                getattr(handler, "_shade_wave_startup_log", False)
+                for handler in root_logger.handlers
+            )
+            if not has_startup_handler:
+                handler = _logging_early.FileHandler(log_path, mode="a", encoding="utf-8")
+                handler._shade_wave_startup_log = True
+                handler.setFormatter(_logging_early.Formatter(
+                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+                ))
+                root_logger.addHandler(handler)
+
+            def _log_uncaught_exception(exc_type, exc_value, exc_traceback):
+                _logging_early.critical(
+                    "Uncaught exception during frozen app execution",
+                    exc_info=(exc_type, exc_value, exc_traceback),
+                )
+
+            _sys_early.excepthook = _log_uncaught_exception
+            _logging_early.info("Frozen app startup logging initialized")
+            return log_path
+        except Exception:
+            return None
+
+    _frozen_startup_log_path = _install_frozen_startup_logging()
     # PyInstaller: kv/json 等は sys._MEIPASS 配下に同梱される
     if getattr(_sys_early, "frozen", False) and hasattr(_sys_early, "_MEIPASS"):
         _os_early.chdir(_sys_early._MEIPASS)
@@ -2331,7 +2370,13 @@ if __name__ == '__main__':
                 self._clear_exif_data()
                 self._show_cached_final_display_image(card.file_path)
                 self.cache_system.register_for_preload(card.file_path, card.exif_data, None, True)
-                self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
+                try:
+                    self.cache_system.get_file(card.file_path, lambda f1, f2, f3, f4, f5, f6: file_cache_system.run_method(self, "on_fcs_get_file", config._config, f1, f2, f3, f4, f5, f6))
+                except FileNotFoundError:
+                    logging.exception("FCS selection load disappeared before callback registration: %s", card.file_path)
+                    self.loading = False
+                    self._actively_loading = False
+                    self.update_mask2_options_enabled()
             else:
                 self._expected_file_path = None
                 self._clear_exif_data()
@@ -2498,7 +2543,15 @@ if __name__ == '__main__':
                     return
 
                 effects.reeffect_all(self.primary_effects)
-                self.start_draw_image_and_crop(imgset)
+                preview_fast_display = (
+                    stage == LoadStage.FIRST_PAINTABLE
+                    and getattr(imgset, 'fidelity', None) == ImageFidelity.PREVIEW
+                )
+                self.start_draw_image_and_crop(
+                    imgset,
+                    fast_display=preview_fast_display,
+                    skip_histogram=preview_fast_display,
+                )
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE) or (
                 stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw'
             ):
@@ -2781,6 +2834,36 @@ if __name__ == '__main__':
                 return None
             return tw / 2.0, th / 2.0
 
+        def _invalidate_mask2_overlay_for_view_change(self):
+            mask_editor = self.ids.get('mask_editor2')
+            if mask_editor is None or not self._is_mask2_enabled():
+                return
+            mask = mask_editor.get_active_mask()
+            if mask is None:
+                return
+            invalidator = getattr(mask_editor, '_invalidate_mask_render_family', None)
+            try:
+                if callable(invalidator):
+                    invalidator(mask)
+                else:
+                    mask.invalidate_render_cache()
+            except Exception:
+                logging.exception('failed to invalidate mask2 overlay for view change')
+
+        def _zoom_preview_to_texture_pos(self, tex_pos):
+            if tex_pos is None:
+                return False
+            self.is_zoomed = True
+            self.click_x, self.click_y = tex_pos
+            self.drag_center_start = None
+            effects.reeffect_all(self.primary_effects, 1)
+            self._invalidate_mask2_overlay_for_view_change()
+            self.start_draw_image_and_crop(
+                self.imgset,
+                center_pos=self._preview_texture_pos_to_image_pos(tex_pos),
+            )
+            return True
+
         def _zoom_preview_from_keyboard(self):
             if self.is_zoomed:
                 return self._reset_preview_zoom()
@@ -2791,17 +2874,7 @@ if __name__ == '__main__':
             tex_pos = self._preview_texture_pos_from_window_pos(KVWindow.mouse_pos)
             if tex_pos is None:
                 tex_pos = self._preview_texture_center_pos()
-            if tex_pos is None:
-                return False
-            self.is_zoomed = True
-            self.click_x, self.click_y = tex_pos
-            self.drag_center_start = None
-            effects.reeffect_all(self.primary_effects, 1)
-            self.start_draw_image_and_crop(
-                self.imgset,
-                center_pos=self._preview_texture_pos_to_image_pos(tex_pos),
-            )
-            return True
+            return self._zoom_preview_to_texture_pos(tex_pos)
 
         def _text_input_has_focus(self):
             return self._focused_text_input() is not None
@@ -2904,15 +2977,7 @@ if __name__ == '__main__':
                         self._reset_preview_zoom()
                         return False
 
-                    self.is_zoomed = True
-                    # ウィンドウ座標からローカルイメージ座標に変換
-                    self.click_x, self.click_y = tex_pos
-
-                    effects.reeffect_all(self.primary_effects, 1)
-                    self.start_draw_image_and_crop(
-                        self.imgset,
-                        center_pos=self._preview_texture_pos_to_image_pos(tex_pos),
-                    )
+                    self._zoom_preview_to_texture_pos(tex_pos)
 
                 # ドラッグ操作
                 elif self.is_zoomed == True:
@@ -4160,11 +4225,20 @@ if __name__ == '__main__':
     # PILイメージプラグイン抑制
     pillow_init()
     
-    # メインプロセスでマネージャーを作成
-    cache_system = file_cache_system.FileCacheSystem(max_cache_size=100, max_concurrent_loads=20)
-        
-    # ここでシステムを使用...
-    MainApp(cache_system).run()
-        
-    # 終了時にクリーンアップ
-    cache_system.shutdown()
+    cache_system = None
+    try:
+        # メインプロセスでマネージャーを作成
+        cache_system = file_cache_system.FileCacheSystem(max_cache_size=100, max_concurrent_loads=20)
+
+        # ここでシステムを使用...
+        MainApp(cache_system).run()
+    except Exception:
+        logging.exception("Unhandled error in app main loop")
+        raise
+    finally:
+        # 終了時にクリーンアップ
+        if cache_system is not None:
+            try:
+                cache_system.shutdown()
+            except Exception:
+                logging.exception("Failed to shut down cache system")

@@ -90,6 +90,12 @@ class HLSColorAdjustTest(unittest.TestCase):
         source = EFFECTS_PATH.read_text()
         self.assertIn('"red", "skin", "orange"', source)
 
+    def test_skin_range_extends_slightly_toward_orange_side(self):
+        skin = self.color_settings["skin"]
+
+        self.assertEqual([15.0, 16.0], skin["width"])
+        self.assertEqual([20.0, 16.3], skin["fade_width"])
+
 
 if __name__ == "__main__":
     unittest.main()
