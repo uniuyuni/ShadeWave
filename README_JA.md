@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-![Shade Wave](assets/Shade%20Wave.png)
+![Shade Wave](docs/screenshot%201.png)
 
 Shade Wave は、Python と Kivy で作られた macOS 向けの RAW/RGB フォトエディタです。
 リニアライトの画像処理パイプライン、マスクによる部分編集、カラーマネジメントを意識したエクスポート、SAM3 / Depth Pro / SCUNet / インペイント系バックエンドなどの任意AI機能を組み合わせています。

@@ -2,7 +2,7 @@
 
 [日本語版](README_JA.md)
 
-![Shade Wave](assets/Shade%20Wave.png)
+![Shade Wave](docs/screenshot%201.png)
 
 Shade Wave is a macOS-focused RAW/RGB photo editor built with Python and Kivy.
 It combines a linear-light image pipeline, mask-based local editing, color-management-aware export, and optional AI helpers such as SAM3, Depth Pro, SCUNet, and inpainting backends.
