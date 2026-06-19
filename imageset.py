@@ -289,15 +289,15 @@ class ImageSet:
                 t1 = time.perf_counter()
                 logging.warning(f"Preview image not found.")
 
-            # float32へ
             if img_array is not None:
-                img_array = core.convert_to_float32(img_array)
-
                 # ガンマ補正は resize より先に「小さい配列」のうちにかけて演算量を削減する。
                 # INTER_AREA は線形空間で重み付き平均する補間なので、本来 gamma decode 済みの値で
                 # 補間する方が物理的にも正しい。
-                import cores.color as color
-                img_array = color.rgb_gamma_decode(img_array, 'sRGB') # ガンマ補正だけは必須
+                if img_array.dtype == np.uint8:
+                    img_array = color.sRGB_to_linear_LUT(img_array)
+                else:
+                    img_array = core.convert_to_float32(img_array)
+                    img_array = color.rgb_gamma_decode(img_array, 'sRGB') # ガンマ補正だけは必須
                 self.color_space = 'sRGB'
                 t2 = time.perf_counter()
                 logging.info(f"PERF: Color conversion took {t2-t1:.4f}s")

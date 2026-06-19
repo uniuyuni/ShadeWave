@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import logging
 import os
+from types import SimpleNamespace
 
 import cores.core as core
 import cores.expand_mask as expand_mask
@@ -213,15 +214,26 @@ def render_freedraw_edge_refine_full_view(
     support_out = np.zeros(tuple(mask_shape), dtype=np.float32)
     any_result = False
     for i, add in adds:
-        # Only erases drawn AFTER this add can undo it (draw -> erase -> draw again).
-        future_erases = [s for s in source_lines[i + 1:]
-                         if bool(getattr(s, "is_erasing", False))]
-        stroke_set = [add] + future_erases
+        # Solve the add region on its own (no erase in the cache key): the erase is
+        # now a plain footprint subtraction, so the add min-cut is erase
+        # independent. Caching by the add alone means drawing/erasing a stroke does
+        # NOT re-run every add's min-cut -- only the cheap subtraction below reruns.
         res = _solve_stroke_set_cached(
-            ctx, effects_param, stroke_set, original, exposure_ref, mode, debug_label, session_sig)
+            ctx, effects_param, [add], original, exposure_ref, mode, debug_label, session_sig)
         if res is None:
             continue
         refined_r, support_r, rect, scale = res
+        # Only erases drawn AFTER this add can undo it (draw -> erase -> draw again).
+        # Subtract their footprint from this add's region as drawn (no edge snap).
+        future_erases = [s for s in source_lines[i + 1:]
+                         if bool(getattr(s, "is_erasing", False))]
+        if future_erases:
+            efp = _erase_footprint_region(ctx, future_erases, rect, scale, refined_r.shape[:2])
+            if efp is not None:
+                keep = 1.0 - efp
+                refined_r = np.asarray(refined_r, dtype=np.float32) * keep
+                if support_r is not None:
+                    support_r = np.asarray(support_r, dtype=np.float32) * keep
         origin = (rect[0], rect[1])
         out = np.maximum(out, _crop_full_view_to_texture(
             ctx, refined_r, tuple(mask_shape), source_origin=origin, source_scale=scale))
@@ -643,6 +655,29 @@ def _make_region_view_context(ctx, image, source_size, source_scale):
     region_ctx.set_primary_param(primary, region_disp)
     region_ctx.set_ref_image(image, image)
     return region_ctx
+
+
+def _erase_footprint_region(ctx, future_erases, rect, scale, region_hw):
+    """Rasterize the erase brush footprint into an add's region (rect+scale space).
+
+    Returns a [0,1] mask of where the future erases cover this region, or None. The
+    erases are rasterized as *positive* brush footprints (is_erasing forced off) so
+    the caller can subtract them -- a plain brush-shaped cut, no edge snap."""
+    if not future_erases:
+        return None
+    pos = [SimpleNamespace(points=getattr(s, "points", None),
+                           size=getattr(s, "size", 1.0),
+                           soft=getattr(s, "soft", 100),
+                           is_erasing=False) for s in future_erases]
+    lines = _freedraw_lines_to_region_texture(ctx, pos, (rect[0], rect[1]), scale)
+    if not lines:
+        return None
+    h, w = int(region_hw[0]), int(region_hw[1])
+    if h <= 0 or w <= 0:
+        return None
+    fp = mask_rasters.draw_line_texture(
+        (w, h), lines, allow_over_one=False, allow_under_zero=False)
+    return np.clip(np.asarray(fp, dtype=np.float32), 0.0, 1.0)
 
 
 def _freedraw_lines_to_region_texture(ctx, source_lines, origin, scale=1.0):

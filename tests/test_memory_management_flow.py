@@ -118,6 +118,12 @@ class MemoryManagementFlowTest(unittest.TestCase):
         self.assertIn('value.get("status") == "COMPLETE"', source)
         self.assertNotIn("self.worker.cancel_all()", _function_source(PIPELINE_PATH, "clear_completed_cache"))
 
+    def test_async_processor_can_clear_cache_without_restarting_idle_worker(self):
+        source = _function_source(PIPELINE_PATH, "cancel_all")
+
+        self.assertIn("restart_idle=True", source)
+        self.assertIn("restart_idle or self.worker.has_pending_tasks()", source)
+
     def test_memory_manager_uses_env_thresholds_and_clears_effect_intermediates(self):
         source = _source(MEMORY_MANAGER_PATH)
 

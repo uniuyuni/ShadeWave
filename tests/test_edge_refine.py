@@ -1407,6 +1407,60 @@ class EdgeRefineTest(unittest.TestCase):
         changed = int((np.abs(only_s1[:, :half] - with_s2[:, :half]) > 0.05).sum())
         self.assertLess(changed, 5, f"adding a far stroke changed the first stroke ({changed}px)")
 
+    def test_freedraw_full_view_erase_does_not_resolve_adds(self):
+        """Drawing an erase must NOT re-run the add region min-cut -- the erase is a
+        plain footprint subtraction, independent of the add solve. Regression for
+        the heavy re-solve that ran when the per-add cache key included the erase
+        strokes (so every add re-solved whenever an erase was drawn)."""
+        os.environ.pop("PLATYPUS_DRAW_QS_FULL_VIEW", None)  # default on
+        W, H = 1000, 800
+        original = np.zeros((H, W, 3), dtype=np.float32)
+        original[:, :500] = (0.20, 0.70, 0.20)
+        original[:, 500:] = (0.40, 0.50, 1.00)
+        disp_info = core.convert_rect_to_info((100, 80, 900, 720), 0.8)
+        ctx = Mask2CoordinateContext()
+        ctx.set_texture_size(500, 500)
+        ctx.set_primary_param({
+            "original_img_size": (W, H), "img_size": (W, H), "disp_info": disp_info,
+            "rotation": 0, "rotation2": 0, "flip_mode": 0, "matrix": np.eye(3),
+        }, disp_info)
+        ctx.set_ref_image(original, original)
+        extended_params._FULLVIEW_SOLVE_CACHE.clear()
+        extended_params._FULLVIEW_SOLVE_SESSION[0] = None
+        eff = {
+            "switch_mask2_options": True, "mask2_edge_refine_mode": "Quick Select",
+            "mask2_edge_refine_radius": 16, "mask2_edge_refine_strength": 80,
+        }
+        add = mask_rasters.Line(False, 60, 100)
+        for ty in (-40, 0, 40):
+            add.add_point(-150, ty)
+        er = mask_rasters.Line(True, 50, 100)
+        er.add_point(-150, 60)
+
+        calls = [0]
+        orig_fn = extended_params._solve_stroke_set_region
+
+        def counting(*a, **k):
+            calls[0] += 1
+            return orig_fn(*a, **k)
+
+        extended_params._solve_stroke_set_region = counting
+        try:
+            extended_params.render_freedraw_edge_refine_full_view(
+                ctx, eff, [add], add.points[1], (500, 500))
+            after_add = calls[0]
+            extended_params.render_freedraw_edge_refine_full_view(
+                ctx, eff, [add, er], add.points[1], (500, 500))
+            after_erase = calls[0]
+        finally:
+            extended_params._solve_stroke_set_region = orig_fn
+
+        self.assertGreaterEqual(after_add, 1, "the add should solve at least one region")
+        self.assertEqual(
+            after_erase, after_add,
+            "drawing an erase re-ran the add region solve "
+            f"({after_erase - after_add} extra solves); it should be a cache hit")
+
     def test_freedraw_full_view_off_image_margin_marked_invalid(self):
         """A render rect extending beyond the image must mark the off-image part
         invalid so the trace cannot snap to the synthetic (zero) border."""
@@ -3179,6 +3233,43 @@ class DrawQuickSelectV4Test(unittest.TestCase):
         self.assertGreater(int(s4_on.sum()), 0)
         self.assertLess(s4_on[:, 140:].mean(), 0.02)
 
+    def test_edge_lock_offset_unlocks_aggressive_weak_edge_snap(self):
+        """Edge Lock raised *above* auto (positive offset) drives the distance
+        prior to an aggressive floor, so a WEAK edge left on the brush arc at the
+        gentle auto prior gets snapped. Offset <= 0 keeps the validated behaviour."""
+        from cores.mask2 import draw_quick_select_v4 as v4
+
+        # Pure function: offset <= 0 is a no-op; offset -> +100 lerps to the floor.
+        base = np.array([0.85, 0.60], dtype=np.float32)
+        self.assertTrue(np.allclose(
+            v4._apply_offset_aggression(base, np.array([0.0, -20.0])), base))
+        self.assertTrue(np.all(
+            v4._apply_offset_aggression(base, np.array([100.0, 100.0])) < 0.2))
+
+        # Trace level: straight boundary at x=200 with a WEAK edge at x=185.
+        H, W = 120, 260
+        edge = np.zeros((H, W), np.float32)
+        edge[:, 184:187] = 0.25  # weak edge inside the band
+        support = np.zeros((H, W), bool)
+        support[20:100, 0:200] = True
+        seed = np.zeros((H, W), bool)
+        seed[40:80, 40:80] = True
+        lock = np.full((H, W), 0.44, np.float32)  # gentle auto edge lock
+
+        def right_edge_mean(sup):
+            rows = [r for r in range(45, 75) if sup[r].any()]
+            return float(np.mean([np.where(sup[r])[0].max() for r in rows]))
+
+        gentle, _ = v4._trace_boundary_to_edges(
+            support, edge, seed, 32, lock, np.zeros((H, W), np.float32))
+        aggressive, _ = v4._trace_boundary_to_edges(
+            support, edge, seed, 32, lock, np.full((H, W), 1.0, np.float32))
+
+        # Gentle prior leaves the weak edge untouched (boundary stays near x=199);
+        # the cranked Edge Lock snaps the boundary onto the weak edge (~x=185).
+        self.assertGreater(right_edge_mean(gentle), 195)
+        self.assertLess(right_edge_mean(aggressive), 190)
+
     def test_v4_snap_improves_clean_edges_and_does_not_over_snap(self):
         """With snap on (the in-app mode), the auto edge-trace must improve the
         clean-edge cases and never regress same-colour roof. Locks the distprior
@@ -3257,6 +3348,38 @@ class DrawQuickSelectEraseLocalityTest(unittest.TestCase):
             leaked, 200,
             f"erase moved {leaked}px more than 50px from its footprint "
             "(boundary reroute, not a local correction)")
+
+    def test_erase_outside_selection_never_grows_it(self):
+        """An erase only removes -- it must never grow the selection. The edge-snap
+        regrows the kept boundary into the erased band up to an edge; without the
+        clamp to the no-erase reference that regrowth can refill the whole brush
+        footprint with pixels the add never selected, so an erase drawn just
+        outside the selection *expands* it (regression for qs_input_052)."""
+        from types import SimpleNamespace
+        from cores.mask2 import draw_quick_select_v3 as v3
+
+        # Bright object on the right (x>=130), dark background on the left.
+        H, W = 200, 260
+        g = np.zeros((H, W, 3), np.float32)
+        g[:, :130] = 0.05
+        g[:, 130:] = 0.80
+        mask = np.zeros((H, W), np.float32)
+        add = SimpleNamespace(points=[(190.0, 100.0)], size=120.0, soft=100.0,
+                              is_erasing=False)
+        # Erase drawn in the dark background, only grazing the object edge.
+        er = SimpleNamespace(points=[(95.0, 100.0)], size=90.0, soft=100.0,
+                             is_erasing=True)
+
+        s_add = np.asarray(v3.compute_draw_support(
+            g, mask, 0, 0, draw_strokes=[add]).support, dtype=bool)
+        s_all = np.asarray(v3.compute_draw_support(
+            g, mask, 0, 0, draw_strokes=[add, er]).support, dtype=bool)
+
+        grew = int((s_all & ~s_add).sum())
+        self.assertLessEqual(
+            grew, 10,
+            f"erase grew the selection by {grew}px (snap refilled the footprint "
+            "instead of only removing)")
 
     def test_unrelated_erase_does_not_move_add_with_v4_snap(self):
         """An erase that does not touch the add's selection must leave the add

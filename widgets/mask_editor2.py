@@ -43,7 +43,7 @@ import config
 import threads
 import utils.dialogutils as dialogutils
 import utils.utils as utils
-from processing_dialog import wait_prosessing
+from processing_dialog import wait_processing
 from history import LayerCtrl, get_history_ctrl
 import macos as device
 
@@ -298,6 +298,8 @@ class MaskType(str, Enum):
 
 # コントロールポイントのクラス
 class ControlPoint(KVWidget):
+    HIT_RADIUS_PX = 10.0
+
     touching = KVBooleanProperty(False)
     is_center = KVBooleanProperty(False)  # 中心のコントロールポイントかどうか
     color = KVListProperty([0, 0, 0])  # デフォルトの色
@@ -319,6 +321,25 @@ class ControlPoint(KVWidget):
         self.center = (0, 0)
         #self.update_graphics()
         self.bind(center=self.update_graphics, color=self.update_color)
+
+    def collide_point(self, x, y):
+        """Hit-test against the visible 20px control-point circle.
+
+        Kivy's default widget hit area is size based (normally 100x100), while
+        ControlPoint intentionally does not set widget size because that changes
+        the TCG center values. Keep the hit-test in window pixels instead.
+        """
+        mask = getattr(self, 'parent', None)
+        converter = getattr(mask, 'tcg_to_window_for_overlay', None)
+        if not callable(converter):
+            converter = getattr(self.editor, 'tcg_to_window', None)
+        if callable(converter):
+            wx, wy = converter(x, y)
+            cx, cy = converter(self.center_x, self.center_y)
+            dx = wx - cx
+            dy = wy - cy
+            return dx * dx + dy * dy <= self.HIT_RADIUS_PX * self.HIT_RADIUS_PX
+        return super().collide_point(x, y)
 
     def update_graphics(self, *args):
         mask = getattr(self, 'parent', None)
@@ -3588,7 +3609,7 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_prosessing(self._draw_segment, original_image_size, [min_x, min_y, w, h], invert)
+            segment_mask = wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], invert)
             #segment_mask = self._draw_segment(original_image_size, [min_x, min_y, w, h])
 
             # SegmentMask用のキャッシュ
@@ -3760,7 +3781,7 @@ class DepthMapMask(BaseMask):
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
             self.image_mask_cache_key = cache_key
 
-            depth_map_mask = wait_prosessing(self.draw_depth_map, original_image_size)
+            depth_map_mask = wait_processing(self.draw_depth_map, original_image_size)
             #depth_map_mask = self.draw_depth_map(original_image_size)
 
             self.image_mask_cache = depth_map_mask
@@ -3942,7 +3963,7 @@ class FaceMask(BaseMask):
             self.image_mask_cache_key = cache_key
 
             # 描画
-            faces_mask = wait_prosessing(self.draw_face, original_image_size, exclude_names)
+            faces_mask = wait_processing(self.draw_face, original_image_size, exclude_names)
             #faces_mask = self.draw_face(original_image_size, exclude_names)
 
             self.image_mask_cache = faces_mask
@@ -4162,7 +4183,7 @@ class TargetTextMask(BaseMask):
             self.image_mask_cache_key = cache_key
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_prosessing(self._draw_segment, original_image_size, text, invert)
+            segment_mask = wait_processing(self._draw_segment, original_image_size, text, invert)
             #segment_mask = self._draw_segment(original_image_size, text)
 
             # SegmentMask用のキャッシュ

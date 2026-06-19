@@ -169,29 +169,32 @@ def _load_file_thread(shared_resources, file_path, exif_data, param, imgset, fil
                 "unsupported extension or preload returned None",
             )
         elif result is not None:
-            # 続きの読み込みがある
+            # まずプレビューを単独で作って UI に渡す。ThreadPool 時にフル RAW デコードを
+            # 先に投げると同一プロセス内で競合し、プレビュー表示自体が数秒遅れる。
             executor = shared_resources['executor']
+            tasks = result
+            first_result = run_method(imgset, tasks[0].worker, config._config, None, file_path, exif_data, param)
+            _task_callback(file_callbacks, shared_resources, first_result)
+
+            # 続きの読み込みがある
             futures = []
-            for i, task in enumerate(result):
-                if i > 0:
-                    try:
-                        task_imgset = type(imgset)()
-                    except Exception:
-                        task_imgset = imageset.ImageSet()
-                    task_imgset.file_path = file_path
-                    future = executor.submit(
-                        run_method,
-                        task_imgset,
-                        task.worker,
-                        config._config,
-                        None,
-                        file_path,
-                        exif_data.copy() if isinstance(exif_data, dict) else exif_data,
-                        param.copy() if isinstance(param, dict) else param,
-                    )
-                    futures.append(future)
-            result = run_method(imgset, result[0].worker, config._config, None, file_path, exif_data, param)
-            _task_callback(file_callbacks, shared_resources, result)
+            for task in tasks[1:]:
+                try:
+                    task_imgset = type(imgset)()
+                except Exception:
+                    task_imgset = imageset.ImageSet()
+                task_imgset.file_path = file_path
+                future = executor.submit(
+                    run_method,
+                    task_imgset,
+                    task.worker,
+                    config._config,
+                    None,
+                    file_path,
+                    exif_data.copy() if isinstance(exif_data, dict) else exif_data,
+                    param.copy() if isinstance(param, dict) else param,
+                )
+                futures.append(future)
             
             # 完了待ち。RAW フルデコードなどが詰まった時に無音で待ち続けると
             # UI 側では「ロード中で固まった」ようにしか見えないため、周期的に状況を出す。

@@ -2180,7 +2180,7 @@ if __name__ == '__main__':
                     items.append(item)
                 return items
 
-            items = processing_dialog.wait_prosessing(_job)
+            items = processing_dialog.wait_processing(_job)
             if current_backup is not None:
                 preset_utils.apply_partial_primary_param(self.primary_param, partial_param)
                 self.set2widget_all(self.primary_effects, self.primary_param)
@@ -2316,6 +2316,12 @@ if __name__ == '__main__':
             cancel_btn.bind(on_release=popup.dismiss)
             delete_btn.bind(on_release=_delete)
             popup.open()
+
+        def _log_slow_load_step(self, label, start_time, threshold=0.05):
+            elapsed = time.perf_counter() - start_time
+            if elapsed >= threshold:
+                logging.warning("[LOAD_PERF] %s took %.3fs", label, elapsed)
+            return time.perf_counter()
         
         @kvmainthread
         def on_select(self, card):
@@ -2388,6 +2394,7 @@ if __name__ == '__main__':
         @kvmainthread
         def on_fcs_get_file(self, file_path, imgset, exif_data, param, history_obj, stage):
             stage = coerce_load_stage(stage)
+            _load_perf_t = time.perf_counter()
             if file_path != getattr(self, '_expected_file_path', None):
                 logging.info(
                     "FCS: 現在の選択と異なるファイルのコールバックを無視します: %r (expected %r)",
@@ -2433,27 +2440,38 @@ if __name__ == '__main__':
                 self.mask2_wait_full_load = False
             self.update_load_dependent_panels_enabled()
             self.update_mask2_options_enabled()
+            _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.update_load_ui", _load_perf_t)
 
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
                 card = self.ids['viewer'].get_card(file_path)
+                _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.get_card", _load_perf_t)
                 if card is not None:
                     # 一度も描画してないので値が設定されてない。暫定処置
                     self.update_preview_texture_size()
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.update_preview_texture_size", _load_perf_t)
                     self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.mask_set_texture_size", _load_perf_t)
                     self.ids['mask_editor2'].set_primary_param(param, params.get_disp_info(param))
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.mask_set_primary_param", _load_perf_t)
 
                     # フル解像のときだけ pmck から重い結果を復元（RAW プレビュー段階ではスキップ）
                     param['image_fidelity'] = getattr(imgset, 'fidelity', ImageFidelity.FULL).value
                     load_heavy = param['image_fidelity'] == ImageFidelity.FULL.value
                     pmck_dict = params.load_json(file_path, param, self.ids['mask_editor2'], load_heavy=load_heavy)
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.load_pmck", _load_perf_t)
                     # RAW: プレビュー段階で読んだ dict を保持しておき、FULL_DECODE 遷移時の
                     # merge_heavy_from_pmck で再パースを避ける。
                     self._last_pmck_dict = (file_path, pmck_dict)
 
             # Cancel previous background tasks
             if self.processor:
-                self.processor.cancel_all()
+                restart_idle_worker = not (
+                    stage == LoadStage.FIRST_PAINTABLE
+                    and getattr(imgset, 'fidelity', None) == ImageFidelity.PREVIEW
+                )
+                self.processor.cancel_all(restart_idle=restart_idle_worker)
                 self.ids['histogram'].set_histogram_data(None)  # Reset histogram?
+                _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.cancel_async_worker", _load_perf_t)
 
             with threads.primary_param_lock:
                 if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE):
@@ -2478,12 +2496,16 @@ if __name__ == '__main__':
                     logging.debug("[PERF] on_fcs_get_file: Merged Params. Time: %s", time.time())
                     perf_trace.event("on_fcs_get_file.params_merged")
                     self.set2widget_all(self.primary_effects, self.primary_param)
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.set2widget_all", _load_perf_t)
                     self.update_mask2_options_enabled()
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.update_mask2_options_after_widgets", _load_perf_t)
 
                     # 特別あつかいでエディタを起動できるなら起動する。
                     # ここでは描画キックを抑止し、後段の start_draw_image_and_crop に集約する。
                     self.apply_effects_lv(1, 'distortion', defer_draw=True)
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.apply_distortion_editor", _load_perf_t)
                     self.apply_effects_lv(0, 'crop', defer_draw=True)
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.apply_crop_editor", _load_perf_t)
 
                     # ヒストリーの設定
                     if history_obj is None:
@@ -2493,6 +2515,7 @@ if __name__ == '__main__':
                         self.history = history_obj
 
                     self.history_panel.set_history(self.history)
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.history_panel", _load_perf_t)
 
                 # RAW フルデコード完了時にレンズ補正まわりを param から反映
                 if stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw':
@@ -2531,9 +2554,11 @@ if __name__ == '__main__':
                     params.merge_heavy_from_pmck(
                         file_path, self.primary_param, self.ids['mask_editor2'], cached_dict=cached_pmck
                     )
+                    _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.merge_heavy_pmck", _load_perf_t)
                 self._last_image_fidelity = fid
 
                 params.apply_original_geometry_if_missing(self.primary_param, imgset.img)
+                _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.apply_original_geometry", _load_perf_t)
                 if not params.has_original_img_size(self.primary_param):
                     logging.error("on_fcs_get_file: デコード画像からも original_img_size を確定できません")
                     self.loading = False
@@ -2543,6 +2568,7 @@ if __name__ == '__main__':
                     return
 
                 effects.reeffect_all(self.primary_effects)
+                _load_perf_t = self._log_slow_load_step(f"on_fcs.{stage.name}.reeffect_all", _load_perf_t)
                 preview_fast_display = (
                     stage == LoadStage.FIRST_PAINTABLE
                     and getattr(imgset, 'fidelity', None) == ImageFidelity.PREVIEW
@@ -2552,6 +2578,7 @@ if __name__ == '__main__':
                     fast_display=preview_fast_display,
                     skip_histogram=preview_fast_display,
                 )
+                self._log_slow_load_step(f"on_fcs.{stage.name}.start_draw", _load_perf_t)
             if stage in (LoadStage.FIRST_PAINTABLE, LoadStage.RGB_DONE) or (
                 stage == LoadStage.FULL_DECODE and param.get('rgb_or_raw') == 'raw'
             ):

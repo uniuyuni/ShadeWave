@@ -107,8 +107,9 @@ def compute_draw_support(
     # plane, so one stroke's strength never bleeds onto another stroke's
     # boundary (preserves per-stroke independence for add/erase correction).
     lock_plane = planes.get("edge_lock_effective")
+    offset_plane = planes.get("edge_lock_offset")
     snapped, _delta = _trace_boundary_to_edges(
-        support, trace_edge, seed, _band_w(radius), lock_plane)
+        support, trace_edge, seed, _band_w(radius), lock_plane, offset_plane)
     # Keep the trace a *local* edit: only change near the painted/erased footprint
     # and never grow outward past Quick Radius. So Radius=0 never affects pixels
     # outside the brush, and an erase only moves boundary near where it was drawn.
@@ -237,12 +238,32 @@ def _lock_to_dist_prior(lock):
     texture clutter and makes every case worse (simple 0.83 -> 0.65 b_f1, roof
     0.51 -> 0.37). The useful band is prior in [~0.55, 1.05]: light snap is best
     on clean edges (simple/lowcontrast), moderate snap helps same-colour edges
-    (roof). So Edge Lock spans light..moderate, never the destructive over-snap
-    that made the top of the slider feel like it "went wrong"."""
+    (roof). So the *auto* Edge Lock spans light..moderate, never the destructive
+    over-snap. The user can still force an aggressive snap by raising the Edge Lock
+    slider above the auto value -- see ``_apply_offset_aggression``."""
     return np.clip(1.05 - 0.0045 * np.asarray(lock, dtype=np.float32), 0.55, 1.05)
 
 
-def _trace_one_contour(cnt, edge, lock_plane, W, smooth):
+def _apply_offset_aggression(dpri, offset):
+    """Drive the distance prior toward an aggressive floor as the user raises the
+    Edge Lock slider *above* the auto value (positive offset).
+
+    The auto edge lock already uses the full 0..100 range, tuned to the gentle
+    ``_lock_to_dist_prior`` curve, so steepening that curve would wreck high-auto
+    images (e.g. lowcontrast auto~96). Instead the *offset* -- the user's deliberate
+    push past auto -- is what unlocks aggressive snapping: offset<=0 keeps the
+    validated behaviour exactly (regression-safe), and offset 0..+100 lerps the
+    prior down to ``QS_V4_TRACE_PRIOR_FLOOR`` (default 0.15) so weak / low-contrast
+    silhouettes get caught. This is the "let me force it onto that soft edge"
+    control, opt-in by cranking the slider, with the clutter risk on the user."""
+    if offset is None:
+        return dpri
+    floor = float(_v1._envf("QS_V4_TRACE_PRIOR_FLOOR", 0.15))
+    t = np.clip(np.asarray(offset, dtype=np.float32) / 100.0, 0.0, 1.0)
+    return dpri + (floor - dpri) * t
+
+
+def _trace_one_contour(cnt, edge, lock_plane, W, smooth, offset_plane=None):
     """DP ribbon trace for one ordered contour. Returns new boundary points, or
     None to keep the contour unchanged (too short).
 
@@ -283,6 +304,12 @@ def _trace_one_contour(cnt, edge, lock_plane, W, smooth):
         dpri = np.full(n, float(override), dtype=np.float32)
     else:
         dpri = _lock_to_dist_prior(lock)
+        if offset_plane is not None:
+            h, w = offset_plane.shape
+            ox = np.clip(np.round(cnt[:, 0]).astype(np.int64), 0, w - 1)
+            oy = np.clip(np.round(cnt[:, 1]).astype(np.int64), 0, h - 1)
+            offset = np.asarray(offset_plane, dtype=np.float32)[oy, ox] * 100.0
+            dpri = _apply_offset_aggression(dpri, offset)
     cost = (1.0 - e) + dpri[:, None] * (np.abs(offsets)[None, :].astype(np.float32) / max(W, 1))
 
     k = 2
@@ -314,7 +341,7 @@ def _trace_one_contour(cnt, edge, lock_plane, W, smooth):
     return cnt + path[:, None] * normal
 
 
-def _trace_boundary_to_edges(support, edge, seed, band_w, lock_plane):
+def _trace_boundary_to_edges(support, edge, seed, band_w, lock_plane, offset_plane=None):
     """Re-trace each support contour onto nearby strong edges (DP ribbon path).
 
     Every contour is traced *independently* with its own locally-read Edge Lock,
@@ -333,7 +360,7 @@ def _trace_boundary_to_edges(support, edge, seed, band_w, lock_plane):
     any_change = False
     for c in contours:
         cnt = c.reshape(-1, 2).astype(np.float32)
-        new_pts = _trace_one_contour(cnt, edge, lock_plane, W, smooth)
+        new_pts = _trace_one_contour(cnt, edge, lock_plane, W, smooth, offset_plane)
         if new_pts is None:
             cv2.fillPoly(filled, [np.round(cnt).astype(np.int32)], 1)
         else:

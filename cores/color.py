@@ -3,6 +3,18 @@
 import numpy as np
 from functools import partial
 
+_SRGB_UINT8_TO_LINEAR_LUT = None
+
+
+def sRGB_to_linear_LUT(encoded):
+    """uint8 sRGB画像を256段LUTでlinear float32へ変換する。"""
+    global _SRGB_UINT8_TO_LINEAR_LUT
+    if _SRGB_UINT8_TO_LINEAR_LUT is None:
+        values = np.arange(256, dtype=np.float32) / 255.0
+        _SRGB_UINT8_TO_LINEAR_LUT = srgb_gamma_decode(values).astype(np.float32)
+    return _SRGB_UINT8_TO_LINEAR_LUT[np.asarray(encoded, dtype=np.uint8)]
+
+
 # RGB Working Space のデータベース
 M_RGB_WORKING_SPACES = {
     "sRGB": {

@@ -90,7 +90,7 @@ def wait_threading(process, *args, **kwargs):
     return result
 
 
-def wait_prosessing(process, *args, **kwargs):
+def wait_processing(process, *args, **kwargs):
     if threading.current_thread() is threading.main_thread():
         return wait_threading(process, *args, **kwargs)
 
@@ -104,3 +104,8 @@ def wait_prosessing(process, *args, **kwargs):
     KVClock.unschedule(event)
     KVClock.schedule_once(hide_processing_dialog)
     return result
+
+
+def wait_prosessing(process, *args, **kwargs):
+    """Backward-compatible alias for the old misspelled API."""
+    return wait_processing(process, *args, **kwargs)

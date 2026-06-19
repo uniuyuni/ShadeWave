@@ -138,19 +138,30 @@ def _strip_lensfun_duplicate_dylibs(app_path: Path) -> None:
 
 def _create_framework_lib_symlinks(app_path: Path) -> None:
     """
-    Frameworks/lib/*.dylib への参照を期待する拡張向けに、Frameworks 直下へ symlink を作成する。
+    Frameworks/lib/*.dylib への参照を期待する拡張向けに、ルート直下へ symlink を作成する。
+    lensfunpy 重複除去後などに壊れた symlink が残ると codesign/Finder が app を壊れた
+    bundle と扱うため、dangling symlink は必ず張り替える。
     """
     fw = app_path / "Contents" / "Frameworks"
+    resources = app_path / "Contents" / "Resources"
     libdir = fw / "lib"
     if not libdir.is_dir():
         return
+
+    def ensure_link(link: Path, target: Path) -> None:
+        if link.is_symlink() and not link.exists():
+            link.unlink()
+        if link.exists() or link.is_symlink():
+            return
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pass
+
     for dylib in sorted(libdir.glob("*.dylib")):
-        link = fw / dylib.name
-        if not link.exists():
-            try:
-                link.symlink_to(Path("lib") / dylib.name)
-            except OSError:
-                pass
+        ensure_link(fw / dylib.name, Path("lib") / dylib.name)
+        if resources.is_dir():
+            ensure_link(resources / dylib.name, Path("../Frameworks/lib") / dylib.name)
 
 
 def _replace_pil_harfbuzz(app_path: Path) -> None:
@@ -210,6 +221,28 @@ def _patch_cv2_iconv_to_system(app_path: Path) -> None:
                 print("cv2 iconv 参照書換:", t, file=sys.stderr)
             except Exception as e:
                 print(f"警告: cv2 iconv 書換失敗 {t}: {e}", file=sys.stderr)
+
+
+def _ad_hoc_codesign_app(app_path: Path) -> None:
+    """
+    PyInstaller 後の dylib 差し替え・install_name_tool・symlink 修復後に署名を作り直す。
+    署名が古いままだと Finder が禁止マーク付きの壊れた app として扱う場合がある。
+    """
+    if not shutil.which("codesign"):
+        print("警告: codesign が見つからないため再署名をスキップします。", file=sys.stderr)
+        return
+    try:
+        subprocess.run(
+            ["codesign", "--force", "--deep", "--sign", "-", str(app_path)],
+            check=True,
+        )
+        subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app_path)],
+            check=True,
+        )
+        print("ad-hoc 再署名完了:", app_path, file=sys.stderr)
+    except subprocess.CalledProcessError as e:
+        print(f"警告: ad-hoc 再署名/検証に失敗: {e}", file=sys.stderr)
 
 
 def _conda_lib_dylib_bundle_args() -> list[str]:
@@ -369,9 +402,13 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
         "radiance_denoise.native",
     ]
 
-    rth_libintl = root / "scripts" / "pyinstaller" / "rth_darwin_libintl.py"
+    rth_dir = root / "scripts" / "pyinstaller"
+    rth_libintl = rth_dir / "rth_darwin_libintl.py"
+    rth_torch_mps = rth_dir / "rth_torch_mps_fallback.py"
     if not rth_libintl.is_file():
         print("警告: rth_darwin_libintl がありません:", rth_libintl, file=sys.stderr)
+    if not rth_torch_mps.is_file():
+        print("警告: rth_torch_mps_fallback がありません:", rth_torch_mps, file=sys.stderr)
 
     args: list[str] = [
         str(root / "main.py"),
@@ -399,6 +436,9 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # cv2 / lensfunpy の libintl 競合対策（main より前に実行）
     if rth_libintl.is_file():
         args.extend(["--runtime-hook", str(rth_libintl)])
+    # SAM3 on MPS may require PyTorch CPU fallback for unsupported fused ops.
+    if rth_torch_mps.is_file():
+        args.extend(["--runtime-hook", str(rth_torch_mps)])
 
     print("conda lib の .dylib を同梱しています（サイズ増のため数分かかることがあります）…", file=sys.stderr)
     args.extend(_conda_lib_dylib_bundle_args())
@@ -523,6 +563,7 @@ def main() -> None:
         _replace_pil_harfbuzz(app)
         _patch_cv2_iconv_to_system(app)
         _create_framework_lib_symlinks(app)
+        _ad_hoc_codesign_app(app)
         print()
         print("ビルド完了:", app)
     else:

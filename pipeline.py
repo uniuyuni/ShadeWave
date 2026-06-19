@@ -578,8 +578,9 @@ class AsyncPipelineManager:
                 return key
         return None
     
-    def cancel_all(self):
-        self.worker.cancel_all()
+    def cancel_all(self, restart_idle=True):
+        if restart_idle or self.worker.has_pending_tasks():
+            self.worker.cancel_all()
         self.cache.clear()
 
     def clear_completed_cache(self):

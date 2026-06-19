@@ -8,6 +8,8 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import file_cache_system
+import numpy as np
+import cores.color as color
 from enums import LoadStage
 from imageset import ImageSet
 
@@ -27,6 +29,17 @@ class _FastFullDecodeImageSet:
 
     def _load_raw_full(self, _raw, file_path, exif_data, param):
         return (file_path, self, exif_data, param, LoadStage.FULL_DECODE)
+
+
+class _RecordingExecutor:
+    def __init__(self, events):
+        self.events = events
+
+    def submit(self, fn, *args, **kwargs):
+        self.events.append(("submit", args[1]))
+        future = concurrent.futures.Future()
+        future.set_result(fn(*args, **kwargs))
+        return future
 
 
 class RawLoadOrderFlowTest(unittest.TestCase):
@@ -63,6 +76,41 @@ class RawLoadOrderFlowTest(unittest.TestCase):
             executor.shutdown(wait=True)
 
         self.assertEqual(calls, [LoadStage.FIRST_PAINTABLE, LoadStage.FULL_DECODE])
+
+    def test_full_decode_submit_waits_until_preview_callback_is_sent(self):
+        path = "/tmp/preview-first-test.raf"
+        events = []
+        old_task_callback = file_cache_system._task_callback
+
+        def record_callback(_file_callbacks, _shared_resources, result):
+            value = result.result() if isinstance(result, concurrent.futures.Future) else result
+            events.append(("callback", value[-1]))
+
+        shared_resources = {
+            "cache": {},
+            "preload_registry": {path: ({}, {}, None, None)},
+            "active_processes": {path: time.time()},
+            "executor": _RecordingExecutor(events),
+            "process_queue_flag": False,
+        }
+
+        try:
+            file_cache_system._task_callback = record_callback
+            file_cache_system._load_file_thread(
+                shared_resources,
+                path,
+                {},
+                {},
+                _FastFullDecodeImageSet(),
+                {},
+            )
+        finally:
+            file_cache_system._task_callback = old_task_callback
+
+        self.assertLess(
+            events.index(("callback", LoadStage.FIRST_PAINTABLE)),
+            events.index(("submit", "_load_raw_full")),
+        )
 
     def test_non_fuji_preview_geometry_probe_is_skipped_when_exif_has_size(self):
         imgset = ImageSet()
@@ -114,6 +162,15 @@ class RawLoadOrderFlowTest(unittest.TestCase):
 
         self.assertIn("RAW画像のサイズに合わせてリサイズ", source)
         self.assertIn("cv2.resize(img_array, (width, height), interpolation=cv2.INTER_AREA)", source)
+
+    def test_raw_preview_uses_uint8_srgb_decode_lut(self):
+        rgb8 = np.array([[[0, 1, 12], [128, 200, 255]]], dtype=np.uint8)
+
+        actual = color.sRGB_to_linear_LUT(rgb8)
+        expected = color.rgb_gamma_decode(rgb8.astype(np.float32) / 255.0, 'sRGB')
+
+        self.assertEqual(actual.dtype, np.float32)
+        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-7)
 
 
 if __name__ == "__main__":
