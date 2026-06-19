@@ -19,6 +19,7 @@ The project is currently optimized for local desktop use on Apple Silicon macOS.
 | Python | Python 3.11 through pixi |
 | Package manager | [pixi](https://pixi.sh/) |
 | Compiler tools | Xcode Command Line Tools / Apple Clang |
+| Metadata tool | ExifTool CLI, e.g. `brew install exiftool` |
 | Network | Required during setup for external repositories, ICC profiles, and model weights |
 | Optional token | Hugging Face token for `facebook/sam3.1` checkpoint download |
 | Optional API key | `RUNWARE_API_KEY` for Runware-backed inpainting / object eraser features |
@@ -33,6 +34,8 @@ pixi run python main.py
 ```
 
 `setup.sh` prepares the pixi environment, clones external projects into `external/`, builds native extensions, downloads ICC profiles, and fetches model assets when needed.
+
+ExifTool must be available on `PATH` before using metadata, rating, or export metadata features.
 
 The application stores user-editable settings and presets in:
 
