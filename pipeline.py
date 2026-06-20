@@ -91,11 +91,13 @@ def _debug_pipeline_param_summary(effect_name, param, effect=None):
         "unsharp_mask": ("unsharp_mask", "unsharp_mask_radius", "unsharp_mask_amount"),
         "grain": (
             "switch_grain",
-            "grain_intensity",
+            "grain_amount",
             "grain_size",
-            "grain_blue_bias",
-            "grain_shadow_boost",
-            "grain_color_noise_ratio",
+            "grain_roughness",
+            "grain_shadow",
+            "grain_highlight",
+            "grain_color",
+            "grain_seed",
         ),
         "vignette": (
             "switch_vignette",

@@ -132,7 +132,92 @@ def processor_cache_bytes(processor) -> int:
     return total
 
 
-def clear_effect_intermediate_caches(effects, processor=None, *, reason: str = "memory_pressure") -> dict:
+def clear_primary_param_ai_caches(primary_param) -> dict:
+    removed = 0
+    removed_bytes = 0
+    if not isinstance(primary_param, dict):
+        return {"primary_param_entries": removed, "primary_param_bytes": removed_bytes}
+
+    for key in ("ai_noise_reduction_result",):
+        value = primary_param.pop(key, None)
+        if value is not None:
+            removed += 1
+            removed_bytes += bytes_of(value)
+    primary_param.pop("ai_noise_reduction_content_key", None)
+    return {"primary_param_entries": removed, "primary_param_bytes": removed_bytes}
+
+
+def clear_mask2_ai_caches(mask_editor2) -> dict:
+    clear = getattr(mask_editor2, "clear_ai_intermediate_caches", None)
+    if clear is None:
+        return {"mask2_entries": 0, "mask2_bytes": 0}
+    try:
+        result = clear()
+    except Exception:
+        logging.exception("memory_manager: failed to clear Mask2 AI cache")
+        return {"mask2_entries": 0, "mask2_bytes": 0}
+    if not isinstance(result, dict):
+        return {"mask2_entries": 0, "mask2_bytes": 0}
+    return {
+        "mask2_entries": int(result.get("mask2_entries", 0) or 0),
+        "mask2_bytes": int(result.get("mask2_bytes", 0) or 0),
+    }
+
+
+def release_ai_model_runtimes() -> dict:
+    try:
+        from cores.mask2 import inference_runtime
+    except Exception:
+        logging.exception("memory_manager: failed to import Mask2 inference runtime")
+        return {
+            "sam3_processor_released": 0,
+            "sam3_model_released": 0,
+            "depth_model_released": 0,
+            "face_runtime_released": 0,
+        }
+    release = getattr(inference_runtime, "release_ai_model_runtimes", None)
+    if release is None:
+        return {
+            "sam3_processor_released": 0,
+            "sam3_model_released": 0,
+            "depth_model_released": 0,
+            "face_runtime_released": 0,
+        }
+    try:
+        result = release()
+    except Exception:
+        logging.exception("memory_manager: failed to release AI model runtimes")
+        return {
+            "sam3_processor_released": 0,
+            "sam3_model_released": 0,
+            "depth_model_released": 0,
+            "face_runtime_released": 0,
+        }
+    if not isinstance(result, dict):
+        return {
+            "sam3_processor_released": 0,
+            "sam3_model_released": 0,
+            "depth_model_released": 0,
+            "face_runtime_released": 0,
+        }
+    return {
+        "sam3_processor_released": int(result.get("sam3_processor_released", 0) or 0),
+        "sam3_model_released": int(result.get("sam3_model_released", 0) or 0),
+        "depth_model_released": int(result.get("depth_model_released", 0) or 0),
+        "face_runtime_released": int(result.get("face_runtime_released", 0) or 0),
+    }
+
+
+def clear_effect_intermediate_caches(
+    effects=None,
+    processor=None,
+    primary_param=None,
+    mask_editor2=None,
+    *,
+    reason: str = "memory_pressure",
+    clear_mask2_results: bool = False,
+    release_ai_models: bool = True,
+) -> dict:
     effect_count = 0
     for layer in effects or []:
         for effect in getattr(layer, "values", lambda: [])():
@@ -160,14 +245,43 @@ def clear_effect_intermediate_caches(effects, processor=None, *, reason: str = "
             except Exception:
                 logging.exception("memory_manager: failed to clear processor cache")
 
+    primary_param_result = clear_primary_param_ai_caches(primary_param)
+    if clear_mask2_results:
+        mask2_result = clear_mask2_ai_caches(mask_editor2)
+    else:
+        mask2_result = {"mask2_entries": 0, "mask2_bytes": 0}
+    ai_model_result = (
+        release_ai_model_runtimes()
+        if release_ai_models
+        else {
+            "sam3_processor_released": 0,
+            "sam3_model_released": 0,
+            "depth_model_released": 0,
+            "face_runtime_released": 0,
+        }
+    )
     gc.collect()
     logging.info(
-        "memory_manager cleared effect intermediates reason=%s effects=%d processor_entries=%d",
+        "memory_manager cleared effect intermediates reason=%s effects=%d processor_entries=%d primary_param_entries=%d primary_param_bytes=%s mask2_entries=%d mask2_bytes=%s sam3_processor_released=%d sam3_model_released=%d depth_model_released=%d face_runtime_released=%d",
         reason,
         effect_count,
         processor_entries,
+        primary_param_result["primary_param_entries"],
+        format_bytes(primary_param_result["primary_param_bytes"]),
+        mask2_result["mask2_entries"],
+        format_bytes(mask2_result["mask2_bytes"]),
+        ai_model_result["sam3_processor_released"],
+        ai_model_result["sam3_model_released"],
+        ai_model_result["depth_model_released"],
+        ai_model_result["face_runtime_released"],
     )
-    return {"effects": effect_count, "processor_entries": processor_entries}
+    return {
+        "effects": effect_count,
+        "processor_entries": processor_entries,
+        **primary_param_result,
+        **mask2_result,
+        **ai_model_result,
+    }
 
 
 def memory_pressure() -> tuple[bool, str]:
@@ -185,13 +299,15 @@ def memory_pressure() -> tuple[bool, str]:
     return False, "ok"
 
 
-def enforce_memory_policy(effects=None, processor=None, *, reason: str = "check") -> dict:
+def enforce_memory_policy(effects=None, processor=None, primary_param=None, mask_editor2=None, *, reason: str = "check") -> dict:
     pressured, pressure_reason = memory_pressure()
     if not pressured:
         return {"cleared": False, "reason": pressure_reason}
     cleared = clear_effect_intermediate_caches(
         effects,
         processor,
+        primary_param,
+        mask_editor2,
         reason=f"{reason}:{pressure_reason}",
     )
     cleared.update({"cleared": True, "reason": pressure_reason})

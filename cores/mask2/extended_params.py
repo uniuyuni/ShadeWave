@@ -47,6 +47,7 @@ def get_mask_hash_tuple(effects_param):
         effects.Mask2Effect.get_param(effects_param, "mask2_close_space"),
         effects.Mask2Effect.get_param(effects_param, "mask2_freedraw_brush_hardness"),
         effects.Mask2Effect.get_param(effects_param, "mask2_polyline_fill"),
+        effects.Mask2Effect.get_param(effects_param, "switch_mask2_quick_select"),
         effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode"),
         effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_radius"),
         effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_strength"),
@@ -164,6 +165,13 @@ def _respect_soft_drawing_region(refined, drawn):
     return refined * drawn
 
 
+def _quick_select_switch_enabled(effects_param):
+    return (
+        effects.Mask2Effect.get_param(effects_param, "switch_mask2_options") is True
+        and effects.Mask2Effect.get_param(effects_param, "switch_mask2_quick_select") is True
+    )
+
+
 def render_freedraw_edge_refine_full_view(
     ctx,
     effects_param,
@@ -172,7 +180,7 @@ def render_freedraw_edge_refine_full_view(
     mask_shape,
     debug_label=None,
 ):
-    if effects.Mask2Effect.get_param(effects_param, "switch_mask2_options") is not True:
+    if not _quick_select_switch_enabled(effects_param):
         return None
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):
@@ -903,7 +911,7 @@ def _apply_edge_refine(
 ):
     if not edge_refine_enabled:
         return image, None
-    if effects.Mask2Effect.get_param(effects_param, "switch_mask2_options") is not True:
+    if not _quick_select_switch_enabled(effects_param):
         return image, None
     mode = effects.Mask2Effect.get_param(effects_param, "mask2_edge_refine_mode")
     if not edge_refine.is_enabled(mode):

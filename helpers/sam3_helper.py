@@ -1,3 +1,4 @@
+import gc
 import logging
 import time
 from threading import RLock
@@ -9,6 +10,7 @@ from sam3.model_builder import build_sam3_image_model
 from sam3.model.box_ops import box_xywh_to_cxcywh
 from sam3.model.sam3_image_processor import Sam3Processor
 from helpers import sam3_coreml_backbone_helper
+from utils import aiutils
 
 RESIZE_FACTOR = 1.0
 
@@ -16,6 +18,22 @@ __model = None
 __model_lock = RLock()
 
 _logger = logging.getLogger(__name__)
+
+
+def _empty_torch_device_cache():
+    aiutils.empty_cache()
+
+
+def release_sam3_model():
+    global __model
+    with __model_lock:
+        released = __model is not None
+        __model = None
+    gc.collect()
+    _empty_torch_device_cache()
+    if released:
+        _logger.info("SAM3 model released")
+    return {"sam3_model_released": int(released)}
 
 
 def _elapsed_ms(start):
@@ -64,6 +82,7 @@ def _materialize_mask_tensor(mask_tensor, org_w, org_h):
 
 def _select_bbox_mask_candidate(mask_tensors, bbox, org_w, org_h):
     x, y, w, h = _clip_bbox_xywh_int(bbox, org_w, org_h)
+    bbox_area = max(0, int(w * h))
     best = None
     best_score = None
     scores = []
@@ -75,8 +94,11 @@ def _select_bbox_mask_candidate(mask_tensors, bbox, org_w, org_h):
         inside = int(np.count_nonzero(mask[y:y + h, x:x + w] > 0.001)) if w > 0 and h > 0 else 0
         outside = max(0, total - inside)
         max_value = float(np.nanmax(mask)) if mask.size else 0.0
-        score = (inside, -outside, max_value)
-        scores.append((index, inside, outside, max_value, materialize_elapsed))
+        coverage = inside / bbox_area if bbox_area > 0 else 0.0
+        precision = inside / total if total > 0 else 0.0
+        dice = (2.0 * inside / (total + bbox_area)) if total > 0 and bbox_area > 0 else 0.0
+        score = (dice, coverage, precision, -outside, max_value)
+        scores.append((index, inside, outside, coverage, precision, dice, max_value, materialize_elapsed))
         if best_score is None or score > best_score:
             best_score = score
             best = mask

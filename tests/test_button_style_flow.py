@@ -14,7 +14,7 @@ class ButtonStyleFlowTest(unittest.TestCase):
         self.assertIn("background_color: dark_blue if self.state == 'down' else [0.58, 0.58, 0.58, 1]", main_kv)
         self.assertIn("<IconToggleButton@ScaledToggleButton>:", main_kv)
         self.assertIn("bg_color_normal: 0.12, 0.13, 0.16, 0.92", main_kv)
-        self.assertIn("text: \"Reset\"\n                        background_color: dark_blue if self.state == 'down' else [0.12, 0.13, 0.16, 0.92]", main_kv)
+        self.assertNotIn("text: \"Reset\"\n                        background_color: dark_blue if self.state == 'down' else [0.12, 0.13, 0.16, 0.92]", main_kv)
         self.assertIn("bg_color_normal = ListProperty([0.38, 0.5, 0.54, 0.92])", scaled_button)
         self.assertIn("bg_color_reset_normal = ListProperty([0.12, 0.13, 0.16, 0.92])", scaled_button)
         self.assertIn('getattr(self, "text", "") == "Reset"', scaled_button)

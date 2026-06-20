@@ -4,6 +4,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -12,6 +14,9 @@ FCS_PATH = ROOT / "file_cache_system.py"
 MAIN_PATH = ROOT / "main.py"
 PIPELINE_PATH = ROOT / "pipeline.py"
 MEMORY_MANAGER_PATH = ROOT / "memory_manager.py"
+MASK2_INFERENCE_RUNTIME_PATH = ROOT / "cores" / "mask2" / "inference_runtime.py"
+SAM3_HELPER_PATH = ROOT / "helpers" / "sam3_helper.py"
+AIUTILS_PATH = ROOT / "utils" / "aiutils.py"
 
 
 def _source(path):
@@ -136,6 +141,104 @@ class MemoryManagementFlowTest(unittest.TestCase):
         self.assertIn("def clear_effect_intermediate_caches", source)
         self.assertIn("effect.reeffect()", source)
         self.assertIn('"clear_completed_cache"', source)
+        self.assertIn("def clear_primary_param_ai_caches", source)
+        self.assertIn('"ai_noise_reduction_result"', source)
+        self.assertIn('"ai_noise_reduction_content_key"', source)
+        self.assertIn("def clear_mask2_ai_caches", source)
+        self.assertIn("clear_ai_intermediate_caches", source)
+        self.assertIn("def release_ai_model_runtimes", source)
+        self.assertIn("clear_mask2_results: bool = False", source)
+        self.assertIn("release_ai_models: bool = True", source)
+        self.assertIn("depth_model_released", source)
+        self.assertIn("face_runtime_released", source)
+
+    def test_memory_manager_clears_ai_noise_raw_result_from_primary_param(self):
+        import memory_manager
+
+        param = {
+            "ai_noise_reduction_result": np.zeros((8, 8, 3), dtype=np.float32),
+            "ai_noise_reduction_content_key": "raw-key",
+            "unrelated": "keep",
+        }
+
+        result = memory_manager.clear_primary_param_ai_caches(param)
+
+        self.assertEqual(result["primary_param_entries"], 1)
+        self.assertEqual(result["primary_param_bytes"], 8 * 8 * 3 * 4)
+        self.assertNotIn("ai_noise_reduction_result", param)
+        self.assertNotIn("ai_noise_reduction_content_key", param)
+        self.assertEqual(param["unrelated"], "keep")
+
+    def test_memory_manager_clears_mask2_ai_intermediate_caches(self):
+        import memory_manager
+
+        class MaskEditor:
+            def clear_ai_intermediate_caches(self):
+                return {"mask2_entries": 2, "mask2_bytes": 128}
+
+        result = memory_manager.clear_effect_intermediate_caches(
+            mask_editor2=MaskEditor(),
+            clear_mask2_results=True,
+            release_ai_models=False,
+        )
+
+        self.assertEqual(result["mask2_entries"], 2)
+        self.assertEqual(result["mask2_bytes"], 128)
+
+    def test_ai_model_runtimes_have_explicit_release_hooks(self):
+        runtime_source = _source(MASK2_INFERENCE_RUNTIME_PATH)
+        helper_source = _source(SAM3_HELPER_PATH)
+        aiutils_source = _source(AIUTILS_PATH)
+
+        self.assertIn("def release_sam3_runtime", runtime_source)
+        self.assertIn("_sam3_processor.clear()", runtime_source)
+        self.assertIn("_sam3_processor = None", runtime_source)
+        self.assertIn('sys.modules.get("helpers.sam3_helper")', runtime_source)
+        self.assertIn("release_model()", runtime_source)
+        self.assertIn("def release_depth_runtime", runtime_source)
+        self.assertIn("_depth_model = None", runtime_source)
+        self.assertIn("def release_face_runtime", runtime_source)
+        self.assertIn("_faces.clear()", runtime_source)
+        self.assertIn("def release_ai_model_runtimes", runtime_source)
+        self.assertIn("release_depth_runtime()", runtime_source)
+        self.assertIn("release_face_runtime()", runtime_source)
+        self.assertIn("aiutils.empty_cache()", runtime_source)
+        self.assertIn("def release_sam3_model", helper_source)
+        self.assertIn("__model = None", helper_source)
+        self.assertIn("aiutils.empty_cache()", helper_source)
+        self.assertIn("torch.mps.empty_cache", aiutils_source)
+
+    def test_file_cache_system_passes_primary_param_to_memory_manager(self):
+        source = _function_source(FCS_PATH, "enforce_memory_policy")
+
+        self.assertIn('getattr(owner, "primary_param", None)', source)
+        self.assertIn('ids.get("mask_editor2")', source)
+        self.assertIn("memory_manager.enforce_memory_policy(effects, processor, primary_param, mask_editor2, reason=reason)", source)
+
+    def test_main_has_manual_memory_release_shortcut(self):
+        release_source = _function_source(MAIN_PATH, "force_release_memory_caches")
+        shortcut_source = _function_source(MAIN_PATH, "_is_force_memory_release_shortcut")
+        key_source = _function_source(MAIN_PATH, "on_key_down")
+
+        self.assertIn("memory_manager.clear_effect_intermediate_caches", release_source)
+        self.assertIn("clear_final_display_cache", release_source)
+        self.assertIn("self._pending_final_display_cache = None", release_source)
+        self.assertIn("self.crop_image = None", release_source)
+        self.assertIn("gc.collect()", release_source)
+        self.assertIn("threads.primary_param_lock.acquire(blocking=False)", release_source)
+        self.assertIn("primary_param_lock_busy", release_source)
+        self.assertIn("threads.primary_param_lock.release()", release_source)
+        self.assertIn("clear_mask2_results=False", release_source)
+        self.assertIn("release_ai_models=True", release_source)
+        self.assertIn('"shift"', shortcut_source)
+        self.assertIn('"meta"', shortcut_source)
+        self.assertIn('"ctrl"', shortcut_source)
+        self.assertIn("(8, 127, 266)", shortcut_source)
+        self.assertIn('self.force_release_memory_caches(reason="manual_shortcut")', key_source)
+        self.assertLess(
+            key_source.index("self._is_force_memory_release_shortcut"),
+            key_source.index("(codepoint or \"\").lower() == 'm'"),
+        )
 
     def test_file_cache_system_logs_stalled_loads_and_uses_valid_start_method(self):
         source = _source(FCS_PATH)

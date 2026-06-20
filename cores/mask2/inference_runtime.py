@@ -3,10 +3,12 @@ Mask2 の推論モデルキャッシュ。UI（mask_editor2）とヘッドレス
 """
 from __future__ import annotations
 
+import gc
 from threading import RLock
 
 import logging
 import os
+import sys
 import time
 
 import config
@@ -18,7 +20,9 @@ import utils.aiutils as aiutils
 _sam3_processor = None
 _sam3_lock = RLock()
 _depth_model = None
+_depth_lock = RLock()
 _faces = None
+_faces_lock = RLock()
 
 DEPTH_MAP_ALGORITHM_VERSION = 2
 _LOGGER = logging.getLogger(__name__)
@@ -160,13 +164,7 @@ def _predict_sam3_bbox_roi(sam3_helper, processor, image, bbox, source_image_key
     return full_mask
 
 
-def _guided_filter_bbox_mask(image, mask, bbox, radius=60, eps=0.0001):
-    """Run guided filter only around the SAM3 bbox.
-
-    cv2.ximgproc.guidedFilter on a full-resolution photo can stall the UI spinner
-    for large images even though the bbox prompt is local. The bbox is still
-    clipped after filtering, so padding only gives the filter local context.
-    """
+def _guided_filter_bbox_mask(image, mask, bbox, radius=20, eps=0.0001):
     x0, y0, x1, y1 = _expanded_bbox_xyxy(bbox, image.shape, radius)
     out = np.zeros(np.asarray(mask).shape[:2], dtype=np.float32)
     if x1 <= x0 or y1 <= y0:
@@ -211,9 +209,78 @@ def _apply_sam3_bbox_limit(mask, bbox, *, stage):
         _LOGGER.info("SAM3 %s mask had %d px outside bbox=%s; clipping", stage, outside, bbox)
     return _zero_outside_bbox(mask_arr, bbox)
 
+
+def _apply_face_mask_guided_filter(image, mask):
+    start = time.perf_counter()
+    refined = cutout_guided.create_cutout_mask_guided(
+        image,
+        np.asarray(mask, dtype=np.float32),
+        radius=20,
+        eps=0.0001,
+    )
+    _LOGGER.info("Face guided filter elapsed=%.1fms radius=20", _elapsed_ms(start))
+    return refined
+
+
 def delete_faces():
     global _faces
-    _faces = None
+    with _faces_lock:
+        _faces = None
+
+
+def release_sam3_runtime() -> dict:
+    global _sam3_processor
+
+    with _sam3_lock:
+        released_processor = _sam3_processor is not None
+        if isinstance(_sam3_processor, dict):
+            _sam3_processor.clear()
+        _sam3_processor = None
+    result = {"sam3_processor_released": int(released_processor)}
+    sam3_helper = sys.modules.get("helpers.sam3_helper")
+    release_model = getattr(sam3_helper, "release_sam3_model", None) if sam3_helper is not None else None
+    if release_model is not None:
+        result.update(release_model())
+    else:
+        result.update({"sam3_model_released": 0})
+    gc.collect()
+    _LOGGER.info("SAM3 runtime release result=%s", result)
+    return result
+
+
+def release_depth_runtime() -> dict:
+    global _depth_model
+
+    with _depth_lock:
+        released = _depth_model is not None
+        _depth_model = None
+    gc.collect()
+    _LOGGER.info("Depth runtime release result=%s", {"depth_model_released": int(released)})
+    return {"depth_model_released": int(released)}
+
+
+def release_face_runtime() -> dict:
+    global _faces
+
+    with _faces_lock:
+        released = _faces is not None and not (isinstance(_faces, int) and _faces == 0)
+        if isinstance(_faces, dict):
+            _faces.clear()
+        _faces = None
+    gc.collect()
+    _LOGGER.info("Face runtime release result=%s", {"face_runtime_released": int(released)})
+    return {"face_runtime_released": int(released)}
+
+
+def release_ai_model_runtimes() -> dict:
+    result = {}
+    result.update(release_sam3_runtime())
+    result.update(release_depth_runtime())
+    result.update(release_face_runtime())
+    aiutils.empty_cache()
+    gc.collect()
+    _LOGGER.info("AI model runtime release result=%s", result)
+    return result
 
 
 def predict_sam3_bbox(img: np.ndarray, bbox, invert: bool) -> np.ndarray:
@@ -244,7 +311,7 @@ def predict_sam3_bbox(img: np.ndarray, bbox, invert: bool) -> np.ndarray:
     _LOGGER.info("SAM3 raw bbox limit elapsed=%.1fms", _elapsed_ms(phase_start))
 
     phase_start = time.perf_counter()
-    mask_original = _guided_filter_bbox_mask(ai_img, mask_original, bbox, radius=60, eps=0.0001)
+    mask_original = _guided_filter_bbox_mask(ai_img, mask_original, bbox, radius=20, eps=0.0001)
     _LOGGER.info("SAM3 guided phase elapsed=%.1fms", _elapsed_ms(phase_start))
     phase_start = time.perf_counter()
     mask_original = _apply_sam3_bbox_limit(mask_original, bbox, stage="guided")
@@ -268,7 +335,7 @@ def predict_sam3_text(img: np.ndarray, text: str, invert: bool) -> np.ndarray:
         mask_original = sam3_helper.predict_sam3_for_text(_sam3_processor, ai_img, text)
 
     mask_original = cutout_guided.create_cutout_mask_guided(
-        ai_img, mask_original, radius=60, eps=0.0001
+        ai_img, mask_original, radius=20, eps=0.0001
     )
     if invert:
         mask_original = 1 - mask_original
@@ -280,9 +347,11 @@ def predict_depth_map(img: np.ndarray) -> np.ndarray:
     from helpers import depth_pro_helper
 
     ai_img = aiutils.to_ai_display_rgb(img)
-    if _depth_model is None:
-        _depth_model = depth_pro_helper.setup_model(device=config.get_config("gpu_device"))
-    return depth_pro_helper.predict_model(_depth_model, ai_img)
+    with _depth_lock:
+        if _depth_model is None:
+            _depth_model = depth_pro_helper.setup_model(device=config.get_config("gpu_device"))
+        depth_model = _depth_model
+    return depth_pro_helper.predict_model(depth_model, ai_img)
 
 
 def predict_face_mask(img: np.ndarray, exclude_names: list) -> np.ndarray:
@@ -290,11 +359,13 @@ def predict_face_mask(img: np.ndarray, exclude_names: list) -> np.ndarray:
     from helpers import facer_helper
 
     ai_img = aiutils.to_ai_display_rgb(img)
-    if _faces is None:
-        _faces = facer_helper.create_faces(ai_img, device="cpu")
+    with _faces_lock:
+        if _faces is None:
+            _faces = facer_helper.create_faces(ai_img, device="cpu")
+        faces = _faces
 
-    if _faces == 0:
-        return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
+        if faces == 0:
+            return np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
 
-    result = facer_helper.draw_face_mask(_faces, exclude_names)
-    return cutout_guided.create_cutout_mask_guided(ai_img, result, radius=60, eps=0.0001)
+        result = facer_helper.draw_face_mask(faces, exclude_names)
+    return _apply_face_mask_guided_filter(ai_img, result)

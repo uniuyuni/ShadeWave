@@ -47,6 +47,7 @@
                 //"QS_V4_EDGE_SNAP": "1",
                 //"QS_V4_SNAP_ALPHA": "1",
                 "PLATYPUS_SAM3_COREML_BACKBONE": "1",
+                //"PLATYPUS_AI_MASK_EDGE_REFINE": "1",
                 //"PLATYPUS_FORCE_THREAD_LOAD_POOL": "1",
                 //"PLATYPUS_LOW_FREQUENCY_TRANSFER_DOWNSAMPLE": "auto",
                 //"PLATYPUS_DEBUG_PIPELINE_STATS": "1",

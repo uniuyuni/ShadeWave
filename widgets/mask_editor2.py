@@ -516,6 +516,73 @@ class BaseMask(KVWidget):
         for cp in getattr(self, 'control_points', []):
             cp.property('center').dispatch(cp)
 
+    def _draw_brush_size(self):
+        value = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_size')
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = 300.0
+        return max(2.0, min(2000.0, value))
+
+    def _draw_brush_hardness(self):
+        value = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = 100.0
+        return max(0.0, min(100.0, value))
+
+    def _set_mask2_slider_value(self, slider_id, value):
+        root = getattr(self.editor, 'root', None)
+        ids = getattr(root, 'ids', {}) if root is not None else {}
+        try:
+            slider = ids.get(slider_id)
+        except AttributeError:
+            slider = None
+        if slider is None:
+            return
+        try:
+            slider.set_slider_value(value)
+        except AttributeError:
+            slider.value = value
+
+    def _set_draw_brush_param(self, key, value, slider_id):
+        self.effects_param[key] = value
+        if key == 'mask2_freedraw_brush_size':
+            self.brush_size = value
+        self._set_mask2_slider_value(slider_id, value)
+
+    def _adjust_draw_brush_from_scroll(self, touch):
+        if not getattr(touch, 'is_mouse_scrolling', False):
+            return False
+        if touch.button == 'scrollup':
+            direction = -1
+        elif touch.button == 'scrolldown':
+            direction = 1
+        else:
+            return False
+
+        modifiers = KVWindow.modifiers or []
+        if 'meta' in modifiers or 'ctrl' in modifiers:
+            value = max(0.0, min(100.0, self._draw_brush_hardness() + direction * 5.0))
+            self._set_draw_brush_param(
+                'mask2_freedraw_brush_hardness',
+                value,
+                'slider_mask2_freedraw_brush_hardness',
+            )
+        else:
+            value = max(2.0, min(2000.0, self._draw_brush_size() + direction * 10.0))
+            self._set_draw_brush_param(
+                'mask2_freedraw_brush_size',
+                value,
+                'slider_mask2_freedraw_brush_size',
+            )
+
+        updater = getattr(self, 'update_brush_cursor', None)
+        if callable(updater):
+            updater(touch.pos[0], touch.pos[1])
+        return True
+
     def _touch_in_initial_placement_area(self, touch):
         return bool(self.editor.collide_point(*touch.pos))
 
@@ -538,7 +605,7 @@ class BaseMask(KVWidget):
         else:
             self.show_center_control_point_only()
 
-    def show_all_control_points(self):
+    def show_all_control_points(self, redraw=True):
         self.opacity = 1
         for cp in self.control_points:
             cp.opacity = 1
@@ -551,9 +618,10 @@ class BaseMask(KVWidget):
                     cp.color = [1, 1, 1]  # 他のコントロールポイントは白色
         self.is_draw_mask = True
         self.refresh_control_points_for_overlay()
-        self.update_mask()
+        if redraw:
+            self.update_mask()
 
-    def show_center_control_point_only(self):
+    def show_center_control_point_only(self, redraw=True):
         self.opacity = 0.2
         for cp in self.control_points:
             if cp.is_center:
@@ -563,9 +631,10 @@ class BaseMask(KVWidget):
                 cp.opacity = 0  # 非表示
         self.is_draw_mask = False
         self.refresh_control_points_for_overlay()
-        self.update_mask()
+        if redraw:
+            self.update_mask()
 
-    def show_hidden(self, keep_overlay=False):
+    def show_hidden(self, keep_overlay=False, redraw=True):
         """マスクの CP 表示を隠す (別 Composit 所属マスク用、または Mesh Edit モード時)。
         効果自体は pipeline 側で反映され続ける。
         keep_overlay=True なら is_draw_mask を残して overlay 描画を継続する
@@ -576,43 +645,31 @@ class BaseMask(KVWidget):
         if keep_overlay:
             self.is_draw_mask = True
             self.refresh_control_points_for_overlay()
-            self.update_mask()
+            if redraw:
+                self.update_mask()
         else:
             self.is_draw_mask = False
             self.refresh_control_points_for_overlay()
 
     def update_visibility_for_active(self, active_mask, mesh_edit_active):
-        """active_mask と Composit 関係に応じて表示モードを切り替える。
-
-        - mesh_edit_active=True:
-          - active と同じ Composit のマスク: CP 非表示 + overlay 継続 (= 結果が見える)
-          - 別 Composit のマスク: 完全非表示
-        - mesh_edit_active=False:
-          - self が active_mask: show_all_control_points (フル表示)
-          - active と同じ Composit: show_center_control_point_only (中央 CP 薄く)
-          - 別 Composit: show_hidden
-        """
+        """active_mask と Composit 関係に応じて表示モードを切り替える。"""
         editor = self.editor
         if editor is None:
             return
         if mesh_edit_active:
             if active_mask is not None and editor._is_in_same_composit(self, active_mask):
-                self.show_hidden(keep_overlay=True)
+                self.show_hidden(keep_overlay=True, redraw=False)
             else:
-                self.show_hidden(keep_overlay=False)
+                self.show_hidden(keep_overlay=False, redraw=False)
             return
-        if active_mask is None:
-            if self is editor.active_mask:
-                self.show_all_control_points()
-            else:
-                self.show_center_control_point_only()
-            return
-        if self is active_mask:
-            self.show_all_control_points()
-        elif editor._is_in_same_composit(self, active_mask):
-            self.show_center_control_point_only()
+        policy = editor.mask_visibility_policy_for(self, active_mask)
+        if policy["control_points"] == "all":
+            self.show_all_control_points(redraw=False)
+        elif policy["control_points"] == "center":
+            self.show_center_control_point_only(redraw=False)
         else:
-            self.show_hidden()
+            self.show_hidden(keep_overlay=policy["overlay"], redraw=False)
+        self.is_draw_mask = bool(policy["overlay"])
 
     def is_center_click(self, touch):
         for cp in self.control_points:
@@ -882,6 +939,7 @@ class BaseMask(KVWidget):
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'),
+                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_quick_select'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius'),
                 effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
@@ -906,10 +964,16 @@ class BaseMask(KVWidget):
         
         return image
 
+    def _quick_select_switch_enabled(self):
+        return (
+            effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') == True
+            and effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_quick_select') == True
+        )
+
     def _apply_edge_refine(self, image, edge_refine_draw_strokes=None):
         if not self._edge_refine_enabled_for_mask():
             return image, None
-        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') != True:
+        if not self._quick_select_switch_enabled():
             return image, None
         mode = effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode')
         if not edge_refine.is_enabled(mode):
@@ -2506,7 +2570,7 @@ class FreeDrawMask(BaseMask):
 
         self.lines = []  # 複数の線を保持
         self.current_line = None
-        self.brush_size = 300
+        self.brush_size = self._draw_brush_size()
         self._stroke_history_started = False
         self._drag_base_mask = None
 
@@ -2629,14 +2693,7 @@ class FreeDrawMask(BaseMask):
             if self.editor.collide_point(*touch.pos):
                 # 描画中または消去中はブラシサイズを変更できない
                 if self.current_line is None:
-                    if touch.button == 'scrollup':
-                        self.brush_size = max(10, self.brush_size - 10)
-                    elif touch.button == 'scrolldown':
-                        self.brush_size = min(2000, self.brush_size + 10)
-                        
-                    self.update_brush_cursor(touch.pos[0], touch.pos[1])
-
-                    return super().on_touch_down(touch)
+                    return self._adjust_draw_brush_from_scroll(touch)
 
         was_initializing = self.initializing
         if not self._touch_in_draw_area(touch):
@@ -2658,7 +2715,8 @@ class FreeDrawMask(BaseMask):
 
         self._drag_base_mask = self._current_committed_preview_base()
 
-        hardness = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
+        self.brush_size = self._draw_brush_size()
+        hardness = self._draw_brush_hardness()
         self.current_line = FreeDrawMask.Line(is_erasing, self.brush_size, hardness)
         self.current_line.add_point(*self.editor.window_to_tcg(*touch.pos))
         self.editor.set_active_mask(self)
@@ -2724,13 +2782,14 @@ class FreeDrawMask(BaseMask):
         self.add_widget(cp_center)
 
     def update_brush_cursor(self, x, y):
+        self.brush_size = self._draw_brush_size()
         brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
         # 内側ハードゾーンの直径 = 外径 × hardness/100 (freedraw_raster の create_natural_brush
         # と同じ意味で、hardness=100 で同径、=0 で消失)
         try:
-            hardness = float(effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'))
+            hardness = self._draw_brush_hardness()
         except Exception:
             hardness = 100.0
         inner_size = max(0.0, brush_size * (hardness / 100.0))
@@ -2738,7 +2797,7 @@ class FreeDrawMask(BaseMask):
         self.brush_cursor_inner.ellipse = (inner_off, inner_off, inner_size, inner_size)
 
     def _edge_refine_preview_freeze_enabled(self):
-        if effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') != True:
+        if not self._quick_select_switch_enabled():
             return False
         mode = effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode')
         return edge_refine.is_enabled(mode)
@@ -2886,7 +2945,7 @@ class PolylineMask(BaseMask):
 
         self.polylines = []          # 確定済み polyline のリスト
         self.current_polyline = None # 描画中の polyline
-        self.brush_size = 300        # 線幅 (TCG)
+        self.brush_size = self._draw_brush_size()  # 線幅 (TCG)
         self._stroke_history_started = False
 
         # コントロールポイント描画状態
@@ -3063,12 +3122,7 @@ class PolylineMask(BaseMask):
         if touch.is_mouse_scrolling:
             if self.editor.collide_point(*touch.pos):
                 if self.current_polyline is None:
-                    if touch.button == 'scrollup':
-                        self.brush_size = max(2, self.brush_size - 10)
-                    elif touch.button == 'scrolldown':
-                        self.brush_size = min(2000, self.brush_size + 10)
-                    self.update_brush_cursor(touch.pos[0], touch.pos[1])
-                    return super().on_touch_down(touch)
+                    return self._adjust_draw_brush_from_scroll(touch)
 
         # 確定 polyline の頂点 ControlPoint クリックを最優先で処理する。
         # 描画中 (current_polyline is not None) はラバーバンドと衝突するので無効化。
@@ -3159,7 +3213,8 @@ class PolylineMask(BaseMask):
             get_history_ctrl().begin_history_layer_ctrl(
                 self.editor, "Update", self.editor.get_mask_list().index(self), None)
             self._stroke_history_started = True
-        hardness = effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness')
+        self.brush_size = self._draw_brush_size()
+        hardness = self._draw_brush_hardness()
         self.current_polyline = PolylineMask.Polyline(
             is_erasing=is_erasing,
             size=self.brush_size,
@@ -3352,12 +3407,13 @@ class PolylineMask(BaseMask):
 
     # ---- カーソル ----
     def update_brush_cursor(self, x, y):
+        self.brush_size = self._draw_brush_size()
         brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
         # 内側ハードゾーンの直径 = 外径 × hardness/100 (FreeDrawMask と同じ意味)
         try:
-            hardness = float(effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'))
+            hardness = self._draw_brush_hardness()
         except Exception:
             hardness = 100.0
         inner_size = max(0.0, brush_size * (hardness / 100.0))
@@ -3642,7 +3698,7 @@ class SegmentMask(BaseMask):
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
-        cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, invert)
+        cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, False)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
             # 描画
             cx, cy = center
@@ -3657,7 +3713,7 @@ class SegmentMask(BaseMask):
             # predict_sam3 に渡す box = [x, y, w, h]
             segment_mask = self._get_or_compute_image_mask_cache(
                 cache_key,
-                lambda: wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], invert),
+                lambda: wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], False),
                 "SegmentMask SAM3",
             )
             #segment_mask = self._draw_segment(original_image_size, [min_x, min_y, w, h])
@@ -3669,6 +3725,8 @@ class SegmentMask(BaseMask):
 
             # SegmentMask用のキャッシュ
             segment_mask = self.image_mask_cache
+            if invert:
+                segment_mask = 1.0 - segment_mask
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
@@ -4150,7 +4208,6 @@ class TargetTextMask(BaseMask):
         self.update_mask()
         
         self.editor._create_end_new_mask()
-        self.editor.created_mask = None
 
     def serialize(self):
         cx, cy = params.norm_param(self.effects_param, (self.center_x, self.center_y))
@@ -4225,12 +4282,12 @@ class TargetTextMask(BaseMask):
         segment_mask = None
 
         # _draw_segmentを呼び出さなければならない用
-        cache_key = cache_keys.target_text_cache_key(original_image_size, text, invert)
+        cache_key = cache_keys.target_text_cache_key(original_image_size, text, False)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
             # predict_sam3 に渡す box = [x, y, w, h]
             segment_mask = self._get_or_compute_image_mask_cache(
                 cache_key,
-                lambda: wait_processing(self._draw_segment, original_image_size, text, invert),
+                lambda: wait_processing(self._draw_segment, original_image_size, text, False),
                 "TargetTextMask SAM3",
             )
             #segment_mask = self._draw_segment(original_image_size, text)
@@ -4242,6 +4299,8 @@ class TargetTextMask(BaseMask):
 
             # SegmentMask用のキャッシュ
             segment_mask = self.image_mask_cache
+            if invert:
+                segment_mask = 1.0 - segment_mask
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
@@ -4281,9 +4340,14 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.rectangle = None
 
         self.created_mask = None
+        # 作成中マスクはまだ CompositMask.mask_list に未登録なので、
+        # mask_list 上の挿入位置から一時的に親 Composit を解決する。
+        self.created_mask_index = 0
         self._last_active_mask_id = None
         self._suppress_mask_overlay_draw = False
         self._skip_next_mask_overlay_refresh = False
+        self._mask_overlay_enabled = False
+        self._overlay_control_points_hidden = False
         self.texture_size = (0, 0)
 
         self.crop_image_rgb = None
@@ -4426,9 +4490,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             self._skip_next_mask_overlay_refresh = False
             _mask_geom_debug("refresh_active_mask_overlay skipped once")
             return
-        mask = self.get_active_mask()
-        if mask is not None and mask.is_draw_mask == True:
-            mask.update_mask()
+        if self._overlay_control_points_hidden or not self._mask_overlay_enabled:
+            return
+        mask = self.overlay_mask_for_active()
+        self._draw_overlay_mask(mask)
 
     def skip_next_mask_overlay_refresh(self, clear=True):
         self._skip_next_mask_overlay_refresh = True
@@ -4641,6 +4706,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self._remove_mask(mask)
 
     def set_draw_mask(self, is_draw_mask, refresh=True):
+        self._mask_overlay_enabled = bool(is_draw_mask)
         if is_draw_mask == False:
             if self.rectangle is not None:
                 try:
@@ -4648,6 +4714,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 except:
                     pass
                 self.rectangle = None
+            self.draw_mask_image(None)
         mask = self.get_active_mask()
         if mask is not None:
             mask.is_draw_mask = is_draw_mask
@@ -4670,7 +4737,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if mask is None:
             return None
         try:
-            return mask if mask.is_composit() else self.find_composit_mask(mask)
+            return self._mask_parent_for_visibility(mask)
         except Exception:
             return None
 
@@ -4690,6 +4757,30 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             except Exception:
                 logging.exception("request_mask_render_update: composit invalidate failed")
         return invalidated
+
+    def _refresh_child_mask_cache_for_overlay(self, mask, overlay_mask):
+        if mask is None or overlay_mask is None or mask is overlay_mask:
+            return
+        try:
+            if not overlay_mask.is_composit():
+                return
+            if self._mask_parent_for_visibility(mask) is not overlay_mask:
+                return
+            if mask.follows_mask_geometry():
+                mask.get_mask_image()
+            else:
+                self._call_with_image_only_matrix(mask.get_mask_image)
+        except Exception:
+            logging.exception("request_mask_render_update: child mask cache refresh failed")
+
+    def _draw_overlay_mask(self, overlay_mask):
+        if overlay_mask is None:
+            self.draw_mask_image(None)
+            return
+        try:
+            overlay_mask.draw_mask_to_fbo(True)
+        except Exception:
+            logging.exception("mask overlay draw failed")
 
     def request_mask_render_update(self, mask=None, reason="", structure_changed=False,
                                    refresh_visibility=True, redraw_overlay=True,
@@ -4712,15 +4803,18 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         if clear_overlay:
             self.draw_mask_image(None)
-        elif redraw_overlay:
-            overlay_mask = self.get_active_mask() or mask
+        elif redraw_overlay and self._mask_overlay_enabled:
+            overlay_mask = self.overlay_mask_for_active() or mask
             if overlay_mask is not None:
                 try:
-                    overlay_mask.update_mask()
+                    self._refresh_child_mask_cache_for_overlay(mask, overlay_mask)
+                    self._draw_overlay_mask(overlay_mask)
                 except Exception:
                     logging.exception("request_mask_render_update: overlay update failed")
             else:
                 self.draw_mask_image(None)
+        elif redraw_overlay:
+            self.draw_mask_image(None)
 
         if structure_changed:
             self.dispatch('on_structure_change')
@@ -4735,6 +4829,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         )
 
     def draw_mask_image(self, glayimg):
+        if self._overlay_control_points_hidden and glayimg is not None:
+            return
         if self.rectangle is not None:
             try:
                 self.mask_container.canvas.before.remove(self.rectangle)
@@ -4775,6 +4871,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         mask = self._create_mask(type, index)
         self.set_active_mask(None)
         self.created_mask = mask
+        self.created_mask_index = index
+        self._mask_overlay_enabled = True
         if self.root is not None:
             self.root.update_mask2_options_enabled()
 
@@ -4788,13 +4886,16 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         # CompositMaskなど初期化が不要な場合は即座に終了処理を行う
         if mask.initializing == False:
             self._create_end_new_mask()
-            self.created_mask = None
 
         return mask
 
     def _create_end_new_mask(self):
         mask = self.created_mask
+        if mask is None:
+            return
         self.set_active_mask(mask)
+        self.created_mask = None
+        self.created_mask_index = 0
         self.request_mask_render_update(
             mask,
             reason="create_end",
@@ -4857,7 +4958,6 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if self.created_mask is not None:
             if self.created_mask.initializing == False:
                 self._create_end_new_mask()
-                self.created_mask = None
 
         return result
 
@@ -4977,6 +5077,79 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             redraw_pipeline=True,
             clear_overlay=True,
         )
+
+    @staticmethod
+    def _cache_bytes(value, seen=None):
+        if seen is None:
+            seen = set()
+        if value is None:
+            return 0
+        value_id = id(value)
+        if value_id in seen:
+            return 0
+        seen.add(value_id)
+        if isinstance(value, np.ndarray):
+            return int(value.nbytes)
+        if isinstance(value, dict):
+            return sum(MaskEditor2._cache_bytes(v, seen) for v in value.values())
+        if isinstance(value, (list, tuple, set)):
+            return sum(MaskEditor2._cache_bytes(v, seen) for v in value)
+        return 0
+
+    def _iter_masks_for_memory(self):
+        seen = set()
+
+        def visit(mask):
+            if mask is None or id(mask) in seen:
+                return
+            seen.add(id(mask))
+            yield mask
+            for child, _maskop in getattr(mask, "mask_list", []) or []:
+                yield from visit(child)
+
+        for mask in list(self.mask_list):
+            yield from visit(mask)
+
+    def clear_ai_intermediate_caches(self):
+        ai_mask_types = (SegmentMask, TargetTextMask, DepthMapMask, FaceMask)
+        cache_attrs = (
+            "image_mask_cache",
+            "segment_mask_cache",
+            "depth_map_mask_cache",
+            "faces_mask_cache",
+        )
+        key_attrs = (
+            "image_mask_cache_hash",
+            "image_mask_cache_key",
+            "segment_mask_cache_hash",
+            "depth_map_mask_cache_hash",
+            "faces_mask_cache_hash",
+        )
+        removed = 0
+        removed_bytes = 0
+        seen_values = set()
+        for mask in self._iter_masks_for_memory():
+            if not isinstance(mask, ai_mask_types):
+                continue
+            for attr in cache_attrs:
+                if not hasattr(mask, attr):
+                    continue
+                value = getattr(mask, attr)
+                if value is None:
+                    continue
+                removed += 1
+                removed_bytes += self._cache_bytes(value, seen_values)
+                setattr(mask, attr, None)
+            for attr in key_attrs:
+                if hasattr(mask, attr):
+                    setattr(mask, attr, None)
+        if removed:
+            logging.info(
+                "MaskEditor2 cleared AI intermediate caches entries=%d bytes=%d",
+                removed,
+                removed_bytes,
+            )
+        return {"mask2_entries": removed, "mask2_bytes": removed_bytes}
 
     def find_composit_mask(self, mask, index=0):
         # 自分の親（コンポジット）を探す
@@ -5181,6 +5354,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         - Scale 効果は除外 (= 軸の "向き" だけを伝える)
         - flip 軸線そのものが mirror axis (flip H なら Y軸線、flip V なら X軸線が mirror)
         """
+        if self._overlay_control_points_hidden:
+            self.clear_mask_geom_axes()
+            return
         if not self._is_geometry_tab_active():
             self.clear_mask_geom_axes()
             return
@@ -5238,11 +5414,59 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if mask is other:
             return True
         try:
-            def _parent(m):
-                return m if m.is_composit() else self.find_composit_mask(m)
-            return _parent(mask) is _parent(other)
+            return self._mask_parent_for_visibility(mask) is self._mask_parent_for_visibility(other)
         except Exception:
             return False
+
+    def _mask_parent_for_visibility(self, mask):
+        if mask is None:
+            return None
+        try:
+            if mask.is_composit():
+                return mask
+            if mask is self.created_mask:
+                return self.find_composit_mask(mask, self.created_mask_index)
+            return self.find_composit_mask(mask)
+        except Exception:
+            return None
+
+    def visibility_reference_mask(self):
+        return self.created_mask if self.created_mask is not None else self.get_active_mask()
+
+    def overlay_mask_for_active(self, active_mask=None):
+        """現在の選択で描くべき overlay mask を返す。
+
+        - Composit 選択時: Composit の合成 overlay
+        - 子マスク選択時: 親 Composit の合成 overlay
+        """
+        active = active_mask if active_mask is not None else self.visibility_reference_mask()
+        if active is None:
+            return None
+        if active.is_composit():
+            return active
+        return self._mask_parent_for_visibility(active)
+
+    def mask_visibility_policy_for(self, mask, active_mask=None):
+        """mask の CP/overlay 表示方針を返す。
+
+        overlay は最終的に overlay_mask_for_active() の1枚を描くが、各 mask の
+        is_draw_mask も合わせておくことで直接 update される経路も破綻しにくくする。
+        """
+        active = active_mask if active_mask is not None else self.visibility_reference_mask()
+        if mask is None or active is None:
+            return {"control_points": "hidden", "overlay": False}
+
+        mask_parent = self._mask_parent_for_visibility(mask)
+        active_parent = self._mask_parent_for_visibility(active)
+        if mask_parent is None or active_parent is None or mask_parent is not active_parent:
+            return {"control_points": "hidden", "overlay": False}
+
+        if active.is_composit():
+            if mask is active:
+                return {"control_points": "hidden", "overlay": True}
+            return {"control_points": "all", "overlay": True}
+
+        return {"control_points": "all", "overlay": True}
 
     def _is_mesh_edit_active(self):
         """Mesh Edit モードが有効か (main MainWidget 側のフラグを参照)。"""
@@ -5260,9 +5484,12 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def refresh_mask_visibility(self, mesh_edit_active=None):
         """全 mask の表示モードを refresh する。set_active_mask の最後や
         Mesh Edit モード切替時に呼ばれる。"""
+        if self._overlay_control_points_hidden:
+            self._hide_overlay_and_control_points()
+            return
         if mesh_edit_active is None:
             mesh_edit_active = self._is_mesh_edit_active()
-        active = self.active_mask
+        active = self.visibility_reference_mask()
         for m in self.mask_list:
             try:
                 m.update_visibility_for_active(active, mesh_edit_active)
@@ -5274,6 +5501,47 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                         child.update_visibility_for_active(active, mesh_edit_active)
                     except Exception:
                         logging.exception("refresh_mask_visibility failed for child mask")
+        if not self._mask_overlay_enabled:
+            for mask in self._iter_visibility_masks():
+                try:
+                    mask.is_draw_mask = False
+                except Exception:
+                    logging.exception("refresh_mask_visibility failed to disable overlay flag")
+            self.draw_mask_image(None)
+        elif not mesh_edit_active:
+            overlay_mask = self.overlay_mask_for_active(active)
+            self._draw_overlay_mask(overlay_mask)
+
+    def _iter_visibility_masks(self):
+        for mask in self.mask_list:
+            yield mask
+            if mask.is_composit():
+                for child, _op in getattr(mask, 'mask_list', []):
+                    yield child
+
+    def _hide_overlay_and_control_points(self):
+        for mask in self._iter_visibility_masks():
+            try:
+                mask.opacity = 0
+                for cp in getattr(mask, 'control_points', []):
+                    cp.opacity = 0
+                mask.is_draw_mask = False
+                mask.refresh_control_points_for_overlay()
+            except Exception:
+                logging.exception("hide_overlay_and_control_points failed")
+        self.draw_mask_image(None)
+        self.clear_mask_geom_axes()
+
+    def set_overlay_control_points_hidden(self, hidden):
+        hidden = bool(hidden)
+        if self._overlay_control_points_hidden == hidden:
+            return
+        self._overlay_control_points_hidden = hidden
+        if hidden:
+            self._hide_overlay_and_control_points()
+            return
+        self.refresh_mask_visibility()
+        self._set_active_composit_matrix(redraw_mask=True)
 
     def set_active_mask(self, mask):
         if self.active_mask is mask:
@@ -5287,6 +5555,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             self.active_mask.end()
 
         self.active_mask = mask
+        self._mask_overlay_enabled = mask is not None
         if mask is not None:
             self._last_active_mask_id = mask.mask_id
             mask.active = True

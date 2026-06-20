@@ -1,16 +1,27 @@
-
+import gc
 import logging
 import os
 import numpy as np
 import cv2
 
 def empty_cache():
-    import torch
+    try:
+        import torch
+    except Exception:
+        gc.collect()
+        return
 
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache() # Cuda用
-    elif torch.backends.mps.is_available():
-        torch.mps.empty_cache()  # MPSバックエンド用
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()  # Cuda用
+    except Exception:
+        logging.exception("CUDA cache release failed")
+    try:
+        if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()  # MPSバックエンド用
+    except Exception:
+        logging.exception("MPS cache release failed")
+    gc.collect()
 
 # log1p による HDR 的レンジ圧縮（SCUNet / DemosaicNet 等で k=8 を共有）
 LOG1P_TONEMAP_K_DEFAULT = 8.0

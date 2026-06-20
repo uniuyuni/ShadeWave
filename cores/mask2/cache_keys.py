@@ -39,7 +39,7 @@ def make_cache_key(kind: str, *parts: Any):
 
 
 def segment_cache_key(original_image_size, center, corner, invert):
-    return make_cache_key("segment", original_image_size, center, corner, bool(invert))
+    return make_cache_key("segment", original_image_size, center, corner)
 
 
 def depth_cache_key(original_image_size, algorithm_version):
@@ -51,4 +51,4 @@ def face_cache_key(original_image_size, exclude_names):
 
 
 def target_text_cache_key(original_image_size, text, invert):
-    return make_cache_key("target_text", original_image_size, str(text), bool(invert))
+    return make_cache_key("target_text", original_image_size, str(text))

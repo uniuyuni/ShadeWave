@@ -639,7 +639,7 @@ class HeadlessSegmentMask:
             invert = False
         segment_mask = None
 
-        cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, invert)
+        cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, False)
         if (
             self.image_mask_cache is None or self.image_mask_cache_key != cache_key
         ) and not self.initializing:
@@ -652,7 +652,7 @@ class HeadlessSegmentMask:
             h = abs(cy - cry)
             img = self.ctx.get_original_image_rgb()
             segment_mask = inference_runtime.predict_sam3_bbox(
-                img, [min_x, min_y, w, h], invert
+                img, [min_x, min_y, w, h], False
             )
             self.image_mask_cache = segment_mask
 
@@ -668,6 +668,8 @@ class HeadlessSegmentMask:
         ):
             self.segment_mask_cache_hash = newhash2
             segment_mask = self.image_mask_cache
+            if invert:
+                segment_mask = 1.0 - segment_mask
             _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             segment_mask = core.rotation(
                 segment_mask,
@@ -952,13 +954,13 @@ class HeadlessTargetTextMask:
         text = self.target_text
         segment_mask = None
 
-        cache_key = cache_keys.target_text_cache_key(original_image_size, text, invert)
+        cache_key = cache_keys.target_text_cache_key(original_image_size, text, False)
         if (
             self.image_mask_cache is None or self.image_mask_cache_key != cache_key
         ) and not self.initializing:
             self.image_mask_cache_key = cache_key
             img = self.ctx.get_original_image_rgb()
-            segment_mask = inference_runtime.predict_sam3_text(img, text, invert)
+            segment_mask = inference_runtime.predict_sam3_text(img, text, False)
             self.image_mask_cache = segment_mask
 
         newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
@@ -973,6 +975,8 @@ class HeadlessTargetTextMask:
         ):
             self.segment_mask_cache_hash = newhash2
             segment_mask = self.image_mask_cache
+            if invert:
+                segment_mask = 1.0 - segment_mask
             _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             segment_mask = core.rotation(
                 segment_mask,

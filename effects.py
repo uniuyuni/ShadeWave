@@ -2219,6 +2219,7 @@ class AINoiseReductonEffect(Effect):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.execution_mode = ExecutionMode.ASYNC
+        self.keep_async_result = False
 
     def get_param_dict(self, param):
         param_dict = super().get_param_dict(param)
@@ -4049,8 +4050,10 @@ class Mask2Effect(Effect):
             'mask2_blur': 0,
             'mask2_open_space': 0,
             'mask2_close_space': 0,
+            'mask2_freedraw_brush_size': 300,
             'mask2_freedraw_brush_hardness': 100,
             'mask2_polyline_fill': True,
+            'switch_mask2_quick_select': True,
             'mask2_edge_refine_mode': 'Off',
             'mask2_edge_refine_radius': 0,
             'mask2_edge_refine_strength': 0,
@@ -4153,8 +4156,16 @@ class Mask2Effect(Effect):
                     'mask2_blur',
                     'mask2_open_space',
                     'mask2_close_space',
+                    'mask2_freedraw_brush_size',
                     'mask2_freedraw_brush_hardness',
                     'mask2_polyline_fill',
+                )
+            }
+        if subname == 'mask2_quick_select':
+            return {
+                key: param_dict[key]
+                for key in (
+                    'switch_mask2_quick_select',
                     'mask2_edge_refine_mode',
                     'mask2_edge_refine_radius',
                     'mask2_edge_refine_strength',
@@ -4222,8 +4233,10 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_blur"].set_slider_value(self._get_param(param, 'mask2_blur'))
         widget.ids["slider_mask2_open_space"].set_slider_value(self._get_param(param, 'mask2_open_space'))
         widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
+        widget.ids["slider_mask2_freedraw_brush_size"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_size'))
         widget.ids["slider_mask2_freedraw_brush_hardness"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_hardness'))
         widget.ids["checkbox_mask2_polyline_fill"].active = self._get_param(param, 'mask2_polyline_fill')
+        widget.ids["switch_mask2_quick_select"].active = self._get_param(param, 'switch_mask2_quick_select')
         edge_refine_mode = self._get_param(param, 'mask2_edge_refine_mode')
         if edge_refine_mode in ('Refine', 'Grow', 'Grow + Islands', 'Lock'):
             edge_refine_mode = 'Quick Select'
@@ -4286,8 +4299,10 @@ class Mask2Effect(Effect):
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
         param['mask2_open_space'] = widget.ids["slider_mask2_open_space"].value
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
+        param['mask2_freedraw_brush_size'] = widget.ids["slider_mask2_freedraw_brush_size"].value
         param['mask2_freedraw_brush_hardness'] = widget.ids["slider_mask2_freedraw_brush_hardness"].value
         param['mask2_polyline_fill'] = widget.ids["checkbox_mask2_polyline_fill"].active
+        param['switch_mask2_quick_select'] = widget.ids["switch_mask2_quick_select"].active
         param['mask2_edge_refine_mode'] = widget.ids["spinner_mask2_edge_refine_mode"].text
         param['mask2_edge_refine_radius'] = widget.ids["slider_mask2_edge_refine_radius"].value
         param['mask2_edge_refine_strength'] = widget.ids["slider_mask2_edge_refine_strength"].value
@@ -4415,35 +4430,45 @@ class MaskGeometryEffect(Effect):
 class GrainEffect(Effect):
     param_bindings = (
         SwitchBinding('switch_grain', True, "switch_grain"),
-        SliderBinding('grain_intensity', 0, "slider_grain_intensity"),
+        SliderBinding('grain_amount', 0, "slider_grain_amount"),
         SliderBinding('grain_size', 0, "slider_grain_size"),
-        SliderBinding('grain_blue_bias', 0, "slider_grain_blue_bias"),
-        SliderBinding('grain_shadow_boost', 0, "slider_grain_shadow_boost"),
-        SliderBinding('grain_color_noise_ratio', 0, "slider_grain_color_noise_ratio"),
+        SliderBinding('grain_roughness', 50, "slider_grain_roughness"),
+        SliderBinding('grain_shadow', 60, "slider_grain_shadow"),
+        SliderBinding('grain_highlight', 30, "slider_grain_highlight"),
+        SliderBinding('grain_color', 10, "slider_grain_color"),
+        SliderBinding('grain_seed', 0, "slider_grain_seed"),
     )
 
     def make_diff(self, rgb, param, efconfig):
         switch_grain = self._get_param(param, 'switch_grain')
-        gi = self._get_param(param, 'grain_intensity')
+        amount = self._get_param(param, 'grain_amount')
         gs = self._get_param(param, 'grain_size')
-        gbb = self._get_param(param, 'grain_blue_bias')
-        gsb = self._get_param(param, 'grain_shadow_boost')
-        gcnr = self._get_param(param, 'grain_color_noise_ratio')
-        if switch_grain == False or gi == 0:
+        roughness = self._get_param(param, 'grain_roughness')
+        shadow = self._get_param(param, 'grain_shadow')
+        highlight = self._get_param(param, 'grain_highlight')
+        color = self._get_param(param, 'grain_color')
+        seed = self._get_param(param, 'grain_seed')
+        if switch_grain == False or amount == 0:
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((gi, gs, gbb, gsb, gcnr))
+            rgb = core.type_convert(rgb, np.ndarray)
+            param_hash = hash((amount, gs, roughness, shadow, highlight, color, seed, rgb.shape, efconfig.resolution_scale))
             if self.hash != param_hash:
                 self.hash = param_hash
 
-                rgb = core.type_convert(rgb, np.ndarray)
-                gi = gi / 100.0                 # 0.0-1.0
-                gs = gs / 100.0 * 4.0 + 1.0     # 1.0-5.0
-                gbb = gbb / 100.0 + 1.0         # 1.0-2.0
-                gsb = gsb / 100.0 * 1.5 + 0.5   # 0.5-2.0          
-                gcnr = gcnr / 100.0             # 0.0-1.0
-                self.diff = core.apply_film_grain(rgb, gi * efconfig.disp_info[4], gs * efconfig.resolution_scale , gbb, gsb, gcnr)
+                size_px = 0.60 + 6.40 * ((float(gs) / 100.0) ** 1.4)
+                size_px *= max(0.35, float(efconfig.resolution_scale))
+                self.diff = core.apply_film_grain(
+                    rgb,
+                    amount=amount,
+                    grain_size=size_px,
+                    roughness=roughness,
+                    shadow=shadow,
+                    highlight=highlight,
+                    color=color,
+                    seed=seed,
+                )
         
         return self.diff
     
@@ -4551,8 +4576,8 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv3['mask_geometry'] = MaskGeometryEffect()
 
     lv4 = effects[4]
-    lv4['grain'] = GrainEffect()
     lv4['vignette'] = VignetteEffect()
+    lv4['grain'] = GrainEffect()
 
     return effects
 

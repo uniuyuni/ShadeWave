@@ -70,9 +70,11 @@ class PipelinePreviewEffectConfigTest(unittest.TestCase):
             pipeline._DEBUG_PIPELINE_STATS = old_debug
 
         self.assertIn("switch_grain=True(default)", grain)
-        self.assertIn("grain_intensity=0(default)", grain)
-        self.assertIn("grain_color_noise_ratio=0(default)", grain)
+        self.assertIn("grain_amount=0(default)", grain)
+        self.assertIn("grain_color=10(default)", grain)
+        self.assertIn("grain_seed=0(default)", grain)
         self.assertNotIn("grain_radius", grain)
+        self.assertNotIn("grain_intensity", grain)
         self.assertIn("switch_vignette=True(default)", vignette)
         self.assertIn("vignette_radius_percent=80(default)", vignette)
         self.assertNotIn("vignette_radius=", vignette)

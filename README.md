@@ -105,6 +105,7 @@ Some tests and runtime paths depend on native libraries, external repositories, 
 | Shortcut | Action |
 | --- | --- |
 | `0` | Toggle preview zoom at the mouse position, or the preview center when the mouse is outside the image |
+| `M` | Temporarily hide the mask overlay |
 | `Space` hold | Temporary preview drag/fast-display mode; release to redraw the normal preview |
 | `Cmd/Ctrl + S` | Save the current sidecar parameters |
 | `Cmd/Ctrl + C` | Copy current effect settings |

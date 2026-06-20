@@ -509,7 +509,18 @@ class FileCacheSystem:
     def enforce_memory_policy(self, owner=None, *, reason="check"):
         effects = getattr(owner, "primary_effects", None) if owner is not None else None
         processor = getattr(owner, "processor", None) if owner is not None else None
-        result = memory_manager.enforce_memory_policy(effects, processor, reason=reason)
+        primary_param = getattr(owner, "primary_param", None) if owner is not None else None
+        mask_editor2 = None
+        ids = getattr(owner, "ids", None) if owner is not None else None
+        if ids is not None:
+            try:
+                mask_editor2 = ids.get("mask_editor2")
+            except Exception:
+                try:
+                    mask_editor2 = ids["mask_editor2"]
+                except Exception:
+                    mask_editor2 = None
+        result = memory_manager.enforce_memory_policy(effects, processor, primary_param, mask_editor2, reason=reason)
         if result.get("cleared"):
             pressured, pressure_reason = memory_manager.memory_pressure()
             if pressured:

@@ -27,3 +27,6 @@ if getattr(sys, "frozen", False) and sys.platform == "darwin":
     # Match the app's intended Quick Select v4 defaults from launch.json.
     os.environ.setdefault("QS_DRAW_V4", "1")
     os.environ.setdefault("QS_V4_EDGE_SNAP", "1")
+
+    # Use the Core ML SAM3 backbone in packaged macOS builds.
+    os.environ.setdefault("PLATYPUS_SAM3_COREML_BACKBONE", "1")

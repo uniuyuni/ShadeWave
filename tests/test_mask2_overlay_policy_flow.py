@@ -25,7 +25,7 @@ class Mask2OverlayPolicyFlowTest(unittest.TestCase):
 
         self.assertIn('reason == "tab_sync"', source)
         self.assertIn('return "preserve"', source)
-        self.assertIn('mask2_group in ("mask2", "mask_geometry")', source)
+        self.assertIn('mask2_group in ("mask2", "mask2_quick_select", "mask_geometry")', source)
         self.assertIn('return "show"', source)
         self.assertIn('mask2_group == "mask2_draw_effects"', source)
         self.assertIn('return "hide"', source)

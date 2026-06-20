@@ -105,6 +105,7 @@ if __name__ == '__main__':
     from kivy.uix.textinput import TextInput as KVTextInput
     from kivy.metrics import dp as kvdp
 
+    import gc
     import threading
     import threads
     import os
@@ -453,6 +454,59 @@ if __name__ == '__main__':
                 self.cache_system.enforce_memory_policy(owner=self, reason="periodic")
             except Exception:
                 logging.exception("memory pressure check failed")
+
+        def _mask_editor2_for_memory(self):
+            try:
+                return self.ids.get("mask_editor2")
+            except Exception:
+                try:
+                    return self.ids["mask_editor2"]
+                except Exception:
+                    return None
+
+        def force_release_memory_caches(self, reason="manual_shortcut"):
+            if not threads.primary_param_lock.acquire(blocking=False):
+                logging.info("manual memory release skipped reason=%s primary_param_lock_busy=True", reason)
+                return {"skipped": True, "reason": "primary_param_lock_busy"}
+            try:
+                mask_editor2 = self._mask_editor2_for_memory()
+                result = memory_manager.clear_effect_intermediate_caches(
+                    self.primary_effects,
+                    self.processor,
+                    self.primary_param,
+                    mask_editor2,
+                    reason=reason,
+                    clear_mask2_results=False,
+                    release_ai_models=True,
+                )
+                if self.cache_system is not None:
+                    keep_file_path = getattr(self.imgset, "file_path", None) if self.imgset is not None else None
+                    result["final_display_evicted"] = self.cache_system.clear_final_display_cache(
+                        keep_file_path=keep_file_path,
+                    )
+                pending = self._pending_final_display_cache is not None
+                self._pending_final_display_cache = None
+                self.crop_image = None
+                gc.collect()
+                logging.info(
+                    "manual memory release reason=%s result=%s pending_final_display_cleared=%s",
+                    reason,
+                    result,
+                    pending,
+                )
+                return result
+            finally:
+                threads.primary_param_lock.release()
+
+        def _is_force_memory_release_shortcut(self, key, codepoint, modifier):
+            modifiers = set(modifier or [])
+            if "shift" not in modifiers:
+                return False
+            if "meta" not in modifiers and "ctrl" not in modifiers:
+                return False
+            if key in (8, 127, 266):
+                return True
+            return (codepoint or "") in ("\x08", "\x7f")
 
         def _log_display_ready_memory(self, file_path, stage, frame_version, img_shape, display_shape):
             if not memory_manager.debug_enabled():
@@ -1616,6 +1670,7 @@ if __name__ == '__main__':
                 self._sticky_mask2_edge_refine = {
                     k: effects.Mask2Effect.get_param(current_param, k)
                     for k in (
+                        'switch_mask2_quick_select',
                         'mask2_edge_refine_mode',
                         'mask2_edge_refine_radius',
                         'mask2_edge_refine_strength',
@@ -1733,7 +1788,7 @@ if __name__ == '__main__':
             effect_list = effect if isinstance(effect, list) else [effect] if effect is not None else []
             mask2_group = subname or (effect_list[0] if len(effect_list) == 1 else None)
 
-            if lv == 3 and mask2_group in ("mask2", "mask_geometry"):
+            if lv == 3 and mask2_group in ("mask2", "mask2_quick_select", "mask_geometry"):
                 return "show"
             if lv == 3 and mask2_group == "mask2_draw_effects":
                 return "hide"
@@ -3314,6 +3369,7 @@ if __name__ == '__main__':
                     'slider_mask2_blur',
                     'slider_mask2_open_space',
                     'slider_mask2_close_space',
+                    'switch_mask2_quick_select',
                     'spinner_mask2_edge_refine_mode',
                     'slider_mask2_edge_refine_radius',
                     'slider_mask2_edge_refine_strength',
@@ -4140,6 +4196,18 @@ if __name__ == '__main__':
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             #print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
 
+            if self._is_force_memory_release_shortcut(key, codepoint, modifier):
+                if not self._text_input_has_focus():
+                    self.force_release_memory_caches(reason="manual_shortcut")
+                    return True
+                return False
+
+            if (codepoint or "").lower() == 'm' or key == 109:
+                if not self._text_input_has_focus():
+                    self.ids['mask_editor2'].set_overlay_control_points_hidden(True)
+                    return True
+                return False
+
             if codepoint == '0' or key == 48:
                 if not self._text_input_has_focus():
                     return self._zoom_preview_from_keyboard()
@@ -4177,6 +4245,10 @@ if __name__ == '__main__':
                 return True
 
         def on_key_up(self, window, key, *args):
+            if key == 109:
+                self.ids['mask_editor2'].set_overlay_control_points_hidden(False)
+                return True
+
             if key == 32:
                 self.is_press_space = False
                 self.sync_draw_image_and_crop(self.imgset)

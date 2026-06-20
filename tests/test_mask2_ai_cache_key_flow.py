@@ -21,6 +21,15 @@ class Mask2AICacheKeyFlowTest(unittest.TestCase):
         unpacked = msgpack.unpackb(packed, raw=False)
         self.assertEqual(key1, unpacked["key"])
 
+    def test_ai_inference_keys_ignore_invert(self):
+        segment_key = cache_keys.segment_cache_key((4000, 3000), (10.0, 20.0), (30.0, 40.0), False)
+        segment_key_inverted = cache_keys.segment_cache_key((4000, 3000), (10.0, 20.0), (30.0, 40.0), True)
+        text_key = cache_keys.target_text_cache_key((4000, 3000), "person", False)
+        text_key_inverted = cache_keys.target_text_cache_key((4000, 3000), "person", True)
+
+        self.assertEqual(segment_key, segment_key_inverted)
+        self.assertEqual(text_key, text_key_inverted)
+
     def test_face_key_uses_serializable_lists_not_tuples(self):
         key = cache_keys.face_cache_key((6000, 4000), ("rb", "lb", "nose"))
 

@@ -533,7 +533,6 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Reset"
-                        background_color: dark_blue if self.state == 'down' else [0.12, 0.13, 0.16, 0.92]
                         disabled: root.image_loaded == False
                         on_press: root.begin_history_reset_all()
                         on_release:
@@ -2524,8 +2523,8 @@
                                     on_release: root.end_history_effect_ctrl(4, 'grain')
 
                                 ParamSlider:
-                                    id: slider_grain_intensity
-                                    text: "Intensity"
+                                    id: slider_grain_amount
+                                    text: "Amount"
                                     min: 0
                                     max: 100
                                     value: 0
@@ -2544,30 +2543,50 @@
                                     on_before_edit: root.begin_history_effect_ctrl(4, 'grain')
                                     on_after_edit: root.end_history_effect_ctrl(4, 'grain')
                                 ParamSlider:
-                                    id: slider_grain_blue_bias
-                                    text: "Blue bias"
+                                    id: slider_grain_roughness
+                                    text: "Roughness"
                                     min: 0
                                     max: 100
-                                    value: 0
+                                    value: 50
                                     step: 1
                                     on_slider: root.apply_effects_lv(4, 'grain')
                                     on_before_edit: root.begin_history_effect_ctrl(4, 'grain')
                                     on_after_edit: root.end_history_effect_ctrl(4, 'grain')
                                 ParamSlider:
-                                    id: slider_grain_shadow_boost
-                                    text: "Shadow boost"
+                                    id: slider_grain_shadow
+                                    text: "Shadow"
                                     min: 0
                                     max: 100
-                                    value: 0
+                                    value: 60
                                     step: 1
                                     on_slider: root.apply_effects_lv(4, 'grain')
                                     on_before_edit: root.begin_history_effect_ctrl(4, 'grain')
                                     on_after_edit: root.end_history_effect_ctrl(4, 'grain')
                                 ParamSlider:
-                                    id: slider_grain_color_noise_ratio
-                                    text: "Color noise"
+                                    id: slider_grain_highlight
+                                    text: "Highlight"
                                     min: 0
                                     max: 100
+                                    value: 30
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(4, 'grain')
+                                    on_before_edit: root.begin_history_effect_ctrl(4, 'grain')
+                                    on_after_edit: root.end_history_effect_ctrl(4, 'grain')
+                                ParamSlider:
+                                    id: slider_grain_color
+                                    text: "Color"
+                                    min: 0
+                                    max: 100
+                                    value: 10
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(4, 'grain')
+                                    on_before_edit: root.begin_history_effect_ctrl(4, 'grain')
+                                    on_after_edit: root.end_history_effect_ctrl(4, 'grain')
+                                ParamSlider:
+                                    id: slider_grain_seed
+                                    text: "Seed"
+                                    min: 0
+                                    max: 9999
                                     value: 0
                                     step: 1
                                     on_slider: root.apply_effects_lv(4, 'grain')
@@ -3501,6 +3520,17 @@
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
                                 ParamSlider:
+                                    id: slider_mask2_freedraw_brush_size
+                                    text: "Brush Size"
+                                    min: 2
+                                    max: 2000
+                                    value: 300
+                                    step: 10
+                                    on_slider: root.apply_effects_lv(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                ParamSlider:
                                     id: slider_mask2_freedraw_brush_hardness
                                     text: "Brush Hardness"
                                     min: 0
@@ -3536,31 +3566,39 @@
 
                                 VSeparator:
 
+                                HeadLabel:
+                                    id: switch_mask2_quick_select
+                                    text: " Quick Select"
+                                    on_press: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
+                                    on_active: root.apply_effects_lv(3, 'mask2', subname='mask2_quick_select')
+                                    on_release: root.end_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
+
                                 ParamBoxLayout:
                                     ParamLabel:
-                                        text: "Quick"
+                                        text: "Mode"
                                     VSpacer:
                                         size_hint_x: 0.1
                                     ParamSpinner:
                                         id: spinner_mask2_edge_refine_mode
                                         values: [ 'Off', 'Quick Select' ]
                                         on_value:
-                                            root.begin_history_effect_ctrl(3, 'mask2')
+                                            root.begin_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                             if self.text == 'Quick Select': switch_mask2_options.active = True
-                                            root.apply_effects_lv(3, 'mask2')
-                                            root.end_history_effect_ctrl(3, 'mask2')
+                                            if self.text == 'Quick Select': switch_mask2_quick_select.active = True
+                                            root.apply_effects_lv(3, 'mask2', subname='mask2_quick_select')
+                                            root.end_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
 
                                 ParamSlider:
                                     id: slider_mask2_edge_refine_radius
-                                    text: "Quick Radius"
+                                    text: "Radius"
                                     min: -200
                                     max: 200
                                     value: 0
                                     step: 1
                                     on_slider: root.apply_mask2_edge_refine_slider()
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                     on_after_edit:
-                                        root.end_history_effect_ctrl(3, 'mask2')
+                                        root.end_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                         root.apply_mask2_edge_refine_slider(settle=True)
 
                                 ParamSlider:
@@ -3572,9 +3610,9 @@
                                     step: 0.01
                                     for_float: True
                                     on_slider: root.apply_mask2_edge_refine_slider()
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                     on_after_edit:
-                                        root.end_history_effect_ctrl(3, 'mask2')
+                                        root.end_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                         root.apply_mask2_edge_refine_slider(settle=True)
 
                                 ParamSlider:
@@ -3586,9 +3624,9 @@
                                     step: 0.1
                                     for_float: True
                                     on_slider: root.apply_mask2_edge_refine_slider()
-                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                     on_after_edit:
-                                        root.end_history_effect_ctrl(3, 'mask2')
+                                        root.end_history_effect_ctrl(3, 'mask2', 'mask2_quick_select')
                                         root.apply_mask2_edge_refine_slider(settle=True)
 
                                 VSeparator:

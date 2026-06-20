@@ -63,6 +63,7 @@ BASE_SWITCH_TARGETS = {
     "switch_mask2_lum": (3, "mask2", "mask2_lum"),
     "switch_mask2_sat": (3, "mask2", "mask2_sat"),
     "switch_mask2_options": (3, "mask2", "mask2_options"),
+    "switch_mask2_quick_select": (3, "mask2", "mask2_quick_select"),
     "switch_mask2_face": (3, "mask2", "mask2_face"),
     "switch_distortion": (1, "distortion", None),
 }

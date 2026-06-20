@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
@@ -10,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import effects
 from async_worker import AsyncWorker
+from enums import EffectMode, PipelineStatus
 from effects import InpaintDiff, InpaintEffect, _ai_noise_blend_raw
 
 
@@ -77,6 +79,34 @@ class AsyncInpaintFlowTest(unittest.TestCase):
 
         self.assertIs(base, _ai_noise_blend_raw(raw, base, 0))
         self.assertIs(raw, _ai_noise_blend_raw(raw, base, 100))
+
+    def test_ai_noise_async_result_is_discarded_after_cache_hit(self):
+        effect = effects.AINoiseReductonEffect()
+        raw = np.ones((2, 2, 3), dtype=np.float32)
+        discarded = []
+
+        class Processor:
+            def get_result(self, effect_name, param_hash):
+                return {"status": "COMPLETE", "result": raw}
+
+            def discard_result(self, effect_name, param_hash):
+                discarded.append((effect_name, param_hash))
+
+        efconfig = SimpleNamespace(
+            processor=Processor(),
+            mode=EffectMode.PREVIEW,
+            upstream_hash="upstream",
+            upstream_status=PipelineStatus.COMPLETE,
+            layer_status=PipelineStatus.COMPLETE,
+        )
+
+        handled, result = effect.try_async_execution(raw, {}, efconfig, "param")
+
+        self.assertTrue(handled)
+        self.assertIs(result, raw)
+        self.assertFalse(effect.keep_async_result)
+        self.assertEqual(1, len(discarded))
+        self.assertEqual("AINoiseReductonEffect", discarded[0][0])
 
 
 if __name__ == "__main__":
