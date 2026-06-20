@@ -693,7 +693,7 @@ previewとexportでMask2位置が一致するための条件:
 | --- | --- | --- |
 | lv0 | loading_wait, ai_noise_reduction, remove_chromatic_aberration, lens_modifier, subpixel_shift, exposure_fusion_debevec, inpaint, patchmatch_inpaint, cross_filter, color_match, geometry, crop | ロード待ち、重い復元、RAW/幾何、crop前処理。 |
 | lv1 | distortion, lensblur_filter, scratch, frosted_glass, mosaic, face | crop後の形状/フィルタ系。 |
-| lv2 | color_temperature, auto_exposure, LUT, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, film/look, glow, unsharp | 主なトーン/カラー/質感処理。 |
+| lv2 | color_temperature, auto_exposure, LUT, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, Film Process/look, glow, unsharp | 主なトーン/カラー/質感処理。 |
 | lv3 | mask2, mask_geometry | マスク表示/マスクジオメトリ関連。 |
 | lv4 | grain, vignette | 最終段。Mask composite後の画像に適用。 |
 
@@ -784,6 +784,9 @@ config.py のデフォルト
 - `utils/preset_utils.py` と `~/Pictures/Shade Wave/presets`。
 - export presetは `~/Pictures/Shade Wave/export_presets.json`。
 - Film Process はプリセット JSON ではなく、Effect param の構造パラメータから生成する。
+- Film Process の UI モードは `Off`, `Negative`, `Slide`, `B&W`。デフォルトは `Off` で、`effects.FilmSimulationEffect.make_diff()` は no-op として `None` を返す。
+- Film Process の主な構造パラメータは `film_latitude`, `film_contrast`, `film_color_bias`, `film_color_drift`, `film_dye_purity`, `film_layer_crosstalk`, `film_halation`, `film_aging`, `film_intensity`。
+- 実処理は `cores/film_process.py` の spectral-lite モデルで、旧 `film_presets.json` / `cores/film_emulator.py` は使わない。
 
 ## 8. 外部依存と環境差
 

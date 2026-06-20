@@ -49,7 +49,7 @@ Shade Wave can:
 
 - Open common RGB images, camera RAW files, and OpenEXR images.
 - Edit images through a layered, non-destructive parameter pipeline.
-- Apply global corrections, local masks, geometry tools, film/look effects, denoise, dehaze, sharpening, grain, and vignette.
+- Apply global corrections, local masks, geometry tools, Film Process/look effects, denoise, dehaze, sharpening, grain, and vignette.
 - Export to common delivery formats with ICC profile handling and metadata options.
 - Use optional AI-assisted features when the required external models are available.
 
@@ -152,7 +152,7 @@ Available ICC profiles are loaded from `icc/`, including sRGB, Display P3, Adobe
 - Geometry: rotation, crop, perspective/mesh-like geometry correction, distortion correction, subpixel shift, lens blur, mosaic, scratch/frosted glass style effects.
 - Local editing: mask layers, composite masks, free draw masks, quick-select style edge refinement, mask geometry, headless mask replay during export.
 - AI-assisted masks: SAM3 box/text segmentation, Depth Pro depth masks, face masks through helper backends.
-- Creative looks: film simulation, lens simulation, cross filter, glow, orton, grain, vignette, solid color overlays.
+- Creative looks: Film Process, lens simulation, cross filter, glow, orton, grain, vignette, solid color overlays.
 - Metadata and ratings: export metadata options and rating propagation.
 - Packaging: PyInstaller-based macOS `.app` creation for the current pixi environment.
 
