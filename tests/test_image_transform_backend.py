@@ -297,6 +297,30 @@ class ImageTransformBackendTest(unittest.TestCase):
         finally:
             image_transform_adapter.native_available = previous_native_available
 
+    def test_line_homography_tcg_info_drops_orientation_only(self):
+        import effects
+
+        matrix = np.array(
+            [[1.0, 0.12, 4.0], [0.03, 0.96, -2.0], [0.0004, -0.0002, 1.0]],
+            dtype=np.float64,
+        )
+        tcg_info = {
+            "original_img_size": (72, 48),
+            "disp_info": (0, 0, 72, 72, 1.0),
+            "rotation": np.deg2rad(17.0),
+            "rotation2": np.deg2rad(90.0),
+            "flip_mode": 3,
+            "matrix": matrix,
+        }
+
+        line_tcg_info = effects._line_homography_tcg_info(tcg_info)
+
+        self.assertEqual(line_tcg_info["rotation"], 0.0)
+        self.assertEqual(line_tcg_info["rotation2"], 0.0)
+        self.assertEqual(line_tcg_info["flip_mode"], 0)
+        self.assertIs(line_tcg_info["matrix"], matrix)
+        self.assertEqual(tcg_info["flip_mode"], 3)
+
     def test_geometry_effect_defers_lens_strength_preview(self):
         from effects import EffectConfig, GeometryEffect
 

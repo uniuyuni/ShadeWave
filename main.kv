@@ -22,11 +22,11 @@
 
 <Button>:
     background_down: ''
-    background_color: dark_blue if self.state == 'down' else [0.48, 0.48, 0.48, 1]
+    background_color: dark_blue if self.state == 'down' else [0.58, 0.58, 0.58, 1]
 
 <ToggleButton>:
     background_down: ''
-    background_color: dark_blue if self.state == 'down' else [0.48, 0.48, 0.48, 1]
+    background_color: dark_blue if self.state == 'down' else [0.58, 0.58, 0.58, 1]
 
 <DistortionEffectButton@ToggleButton>:
     group: 'effect'
@@ -142,6 +142,8 @@
     md_bg_color: 'gray'
 
 <IconToggleButton@ScaledToggleButton>:
+    bg_color_normal: 0.12, 0.13, 0.16, 0.92
+    bg_color_down: 0.13, 0.23, 0.74, 0.95
     text: md_icons.get(self.icon, "")
     font_name: "Icons"
     font_size: self.icon_size if self.icon_size else '21dp'
@@ -531,6 +533,7 @@
                         ref_height: 15
                         font_size: '9pt'
                         text: "Reset"
+                        background_color: dark_blue if self.state == 'down' else [0.12, 0.13, 0.16, 0.92]
                         disabled: root.image_loaded == False
                         on_press: root.begin_history_reset_all()
                         on_release:

@@ -144,10 +144,11 @@ def _build_geometry_valid_mask(param):
             params.add_matrix(temp_param, H, offset=(half_size, half_size))
 
         if len(reference_lines) > 0:
+            line_tcg_info = _line_homography_tcg_info(tcg_info)
             mask, H = correct_with_lines(
                 mask,
                 reference_lines,
-                tcg_info=tcg_info,
+                tcg_info=line_tcg_info,
                 interpolation='bilinear',
             )
             if H is not None:
@@ -175,6 +176,20 @@ def _build_geometry_valid_mask(param):
             )
 
     return np.minimum(mask, rotation_limit_mask)
+
+
+def _line_homography_tcg_info(tcg_info):
+    """Return a TCG copy for Lines homography without image orientation.
+
+    This keeps the already-composed perspective matrix, but evaluates the
+    reference line points before rotation/flip. The image pipeline still owns
+    the actual rotation step; this only changes how Lines derive their H.
+    """
+    line_tcg_info = tcg_info.copy()
+    line_tcg_info['rotation'] = 0.0
+    line_tcg_info['rotation2'] = 0.0
+    line_tcg_info['flip_mode'] = 0
+    return line_tcg_info
 
 
 class EffectConfig():
@@ -1502,7 +1517,8 @@ class GeometryEffect(Effect):
         # Lines
         if len(reference_lines) > 0:
             tcg_info = params.param_to_tcg_info(param)
-            H = calculate_lines_homography(reference_lines, size, size, tcg_info=tcg_info)
+            line_tcg_info = _line_homography_tcg_info(tcg_info)
+            H = calculate_lines_homography(reference_lines, size, size, tcg_info=line_tcg_info)
             if H is not None:
                 params.add_matrix(param, H, offset=(half_size, half_size))
 
@@ -1584,7 +1600,8 @@ class GeometryEffect(Effect):
 
             if len(reference_lines or []) > 0:
                 tcg_info = params.param_to_tcg_info(param)
-                H = calculate_lines_homography(reference_lines, size, size, tcg_info=tcg_info)
+                line_tcg_info = _line_homography_tcg_info(tcg_info)
+                H = calculate_lines_homography(reference_lines, size, size, tcg_info=line_tcg_info)
                 if H is not None:
                     params.add_matrix(param, H, offset=(half_size, half_size))
                     has_matrix = True
@@ -1774,10 +1791,11 @@ class GeometryEffect(Effect):
                     
                 # Lines
                 if len(reference_lines) > 0: 
+                    line_tcg_info = _line_homography_tcg_info(tcg_info)
                     img, H = correct_with_lines(
                         img,
                         reference_lines,
-                        tcg_info=tcg_info, # correct_with_lines内部でtcg_info使うので渡す
+                        tcg_info=line_tcg_info,
                         interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
                     if H is not None:

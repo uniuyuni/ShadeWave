@@ -10,6 +10,7 @@ class ScaledButtonMixin:
     bg_color_normal = ListProperty([0.38, 0.5, 0.54, 0.92])
     bg_color_down = ListProperty([0.13, 0.23, 0.74, 0.95])
     bg_color_disabled = ListProperty([0.18, 0.18, 0.18, 0.45])
+    bg_color_reset_normal = ListProperty([0.12, 0.13, 0.16, 0.92])
     ref_layout_padding = ListProperty([0, 0])
     icon = StringProperty("")
     icon_size = StringProperty("")
@@ -23,7 +24,7 @@ class ScaledButtonMixin:
         self.background_disabled_down = ""
         self.background_color = (0, 0, 0, 0)
         self.color = (1, 1, 1, 1)
-        self.bind(state=self._update_bg, disabled=self._update_bg)
+        self.bind(state=self._update_bg, disabled=self._update_bg, text=self._update_bg)
         self._update_bg()
 
     def _update_bg(self, *_args):
@@ -31,6 +32,8 @@ class ScaledButtonMixin:
             self.background_color = self.bg_color_disabled
         elif self.state == "down":
             self.background_color = self.bg_color_down
+        elif getattr(self, "text", "") == "Reset":
+            self.background_color = self.bg_color_reset_normal
         else:
             self.background_color = self.bg_color_normal
 
