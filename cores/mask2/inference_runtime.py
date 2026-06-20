@@ -91,14 +91,27 @@ def _expanded_bbox_xyxy(bbox, shape, pad):
     return x0, y0, x1, y1
 
 
-def _sam3_roi_pad():
-    value = os.environ.get("PLATYPUS_SAM3_ROI_PAD")
+def _scaled_bbox_xyxy(bbox, shape, scale):
+    h, w = int(shape[0]), int(shape[1])
+    x, y, bw, bh = [int(v) for v in bbox]
+    scale = max(1.0, float(scale))
+    pad_x = int(np.ceil(max(0.0, (bw * scale - bw) / 2.0)))
+    pad_y = int(np.ceil(max(0.0, (bh * scale - bh) / 2.0)))
+    x0 = min(max(x - pad_x, 0), w)
+    y0 = min(max(y - pad_y, 0), h)
+    x1 = min(max(x + bw + pad_x, 0), w)
+    y1 = min(max(y + bh + pad_y, 0), h)
+    return x0, y0, x1, y1
+
+
+def _sam3_roi_scale():
+    value = os.environ.get("PLATYPUS_SAM3_ROI_SCALE")
     if value is None:
-        return 96
+        return 1.5
     try:
-        return max(0, int(round(float(value))))
+        return max(1.0, float(value))
     except Exception:
-        return 96
+        return 1.5
 
 
 def _sam3_roi_enabled():
@@ -134,7 +147,7 @@ def _predict_sam3_bbox_roi(sam3_helper, processor, image, bbox, source_image_key
             bbox,
         )
         return mask
-    x0, y0, x1, y1 = _expanded_bbox_xyxy(bbox, image.shape, _sam3_roi_pad())
+    x0, y0, x1, y1 = _scaled_bbox_xyxy(bbox, image.shape, _sam3_roi_scale())
     if x1 <= x0 or y1 <= y0:
         return np.zeros(image.shape[:2], dtype=np.float32)
     roi = image[y0:y1, x0:x1]
@@ -290,8 +303,9 @@ def predict_sam3_bbox(img: np.ndarray, bbox, invert: bool) -> np.ndarray:
     total_start = time.perf_counter()
     source_image_key = _array_cache_key(img)
     phase_start = time.perf_counter()
-    ai_img = aiutils.to_ai_display_rgb(img)
-    _LOGGER.info("SAM3 ai display input elapsed=%.1fms image_shape=%s", _elapsed_ms(phase_start), ai_img.shape[:2])
+    # ai_img = aiutils.to_ai_display_rgb(img)
+    ai_img = img
+    _LOGGER.info("SAM3 input passthrough elapsed=%.1fms image_shape=%s", _elapsed_ms(phase_start), ai_img.shape[:2])
     phase_start = time.perf_counter()
     bbox = _clip_bbox_xywh(bbox, ai_img.shape)
     if bbox[2] <= 0 or bbox[3] <= 0:
@@ -328,7 +342,8 @@ def predict_sam3_text(img: np.ndarray, text: str, invert: bool) -> np.ndarray:
     global _sam3_processor
     from helpers import sam3_helper
 
-    ai_img = aiutils.to_ai_display_rgb(img)
+    # ai_img = aiutils.to_ai_display_rgb(img)
+    ai_img = img
     with _sam3_lock:
         if _sam3_processor is None:
             _sam3_processor = sam3_helper.setup_sam3(config.get_config("gpu_device"))

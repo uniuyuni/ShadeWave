@@ -62,7 +62,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
         self.runtime._depth_model = None
         self.runtime._faces = None
 
-    def test_depth_face_and_sam3_use_ai_display_adapter(self):
+    def test_depth_and_face_use_ai_display_adapter_but_sam3_uses_original_input(self):
         runtime = self.runtime
         original = np.zeros((8, 10, 3), dtype=np.float32)
         converted = np.ones_like(original, dtype=np.float32) * 0.42
@@ -92,7 +92,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
             calls["sam3_img"] = img
             calls["sam3_bbox"] = bbox
             calls["sam3_image_key"] = image_key
-            return np.ones((8, 10), dtype=np.float32)
+            return np.ones(img.shape[:2], dtype=np.float32)
         sam3_module.predict_sam3_for_bbox = mock.Mock(side_effect=predict_sam3)
 
         with mock.patch.dict(sys.modules, {
@@ -111,15 +111,15 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
                         runtime.predict_face_mask(original, [])
                         sam3_mask = runtime.predict_sam3_bbox(original, [1, 1, 4, 4], False)
 
-        self.assertEqual(adapter.call_count, 3)
+        self.assertEqual(adapter.call_count, 2)
         self.assertIs(calls["depth_img"], converted)
         self.assertIs(calls["face_img"], converted)
         self.assertEqual(guided.call_count, 2)
         self.assertIs(guided.call_args_list[0].args[0], converted)
-        self.assertTrue(np.shares_memory(guided.call_args_list[1].args[0], converted))
+        self.assertTrue(np.shares_memory(guided.call_args_list[1].args[0], original))
         self.assertEqual(guided.call_args_list[0].kwargs["radius"], 20)
         self.assertEqual(guided.call_args_list[1].kwargs["radius"], 20)
-        self.assertTrue(np.shares_memory(calls["sam3_img"], converted))
+        self.assertTrue(np.shares_memory(calls["sam3_img"], original))
         self.assertEqual(calls["sam3_bbox"], [1, 1, 4, 4])
         self.assertEqual(calls["sam3_image_key"][0], "roi")
         self.assertEqual(int(sam3_mask.sum()), 16)
@@ -138,7 +138,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
         def predict_sam3(processor, img, bbox, image_key=None):
             calls["bbox"] = bbox
             calls["image_key"] = image_key
-            return np.ones((6, 8), dtype=np.float32)
+            return np.ones(img.shape[:2], dtype=np.float32)
         sam3_module.predict_sam3_for_bbox = mock.Mock(side_effect=predict_sam3)
 
         with mock.patch.dict(sys.modules, {"helpers.sam3_helper": sam3_module}):
@@ -151,7 +151,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
                     ):
                         mask = runtime.predict_sam3_bbox(original, [-3.2, 2.2, 7.6, 9.0], False)
 
-        self.assertEqual(calls["bbox"], [0, 2, 5, 4])
+        self.assertEqual(calls["bbox"], [0, 1, 5, 4])
         self.assertEqual(calls["image_key"][0], "roi")
         self.assertEqual(int(mask.sum()), 20)
         self.assertEqual(float(mask[:2, :].sum()), 0.0)
@@ -171,9 +171,9 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
             return np.ones(img.shape[:2], dtype=np.float32)
         sam3_module.predict_sam3_for_bbox = mock.Mock(side_effect=predict_sam3)
 
-        old_pad = os.environ.get("PLATYPUS_SAM3_ROI_PAD")
+        old_scale = os.environ.get("PLATYPUS_SAM3_ROI_SCALE")
         try:
-            os.environ["PLATYPUS_SAM3_ROI_PAD"] = "16"
+            os.environ["PLATYPUS_SAM3_ROI_SCALE"] = "1.5"
             with mock.patch.dict(sys.modules, {"helpers.sam3_helper": sam3_module}):
                 with mock.patch.object(runtime.config, "get_config", return_value="cpu"):
                     with mock.patch.object(runtime.aiutils, "to_ai_display_rgb", return_value=original):
@@ -184,15 +184,15 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
                         ):
                             mask = runtime.predict_sam3_bbox(original, [70, 80, 10, 8], False)
         finally:
-            if old_pad is None:
-                os.environ.pop("PLATYPUS_SAM3_ROI_PAD", None)
+            if old_scale is None:
+                os.environ.pop("PLATYPUS_SAM3_ROI_SCALE", None)
             else:
-                os.environ["PLATYPUS_SAM3_ROI_PAD"] = old_pad
+                os.environ["PLATYPUS_SAM3_ROI_SCALE"] = old_scale
 
-        self.assertEqual(calls["image_shape"], (40, 42, 3))
-        self.assertEqual(calls["bbox"], [16, 16, 10, 8])
+        self.assertEqual(calls["image_shape"], (12, 16, 3))
+        self.assertEqual(calls["bbox"], [3, 2, 10, 8])
         self.assertEqual(calls["image_key"][0], "roi")
-        self.assertEqual(calls["image_key"][2], (54, 64, 96, 104))
+        self.assertEqual(calls["image_key"][2], (67, 78, 83, 90))
         self.assertEqual(int(mask.sum()), 80)
 
     def test_sam3_bbox_guided_filter_uses_smaller_bbox_roi(self):
@@ -202,7 +202,9 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
 
         sam3_module = types.ModuleType("helpers.sam3_helper")
         sam3_module.setup_sam3 = mock.Mock(return_value="sam3")
-        sam3_module.predict_sam3_for_bbox = mock.Mock(return_value=np.full((120, 160), 2.0, dtype=np.float32))
+        sam3_module.predict_sam3_for_bbox = mock.Mock(
+            side_effect=lambda _processor, img, _bbox, image_key=None: np.full(img.shape[:2], 2.0, dtype=np.float32)
+        )
 
         def fake_guided(image, src, radius, eps):
             calls["guide_shape"] = image.shape
@@ -300,6 +302,43 @@ class Sam3HelperImageKeyTest(unittest.TestCase):
 
         self.assertEqual(int(mask[2:4, 3:6].sum()), 6)
         self.assertEqual(int(mask[0:2, 0:2].sum()), 0)
+
+    def test_bbox_candidate_log_includes_count_and_selected_index(self):
+        from helpers import sam3_helper
+        import torch
+
+        class FakeProcessor:
+            def set_image(self, image):
+                return {"image_shape": image.shape}
+
+            def reset_all_prompts(self, inference_state):
+                return None
+
+            def add_geometric_prompt(self, state, box, label=True):
+                mask_a = torch.zeros((1, 6, 8), dtype=torch.float32)
+                mask_b = torch.zeros((1, 6, 8), dtype=torch.float32)
+                mask_b[:, 2:4, 3:6] = 1.0
+                return {"masks": [mask_a, mask_b]}
+
+        sam3_dict = {
+            "processor": FakeProcessor(),
+            "image": None,
+            "image_key": None,
+            "inference_state": None,
+            "_device_logged": True,
+        }
+        image = np.zeros((6, 8, 3), dtype=np.float32)
+
+        with self.assertLogs("helpers.sam3_helper", level="INFO") as logs:
+            sam3_helper.predict_sam3_for_bbox(
+                sam3_dict,
+                image,
+                [3, 2, 3, 2],
+                image_key=("roi", "candidate-log-test"),
+            )
+
+        text = "\n".join(logs.output)
+        self.assertIn("SAM3 bbox mask candidates count=2 selected_index=1", text)
 
     def test_bbox_prediction_prefers_tighter_candidate_over_huge_overlap(self):
         from helpers import sam3_helper

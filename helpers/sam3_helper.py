@@ -85,6 +85,7 @@ def _select_bbox_mask_candidate(mask_tensors, bbox, org_w, org_h):
     bbox_area = max(0, int(w * h))
     best = None
     best_score = None
+    best_index = None
     scores = []
     for index, mask_tensor in enumerate(mask_tensors):
         start = time.perf_counter()
@@ -101,11 +102,14 @@ def _select_bbox_mask_candidate(mask_tensors, bbox, org_w, org_h):
         scores.append((index, inside, outside, coverage, precision, dice, max_value, materialize_elapsed))
         if best_score is None or score > best_score:
             best_score = score
+            best_index = index
             best = mask
     _logger.info(
-        "SAM3 bbox mask candidates bbox=%s selected=%s scores=%s",
+        "SAM3 bbox mask candidates count=%d selected_index=%s bbox=%s selected_score=%s scores=%s",
+        len(mask_tensors),
+        best_index,
         [x, y, w, h],
-        None if best_score is None else best_score,
+        best_score,
         scores,
     )
     return best if best is not None else np.zeros((org_h, org_w), dtype=np.float32)
