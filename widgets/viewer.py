@@ -905,7 +905,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         return thumb_data_list
 
     def _decode_embedded_thumbnail(self, exif_data):
-        for key in ("ThumbnailImage", "PreviewImage", "JpgFromRaw", 'PreviewTIFF'):
+        for key in ("PreviewImage", "JpgFromRaw", 'PreviewTIFF', "ThumbnailImage"):
             encoded = exif_data.get(key, None)
             if not encoded:
                 continue
@@ -934,6 +934,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
         should_notify = False
         
         if not touch.is_mouse_scrolling and touch.button == 'left':
+            already_single_selected = (
+                index in self.selected_indices
+                and len(self.selected_indices) == 1
+            )
             if (
                 'shift' in KVWindow.modifiers
                 and self.last_selected_index is not None
@@ -955,6 +959,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     self.toggle_at(index)
                     should_notify = True # Toggle always changes selection
                 else:
+                    if already_single_selected:
+                        self.last_selected_index = index
+                        return
                     self.clear_selection()
                     self.select_at(index)
                     should_notify = True

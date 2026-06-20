@@ -2,7 +2,6 @@ import os
 
 from kivy.animation import Animation
 from kivy.lang import Builder as KVBuilder
-from kivy.metrics import dp
 from kivy.properties import (
     BooleanProperty,
     ColorProperty,
@@ -20,6 +19,8 @@ KVBuilder.load_file(os.path.join(CUR_DIR, "modern_checkbox.kv"))
 class ModernCheckBox(ButtonBehavior, Widget):
     active = BooleanProperty(False)
     disabled = BooleanProperty(False)
+    ref_width = NumericProperty(16)
+    ref_height = NumericProperty(16)
 
     box_color = ColorProperty([1, 1, 1, 1])
     border_color_inactive = ColorProperty([0.796, 0.827, 0.882, 1])
@@ -31,9 +32,9 @@ class ModernCheckBox(ButtonBehavior, Widget):
     _focus_alpha = NumericProperty(0)
     _check_progress = NumericProperty(0)
     _content_scale = NumericProperty(1)
-    _box_side = NumericProperty(dp(14))
+    _box_side = NumericProperty(0)
     _box_pos = ListProperty([0, 0])
-    _focus_side = NumericProperty(dp(20))
+    _focus_side = NumericProperty(0)
     _focus_pos = ListProperty([0, 0])
     _check_points = ListProperty([0, 0, 0, 0, 0, 0])
 
@@ -89,14 +90,14 @@ class ModernCheckBox(ButtonBehavior, Widget):
 
     def _box_size(self):
         side = min(self.width, self.height)
-        base_size = min(max(side * 0.6, dp(11)), dp(15))
-        return base_size * self._content_scale
+        return side * 0.64 * self._content_scale
 
     def _update_geometry(self, *args):
         box_side = self._box_size()
         box_x = self.x + (self.width - box_side) / 2
         box_y = self.y + (self.height - box_side) / 2
-        focus_side = min(min(self.width, self.height), box_side + dp(2))
+        side = min(self.width, self.height)
+        focus_side = min(side, box_side + side * 0.06)
         focus_x = self.x + (self.width - focus_side) / 2
         focus_y = self.y + (self.height - focus_side) / 2
 
@@ -114,19 +115,22 @@ class ModernCheckBox(ButtonBehavior, Widget):
         ]
 
     def _box_radius(self):
-        return [self._box_side * 0.28]
+        return [self._box_side * 0.18]
+
+    def _box_fill_radius(self):
+        return [self._box_side * 0.12]
 
     def _focus_size(self):
         return (self._focus_side, self._focus_side)
 
     def _focus_radius(self):
-        return [self._focus_side * 0.32]
+        return [self._focus_side * 0.22]
 
     def _border_line_width(self):
         s = float(self._box_side)
         # Pixel座標の Line.width：dp で下限を上げ過ぎると低 DPI で太く見える
-        return max(1.0, min(s * 0.044, s * 0.075))
+        return max(0.65, min(s * 0.04, 0.9))
 
     def _check_line_width(self):
         s = float(self._box_side)
-        return max(1.0, min(s * 0.058, s * 0.10))
+        return max(0.8, min(s * 0.055, 1.05))

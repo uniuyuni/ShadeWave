@@ -11,18 +11,14 @@ from AppKit import (
     NSApp, NSDragOperationCopy,
     NSImage, NSURL, NSDraggingItem,
     NSBezierPath, NSColor, NSMakeRect,
-    NSEvent, NSLog, NSBitmapImageRep, NSDragOperationNone
+    NSEvent, NSLog, NSBitmapImageRep, NSDragOperationNone,
+    NSDragOperationDelete, NSWorkspace, NSObject,
+    NSPasteboardItem, NSPasteboardTypeFileURL, NSURLPboardType,
+    NSFilenamesPboardType,
 )
-from objc import objc_method, informal_protocol, selector
+from objc import objc_method
 
 NSPasteboardTypeDrag = 'NSDragPboard'
-
-informal_protocol('NSDraggingSource', [
-    selector(None, b'draggingSession:sourceOperationMaskForDraggingContext:',
-                  signature=b'v@:@@'),
-    selector(None, b'draggingSession:endedAtPoint:operation:',
-                  signature=b'v@:@@L')
-])
 
 def ndarray_to_nsimage(arr):
     """NumPy配列をNSImageに変換"""
@@ -33,6 +29,31 @@ def ndarray_to_nsimage(arr):
     rep = NSBitmapImageRep.alloc().initWithData_(png_data.getvalue())
     ns_image.addRepresentation_(rep)
     return ns_image
+
+
+class _DraggingSource(NSObject):
+    @objc_method
+    def draggingSession_sourceOperationMaskForDraggingContext_(self, session, context):
+        NSLog("ドラッグ操作検出")
+        return NSDragOperationCopy | NSDragOperationDelete
+
+    @objc_method
+    def draggingSession_endedAtPoint_operation_(self, session, end_point, operation):
+        owner = getattr(self, "owner", None)
+        if owner is not None:
+            owner._on_dragging_session_ended(operation)
+
+
+def _make_file_pasteboard_item(file_path):
+    path = os.path.abspath(file_path)
+    url = NSURL.fileURLWithPath_(path)
+    url_string = str(url.absoluteString())
+    item = NSPasteboardItem.alloc().init()
+    item.setString_forType_(url_string, NSPasteboardTypeFileURL)
+    item.setString_forType_(url_string, NSURLPboardType)
+    item.setPropertyList_forType_([path], NSFilenamesPboardType)
+    return item
+
 
 class DraggableWidget(KVWidget):
     def __init__(self, **kwargs):
@@ -47,6 +68,8 @@ class DraggableWidget(KVWidget):
             self.rect = Rectangle(pos=self.pos, size=self.size)
         """
         self.dragging = False
+        self._current_drag_file_paths = []
+        self._drag_source = None
     
     def on_touch_move(self, touch):
         if self.collide_point(*touch.pos) and self.dragging == False:
@@ -69,19 +92,21 @@ class DraggableWidget(KVWidget):
 
     def start_drag(self, touch):
         
-        file_paths = self.get_drag_files()
-        if len(file_paths) <= 0:
+        files = self.get_drag_files()
+        if len(files) <= 0:
             return
+        self._current_drag_file_paths = [file_path for file_path, _image in files]
 
         dragging_items = []
-        for i, file in enumerate(file_paths):
+        for i, file in enumerate(files):
             file_path, image = file
 
-            # ファイルURLの準備
-            file_url = NSURL.fileURLWithPath_(file_path)
-            
-            # ドラッグアイテムの作成
-            dragging_item = NSDraggingItem.alloc().initWithPasteboardWriter_(file_url)
+            # Finder 互換寄りの複数 pasteboard type を載せる。
+            # Chromium/Arc の Web drop target は NSURL だけだと一度受けてから
+            # キャンセルすることがあるため、legacy filenames も明示する。
+            dragging_item = NSDraggingItem.alloc().initWithPasteboardWriter_(
+                _make_file_pasteboard_item(file_path)
+            )
             
             # ドラッグ画像の設定（サイズ: 64x64）
             if image is None:
@@ -111,6 +136,8 @@ class DraggableWidget(KVWidget):
         if not main_window:
             NSLog("メインウィンドウが見つかりません")
             return
+        self._drag_source = _DraggingSource.alloc().init()
+        self._drag_source.owner = self
         
         # ドラッグセッションの開始
         session = main_window.contentView().beginDraggingSessionWithItems_event_source_(
@@ -126,7 +153,7 @@ class DraggableWidget(KVWidget):
                 1,  # clickCount
                 0.0  # pressure
             ),
-            main_window
+            self._drag_source
         )
         NSLog(f"ドラッグセッション開始: {session}")
 
@@ -134,17 +161,38 @@ class DraggableWidget(KVWidget):
         # Kivyの座標（左下原点）→ macOS座標（左上原点）
         return (pos[0] + offset, KVWindow.height - pos[1])
 
-    @objc_method
-    def draggingSession_sourceOperationMaskForDraggingContext_(self, session, context):
-        NSLog("ドラッグ操作検出")
-        return NSDragOperationCopy
-
-    @objc_method
-    def draggingSession_endedAtPoint_operation_(self, session, end_point, operation):    
+    def _on_dragging_session_ended(self, operation):
         if operation == NSDragOperationNone:
             logging.debug("ドロップ失敗")
+        elif self._drag_operation_requests_delete(operation):
+            self._recycle_drag_files(self._current_drag_file_paths)
         else:
             logging.debug("ドロップ成功")
+        self._current_drag_file_paths = []
+        self._drag_source = None
+
+    def _drag_operation_requests_delete(self, operation):
+        return bool(int(operation) & int(NSDragOperationDelete))
+
+    def _recycle_drag_files(self, file_paths):
+        paths = [
+            os.path.abspath(path)
+            for path in file_paths
+            if path and os.path.isfile(path)
+        ]
+        if not paths:
+            logging.debug("trash drop ignored: no existing files")
+            return
+
+        urls = [NSURL.fileURLWithPath_(path) for path in paths]
+
+        def _completion(_new_urls, error):
+            if error is not None:
+                logging.warning("failed to move dragged files to Trash: %s", error)
+            else:
+                logging.info("moved dragged files to Trash: %s", paths)
+
+        NSWorkspace.sharedWorkspace().recycleURLs_completionHandler_(urls, _completion)
 
 
 class DragDropApp(KVApp):

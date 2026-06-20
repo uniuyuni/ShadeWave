@@ -2284,39 +2284,27 @@ if __name__ == '__main__':
             self._open_effect_selector(_selected)
 
         def _open_preset_name_dialog(self, partial_param):
-            layout = KVBoxLayout(orientation="vertical")
-            layout.ref_layout_padding = 10
-            layout.ref_layout_spacing = 10
-            text_input = KVTextInput(multiline=False, hint_text="Preset name", size_hint_y=None)
-            text_input.ref_height = 32
-            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None)
-            buttons.ref_height = 40
-            buttons.ref_layout_spacing = 8
-            cancel_btn = KVButton(text="Cancel")
-            ok_btn = KVButton(text="OK")
-            buttons.add_widget(cancel_btn)
-            buttons.add_widget(ok_btn)
-            layout.add_widget(text_input)
-            layout.add_widget(buttons)
-            popup = KVPopup(title="Save Preset", content=layout, size_hint=(None, None), auto_dismiss=False)
-            popup.ref_width = 440
-            popup.ref_height = 180
-            dialogutils.install_ref_scaling(popup)
-
-            def _save(*_args):
-                try:
-                    path = preset_utils.preset_path_for_name(text_input.text)
-                    preset_utils.save_preset_json(path, preset_utils.build_preset_dict(partial_param))
-                except Exception as e:
-                    self.show_warning_dialog(str(e))
-                    return
-                popup.dismiss()
-                self.refresh_preset_panel()
-
-            ok_btn.bind(on_release=_save)
-            cancel_btn.bind(on_release=popup.dismiss)
-            text_input.bind(on_text_validate=_save)
-            popup.open()
+            try:
+                preset_name = device.prompt_native(
+                    message="Preset name",
+                    title="Save Preset",
+                    default="",
+                    show_cancel=True,
+                    ascii_only=False,
+                )
+            except Exception as e:
+                logging.warning("preset name prompt failed: %s", e)
+                self.show_warning_dialog(str(e))
+                return
+            if not preset_name or not preset_name.strip():
+                return
+            try:
+                path = preset_utils.preset_path_for_name(preset_name)
+                preset_utils.save_preset_json(path, preset_utils.build_preset_dict(partial_param))
+            except Exception as e:
+                self.show_warning_dialog(str(e))
+                return
+            self.refresh_preset_panel()
 
         def refresh_preset_panel(self):
             panel = getattr(self, "preset_panel", None)

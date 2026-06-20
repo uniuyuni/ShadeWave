@@ -46,6 +46,18 @@ class LoadDependentPanelsFlowTest(unittest.TestCase):
             self.assertIn("if self.mask2_wait_full_load:", source)
             self.assertIn("return", source)
 
+    def test_save_preset_name_uses_native_macos_prompt(self):
+        source = MAIN_PATH.read_text()
+        node = _load_function_node("_open_preset_name_dialog")
+        dialog_source = ast.get_source_segment(source, node)
+
+        self.assertIn("device.prompt_native(", dialog_source)
+        self.assertIn('title="Save Preset"', dialog_source)
+        self.assertIn("show_cancel=True", dialog_source)
+        self.assertIn("if not preset_name or not preset_name.strip():", dialog_source)
+        self.assertNotIn("KVTextInput", dialog_source)
+        self.assertNotIn("KVPopup", dialog_source)
+
 
 if __name__ == "__main__":
     unittest.main()

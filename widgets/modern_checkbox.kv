@@ -1,6 +1,11 @@
+#:import kvutils utils.kvutils
+
 <ModernCheckBox>:
     size_hint: None, None
-    size: dp(18), dp(18)
+    ref_width: 16
+    ref_height: 16
+    width: kvutils.dpi_scale_width(root.ref_width)
+    height: kvutils.dpi_scale_height(root.ref_height)
     canvas.before:
         Color:
             rgba:
@@ -18,7 +23,7 @@
         RoundedRectangle:
             pos: root._box_pos
             size: root._box_side, root._box_side
-            radius: root._box_radius()
+            radius: root._box_fill_radius()
 
         Color:
             rgba:
