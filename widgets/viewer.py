@@ -373,6 +373,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
         super().__init__(**kwargs)
         self.data = []
         self.watch_directory = None
+        self._watch_directory_lock = threading.Lock()
+        self._watch_stop_event = None
         self._card_width_layout_event = None
         self._hover_recheck_event = None
         self._hover_hint_event = None
@@ -531,16 +533,32 @@ class ViewerWidget(RecycleView, DraggableWidget):
         }
 
         while True:
-            watch_directory = self.watch_directory
-            if watch_directory is not None:
-                try:
-                    for changes in watch(watch_directory):
-                        for action, path in changes:
-                            if action in action_type_map:
-                                action_type_map[action](path)
-                except Exception:
-                    pass
+            with self._watch_directory_lock:
+                watch_directory = self.watch_directory
+                stop_event = self._watch_stop_event
+            if watch_directory is None or stop_event is None:
+                time.sleep(1)
+                continue
+            try:
+                for changes in watch(watch_directory, stop_event=stop_event):
+                    if stop_event.is_set():
+                        break
+                    for action, path in changes:
+                        if action in action_type_map:
+                            action_type_map[action](path)
+            except Exception:
+                pass
             time.sleep(1)
+
+    def _set_watch_directory(self, directory):
+        directory = os.path.abspath(directory) if directory else None
+        with self._watch_directory_lock:
+            if self.watch_directory and self._norm_path_key(self.watch_directory) == self._norm_path_key(directory):
+                return
+            if self._watch_stop_event is not None:
+                self._watch_stop_event.set()
+            self.watch_directory = directory
+            self._watch_stop_event = threading.Event() if directory else None
 
     def _new_image_item(self, file_path):
         return {
@@ -649,6 +667,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
         if pmck_image_path is not None:
             self.set_pmck_indicator_for_path(pmck_image_path, False)
             return
+        if not self._is_in_current_watch_directory(file_path):
+            return
         for i, d in enumerate(self.data):
             if d['file_path'] == file_path:
                 self.data.pop(i)
@@ -703,7 +723,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self.cols = max(1, len(self.data)) # Not used for logic, but might be used by UI binding?
         
         self.load_images(file_path_dict)
-        self.watch_directory = directory
+        self._set_watch_directory(directory)
 
     def load_images(self, file_path_dict):
         if len(file_path_dict) > 0:

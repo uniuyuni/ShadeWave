@@ -1,4 +1,5 @@
 import logging
+import time
 from threading import RLock
 
 import torch
@@ -7,6 +8,7 @@ import cv2
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.box_ops import box_xywh_to_cxcywh
 from sam3.model.sam3_image_processor import Sam3Processor
+from helpers import sam3_coreml_backbone_helper
 
 RESIZE_FACTOR = 1.0
 
@@ -14,6 +16,10 @@ __model = None
 __model_lock = RLock()
 
 _logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(start):
+    return (time.perf_counter() - start) * 1000.0
 
 
 def _device_equal(a: torch.device, b: torch.device) -> bool:
@@ -37,6 +43,52 @@ def _normalize_bbox(bbox_xywh, img_w, img_h):
     return normalized_bbox
 
 
+def _clip_bbox_xywh_int(bbox, img_w, img_h):
+    x, y, w, h = [float(v) for v in bbox]
+    x0 = int(np.floor(min(x, x + w)))
+    y0 = int(np.floor(min(y, y + h)))
+    x1 = int(np.ceil(max(x, x + w)))
+    y1 = int(np.ceil(max(y, y + h)))
+    x0 = min(max(x0, 0), img_w)
+    y0 = min(max(y0, 0), img_h)
+    x1 = min(max(x1, 0), img_w)
+    y1 = min(max(y1, 0), img_h)
+    return x0, y0, max(0, x1 - x0), max(0, y1 - y0)
+
+
+def _materialize_mask_tensor(mask_tensor, org_w, org_h):
+    mask = mask_tensor.squeeze(0).cpu().numpy()
+    mask = np.array(mask, dtype=np.float32)
+    return cv2.resize(mask, (org_w, org_h))
+
+
+def _select_bbox_mask_candidate(mask_tensors, bbox, org_w, org_h):
+    x, y, w, h = _clip_bbox_xywh_int(bbox, org_w, org_h)
+    best = None
+    best_score = None
+    scores = []
+    for index, mask_tensor in enumerate(mask_tensors):
+        start = time.perf_counter()
+        mask = _materialize_mask_tensor(mask_tensor, org_w, org_h)
+        materialize_elapsed = _elapsed_ms(start)
+        total = int(np.count_nonzero(mask > 0.001))
+        inside = int(np.count_nonzero(mask[y:y + h, x:x + w] > 0.001)) if w > 0 and h > 0 else 0
+        outside = max(0, total - inside)
+        max_value = float(np.nanmax(mask)) if mask.size else 0.0
+        score = (inside, -outside, max_value)
+        scores.append((index, inside, outside, max_value, materialize_elapsed))
+        if best_score is None or score > best_score:
+            best_score = score
+            best = mask
+    _logger.info(
+        "SAM3 bbox mask candidates bbox=%s selected=%s scores=%s",
+        [x, y, w, h],
+        None if best_score is None else best_score,
+        scores,
+    )
+    return best if best is not None else np.zeros((org_h, org_w), dtype=np.float32)
+
+
 def setup_sam3(device="cpu"):
     global __model
     if isinstance(device, str):
@@ -55,6 +107,7 @@ def setup_sam3(device="cpu"):
             __model = __model.to(torch_device)
     # device を省略すると get_default_device() が MPS を選び、モデルが CPU のときに不一致になる
     processor = Sam3Processor(__model, device=torch_device)
+    sam3_coreml_backbone_helper.install(processor, __model)
     param_dev = next(__model.parameters()).device
     if not _device_equal(param_dev, torch_device) or not _device_equal(processor.device, torch_device):
         _logger.error(
@@ -73,6 +126,7 @@ def setup_sam3(device="cpu"):
     sam3_dict = {
         "processor": processor,
         "image": None,
+        "image_key": None,
         "inference_state": None,
         "_device_logged": False,
     }
@@ -102,30 +156,58 @@ def _log_backbone_device_once(sam3_dict):
             )
     sam3_dict["_device_logged"] = True
 
-def predict_sam3_for_bbox(sam3_dict, image, bbox):
+def predict_sam3_for_bbox(sam3_dict, image, bbox, image_key=None):
     processor = sam3_dict["processor"]
     org_h, org_w = image.shape[0:2]
+    cache_key = image_key if image_key is not None else ("object", id(image))
 
     with torch.inference_mode():
-        if sam3_dict["image"] is not image:
+        if sam3_dict.get("image_key") != cache_key:
+            start = time.perf_counter()
             sam3_dict["image"] = image
+            sam3_dict["image_key"] = cache_key
             image = cv2.resize(image, (int(org_w * RESIZE_FACTOR), int(org_h * RESIZE_FACTOR)))
+            resize_elapsed = _elapsed_ms(start)
+            start = time.perf_counter()
             sam3_dict["inference_state"] = processor.set_image(image)
+            _logger.info(
+                "SAM3 set_image elapsed=%.1fms resize_elapsed=%.1fms image_shape=%s",
+                _elapsed_ms(start),
+                resize_elapsed,
+                image.shape[:2],
+            )
             _log_backbone_device_once(sam3_dict)
+        else:
+            _logger.info("SAM3 set_image skipped cache_key=%s image_shape=%s", cache_key, image.shape[:2])
         inference_state = sam3_dict["inference_state"]
 
+        start = time.perf_counter()
         box_input_xywh = torch.tensor(bbox).view(-1, 4)
         box_input_cxcywh = box_xywh_to_cxcywh(box_input_xywh)
         norm_box_cxcywh = _normalize_bbox(box_input_cxcywh, org_w, org_h).flatten().tolist()
+        _logger.info("SAM3 bbox normalize elapsed=%.1fms norm_box=%s", _elapsed_ms(start), norm_box_cxcywh)
 
+        start = time.perf_counter()
         processor.reset_all_prompts(inference_state)
+        reset_elapsed = _elapsed_ms(start)
+        start = time.perf_counter()
         results = processor.add_geometric_prompt(state=inference_state, box=norm_box_cxcywh, label=True)
+        _logger.info(
+            "SAM3 add_geometric_prompt elapsed=%.1fms reset_elapsed=%.1fms masks=%d",
+            _elapsed_ms(start),
+            reset_elapsed,
+            len(results.get("masks", [])),
+        )
     if len(results["masks"]) == 0:
         return np.zeros((org_h, org_w), dtype=np.float32)
 
-    mask = results["masks"][0].squeeze(0).cpu().numpy()
-    mask = np.array(mask, dtype=np.float32)
-    mask = cv2.resize(mask, (org_w, org_h))
+    start = time.perf_counter()
+    mask = _select_bbox_mask_candidate(results["masks"], bbox, org_w, org_h)
+    _logger.info(
+        "SAM3 mask materialize elapsed=%.1fms output_shape=%s",
+        _elapsed_ms(start),
+        mask.shape,
+    )
 
     return mask
 

@@ -1,12 +1,12 @@
 
 import logging
+import os
 import numpy as np
 import cv2
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 def empty_cache():
+    import torch
+
     if torch.cuda.is_available():
         torch.cuda.empty_cache() # Cuda用
     elif torch.backends.mps.is_available():
@@ -14,6 +14,55 @@ def empty_cache():
 
 # log1p による HDR 的レンジ圧縮（SCUNet / DemosaicNet 等で k=8 を共有）
 LOG1P_TONEMAP_K_DEFAULT = 8.0
+
+
+def _ai_display_input_enabled():
+    value = os.environ.get("PLATYPUS_AI_DISPLAY_INPUT")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _default_cat():
+    try:
+        import config
+        return config.get_config("cat")
+    except Exception:
+        return "CAT16"
+
+
+def to_ai_display_rgb(
+        image,
+        input_colourspace="ProPhoto RGB",
+        output_colourspace="sRGB",
+        cat=None):
+    """Convert the app's linear working RGB into display-encoded RGB for AI.
+
+    Segmentation/depth models are generally trained on ordinary display images,
+    while Platypus keeps working pixels linear. Keep that conversion at the AI
+    boundary so the main pipeline can stay linear. Set PLATYPUS_AI_DISPLAY_INPUT=0
+    to pass the original linear image through for comparison.
+    """
+    arr = np.asarray(image, dtype=np.float32)
+    if not _ai_display_input_enabled():
+        return arr
+    if arr.size == 0:
+        return arr.copy()
+    if arr.ndim < 3 or arr.shape[-1] < 3:
+        return np.clip(np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+
+    rgb = np.nan_to_num(arr[..., :3], nan=0.0, posinf=1.0, neginf=0.0)
+    try:
+        from effect_backends import colour_functions_adapter as colour_functions
+        basis = colour_functions.display_color_transform_basis(
+            input_colourspace,
+            output_colourspace,
+            _default_cat() if cat is None else cat,
+        )
+        rgb = colour_functions.apply_display_color_transform(rgb, basis, output_colourspace)
+    except Exception:
+        logging.exception("AI display input conversion failed; falling back to clipped RGB")
+    return np.clip(np.asarray(rgb, dtype=np.float32), 0.0, 1.0).astype(np.float32, copy=False)
 
 
 def log1p_tonemap_forward(x, k=LOG1P_TONEMAP_K_DEFAULT, clip_nonnegative=True):
@@ -213,6 +262,8 @@ def print_model_structure(model, indent=0):
     """
     モデルの構造を詳細に表示
     """
+    import torch.nn as nn
+
     for name, module in model.named_children():
         logging.debug("%s├─ %s: %s", "  " * indent, name, module.__class__.__name__)
         

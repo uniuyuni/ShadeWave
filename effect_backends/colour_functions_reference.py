@@ -2,6 +2,10 @@
 色空間変換ライブラリ - オールインワン版
 All-in-One Colour Space Conversion Library
 
+This module implements a subset of Colour Science for Python compatible
+colour-space conversion behaviour and data. Colour Science for Python is
+licensed under BSD-3-Clause; see THIRD_PARTY_NOTICES.md.
+
 このファイル1つで完結します！
 This single file contains everything you need!
 

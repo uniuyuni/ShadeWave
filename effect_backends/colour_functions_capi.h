@@ -1,3 +1,11 @@
+/*
+ * Native fused display colour transform C API.
+ *
+ * License: GPL-3.0-or-later as part of Shade Wave / PLATYPUS.
+ * Implements behaviour compatible with a subset of Colour Science for Python,
+ * whose upstream project is BSD-3-Clause licensed.
+ */
+
 #ifndef COLOUR_FUNCTIONS_CAPI_H
 #define COLOUR_FUNCTIONS_CAPI_H
 

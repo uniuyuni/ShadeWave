@@ -14,9 +14,9 @@ that hugs strong (coherent) edges while staying smooth and close to the
 reference. Smoothness + a distance prior keep it from jumping onto disconnected
 texture clutter (foliage / roof tiles) or drifting where there is no edge.
 
-Default OFF (opt-in via ``QS_V4_EDGE_SNAP=1``) until validated against real
-hand-drawn ground truth; default keeps V4 == V3 everywhere. See
-``docs/draw-quick-select-v4-design.md``.
+Enabled by default for the app's current Draw Quick Select path. Set
+``QS_V4_EDGE_SNAP=0`` or ``QS_V4_SNAP_ALPHA=0`` to isolate older behavior.
+See ``docs/draw-quick-select-v4-design.md``.
 """
 from __future__ import annotations
 
@@ -33,7 +33,8 @@ from cores.mask2 import edge_refine as _er
 
 DrawSupportResult = _v1.DrawSupportResult
 
-_EDGE_SNAP_DEFAULT = False
+_EDGE_SNAP_DEFAULT = True
+_SNAP_ALPHA_DEFAULT = True
 
 # Coherence 1-slot cache: structure tensor is expensive (~20ms) and only
 # depends on the guide image, so cache it alongside the edge.
@@ -44,6 +45,13 @@ def _snap_enabled():
     value = os.environ.get("QS_V4_EDGE_SNAP")
     if value is None:
         return bool(_EDGE_SNAP_DEFAULT)
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _snap_alpha_enabled():
+    value = os.environ.get("QS_V4_SNAP_ALPHA")
+    if value is None:
+        return bool(_SNAP_ALPHA_DEFAULT)
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -128,9 +136,44 @@ def compute_draw_support(
         return base
 
     out_planes = list(base.debug_planes)
+    out_planes = _maybe_recompute_snap_alpha(
+        guide,
+        snapped,
+        planes,
+        out_planes,
+        edge_bias=edge_bias,
+    )
     out_planes.append(("v4_boundary_snap_delta", delta))
     logging.info("[DRAW_QS_V4] edge-trace moved=%d px", int(np.count_nonzero(delta)))
     return DrawSupportResult(base.seed, base.candidate, snapped, out_planes)
+
+
+def _maybe_recompute_snap_alpha(guide, snapped, planes, out_planes, edge_bias=0.0):
+    """Optionally rebuild support_alpha against the post-snap boundary.
+
+    Kept env-gated because this changes only the matte, not the selected support.
+    Set QS_V4_SNAP_ALPHA=0 to isolate the previously validated V4 snap behavior.
+    """
+    if not _snap_alpha_enabled():
+        return out_planes
+    support_alpha = _v3._support_alpha_from_edge_softness(
+        guide,
+        snapped,
+        planes,
+        edge_bias=edge_bias,
+    )
+    replaced = False
+    updated = []
+    for name, value in out_planes:
+        if name == "support_alpha":
+            updated.append((name, support_alpha))
+            replaced = True
+        else:
+            updated.append((name, value))
+    if not replaced:
+        updated.append(("support_alpha", support_alpha))
+    updated.append(("v4_snap_alpha_recomputed", np.ones_like(support_alpha, dtype=np.float32)))
+    return updated
 
 
 def _localize_to_brush(snapped, support, mask, draw_strokes, radius):

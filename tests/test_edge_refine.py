@@ -23,6 +23,20 @@ from cores.mask2.headless_masks import (
 )
 
 
+class _LegacyDrawQuickSelectEnvMixin:
+    def setUp(self):
+        super().setUp()
+        self._old_qs_draw_v4 = os.environ.get("QS_DRAW_V4")
+        os.environ["QS_DRAW_V4"] = "0"
+
+    def tearDown(self):
+        if self._old_qs_draw_v4 is None:
+            os.environ.pop("QS_DRAW_V4", None)
+        else:
+            os.environ["QS_DRAW_V4"] = self._old_qs_draw_v4
+        super().tearDown()
+
+
 def _snow_like_scene_and_u_stroke():
     h, w = 180, 240
     image = np.zeros((h, w, 3), dtype=np.float32)
@@ -177,7 +191,7 @@ def _curve_side_mask(edge_y, shape, side, margin):
     return out
 
 
-class EdgeRefineTest(unittest.TestCase):
+class EdgeRefineTest(_LegacyDrawQuickSelectEnvMixin, unittest.TestCase):
     def test_mask2_quick_select_radius_defaults_to_zero(self):
         self.assertEqual(
             effects.Mask2Effect.get_param({}, "mask2_edge_refine_radius"),
@@ -1606,7 +1620,7 @@ def _s_curve_scene(h=200, w=260):
     return image, edge_y
 
 
-class DrawQuickSelectMinCutTest(unittest.TestCase):
+class DrawQuickSelectMinCutTest(_LegacyDrawQuickSelectEnvMixin, unittest.TestCase):
     """Scenes exercising the band + min-cut Draw Quick Select backend.
 
     Assertions are deliberately area/region based, not pixel-exact, so they
@@ -3198,7 +3212,7 @@ class DrawQuickSelectRealGTTest(unittest.TestCase):
 
 
 class DrawQuickSelectV4Test(unittest.TestCase):
-    """V4 = V3 region + opt-in boundary edge-snap (default off => V4 == V3)."""
+    """V4 = V3 region + default boundary edge-snap and snap-alpha."""
 
     def _solve(self, module, image, mask):
         return np.asarray(module.compute_draw_support(
@@ -3206,7 +3220,7 @@ class DrawQuickSelectV4Test(unittest.TestCase):
             seed_mask=edge_refine.make_confident_seed(mask),
             draw_strokes=[_straight_edge_line(stroke_x=110)]).support, dtype=bool)
 
-    def test_v4_edge_snap_is_opt_in_and_keeps_region(self):
+    def test_v4_edge_snap_is_default_on_and_can_be_disabled(self):
         from cores.mask2 import draw_quick_select_v3, draw_quick_select_v4
 
         image = _straight_edge_scene(edge_x=120)
@@ -3215,23 +3229,88 @@ class DrawQuickSelectV4Test(unittest.TestCase):
         s3 = self._solve(draw_quick_select_v3, image, mask)
 
         old = os.environ.get("QS_V4_EDGE_SNAP")
-        os.environ.pop("QS_V4_EDGE_SNAP", None)  # default = off
         try:
-            s4_off = self._solve(draw_quick_select_v4, image, mask)
-            os.environ["QS_V4_EDGE_SNAP"] = "1"
-            s4_on = self._solve(draw_quick_select_v4, image, mask)
+            os.environ["QS_V4_EDGE_SNAP"] = "0"
+            s4_disabled = self._solve(draw_quick_select_v4, image, mask)
+            os.environ.pop("QS_V4_EDGE_SNAP", None)
+            s4_default = self._solve(draw_quick_select_v4, image, mask)
         finally:
             if old is None:
                 os.environ.pop("QS_V4_EDGE_SNAP", None)
             else:
                 os.environ["QS_V4_EDGE_SNAP"] = old
 
-        # Default off keeps V4 identical to V3 (no regression by default).
-        self.assertTrue(np.array_equal(s3, s4_off))
-        # With the snap on the result is still a valid selection that never
-        # leaks across the strong edge into the far side.
-        self.assertGreater(int(s4_on.sum()), 0)
-        self.assertLess(s4_on[:, 140:].mean(), 0.02)
+        # Explicitly disabling the snap keeps V4 identical to V3.
+        self.assertTrue(np.array_equal(s3, s4_disabled))
+        # Default-on snap is still a valid selection that never leaks across the
+        # strong edge into the far side.
+        self.assertGreater(int(s4_default.sum()), 0)
+        self.assertLess(s4_default[:, 140:].mean(), 0.02)
+
+    def test_draw_v4_dispatch_is_default_on_and_can_be_disabled(self):
+        from unittest import mock
+        from cores.mask2 import draw_quick_select as v1
+        from cores.mask2 import draw_quick_select_v3 as v3
+        from cores.mask2 import draw_quick_select_v4 as v4
+
+        image = np.ones((24, 24, 3), np.float32)
+        mask = np.zeros((24, 24), np.float32)
+        mask[6:18, 6:18] = 1.0
+        empty = np.zeros_like(mask, dtype=bool)
+        v3_support = np.zeros_like(mask, dtype=bool)
+        v3_support[8:16, 8:16] = True
+        v4_support = np.zeros_like(mask, dtype=bool)
+        v4_support[4:20, 4:20] = True
+        v3_result = v1.DrawSupportResult(empty, v3_support, v3_support, [])
+        v4_result = v1.DrawSupportResult(empty, v4_support, v4_support, [])
+        old_v4 = os.environ.get("QS_DRAW_V4")
+        old_snap = os.environ.get("QS_V4_EDGE_SNAP")
+        old_alpha = os.environ.get("QS_V4_SNAP_ALPHA")
+        try:
+            with mock.patch.object(v4, "compute_draw_support", return_value=v4_result) as v4_call:
+                with mock.patch.object(v3, "compute_draw_support", return_value=v3_result) as v3_call:
+                    os.environ.pop("QS_DRAW_V4", None)
+                    os.environ.pop("QS_V4_EDGE_SNAP", None)
+                    os.environ.pop("QS_V4_SNAP_ALPHA", None)
+                    _refined, support_default = edge_refine.refine_mask_edge_aware(
+                        image,
+                        mask,
+                        mode=edge_refine.MODE_QUICK_SELECT,
+                        radius=12,
+                        strength=0,
+                        selection_strategy=edge_refine.STRATEGY_DRAW,
+                        draw_strokes=[],
+                        return_support=True,
+                    )
+                    self.assertEqual(v4_call.call_count, 1)
+                    self.assertEqual(v3_call.call_count, 0)
+
+                    os.environ["QS_DRAW_V4"] = "0"
+                    _refined, support_disabled = edge_refine.refine_mask_edge_aware(
+                        image,
+                        mask,
+                        mode=edge_refine.MODE_QUICK_SELECT,
+                        radius=12,
+                        strength=0,
+                        selection_strategy=edge_refine.STRATEGY_DRAW,
+                        draw_strokes=[],
+                        return_support=True,
+                    )
+                    self.assertEqual(v4_call.call_count, 1)
+                    self.assertEqual(v3_call.call_count, 1)
+        finally:
+            for key, val in (
+                    ("QS_DRAW_V4", old_v4),
+                    ("QS_V4_EDGE_SNAP", old_snap),
+                    ("QS_V4_SNAP_ALPHA", old_alpha)):
+                if val is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = val
+
+        self.assertIsNotNone(support_default)
+        self.assertIsNotNone(support_disabled)
+        self.assertFalse(np.array_equal(support_default, support_disabled))
 
     def test_edge_lock_offset_unlocks_aggressive_weak_edge_snap(self):
         """Edge Lock raised *above* auto (positive offset) drives the distance
@@ -3269,6 +3348,40 @@ class DrawQuickSelectV4Test(unittest.TestCase):
         # the cranked Edge Lock snaps the boundary onto the weak edge (~x=185).
         self.assertGreater(right_edge_mean(gentle), 195)
         self.assertLess(right_edge_mean(aggressive), 190)
+
+    def test_v4_snap_alpha_recompute_is_default_on_and_can_be_disabled(self):
+        from cores.mask2 import draw_quick_select_v4 as v4
+
+        H, W = 48, 64
+        guide = np.zeros((H, W, 3), np.float32)
+        guide[:, 32:] = 1.0
+        support = np.zeros((H, W), bool)
+        support[12:36, 20:42] = True
+        old_alpha = np.zeros((H, W), np.float32)
+        planes = {"context_edge": edge_refine._draw_snap_edge_strength(guide)}
+        base_planes = [("support_alpha", old_alpha)]
+
+        old = os.environ.get("QS_V4_SNAP_ALPHA")
+        try:
+            os.environ["QS_V4_SNAP_ALPHA"] = "0"
+            off_planes = v4._maybe_recompute_snap_alpha(
+                guide, support, planes, list(base_planes), edge_bias=0.0)
+            self.assertTrue(np.array_equal(dict(off_planes)["support_alpha"], old_alpha))
+            self.assertNotIn("v4_snap_alpha_recomputed", dict(off_planes))
+
+            os.environ.pop("QS_V4_SNAP_ALPHA", None)
+            on_planes = v4._maybe_recompute_snap_alpha(
+                guide, support, planes, list(base_planes), edge_bias=0.0)
+            new_alpha = dict(on_planes)["support_alpha"]
+            self.assertIn("v4_snap_alpha_recomputed", dict(on_planes))
+            self.assertEqual(new_alpha.shape, old_alpha.shape)
+            self.assertGreater(float(new_alpha[support].max()), 0.0)
+            self.assertFalse(np.array_equal(new_alpha, old_alpha))
+        finally:
+            if old is None:
+                os.environ.pop("QS_V4_SNAP_ALPHA", None)
+            else:
+                os.environ["QS_V4_SNAP_ALPHA"] = old
 
     def test_v4_snap_improves_clean_edges_and_does_not_over_snap(self):
         """With snap on (the in-app mode), the auto edge-trace must improve the

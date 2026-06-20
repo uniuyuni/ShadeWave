@@ -1,3 +1,10 @@
+"""DNG temperature/tint conversion helpers.
+
+This module is based on the Adobe DNG SDK temperature/tint conversion logic
+and black-body lookup table. The DNG SDK is distributed under the "DNG SDK
+License Agreement"; see THIRD_PARTY_NOTICES.md for attribution and conditions.
+"""
+
 import math
 
 # Scale factor between distances in uv space to a more user friendly "tint" parameter.

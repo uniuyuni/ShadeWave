@@ -80,14 +80,15 @@ def set_processing_text(text):
 
 def wait_threading(process, *args, **kwargs):
     show_processing_dialog()
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(process, *args, **kwargs)
-        while not future.done():
-            update_processing_dialog()
-            time.sleep(0.04)
-        result = future.result()
-    hide_processing_dialog()
-    return result
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(process, *args, **kwargs)
+            while not future.done():
+                update_processing_dialog()
+                time.sleep(0.04)
+            return future.result()
+    finally:
+        hide_processing_dialog()
 
 
 def wait_processing(process, *args, **kwargs):
@@ -96,14 +97,15 @@ def wait_processing(process, *args, **kwargs):
 
     KVClock.schedule_once(show_processing_dialog)
     event = KVClock.schedule_interval(update_processing_dialog, 0.04)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(process, *args, **kwargs)
-        while not future.done():
-            time.sleep(0.5)
-        result = future.result()
-    KVClock.unschedule(event)
-    KVClock.schedule_once(hide_processing_dialog)
-    return result
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(process, *args, **kwargs)
+            while not future.done():
+                time.sleep(0.5)
+            return future.result()
+    finally:
+        KVClock.unschedule(event)
+        KVClock.schedule_once(hide_processing_dialog)
 
 
 def wait_prosessing(process, *args, **kwargs):

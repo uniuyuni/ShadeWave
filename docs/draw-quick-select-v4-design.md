@@ -125,15 +125,16 @@ export-labels の旧ソルバ出力コピー≒循環参照**で、IoU を実態
 ### V4 = 大域 DP リボン edge-trace（§1.1 の本実装）
 - `draw_quick_select_v4.py`：V3 領域解＋`_trace_boundary_to_edges`（境界をリボン展開し
   法線±W で「エッジに乗るほど安い」コストの最小経路を DP＝livewire 相当、連結・滑らか・
-  ブラシ近傍拘束。clutter は smoothness で回避）。`QS_DRAW_V4=1`/`--solver v4`。
+  ブラシ近傍拘束。clutter は smoothness で回避）。現在は通常実行の既定。
 - **真GT で本物の改善（局所スナップの wash と違う）**：
   - simple b_f1 0.684→**0.774**(+0.09)、roof 0.467→**0.550**(+0.08)、simple2 維持。
   - ＝**領域が正しい clean-edge ケース（roof/simple）で一貫して効く**。
 - tree2（foliage）は領域過剰＋枝の intricate シルエットで trace 効かず＝**SAM3 領分**。
 - 既定: `QS_V4_SNAP_BAND=32`/`QS_V4_TRACE_DISTPRIOR=0.30`/`QS_V4_TRACE_SMOOTH=0.12`
   （広げ過ぎ/prior 弱め過ぎは clutter 崩壊）。
-- **snap 既定 OFF（`QS_V4_EDGE_SNAP=1` で opt-in）**：真GT 検証が 5枚のみ＋実機要確認。
-  既定 V4 ≡ V3（劣化ゼロ）。
+- **snap / snap-alpha 既定 ON**：通常実行は `QS_DRAW_V4=1`, `QS_V4_EDGE_SNAP=1`,
+  `QS_V4_SNAP_ALPHA=1` 相当。切り分け時は `QS_DRAW_V4=0` / `QS_V4_EDGE_SNAP=0` /
+  `QS_V4_SNAP_ALPHA=0` で旧挙動へ戻せる。
 
 ### 残課題（次手）
 1. **領域過剰**（roof 上部の背景膨らみ・tree2）＝境界 trace では引き戻せない別問題。
@@ -141,4 +142,5 @@ export-labels の旧ソルバ出力コピー≒循環参照**で、IoU を実態
 2. 真GT コーパスを増やし、循環ラベルを置換。
 3. snap strength を UI 制御に（auto＋調整）。
 
-`QS_DRAW_V4=1 QS_V4_EDGE_SNAP=1 pixi run python main.py` で roof/simple のエッジ追従を体感。
+`pixi run python main.py` で roof/simple のエッジ追従を体感。旧挙動との差分を見る場合は
+`QS_DRAW_V4=0 pixi run python main.py` などで切り分ける。

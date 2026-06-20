@@ -1,3 +1,11 @@
+/*
+ * Python binding for the native fused display colour transform backend.
+ *
+ * License: GPL-3.0-or-later as part of Shade Wave / PLATYPUS.
+ * Implements behaviour compatible with a subset of Colour Science for Python,
+ * whose upstream project is BSD-3-Clause licensed.
+ */
+
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 

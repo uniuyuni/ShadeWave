@@ -142,7 +142,7 @@ def refine_mask_edge_aware(
             draw_v4_flag = os.environ.get("QS_DRAW_V4")
             draw_v3_flag = os.environ.get("QS_DRAW_V3")
             draw_v2_flag = os.environ.get("QS_DRAW_V2")
-            use_draw_v4 = draw_v4_flag is not None and draw_v4_flag.strip().lower() not in {"0", "false", "no", "off"}
+            use_draw_v4 = draw_v4_flag is None or draw_v4_flag.strip().lower() not in {"0", "false", "no", "off"}
             use_draw_v3 = draw_v3_flag is None or draw_v3_flag.strip().lower() not in {"0", "false", "no", "off"}
             use_draw_v2 = draw_v2_flag is None or draw_v2_flag.strip().lower() not in {"0", "false", "no", "off"}
             if use_draw_v4:

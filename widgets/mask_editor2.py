@@ -13,6 +13,7 @@ from enum import Enum
 import copy
 import logging
 import importlib
+import threading
 from functools import partial
 
 from kivy.app import App as KVApp
@@ -409,6 +410,53 @@ class BaseMask(KVWidget):
         self.image_mask_cache_key = None
         self.do_draw_composit_mask = True
         self._initial_touch_started = False
+        self._image_mask_pending_lock = threading.Lock()
+        self._image_mask_pending_event = None
+        self._image_mask_pending_key = None
+        self._image_mask_pending_error = None
+
+    def _get_or_compute_image_mask_cache(self, cache_key, compute_func, label):
+        while True:
+            with self._image_mask_pending_lock:
+                if self.image_mask_cache is not None and self.image_mask_cache_key == cache_key:
+                    return self.image_mask_cache
+                if self._image_mask_pending_event is None:
+                    event = threading.Event()
+                    self._image_mask_pending_event = event
+                    self._image_mask_pending_key = cache_key
+                    self._image_mask_pending_error = None
+                    break
+                event = self._image_mask_pending_event
+                pending_key = self._image_mask_pending_key
+
+            logging.info("%s prediction already running pending_key=%s requested_key=%s; waiting", label, pending_key, cache_key)
+            event.wait()
+            with self._image_mask_pending_lock:
+                pending_error = self._image_mask_pending_error
+            if pending_error is not None:
+                raise pending_error
+
+        try:
+            result = compute_func()
+        except BaseException as exc:
+            with self._image_mask_pending_lock:
+                if self._image_mask_pending_event is event:
+                    self._image_mask_pending_error = exc
+                    self._image_mask_pending_event = None
+                    self._image_mask_pending_key = None
+                    self.image_mask_cache_key = None
+                event.set()
+            raise
+
+        with self._image_mask_pending_lock:
+            if self._image_mask_pending_event is event:
+                self.image_mask_cache = result
+                self.image_mask_cache_key = cache_key
+                self._image_mask_pending_error = None
+                self._image_mask_pending_event = None
+                self._image_mask_pending_key = None
+            event.set()
+        return result
 
     def invalidate_render_cache(self):
         old_hash = self.image_mask_cache_hash
@@ -3596,8 +3644,6 @@ class SegmentMask(BaseMask):
         # _draw_segmentを呼び出さなければならない用
         cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, invert)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
-            self.image_mask_cache_key = cache_key
-
             # 描画
             cx, cy = center
             crx, cry = corner
@@ -3609,11 +3655,12 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], invert)
+            segment_mask = self._get_or_compute_image_mask_cache(
+                cache_key,
+                lambda: wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], invert),
+                "SegmentMask SAM3",
+            )
             #segment_mask = self._draw_segment(original_image_size, [min_x, min_y, w, h])
-
-            # SegmentMask用のキャッシュ
-            self.image_mask_cache = segment_mask
 
         # その他更新用
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
@@ -3779,12 +3826,12 @@ class DepthMapMask(BaseMask):
         from cores.mask2 import inference_runtime as mask2_inference_runtime
         cache_key = cache_keys.depth_cache_key(original_image_size, mask2_inference_runtime.DEPTH_MAP_ALGORITHM_VERSION)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
-            self.image_mask_cache_key = cache_key
-
-            depth_map_mask = wait_processing(self.draw_depth_map, original_image_size)
+            depth_map_mask = self._get_or_compute_image_mask_cache(
+                cache_key,
+                lambda: wait_processing(self.draw_depth_map, original_image_size),
+                "DepthMapMask",
+            )
             #depth_map_mask = self.draw_depth_map(original_image_size)
-
-            self.image_mask_cache = depth_map_mask
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
         if self.image_mask_cache is not None and (self.image_mask_cache is depth_map_mask or self.depth_map_mask_cache is None or self.depth_map_mask_cache_hash != newhash) and self.initializing == False:
@@ -3960,13 +4007,13 @@ class FaceMask(BaseMask):
 
         cache_key = cache_keys.face_cache_key(original_image_size, exclude_names)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
-            self.image_mask_cache_key = cache_key
-
             # 描画
-            faces_mask = wait_processing(self.draw_face, original_image_size, exclude_names)
+            faces_mask = self._get_or_compute_image_mask_cache(
+                cache_key,
+                lambda: wait_processing(self.draw_face, original_image_size, exclude_names),
+                "FaceMask",
+            )
             #faces_mask = self.draw_face(original_image_size, exclude_names)
-
-            self.image_mask_cache = faces_mask
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
         if self.image_mask_cache is not None and (self.image_mask_cache is faces_mask or self.faces_mask_cache is None or self.faces_mask_cache_hash != newhash) and self.initializing == False:
@@ -4180,14 +4227,13 @@ class TargetTextMask(BaseMask):
         # _draw_segmentを呼び出さなければならない用
         cache_key = cache_keys.target_text_cache_key(original_image_size, text, invert)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
-            self.image_mask_cache_key = cache_key
-            
             # predict_sam3 に渡す box = [x, y, w, h]
-            segment_mask = wait_processing(self._draw_segment, original_image_size, text, invert)
+            segment_mask = self._get_or_compute_image_mask_cache(
+                cache_key,
+                lambda: wait_processing(self._draw_segment, original_image_size, text, invert),
+                "TargetTextMask SAM3",
+            )
             #segment_mask = self._draw_segment(original_image_size, text)
-
-            # SegmentMask用のキャッシュ
-            self.image_mask_cache = segment_mask
 
         # その他更新用
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))

@@ -53,6 +53,22 @@ class ExportViewerRefreshFlowTest(unittest.TestCase):
         self.assertIn("self._mapped_or_current_index(file_path_dict, file_path)", load_source)
         self.assertIn("self._mapped_or_current_index(file_path_dict, file_path)", pending_source)
 
+    def test_watch_directory_changes_restart_watchfiles(self):
+        viewer_source = VIEWER_PATH.read_text(encoding="utf-8")
+        watch_source = _function_source(VIEWER_PATH, "_watchfiles_thread")
+        set_watch_source = _function_source(VIEWER_PATH, "_set_watch_directory")
+        set_path_source = _function_source(VIEWER_PATH, "set_path")
+        deleted_source = _function_source(VIEWER_PATH, "_deleted_file")
+
+        self.assertIn("self._watch_directory_lock = threading.Lock()", viewer_source)
+        self.assertIn("self._watch_stop_event = None", viewer_source)
+        self.assertIn("watch(watch_directory, stop_event=stop_event)", watch_source)
+        self.assertIn("self._watch_stop_event.set()", set_watch_source)
+        self.assertIn("self._watch_stop_event = threading.Event() if directory else None", set_watch_source)
+        self.assertIn("self._set_watch_directory(directory)", set_path_source)
+        self.assertNotIn("self.watch_directory = directory", set_path_source)
+        self.assertIn("self._is_in_current_watch_directory(file_path)", deleted_source)
+
 
 if __name__ == "__main__":
     unittest.main()

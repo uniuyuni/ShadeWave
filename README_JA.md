@@ -253,9 +253,9 @@ Shade Wave 2.22.42
 
 ## ライセンスとクレジット
 
-このリポジトリには現在、トップレベルのライセンスファイルがありません。プロジェクトライセンスが追加されるまでは、再配布権限は未定義として扱ってください。
+Shade Wave / PLATYPUS は GNU General Public License version 3 or later で公開します。詳細は `LICENSE` を参照してください。
 
-Shade Wave は Kivy、KivyMD、NumPy、OpenCV、pyvips、OpenEXR、Pillow、PyTorch、torchvision、coremltools、LibRaw、lensfun/lensfunpy、SAM3、Depth Pro、SCUNet、radiance_denoise など多くのオープンソースライブラリと外部研究プロジェクトに依存しています。バイナリやモデルを配布する前に、各上流のライセンスとモデル利用条件を確認してください。
+このリポジトリには、`libraw_enhanced` 内の RawTherapee 由来デモザイクコード、LibRaw、Adobe DNG SDK 由来の色温度ヘルパー、Colour Science 互換の色変換コード、SAM3、Depth Pro、SCUNet、radiance_denoise など、個別条件を持つ外部コードや外部プロジェクトが含まれます。ソース、バイナリ、モデルウェイト、`.app` ビルドを再配布する前に `THIRD_PARTY_NOTICES.md` を確認してください。
 
 ## リンク
 
