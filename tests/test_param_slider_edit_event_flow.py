@@ -19,6 +19,14 @@ def _load_class_function(path, class_name, function_name):
     raise AssertionError(f"{class_name}.{function_name} was not found")
 
 
+def _load_class(path, class_name):
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return node
+    raise AssertionError(f"{class_name} was not found")
+
+
 class ParamSliderEditEventFlowTest(unittest.TestCase):
     def test_edit_events_are_counters_not_value_assignments(self):
         source = PARAM_SLIDER_PATH.read_text()
@@ -103,6 +111,10 @@ class ParamSliderEditEventFlowTest(unittest.TestCase):
         self.assertIn("c_thumb = self.active_thumb_color", source)
 
     def test_param_slider_multi_point_controls_edit_values_not_scalar_value(self):
+        input_class_source = ast.get_source_segment(
+            PARAM_SLIDER_PATH.read_text(),
+            _load_class(PARAM_SLIDER_PATH, "ParamFloatInput"),
+        )
         input_source = ast.get_source_segment(
             PARAM_SLIDER_PATH.read_text(),
             _load_class_function(PARAM_SLIDER_PATH, "ParamSlider", "on_input_text_validate"),
@@ -118,6 +130,9 @@ class ParamSliderEditEventFlowTest(unittest.TestCase):
         kv_source = PARAM_SLIDER_KV_PATH.read_text()
 
         self.assertIn("multi_value_edit_mode = KVStringProperty(\"active\")", PARAM_SLIDER_PATH.read_text())
+        self.assertIn("def _scrub_owner(self):", input_class_source)
+        self.assertIn("parent = getattr(parent, 'parent', None)", input_class_source)
+        self.assertIn("owner.on_input_scrub_pixels(dx)", input_class_source)
         self.assertIn("self._set_slider_value_at(self._active_slider_index(), val)", input_source)
         self.assertIn("self._set_slider_value_at(self._active_slider_index(), self._active_slider_value() + step)", button_source)
         self.assertIn("self._set_slider_value_at(self._active_slider_index(), self._active_slider_value() + delta)", scrub_source)

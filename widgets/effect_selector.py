@@ -56,7 +56,7 @@ _SWITCH_LABELS = {
     "switch_solid_color": "Solid color",
     "switch_global": "Global Color",
     "switch_fringe_removal": "Fringe Removal",
-    "switch_film_simulation": "Film Simulation",
+    "switch_film_simulation": "Film Process",
     "switch_lens_simulator": "Lens Simulator",
     "switch_filters": "Filters",
     "switch_orton_effect": "Orton",

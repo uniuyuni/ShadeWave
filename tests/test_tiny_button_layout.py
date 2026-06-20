@@ -31,6 +31,13 @@ class TinyButtonLayoutTest(unittest.TestCase):
         self.assertNotIn("from kivy.uix.button import Button", py_source)
         self.assertNotIn("border_width", py_source)
 
+    def test_param_slider_input_background_is_drawn_one_pixel_shorter(self):
+        source = (ROOT / "widgets" / "param_slider.kv").read_text(encoding="utf-8")
+
+        self.assertIn("background_color: 0.18, 0.18, 0.18, 1", source)
+        self.assertIn("pos: self.x, self.top - 1", source)
+        self.assertIn("size: self.width, 1", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3537,7 +3537,11 @@ class SegmentMask(BaseMask):
             return True
         else: 
             self.is_draw_mask = False
-            return super().on_touch_down(touch)
+            handled = super().on_touch_down(touch)
+            if handled:
+                self.editor.draw_mask_image(None)
+                self.update_mask()
+            return handled
 
     def on_touch_move(self, touch):
         if self.initializing:
@@ -3548,8 +3552,12 @@ class SegmentMask(BaseMask):
             self.update_mask()
             return True
         else:
-            self.is_draw_mask = False
-            self.update_mask()
+            for cp in self.control_points:
+                if cp.touching:
+                    cp.on_touch_move(touch)
+                    self.is_draw_mask = False
+                    self.update_mask()
+                    return True
             return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
@@ -3564,9 +3572,21 @@ class SegmentMask(BaseMask):
             self.update_draw_mask()
             return True
         else:
-            self.is_draw_mask = True
-            self.update_mask()
-            self.update_draw_mask()
+            for cp in self.control_points:
+                if cp.touching:
+                    cp.on_touch_up(touch)
+                    get_history_ctrl().end_history_layer_ctrl(
+                        self.editor, "Update", self.editor.get_mask_list().index(self)
+                    )
+                    self.is_draw_mask = True
+                    self.update_mask()
+                    self.editor.request_mask_render_update(
+                        self,
+                        reason="segment_control_point_touch_up",
+                        redraw_overlay=True,
+                        redraw_pipeline=True,
+                    )
+                    return True
             return super().on_touch_up(touch)
 
     def create_control_points(self):

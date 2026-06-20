@@ -75,6 +75,19 @@ class Mask2InitialPlacementBoundsFlowTest(unittest.TestCase):
         self.assertIn("getattr(self.created_mask, '_initial_touch_started', False)", source)
         self.assertIn("return False", source)
 
+    def test_segment_cp_drag_defers_rerender_until_touch_up(self):
+        move_source = _class_function_source("SegmentMask", "on_touch_move")
+        up_source = _class_function_source("SegmentMask", "on_touch_up")
+        down_source = _class_function_source("SegmentMask", "on_touch_down")
+
+        self.assertIn("self.editor.draw_mask_image(None)", down_source)
+        self.assertIn("cp.on_touch_move(touch)", move_source)
+        self.assertIn("self.update_mask()", move_source)
+        self.assertNotIn("request_mask_render_update", move_source)
+        self.assertNotIn("update_draw_mask()", move_source)
+        self.assertIn("reason=\"segment_control_point_touch_up\"", up_source)
+        self.assertIn("redraw_pipeline=True", up_source)
+
 
 if __name__ == "__main__":
     unittest.main()

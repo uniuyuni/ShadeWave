@@ -8,7 +8,7 @@ import logging
 import cores.core as core
 import cores.cubelut as cubelut
 import cores.exposure_fusion_debevec as exposure_fusion_debevec
-import cores.film_emulator as film_emulator
+import cores.film_process as film_process
 from cores.coating_simulator import CoatingSimulator
 from cores.lens_aberration_simulator import LensAberrationSimulator
 import cores.linear_to_log_lut as linear_to_log
@@ -1272,18 +1272,24 @@ class DistortionEffect(Effect):
         )
 
     def _sync_distortion_painter_ref(self, img, param, efconfig, force=False):
-        if self.distortion_painter is None:
+        distortion_painter = self.distortion_painter
+        if distortion_painter is None:
             return
         ref_key = self._make_painter_ref_key(img, param, efconfig)
         if not force and ref_key == self._painter_ref_key:
             return
 
-        self.distortion_painter.set_effect(self.effect_type)
-        self.distortion_painter.set_primary_param(param)
-        self.distortion_painter.set_ref_image(img, True)
-        self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
-        self.distortion_painter.remap_recorded()
-        self._painter_ref_key = ref_key
+        distortion_painter.set_effect(self.effect_type)
+        distortion_painter.set_primary_param(param)
+        distortion_painter.set_ref_image(img, True)
+        distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
+        distortion_painter.remap_recorded()
+        if self.distortion_painter is distortion_painter:
+            self._painter_ref_key = ref_key
+        else:
+            self.diff = None
+            self.hash = None
+            self._painter_ref_key = None
 
     def make_diff(self, img, param, efconfig):
         if self.is_initial_open > 0:
@@ -1350,6 +1356,8 @@ class DistortionEffect(Effect):
             widget.ids["preview_widget"].remove_widget(self.distortion_painter)
             param['distortion_recorded'] = self.distortion_painter.get_recorded()
             self.distortion_painter = None
+            self.diff = None
+            self.hash = None
             self._painter_ref_key = None
 
     def _painter_callback(self, proc, widget):
@@ -3913,26 +3921,61 @@ class LensSimulatorEffect(Effect):
 class FilmSimulationEffect(Effect):
     param_bindings = (
         SwitchBinding('switch_film_simulation', True, "switch_film_simulation", widget_attr="enabled"),
-        SpinnerTextBinding('film_preset', 'None', "spinner_film_preset"),
+        SpinnerTextBinding('film_mode', 'Off', "spinner_film_mode"),
+        SliderBinding('film_latitude', 55, "slider_film_latitude"),
+        SliderBinding('film_contrast', 50, "slider_film_contrast"),
+        SliderBinding('film_color_bias', 0, "slider_film_color_bias"),
+        SliderBinding('film_color_drift', 0, "slider_film_color_drift"),
+        SliderBinding('film_dye_purity', 75, "slider_film_dye_purity"),
+        SliderBinding('film_layer_crosstalk', 30, "slider_film_layer_crosstalk"),
+        SliderBinding('film_halation', 0, "slider_film_halation"),
+        SliderBinding('film_aging', 0, "slider_film_aging"),
         SliderBinding('film_intensity', 100, "slider_film_intensity"),
-        SliderBinding('film_expired', 0, "slider_film_expired"),
     )
 
     def make_diff(self, rgb, param, efconfig):
         switch_film_simulation = self._get_param(param, 'switch_film_simulation')
-        preset = self._get_param(param, 'film_preset')
+        mode = self._get_param(param, 'film_mode')
+        latitude = self._get_param(param, 'film_latitude')
+        contrast = self._get_param(param, 'film_contrast')
+        color_bias = self._get_param(param, 'film_color_bias')
+        color_drift = self._get_param(param, 'film_color_drift')
+        dye_purity = self._get_param(param, 'film_dye_purity')
+        layer_crosstalk = self._get_param(param, 'film_layer_crosstalk')
+        halation = self._get_param(param, 'film_halation')
+        aging = self._get_param(param, 'film_aging')
         intensity = self._get_param(param, 'film_intensity')
-        expired = self._get_param(param, 'film_expired')
-        if switch_film_simulation == False or preset == 'None' or intensity <= 0:
+        if switch_film_simulation == False or mode == 'Off' or intensity <= 0:
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((preset, intensity, expired))
+            param_hash = hash((
+                mode,
+                latitude,
+                contrast,
+                color_bias,
+                color_drift,
+                dye_purity,
+                layer_crosstalk,
+                halation,
+                aging,
+                intensity,
+            ))
             if self.hash != param_hash:
                 self.hash = param_hash
                 
                 rgb = core.type_convert(rgb, np.ndarray)
-                film = film_emulator.emulator.apply_film_effect(rgb, preset, expired)
+                film = film_process.apply_film_process(rgb, {
+                    "film_mode": mode,
+                    "film_latitude": latitude,
+                    "film_contrast": contrast,
+                    "film_color_bias": color_bias,
+                    "film_color_drift": color_drift,
+                    "film_dye_purity": dye_purity,
+                    "film_layer_crosstalk": layer_crosstalk,
+                    "film_halation": halation,
+                    "film_aging": aging,
+                })
                 per = intensity / 100.0
                 self.diff = cv2.addWeighted(film, per, rgb, 1 - per, 0)
 

@@ -7,7 +7,6 @@ APP_DIR_NAME = "Shade Wave"
 LEGACY_APP_DIR_NAME = "Platypus"
 CONFIG_FILE_NAME = "config.json"
 EXPORT_PRESETS_FILE_NAME = "export_presets.json"
-FILM_PRESETS_FILE_NAME = "film_presets.json"
 PRESETS_DIR_NAME = "presets"
 
 LEGACY_EXPORT_PRESETS_FILE_NAME = "export_preset.json"
@@ -89,8 +88,6 @@ def ensure_user_data_dir() -> Path:
     _rename_if_needed(folder, LEGACY_EXPORT_PRESETS_FILE_NAME, EXPORT_PRESETS_FILE_NAME)
 
     _copy_file_if_missing(internal_resource_path(CONFIG_FILE_NAME), folder / CONFIG_FILE_NAME)
-    _copy_file_if_missing(internal_resource_path(FILM_PRESETS_FILE_NAME), folder / FILM_PRESETS_FILE_NAME)
-
     export_source = internal_resource_path(EXPORT_PRESETS_FILE_NAME)
     if not export_source.is_file():
         export_source = internal_resource_path(LEGACY_EXPORT_PRESETS_FILE_NAME)
@@ -114,10 +111,6 @@ def config_path() -> Path:
 
 def export_presets_path() -> Path:
     return user_data_path(EXPORT_PRESETS_FILE_NAME)
-
-
-def film_presets_path() -> Path:
-    return user_data_path(FILM_PRESETS_FILE_NAME)
 
 
 def presets_dir() -> Path:

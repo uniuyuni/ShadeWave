@@ -217,6 +217,14 @@ class ParamFloatInput(widgets.float_input.FloatInput):
         self._scrub_start = (0.0, 0.0)
         self._scrub_last_x = 0.0
 
+    def _scrub_owner(self):
+        parent = self.parent
+        while parent is not None:
+            if hasattr(parent, 'on_input_scrub_pixels'):
+                return parent
+            parent = getattr(parent, 'parent', None)
+        return None
+
     def on_touch_down(self, touch):
         self._scrub_touch_uid = None
         self._scrub_start = (touch.x, touch.y)
@@ -229,7 +237,7 @@ class ParamFloatInput(widgets.float_input.FloatInput):
     def on_touch_move(self, touch):
         if self._scrub_touch_uid != touch.uid:
             return super().on_touch_move(touch)
-        parent = self.parent
+        owner = self._scrub_owner()
         sx, sy = self._scrub_start
         dx_total = touch.x - sx
         dy_total = touch.y - sy
@@ -241,21 +249,21 @@ class ParamFloatInput(widgets.float_input.FloatInput):
             self._scrub_active = True
             self.focus = False
             touch.grab(self)
-            if hasattr(parent, 'on_input_scrub_begin'):
-                parent.on_input_scrub_begin()
+            if owner is not None and hasattr(owner, 'on_input_scrub_begin'):
+                owner.on_input_scrub_begin()
             self._scrub_last_x = touch.x
         dx = touch.x - self._scrub_last_x
         self._scrub_last_x = touch.x
-        if hasattr(parent, 'on_input_scrub_pixels'):
-            parent.on_input_scrub_pixels(dx)
+        if owner is not None:
+            owner.on_input_scrub_pixels(dx)
         return True
 
     def on_touch_up(self, touch):
         if self._scrub_touch_uid == touch.uid:
             if self._scrub_active:
-                parent = self.parent
-                if hasattr(parent, 'on_input_scrub_end'):
-                    parent.on_input_scrub_end()
+                owner = self._scrub_owner()
+                if owner is not None and hasattr(owner, 'on_input_scrub_end'):
+                    owner.on_input_scrub_end()
                 if touch.grab_current is self:
                     touch.ungrab(self)
                 self._scrub_active = False

@@ -783,7 +783,7 @@ config.py のデフォルト
 
 - `utils/preset_utils.py` と `~/Pictures/Shade Wave/presets`。
 - export presetは `~/Pictures/Shade Wave/export_presets.json`。
-- film presetは `~/Pictures/Shade Wave/film_presets.json`。
+- Film Process はプリセット JSON ではなく、Effect param の構造パラメータから生成する。
 
 ## 8. 外部依存と環境差
 

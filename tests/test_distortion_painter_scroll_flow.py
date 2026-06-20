@@ -86,6 +86,10 @@ class DistortionPainterScrollFlowTest(unittest.TestCase):
             source_text,
             _load_class_function(EFFECTS_PATH, "DistortionEffect", "_sync_distortion_painter_ref"),
         )
+        close_source = ast.get_source_segment(
+            source_text,
+            _load_class_function(EFFECTS_PATH, "DistortionEffect", "_close_distortion_painter"),
+        )
         make_diff_source = ast.get_source_segment(
             source_text,
             _load_class_function(EFFECTS_PATH, "DistortionEffect", "make_diff"),
@@ -93,8 +97,15 @@ class DistortionPainterScrollFlowTest(unittest.TestCase):
 
         self.assertIn("params.get_disp_info(param)", make_key_source)
         self.assertIn("getattr(efconfig, 'upstream_hash', None)", make_key_source)
+        self.assertIn("distortion_painter = self.distortion_painter", sync_source)
+        self.assertIn("if distortion_painter is None:", sync_source)
         self.assertIn("ref_key == self._painter_ref_key", sync_source)
-        self.assertIn("self.distortion_painter.set_ref_image(img, True)", sync_source)
+        self.assertIn("distortion_painter.set_ref_image(img, True)", sync_source)
+        self.assertIn("if self.distortion_painter is distortion_painter:", sync_source)
+        self.assertIn("self.diff = None", sync_source)
+        self.assertIn("self.hash = None", sync_source)
+        self.assertIn("self.diff = None", close_source)
+        self.assertIn("self.hash = None", close_source)
         self.assertIn("self._sync_distortion_painter_ref(img, param, efconfig)", make_diff_source)
         self.assertIn("self._painter_ref_key", make_diff_source)
 

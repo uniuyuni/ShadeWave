@@ -38,6 +38,14 @@ class Mask2OverlayPolicyFlowTest(unittest.TestCase):
         self.assertIn('self.apply_effects_lv(0, "geometry", overlay_reason="tab_sync")', source)
         self.assertIn('self.apply_effects_lv(0, "crop", overlay_reason="tab_sync")', source)
         self.assertIn('self.apply_effects_lv(1, "distortion", overlay_reason="tab_sync")', source)
+        self.assertLess(
+            source.index('self.apply_effects_lv(1, "distortion", overlay_reason="tab_sync")'),
+            source.index('self.apply_effects_lv(0, "geometry", overlay_reason="tab_sync")'),
+        )
+        self.assertLess(
+            source.index('self.apply_effects_lv(1, "distortion", overlay_reason="tab_sync")'),
+            source.index('self.apply_effects_lv(0, "crop", overlay_reason="tab_sync")'),
+        )
 
     def test_apply_effects_uses_overlay_policy_helper(self):
         source_text = MAIN_PATH.read_text()

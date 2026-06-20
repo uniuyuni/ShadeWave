@@ -3,6 +3,8 @@ import sys
 import unittest
 from types import SimpleNamespace
 
+import numpy as np
+
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -341,21 +343,44 @@ class EffectParamBindingTest(unittest.TestCase):
             "ai_noise_reduction_intensity": 55,
         })
 
-    def test_spinner_text_binding_uses_hovered_item(self):
+    def test_film_mode_binding_uses_hovered_item(self):
         effect = effects.FilmSimulationEffect()
         widget = self._make_widget(effect)
         widget.ids["switch_film_simulation"].enabled = True
-        widget.ids["spinner_film_preset"].text = "Portra"
-        widget.ids["spinner_film_preset"].hovered_item = SimpleNamespace(text="Velvia")
+        widget.ids["spinner_film_mode"].text = "Negative"
+        widget.ids["spinner_film_mode"].hovered_item = SimpleNamespace(text="Slide")
+        widget.ids["slider_film_latitude"].value = 70
+        widget.ids["slider_film_contrast"].value = 55
+        widget.ids["slider_film_color_bias"].value = -12
+        widget.ids["slider_film_color_drift"].value = 34
+        widget.ids["slider_film_dye_purity"].value = 82
+        widget.ids["slider_film_layer_crosstalk"].value = 25
+        widget.ids["slider_film_halation"].value = 18
+        widget.ids["slider_film_aging"].value = 9
         widget.ids["slider_film_intensity"].value = 65
-        widget.ids["slider_film_expired"].value = 15
 
         param = {}
         effect.set2param(param, widget)
 
-        self.assertEqual(param["film_preset"], "Velvia")
+        self.assertEqual(param["film_mode"], "Slide")
+        self.assertEqual(param["film_latitude"], 70)
+        self.assertEqual(param["film_contrast"], 55)
+        self.assertEqual(param["film_color_bias"], -12)
+        self.assertEqual(param["film_color_drift"], 34)
+        self.assertEqual(param["film_dye_purity"], 82)
+        self.assertEqual(param["film_layer_crosstalk"], 25)
+        self.assertEqual(param["film_halation"], 18)
+        self.assertEqual(param["film_aging"], 9)
         self.assertEqual(param["film_intensity"], 65)
-        self.assertEqual(param["film_expired"], 15)
+
+    def test_film_off_mode_makes_no_diff(self):
+        effect = effects.FilmSimulationEffect()
+        image = np.full((2, 2, 3), 0.5, dtype=np.float32)
+
+        diff = effect.make_diff(image, effect.get_param_dict({}), effects.EffectConfig())
+
+        self.assertIsNone(diff)
+        self.assertIsNone(effect.diff)
 
     def test_patchmatch_set2widget_targets_patchmatch_predict_button(self):
         effect = effects.PatchmatchInpaintEffect()
@@ -938,15 +963,29 @@ class EffectParamBindingTest(unittest.TestCase):
                 effects.FilmSimulationEffect,
                 {
                     "switch_film_simulation": False,
-                    "film_preset": "Portra",
+                    "film_mode": "Off",
+                    "film_latitude": 55,
+                    "film_contrast": 50,
+                    "film_color_bias": 0,
+                    "film_color_drift": 0,
+                    "film_dye_purity": 75,
+                    "film_layer_crosstalk": 30,
+                    "film_halation": 0,
+                    "film_aging": 0,
                     "film_intensity": 75,
-                    "film_expired": 10,
                 },
                 {
                     "switch_film_simulation": True,
-                    "film_preset": "Velvia",
+                    "film_mode": "Slide",
+                    "film_latitude": 65,
+                    "film_contrast": 58,
+                    "film_color_bias": 10,
+                    "film_color_drift": 35,
+                    "film_dye_purity": 88,
+                    "film_layer_crosstalk": 18,
+                    "film_halation": 12,
+                    "film_aging": 6,
                     "film_intensity": 60,
-                    "film_expired": 20,
                 },
             ),
             (

@@ -140,7 +140,6 @@ if __name__ == '__main__':
     from utils import rating_io
     import macos as device
 
-    import cores.film_emulator as film_emulator
     from cores.coating_simulator import CoatingSimulator
     import config
     import export
@@ -934,7 +933,6 @@ if __name__ == '__main__':
 
             self.ids['mask_editor2'].opacity = 0
             self.ids['mask_editor2'].disabled = True
-            self._set_film_presets()
             self._set_lens_presets()
 
             self.apply_preview_focus_layout()
@@ -3284,6 +3282,43 @@ if __name__ == '__main__':
         def _is_mask2_enabled(self):
             return self.ids['mask_editor2'].opacity == 1 and self.ids['mask_editor2'].disabled == False
 
+        def _find_effect_tab(self, text):
+            effects_panel = self.ids.get("effects")
+            if effects_panel is None:
+                return None
+            for tab in getattr(effects_panel, "tab_list", []):
+                if getattr(tab, "text", None) == text:
+                    return tab
+            return None
+
+        def _set_li_tab_disabled_for_mask2(self):
+            effects_panel = self.ids.get("effects")
+            li_tab = self.ids.get("tab_li") or self._find_effect_tab("Li")
+            if effects_panel is None or li_tab is None:
+                return False
+
+            disabled = self._is_mask2_enabled()
+            li_tab.disabled = disabled
+            if not disabled:
+                return False
+
+            current_tab = getattr(effects_panel, "current_tab", None)
+            if getattr(current_tab, "text", None) != "Li":
+                return False
+
+            fallback = self.ids.get("tab_mask2") or self._find_effect_tab("M2")
+            if fallback is None or getattr(fallback, "disabled", False):
+                fallback = self.ids.get("tab_basic") or self._find_effect_tab("Ba")
+            if fallback is None or getattr(fallback, "disabled", False):
+                for tab in reversed(getattr(effects_panel, "tab_list", [])):
+                    if getattr(tab, "text", None) != "Li" and not getattr(tab, "disabled", False):
+                        fallback = tab
+                        break
+            if fallback is not None:
+                effects_panel.switch_to(fallback)
+                return True
+            return False
+
         def _set_disabled_for_ids(self, id_names, disabled):
             for id_name in id_names:
                 widget = self.ids.get(id_name)
@@ -3292,6 +3327,7 @@ if __name__ == '__main__':
 
         def update_mask2_options_enabled(self):
             self.update_load_dependent_panels_enabled()
+            self._set_li_tab_disabled_for_mask2()
             editor = self.ids.get('mask_editor2')
             mask2_button = self.ids.get('mask2')
             mask2_panel = self.ids.get('mask2_panel')
@@ -3442,6 +3478,7 @@ if __name__ == '__main__':
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1
             self.ids['mask_editor2'].disabled = False
+            self._set_li_tab_disabled_for_mask2()
             self.update_preview_texture_size()
             self.ids['mask_editor2'].set_texture_size(config.get_config('preview_width'), config.get_config('preview_height'))
             self.ids['mask_editor2'].set_primary_param(self.primary_param, params.get_disp_info(self.primary_param))
@@ -3454,6 +3491,7 @@ if __name__ == '__main__':
             self.ids['mask_editor2'].disabled = True
             self.ids['mask_editor2'].set_active_mask(None)
             self.ids['mask_editor2'].end()
+            self._set_li_tab_disabled_for_mask2()
             self.update_mask2_options_enabled()
 
         def on_mask2_press(self, value):
@@ -3926,6 +3964,9 @@ if __name__ == '__main__':
         def on_current_tab(self, current):
             self._clear_text_input_focus()
             self._cancel_mask1_mode(redraw=False)
+            if getattr(current, "text", None) == "Li" and self._is_mask2_enabled():
+                if self._set_li_tab_disabled_for_mask2():
+                    return
 
             # 描画中の操作 (Polyline の途中など) はタブ切替で確定させる。
             try:
@@ -3964,9 +4005,9 @@ if __name__ == '__main__':
             if self.imgset is not None:
                 # apply_effects_lv(0, 'crop') 内の sync_crop_editor_mode_from_widget は
                 # Mask2 ON 時はクロップエディタを閉じるよう CropEffect 側で対応済み。
+                self.apply_effects_lv(1, "distortion", overlay_reason="tab_sync")
                 self.apply_effects_lv(0, "geometry", overlay_reason="tab_sync")
                 self.apply_effects_lv(0, "crop", overlay_reason="tab_sync")
-                self.apply_effects_lv(1, "distortion", overlay_reason="tab_sync")
 
 
 
@@ -3982,15 +4023,6 @@ if __name__ == '__main__':
                     lut_values.append(file_name)
                     effects.LUTEffect.file_pathes[file_name] = file_path
             self.ids['lut_spinner'].values = lut_values
-
-        def _set_film_presets(self):
-            presets = ['None']
-
-            film_presets = film_emulator.emulator.get_presets()
-            for preset in film_presets:
-                presets.append(preset)
-
-            self.ids['spinner_film_preset'].values = presets
 
         def _set_lens_presets(self):
             presets = ['None']

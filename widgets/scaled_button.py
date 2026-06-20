@@ -24,8 +24,20 @@ class ScaledButtonMixin:
         self.background_disabled_down = ""
         self.background_color = (0, 0, 0, 0)
         self.color = (1, 1, 1, 1)
-        self.bind(state=self._update_bg, disabled=self._update_bg, text=self._update_bg)
+        self.bind(
+            state=self._schedule_update_bg,
+            disabled=self._schedule_update_bg,
+            text=self._schedule_update_bg,
+            bg_color_normal=self._schedule_update_bg,
+            bg_color_down=self._schedule_update_bg,
+            bg_color_disabled=self._schedule_update_bg,
+            bg_color_reset_normal=self._schedule_update_bg,
+        )
         self._update_bg()
+
+    def _schedule_update_bg(self, *_args):
+        self._update_bg()
+        Clock.schedule_once(self._update_bg, 0)
 
     def _update_bg(self, *_args):
         if self.disabled:
