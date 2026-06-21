@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 import numpy as np
@@ -13,6 +14,32 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from effect_backends import colour_functions_adapter as colour_functions
 from utils import aiutils
+
+
+@contextmanager
+def _patch_helper_modules(modules):
+    import helpers
+
+    sentinel = object()
+    old_attrs = {}
+    for full_name, module in modules.items():
+        _, _, attr = full_name.partition(".")
+        old_attrs[attr] = getattr(helpers, attr, sentinel)
+        setattr(helpers, attr, module)
+    try:
+        with mock.patch.dict(sys.modules, modules):
+            yield
+    finally:
+        for full_name in modules:
+            _, _, attr = full_name.partition(".")
+            old_value = old_attrs[attr]
+            if old_value is sentinel:
+                try:
+                    delattr(helpers, attr)
+                except AttributeError:
+                    pass
+            else:
+                setattr(helpers, attr, old_value)
 
 
 class AiDisplayInputAdapterTest(unittest.TestCase):
@@ -95,7 +122,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
             return np.ones(img.shape[:2], dtype=np.float32)
         sam3_module.predict_sam3_for_bbox = mock.Mock(side_effect=predict_sam3)
 
-        with mock.patch.dict(sys.modules, {
+        with _patch_helper_modules({
             "helpers.depth_pro_helper": depth_module,
             "helpers.facer_helper": facer_module,
             "helpers.sam3_helper": sam3_module,
@@ -141,7 +168,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
             return np.ones(img.shape[:2], dtype=np.float32)
         sam3_module.predict_sam3_for_bbox = mock.Mock(side_effect=predict_sam3)
 
-        with mock.patch.dict(sys.modules, {"helpers.sam3_helper": sam3_module}):
+        with _patch_helper_modules({"helpers.sam3_helper": sam3_module}):
             with mock.patch.object(runtime.config, "get_config", return_value="cpu"):
                 with mock.patch.object(runtime.aiutils, "to_ai_display_rgb", return_value=original):
                     with mock.patch.object(
@@ -174,7 +201,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
         old_scale = os.environ.get("PLATYPUS_SAM3_ROI_SCALE")
         try:
             os.environ["PLATYPUS_SAM3_ROI_SCALE"] = "1.5"
-            with mock.patch.dict(sys.modules, {"helpers.sam3_helper": sam3_module}):
+            with _patch_helper_modules({"helpers.sam3_helper": sam3_module}):
                 with mock.patch.object(runtime.config, "get_config", return_value="cpu"):
                     with mock.patch.object(runtime.aiutils, "to_ai_display_rgb", return_value=original):
                         with mock.patch.object(
@@ -212,7 +239,7 @@ class Mask2InferenceRuntimeAiInputTest(unittest.TestCase):
             calls["radius"] = radius
             return src
 
-        with mock.patch.dict(sys.modules, {"helpers.sam3_helper": sam3_module}):
+        with _patch_helper_modules({"helpers.sam3_helper": sam3_module}):
             with mock.patch.object(runtime.config, "get_config", return_value="cpu"):
                 with mock.patch.object(runtime.aiutils, "to_ai_display_rgb", return_value=original):
                     with mock.patch.object(

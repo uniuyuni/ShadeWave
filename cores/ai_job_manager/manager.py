@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import multiprocessing
 import os
 import threading
 from collections import OrderedDict
@@ -59,6 +58,7 @@ class AIJobManager:
         self.status_by_job: dict[int, AIJobStatus] = {}
         self.job_by_target: dict[tuple[str, str], int] = {}
         self.completed_results: OrderedDict[tuple[str, str, str], np.ndarray] = OrderedDict()
+        self.completed_results_total_bytes = 0
         self.active_input_shms: dict[int, shared_memory.SharedMemory] = {}
         self.active_started_at: dict[int, float] = {}
         self.pending_payloads: dict[int, dict[str, Any]] = {}
@@ -91,15 +91,17 @@ class AIJobManager:
             self._terminate_worker_process()
             self._cleanup_all_input_shms()
 
-    def _restart_worker(self):
+    def _restart_worker(self, *, count_restart: bool = True, mark_pending_on_limit: bool = True):
         if self.thread_mode:
             logging.warning("AI job worker restart skipped in thread mode to avoid overlapping CoreML inference.")
             return False
-        if self.worker_restart_count >= MAX_WORKER_RESTARTS:
+        if count_restart and self.worker_restart_count >= MAX_WORKER_RESTARTS:
             logging.error("AI job worker restart limit reached; pending jobs will be marked error.")
-            self._mark_pending_jobs_error("AI job worker restart limit reached")
+            if mark_pending_on_limit:
+                self._mark_pending_jobs_error("AI job worker restart limit reached")
             return False
-        self.worker_restart_count += 1
+        if count_restart:
+            self.worker_restart_count += 1
         pending = list(self.pending_payloads.values())
         self._drain_result_queue_discard_shm()
         self._terminate_worker_process()
@@ -206,14 +208,16 @@ class AIJobManager:
 
     def get_completed_result(self, kind: str, file_path: str, content_key: str):
         with self._lock:
-            result = self.completed_results.get((kind, file_path, content_key))
+            key = (kind, file_path, content_key)
+            result = self.completed_results.get(key)
             if result is not None:
+                self.completed_results.move_to_end(key)
                 logging.info("AIJobManager completed cache hit: kind=%s file=%s content_key=%s", kind, file_path, content_key)
             return result
 
     def discard_completed_result(self, job: AIJob) -> None:
         with self._lock:
-            removed = self.completed_results.pop(self._result_key(job), None)
+            removed = self._pop_completed_result(self._result_key(job))
             if removed is not None:
                 logging.info(
                     "AIJobManager discarded completed cache: file=%s content_key=%s bytes=%s remaining_bytes=%s",
@@ -229,12 +233,21 @@ class AIJobManager:
 
     def completed_results_bytes(self) -> int:
         with self._lock:
-            return sum(int(getattr(result, "nbytes", 0) or 0) for result in self.completed_results.values())
+            return self.completed_results_total_bytes
+
+    def _result_nbytes(self, result: np.ndarray | None) -> int:
+        return int(getattr(result, "nbytes", 0) or 0)
+
+    def _pop_completed_result(self, key: tuple[str, str, str]) -> np.ndarray | None:
+        removed = self.completed_results.pop(key, None)
+        if removed is not None:
+            self.completed_results_total_bytes = max(0, self.completed_results_total_bytes - self._result_nbytes(removed))
+        return removed
 
     def _store_completed_result(self, job: AIJob, raw: np.ndarray) -> bool:
         limit = completed_results_cache_limit_bytes()
         key = self._result_key(job)
-        self.completed_results.pop(key, None)
+        self._pop_completed_result(key)
         result_bytes = int(getattr(raw, "nbytes", 0) or 0)
         if limit <= 0:
             logging.info(
@@ -253,13 +266,14 @@ class AIJobManager:
             )
             return False
         self.completed_results[key] = raw
+        self.completed_results_total_bytes += result_bytes
         self._enforce_completed_results_budget(limit)
         logging.info(
             "AIJobManager stored completed cache: file=%s content_key=%s bytes=%s total_bytes=%s limit=%s",
             job.file_path,
             job.content_key,
             result_bytes,
-            self.completed_results_bytes(),
+            self.completed_results_total_bytes,
             limit,
         )
         return True
@@ -267,8 +281,9 @@ class AIJobManager:
     def _enforce_completed_results_budget(self, limit: int | None = None) -> None:
         if limit is None:
             limit = completed_results_cache_limit_bytes()
-        while self.completed_results and self.completed_results_bytes() > limit:
+        while self.completed_results and self.completed_results_total_bytes > limit:
             key, removed = self.completed_results.popitem(last=False)
+            self.completed_results_total_bytes = max(0, self.completed_results_total_bytes - self._result_nbytes(removed))
             logging.warning(
                 "AIJobManager evicted completed cache to stay within memory budget: "
                 "kind=%s file=%s content_key=%s bytes=%s remaining_bytes=%s limit=%s",
@@ -276,7 +291,7 @@ class AIJobManager:
                 key[1],
                 key[2],
                 int(getattr(removed, "nbytes", 0) or 0),
-                self.completed_results_bytes(),
+                self.completed_results_total_bytes,
                 limit,
             )
 
@@ -289,8 +304,10 @@ class AIJobManager:
             source_signature=source_signature,
         )
         with self._lock:
-            result = self.completed_results.get((AI_NOISE_KIND, file_path, content_key))
+            result_key = (AI_NOISE_KIND, file_path, content_key)
+            result = self.completed_results.get(result_key)
             if result is not None:
+                self.completed_results.move_to_end(result_key)
                 logging.info("AIJobManager reused completed AI-NR result: file=%s content_key=%s", file_path, content_key)
                 return AIJobStatus.COMPLETE, result, content_key, source_signature
 
@@ -442,7 +459,38 @@ class AIJobManager:
         if job is None:
             return
         logging.info("AIJobManager preempting running background AI job for foreground request: %s", job.file_path)
+        should_requeue = str(job.content_key).startswith("pending:")
         self._cancel_job(job_id, restart_running=True)
+        if should_requeue:
+            self._requeue_background_file_job(job)
+
+    def _requeue_background_file_job(self, job: AIJob):
+        new_job = AIJob(
+            job_id=self._next_job_id(),
+            kind=job.kind,
+            file_path=job.file_path,
+            content_key=f"pending:{self._job_counter}",
+            source_signature=f"pending:{self._job_counter}",
+            param_snapshot=dict(job.param_snapshot or {}),
+        )
+        self.jobs[new_job.job_id] = new_job
+        self.job_by_target[self._target_key(new_job.kind, new_job.file_path)] = new_job.job_id
+        self.priority_by_job[new_job.job_id] = BACKGROUND_PRIORITY
+        self._set_status(new_job, AIJobStatus.QUEUED)
+        payload = {
+            "job_id": new_job.job_id,
+            "kind": new_job.kind,
+            "file_path": new_job.file_path,
+            "param_snapshot": dict(new_job.param_snapshot or {}),
+            "priority": BACKGROUND_PRIORITY,
+            "queued_at": time.monotonic(),
+        }
+        if self.thread_mode:
+            cancel_event = threading.Event()
+            self.cancel_events[new_job.job_id] = cancel_event
+            payload["cancel_event"] = cancel_event
+        self.pending_payloads[new_job.job_id] = payload
+        self._dispatch_next_payload()
 
     def _payload_sort_key(self, payload: dict[str, Any]):
         return (
@@ -492,7 +540,11 @@ class AIJobManager:
                 logging.info("AI job running task cancelled in thread mode; stale result will be discarded: %s", job.file_path)
                 self._dispatch_next_payload()
             else:
-                self._restart_worker()
+                if self.dispatched_job_id == job_id:
+                    self.dispatched_job_id = None
+                restarted = self._restart_worker(count_restart=False, mark_pending_on_limit=False)
+                if not restarted:
+                    self._dispatch_next_payload()
         else:
             self._dispatch_next_payload()
 
@@ -509,8 +561,9 @@ class AIJobManager:
             self.input_queue.put(payload)
 
     def poll_results(self) -> list[AIJobResult]:
+        completed_reads: list[tuple[int, AIJob, dict[str, Any]]] = []
+        results: list[AIJobResult] = []
         with self._lock:
-            results: list[AIJobResult] = []
             self._mark_dead_worker_jobs_error()
             while True:
                 try:
@@ -526,6 +579,10 @@ class AIJobManager:
                     continue
                 if self.status_by_job.get(job_id) == AIJobStatus.CANCELLED:
                     self._discard_result_shm(res)
+                    self.pending_payloads.pop(job_id, None)
+                    if self.dispatched_job_id == job_id:
+                        self.dispatched_job_id = None
+                    self._dispatch_next_payload()
                     continue
 
                 raw_status = res.get("status", AIJobStatus.ERROR.value)
@@ -539,28 +596,14 @@ class AIJobManager:
                     self._set_status(job, AIJobStatus.RUNNING)
                     continue
                 if status == AIJobStatus.COMPLETE:
-                    try:
-                        if res.get("content_key") and res.get("source_signature"):
-                            job = replace(
-                                job,
-                                content_key=res["content_key"],
-                                source_signature=res["source_signature"],
-                            )
-                            self.jobs[job_id] = job
-                        raw = self._read_result_shm(res["shm_name"], res["shape"], res["dtype"])
-                        self._store_completed_result(job, raw)
-                        self.pending_payloads.pop(job_id, None)
-                        self._set_status(job, AIJobStatus.COMPLETE)
-                        self.job_by_target.pop(self._target_key(job.kind, job.file_path), None)
-                        if self.dispatched_job_id == job_id:
-                            self.dispatched_job_id = None
-                        results.append(AIJobResult(job=job, status=AIJobStatus.COMPLETE, result=raw))
-                    except Exception as exc:
-                        logging.exception("failed to read AI job result")
-                        self._set_status(job, AIJobStatus.ERROR)
-                        if self.dispatched_job_id == job_id:
-                            self.dispatched_job_id = None
-                        results.append(AIJobResult(job=job, status=AIJobStatus.ERROR, error=str(exc)))
+                    if res.get("content_key") and res.get("source_signature"):
+                        job = replace(
+                            job,
+                            content_key=res["content_key"],
+                            source_signature=res["source_signature"],
+                        )
+                        self.jobs[job_id] = job
+                    completed_reads.append((job_id, job, res))
                 elif status == AIJobStatus.STALE:
                     self.pending_payloads.pop(job_id, None)
                     self._set_status(job, AIJobStatus.STALE)
@@ -576,8 +619,45 @@ class AIJobManager:
                     results.append(AIJobResult(job=job, status=AIJobStatus.ERROR, error=res.get("error")))
                 self._dispatch_next_payload()
                 self._prune_finished_jobs()
+            if not completed_reads:
+                self._dispatch_next_payload()
+                return results
+
+        for job_id, job, res in completed_reads:
+            try:
+                raw = self._read_result_shm(res["shm_name"], res["shape"], res["dtype"])
+            except Exception as exc:
+                logging.exception("failed to read AI job result")
+                with self._lock:
+                    if self.status_by_job.get(job_id) != AIJobStatus.CANCELLED:
+                        self._set_status(job, AIJobStatus.ERROR)
+                        if self.dispatched_job_id == job_id:
+                            self.dispatched_job_id = None
+                        results.append(AIJobResult(job=job, status=AIJobStatus.ERROR, error=str(exc)))
+                        self._dispatch_next_payload()
+                        self._prune_finished_jobs()
+                continue
+
+            with self._lock:
+                if self.status_by_job.get(job_id) == AIJobStatus.CANCELLED:
+                    if self.dispatched_job_id == job_id:
+                        self.dispatched_job_id = None
+                    self._dispatch_next_payload()
+                    continue
+                self._store_completed_result(job, raw)
+                self.pending_payloads.pop(job_id, None)
+                self._set_status(job, AIJobStatus.COMPLETE)
+                self.job_by_target.pop(self._target_key(job.kind, job.file_path), None)
+                if self.dispatched_job_id == job_id:
+                    self.dispatched_job_id = None
+                self.worker_restart_count = 0
+                results.append(AIJobResult(job=job, status=AIJobStatus.COMPLETE, result=raw))
+                self._dispatch_next_payload()
+                self._prune_finished_jobs()
+
+        with self._lock:
             self._dispatch_next_payload()
-            return results
+        return results
 
     def _worker_is_alive(self) -> bool:
         proc = self.process
@@ -694,7 +774,7 @@ class AIJobManager:
         for job_id, job in finished[: len(finished) - FINISHED_JOB_RETENTION]:
             if job is not None:
                 self.job_by_target.pop(self._target_key(job.kind, job.file_path), None)
-                self.completed_results.pop(self._result_key(job), None)
+                self._pop_completed_result(self._result_key(job))
             self.jobs.pop(job_id, None)
             self.status_by_job.pop(job_id, None)
             self.pending_payloads.pop(job_id, None)

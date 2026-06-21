@@ -564,7 +564,7 @@ class AIJobManagerTest(unittest.TestCase):
         mgr = AIJobManager()
         job = AIJob(1, AI_NOISE_KIND, "/tmp/current.jpg", "content", "source")
         raw = np.ones((2, 2, 3), dtype=np.float32)
-        mgr.completed_results[(job.kind, job.file_path, job.content_key)] = raw
+        mgr._store_completed_result(job, raw)
 
         self.assertGreater(mgr.completed_results_bytes(), 0)
         mgr.discard_completed_result(job)
@@ -584,6 +584,23 @@ class AIJobManagerTest(unittest.TestCase):
         self.assertIsNone(mgr.get_completed_result(AI_NOISE_KIND, job1.file_path, job1.content_key))
         self.assertIsNotNone(mgr.get_completed_result(AI_NOISE_KIND, job2.file_path, job2.content_key))
         self.assertLessEqual(mgr.completed_results_bytes(), 83)
+
+    def test_completed_result_cache_evicts_least_recently_used_result(self):
+        mgr = AIJobManager()
+        raw = np.ones((2, 2, 3), dtype=np.float32)
+        job1 = AIJob(1, AI_NOISE_KIND, "/tmp/one.jpg", "content-1", "source-1")
+        job2 = AIJob(2, AI_NOISE_KIND, "/tmp/two.jpg", "content-2", "source-2")
+        job3 = AIJob(3, AI_NOISE_KIND, "/tmp/three.jpg", "content-3", "source-3")
+
+        with patch.dict(os.environ, {"PLATYPUS_AI_COMPLETED_CACHE_MAX_MB": "0.0001"}):
+            self.assertTrue(mgr._store_completed_result(job1, raw))
+            self.assertTrue(mgr._store_completed_result(job2, raw))
+            self.assertIsNotNone(mgr.get_completed_result(AI_NOISE_KIND, job1.file_path, job1.content_key))
+            self.assertTrue(mgr._store_completed_result(job3, raw))
+
+        self.assertIsNotNone(mgr.get_completed_result(AI_NOISE_KIND, job1.file_path, job1.content_key))
+        self.assertIsNone(mgr.get_completed_result(AI_NOISE_KIND, job2.file_path, job2.content_key))
+        self.assertIsNotNone(mgr.get_completed_result(AI_NOISE_KIND, job3.file_path, job3.content_key))
 
     def test_completed_result_larger_than_cache_budget_is_not_stored(self):
         mgr = AIJobManager()
@@ -625,6 +642,70 @@ class AIJobManagerTest(unittest.TestCase):
         self.assertEqual([], mgr.poll_results())
 
         self.assertIn((job.file_path, "running", "12/84"), states)
+
+    def test_complete_result_shared_memory_copy_runs_outside_manager_lock(self):
+        class ListQueue:
+            def __init__(self, items):
+                self.items = list(items)
+
+            def get_nowait(self):
+                if self.items:
+                    return self.items.pop(0)
+                from queue import Empty
+
+                raise Empty
+
+        class TrackingRLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.depth = 0
+
+            def __enter__(self):
+                self._lock.acquire()
+                self.depth += 1
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self.depth -= 1
+                self._lock.release()
+
+        lock_depths = []
+        mgr = AIJobManager()
+        mgr._lock = TrackingRLock()
+
+        class FakeSharedMemory:
+            def __init__(self, create=False, size=0, name=None):
+                lock_depths.append(mgr._lock.depth)
+                self.name = name or "fake-result"
+                self.buf = bytearray(np.ones((2, 2, 3), dtype=np.float32).tobytes())
+
+            def close(self):
+                pass
+
+            def unlink(self):
+                pass
+
+        job = AIJob(1, AI_NOISE_KIND, "/tmp/current.jpg", "pending:1", "pending:1")
+        mgr.jobs[job.job_id] = job
+        mgr.status_by_job[job.job_id] = AIJobStatus.RUNNING
+        mgr.dispatched_job_id = job.job_id
+        mgr.result_queue = ListQueue([
+            {
+                "job_id": job.job_id,
+                "status": AIJobStatus.COMPLETE.value,
+                "shm_name": "fake-result",
+                "shape": (2, 2, 3),
+                "dtype": "float32",
+                "content_key": "content",
+                "source_signature": "source",
+            }
+        ])
+
+        with patch("cores.ai_job_manager.manager.shared_memory.SharedMemory", FakeSharedMemory):
+            results = mgr.poll_results()
+
+        self.assertEqual(1, len(results))
+        self.assertEqual([0], lock_depths)
 
     def test_cancelled_or_unknown_complete_unlinks_result_shm(self):
         class ListQueue:
@@ -676,6 +757,146 @@ class AIJobManagerTest(unittest.TestCase):
 
         self.assertIn(("cancelled-result", "unlink"), discarded)
         self.assertIn(("unknown-result", "unlink"), discarded)
+
+    def test_cancelled_result_releases_dispatched_job(self):
+        class ListQueue:
+            def __init__(self, items):
+                self.items = list(items)
+                self.dispatched = []
+
+            def get_nowait(self):
+                if self.items:
+                    return self.items.pop(0)
+                from queue import Empty
+
+                raise Empty
+
+            def put(self, payload):
+                self.dispatched.append(payload)
+
+        mgr = AIJobManager()
+        cancelled = AIJob(1, AI_NOISE_KIND, "/tmp/cancelled.jpg", "content", "source")
+        next_job = AIJob(2, AI_NOISE_KIND, "/tmp/next.jpg", "content2", "source2")
+        queue = ListQueue([
+            {
+                "job_id": cancelled.job_id,
+                "status": AIJobStatus.CANCELLED.value,
+            },
+        ])
+        mgr.jobs[cancelled.job_id] = cancelled
+        mgr.jobs[next_job.job_id] = next_job
+        mgr.status_by_job[cancelled.job_id] = AIJobStatus.CANCELLED
+        mgr.status_by_job[next_job.job_id] = AIJobStatus.QUEUED
+        mgr.dispatched_job_id = cancelled.job_id
+        mgr.pending_payloads[next_job.job_id] = {
+            "job_id": next_job.job_id,
+            "kind": next_job.kind,
+            "priority": 0,
+            "queued_at": 2.0,
+        }
+        mgr.result_queue = queue
+        mgr.input_queue = queue
+
+        self.assertEqual([], mgr.poll_results())
+
+        self.assertEqual(next_job.job_id, mgr.dispatched_job_id)
+        self.assertEqual([next_job.job_id], [payload["job_id"] for payload in queue.dispatched])
+
+    def test_complete_result_resets_worker_restart_budget(self):
+        class ListQueue:
+            def __init__(self, items):
+                self.items = list(items)
+
+            def get_nowait(self):
+                if self.items:
+                    return self.items.pop(0)
+                from queue import Empty
+
+                raise Empty
+
+        class FakeSharedMemory:
+            def __init__(self, create=False, size=0, name=None):
+                self.name = name or "fake-result"
+                self.buf = bytearray(np.ones((2, 2, 3), dtype=np.float32).tobytes())
+
+            def close(self):
+                pass
+
+            def unlink(self):
+                pass
+
+        mgr = AIJobManager()
+        mgr.worker_restart_count = 2
+        job = AIJob(1, AI_NOISE_KIND, "/tmp/current.jpg", "pending:1", "pending:1")
+        mgr.jobs[job.job_id] = job
+        mgr.status_by_job[job.job_id] = AIJobStatus.RUNNING
+        mgr.dispatched_job_id = job.job_id
+        mgr.result_queue = ListQueue([
+            {
+                "job_id": job.job_id,
+                "status": AIJobStatus.COMPLETE.value,
+                "shm_name": "fake-result",
+                "shape": (2, 2, 3),
+                "dtype": "float32",
+                "content_key": "content",
+                "source_signature": "source",
+            }
+        ])
+
+        with patch("cores.ai_job_manager.manager.shared_memory.SharedMemory", FakeSharedMemory):
+            results = mgr.poll_results()
+
+        self.assertEqual(1, len(results))
+        self.assertEqual(0, mgr.worker_restart_count)
+
+    def test_process_mode_foreground_preempt_does_not_exhaust_crash_restart_budget(self):
+        class FakeSharedMemory:
+            def __init__(self, create=False, size=0, name=None):
+                self.name = name or "fake-input"
+                self.buf = bytearray(size)
+
+            def close(self):
+                pass
+
+            def unlink(self):
+                pass
+
+        mgr = AIJobManager()
+        mgr.thread_mode = False
+        mgr.start = lambda: None
+        mgr.worker_restart_count = 2
+        background = AIJob(
+            job_id=1,
+            kind=AI_NOISE_KIND,
+            file_path="/tmp/bg.jpg",
+            content_key="pending:1",
+            source_signature="pending:1",
+        )
+        mgr.jobs[background.job_id] = background
+        mgr._job_counter = background.job_id
+        mgr.status_by_job[background.job_id] = AIJobStatus.RUNNING
+        mgr.job_by_target[(AI_NOISE_KIND, background.file_path)] = background.job_id
+        mgr.priority_by_job[background.job_id] = 100
+        mgr.dispatched_job_id = background.job_id
+
+        with patch("cores.ai_job_manager.manager.shared_memory.SharedMemory", FakeSharedMemory):
+            foreground = mgr.enqueue_image_job(
+                kind=AI_NOISE_KIND,
+                file_path="/tmp/current.jpg",
+                image=np.zeros((2, 2, 3), dtype=np.float32),
+                param_snapshot={"ai_noise_reduction": True},
+                content_key="content",
+                source_signature="source",
+                priority=0,
+            )
+
+        self.assertEqual(2, mgr.worker_restart_count)
+        self.assertEqual(AIJobStatus.CANCELLED, mgr.status_by_job[background.job_id])
+        self.assertEqual(AIJobStatus.QUEUED, mgr.status_by_job[foreground.job_id])
+        self.assertEqual(foreground.job_id, mgr.dispatched_job_id)
+        self.assertTrue(
+            any(payload.get("file_path") == background.file_path for payload in mgr.pending_payloads.values())
+        )
 
     def test_dead_worker_does_not_leave_pending_jobs_forever(self):
         states = []
@@ -805,6 +1026,9 @@ class AIJobManagerTest(unittest.TestCase):
         self.assertEqual(foreground.job_id, mgr.dispatched_job_id)
         self.assertEqual([foreground.job_id], [payload["job_id"] for payload in dispatched])
         self.assertIsNotNone(dispatched[0].get("cancel_event"))
+        self.assertTrue(
+            any(payload.get("file_path") == background.file_path for payload in mgr.pending_payloads.values())
+        )
 
     def test_run_ai_noise_maps_helper_cancel_to_worker_cancel(self):
         class HelperCancelled(RuntimeError):
@@ -875,7 +1099,7 @@ class AIJobManagerTest(unittest.TestCase):
             mgr.jobs[job.job_id] = job
             mgr.status_by_job[job.job_id] = AIJobStatus.COMPLETE
             mgr.job_by_target[(AI_NOISE_KIND, job.file_path)] = job.job_id
-            mgr.completed_results[(job.kind, job.file_path, job.content_key)] = np.zeros((1, 1, 3), dtype=np.float32)
+            mgr._store_completed_result(job, np.zeros((1, 1, 3), dtype=np.float32))
 
         mgr._prune_finished_jobs()
 
