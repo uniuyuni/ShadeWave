@@ -489,12 +489,12 @@ class DistortionCanvas(KVFloatLayout):
     effect_type = KVStringProperty('forward_warp')
     last_touch_pos = KVListProperty([0, 0])
     
-    def __init__(self, image_widget=None, recorded=[], callback=None, **kwargs):
+    def __init__(self, image_widget=None, recorded=None, callback=None, **kwargs):
         super().__init__(**kwargs)
 
         self.original_image = None
         self.current_image = None
-        self.recorded = recorded
+        self.recorded = [] if recorded is None else recorded
         self.is_recording = False
         self.last_touch_time = 0
         self.points_buffer = []  # 補間用ポイントバッファ

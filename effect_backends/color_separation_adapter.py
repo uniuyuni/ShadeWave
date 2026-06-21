@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import importlib
-import os
-
 import numpy as np
 
+from .backend_utils import (
+    BackendStatus,
+    backend_preference,
+    import_error_detail,
+    native_backend_enabled,
+    optional_backend,
+    strict_enabled,
+)
 from . import color_separation_reference
 
 
-@dataclass(frozen=True)
-class BackendStatus:
-    effect: str
-    backend: str
-    native: bool
-    detail: str = ""
-
-
-try:
-    _cpu_backend = importlib.import_module(f"{__package__}._color_separation_cpu")
-    _CPU_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on local build state.
-    _cpu_backend = None
-    _CPU_IMPORT_ERROR = exc
+_cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_color_separation_cpu")
 
 
 def native_available() -> bool:
@@ -32,19 +23,15 @@ def native_available() -> bool:
 
 
 def _backend_preference() -> str:
-    return os.getenv("PLATYPUS_COLOR_SEPARATION_BACKEND", "").strip().lower()
+    return backend_preference("PLATYPUS_COLOR_SEPARATION_BACKEND")
 
 
 def native_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "off", "0", "false", "no"}:
-        return False
-    return _cpu_backend is not None
+    return native_backend_enabled(_cpu_backend, _backend_preference())
 
 
 def _native_strict() -> bool:
-    value = os.getenv("PLATYPUS_COLOR_SEPARATION_STRICT", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return strict_enabled("PLATYPUS_COLOR_SEPARATION_STRICT")
 
 
 def backend_status() -> BackendStatus:
@@ -57,7 +44,7 @@ def backend_status() -> BackendStatus:
             False,
             "cpu backend available; PLATYPUS_COLOR_SEPARATION_BACKEND requested reference",
         )
-    detail = "" if _CPU_IMPORT_ERROR is None else str(_CPU_IMPORT_ERROR)
+    detail = import_error_detail(_CPU_IMPORT_ERROR)
     return BackendStatus("color_separation", "effect_backends.color_separation_reference", False, detail)
 
 

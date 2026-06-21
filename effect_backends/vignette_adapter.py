@@ -2,29 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import importlib
 from typing import Any
 
 import numpy as np
 
+from .backend_utils import BackendStatus, import_error_detail, optional_backend
 from . import vignette_reference
 
 
-@dataclass(frozen=True)
-class BackendStatus:
-    effect: str
-    backend: str
-    native: bool
-    detail: str = ""
-
-
-try:
-    _cpu_backend = importlib.import_module(f"{__package__}._vignette_cpu")
-    _CPU_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on local build state.
-    _cpu_backend = None
-    _CPU_IMPORT_ERROR = exc
+_cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_vignette_cpu")
 
 
 def native_available() -> bool:
@@ -34,7 +20,7 @@ def native_available() -> bool:
 def backend_status() -> BackendStatus:
     if _cpu_backend is not None:
         return BackendStatus("vignette", "effect_backends._vignette_cpu", True)
-    detail = "" if _CPU_IMPORT_ERROR is None else str(_CPU_IMPORT_ERROR)
+    detail = import_error_detail(_CPU_IMPORT_ERROR)
     return BackendStatus("vignette", "effect_backends.vignette_reference", False, detail)
 
 

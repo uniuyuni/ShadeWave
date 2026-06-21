@@ -28,7 +28,9 @@ def create_faces(rgb_float32, device='cpu'):
 
     return faces
 
-def draw_face_mask(faces, exclude_names=[]):
+def draw_face_mask(faces, exclude_names=None):
+    if exclude_names is None:
+        exclude_names = []
 
     seg_results = faces['seg']
     label_names = seg_results['label_names']

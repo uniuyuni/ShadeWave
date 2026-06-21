@@ -1,5 +1,6 @@
 import copy
 import json
+import logging
 import os
 from datetime import datetime as dt
 
@@ -192,7 +193,7 @@ def cleanup_pmck_backup_files(directory):
             try:
                 os.remove(os.path.join(directory, file_name))
             except OSError:
-                pass
+                logging.exception("failed to remove pmck backup file: %s", file_name)
 
 
 def backup_pmck_for_batch(image_path):

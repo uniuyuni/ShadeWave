@@ -8,26 +8,28 @@
 
 | # | 種別 | 重要度 | 概要 | 位置 |
 |---|------|--------|------|------|
-| A | 正しさ/セキュリティ | 高 | `eval()` を永続化パラメータに実行 | effects.py:1954 |
+| A | 正しさ/セキュリティ | 解決 | `eval()` を永続化パラメータに実行 | effects.py:1954 |
 | B | アーキテクチャ | 高(大工事) | main.py の god 構造（import 不可＋234メソッド god class） | main.py |
 | C | テスト健全性 | 中 | B が誘発するテストの実装文字列依存（27ファイルで複製） | tests/ |
-| D | 重複 | 中 | effect_backends アダプタ 9本×共通I/F（1339行） | effect_backends/*_adapter.py |
+| D | 重複 | 一部解決 | effect_backends アダプタ 9本×共通I/F（1339行） | effect_backends/*_adapter.py |
 | E | 重複 | 中 | helpers モデルヘルパ 5–6本×共通I/F | helpers/*_helper.py |
-| F | 重複/罠 | 中 | `read_pmck_dict` 同名・異挙動 | preset_utils.py:166 / rating_io.py:68 |
+| F | 重複/罠 | 解決 | `read_pmck_dict` 同名・異挙動 | preset_utils.py:166 / rating_io.py:68 |
 | G | 重複 | 低 | util 小重複（gaussian_blur_cv/apply_lut 等） | core.py 他 |
-| H | 堅牢性 | 中 | 握りつぶし `except: pass` 124箇所 | main.py 22 他 |
-| I | 小バグ | 低 | mutable default 引数 ×2 | facer_helper.py:31 / distortion_painter.py:492 |
-| — | 既知 | 高 | AIJobManager restart wedge（別途対応中） | ai_job_manager/manager.py |
+| H | 堅牢性 | 一部解決 | 握りつぶし `except: pass` 124箇所 | main.py 22 他 |
+| I | 小バグ | 解決 | mutable default 引数 ×2 | facer_helper.py:31 / distortion_painter.py:492 |
+| — | 既知 | 解決 | AIJobManager restart wedge | ai_job_manager/manager.py |
 
 ---
 
 ## 1. 正しさ / セキュリティ
 
 ### A. `eval()` を永続化パラメータに実行 — `effects.py:1954`
+**対応済み**: `eval` を撤去し、`None` / 数値文字列 / `n/d` 形式だけを安全に解釈するパーサへ置換。不正値とゼロ除算は `0` へ倒す。
+
 ```python
 def _param_to_aspect_ratio(self, param):
     ar = self._get_param(param, 'aspect_ratio')
-    return eval(ar if ar != "None" else "0")
+    ...
 ```
 - `aspect_ratio` はスピナー文字列（"16/9" 等）として `param['aspect_ratio']` に格納され（effects.py:1985, 2022）、**param は `.pmck` に永続化→再ロードされる**。
 - 通常はスピナー固定値で安全だが、`eval` は「ファイル由来文字列の実行」経路になり得る（手編集／共有 .pmck に `__import__('os').system(...)` 混入可）。不正値で汎用 eval エラーで停止する脆さもある。
@@ -67,6 +69,8 @@ def _param_to_aspect_ratio(self, param):
 ## 3. 重複コード
 
 ### D. `effect_backends/*_adapter.py` ×9（計 1339 行）— 最大の重複源
+**一部対応済み**: `effect_backends/backend_utils.py` を追加し、`BackendStatus`、optional backend import、backend preference、strict flag、import error detail、native enabled 判定を共通化。各adapter固有のMetal/CPU fallback条件やstatus文言は残している。
+
 - 各アダプタが `native_available` / `backend_status` / `_backend_preference` / `native_enabled` / `_native_strict` / `_metal_device_available` / `_metal_backend_enabled` を再実装。
 - 行数: image_transform 216 / low_frequency_transfer 280 / colour_functions 162 / cross_filter 162 / color_separation 128 / film_grain 113 / tone 109 / subpixel_shift 99 / vignette 70。
 - **対応**: `BackendAdapter` 共通基底（バックエンド選択・strict 判定・status 一元化）へ。大幅縮小可。
@@ -76,6 +80,8 @@ def _param_to_aspect_ratio(self, param):
 - **対応**: `ModelHelper` 基底 or Protocol に集約。
 
 ### F. `read_pmck_dict` 同名・異挙動 — `preset_utils.py:166` / `rating_io.py:68`
+**対応済み**: `rating_io` 側を `read_pmck_dict_or_none` に改名。`preset_utils.read_pmck_dict` は primary_param を保証する契約として残す。
+
 - preset_utils 版: `read_path(..., default_empty=True)` ＋ `ensure_primary_param`（非None保証・primary_param 整形）。
 - rating_io 版: `read_path(pmck_path)` のみ（`Optional`・生データ）。
 - **同名だが契約が異なる罠**。実体は `pmck_store` に集約済みなので、片方を改名（例 `read_pmck_dict_or_none`）して衝突解消。
@@ -89,10 +95,14 @@ def _param_to_aspect_ratio(self, param):
 ## 4. 堅牢性 / 小バグ
 
 ### H. 握りつぶし `except …: pass` 124箇所（非テスト）
+**一部対応済み**: `.pmck` backup cleanup の `OSError` は `logging.exception` を残すように変更。`FileNotFoundError` など期待される削除競合はそのまま。
+
 - hotspots: main.py 22 / params.py 14 / macos.py 14 / mask_editor2.py 10 / async_worker.py 8 / preset_utils.py 6 / viewer.py 4 / memory_manager.py 4 / export.py 4 / ai_job_manager/manager.py 4。
 - ストレス時の不具合切り分けを困難にする。**対応**: 最低限 `logging.exception(...)` を残し、握りつぶす根拠をコメント化。
 
 ### I. mutable default 引数 ×2
+**対応済み**: `None` default に置換し、関数本体で初期化。
+
 - `helpers/facer_helper.py:31` `def draw_face_mask(faces, exclude_names=[])`
 - `widgets/distortion_painter.py:492` `def __init__(self, ..., recorded=[], ...)`
 - インスタンス間で共有される古典バグ。`=None` ＋本体初期化に。
@@ -100,16 +110,16 @@ def _param_to_aspect_ratio(self, param):
 ---
 
 ## 5. 既知（前段までの調査）
-- **AIJobManager restart wedge**（`worker_restart_count` 非リセット＋CANCELLED 分岐の `dispatched_job_id` 取りこぼし）— 別途対応中。
+- **AIJobManager restart wedge**（`worker_restart_count` 非リセット＋CANCELLED 分岐の `dispatched_job_id` 取りこぼし）— 対応済み。
 - **H3 サイドカーマージ** 無制限バックログ＋full-res zstd 直列（`sidecar_merge.py`）。
 
 ---
 
 ## 推奨着手順
-1. **A**（eval 撤去）— 小修正・影響大。
-2. **D / E**（アダプタ・ヘルパ基底化）— 重複最大塊、保守コスト即効。
-3. **B / C**（main.py 責務分割）— 最も効くが大工事。ファイルI/O→履歴→画像処理の順に小さく抽出。
-4. **F / H / I** — 低コストで踏みやすい罠を順次。
+1. **D / E**（アダプタ・ヘルパ基底化の続き）— 小関数共通化は着手済み。次はstatus生成やhelper共通I/Fを慎重に設計。
+2. **B / C**（main.py 責務分割）— 最も効くが大工事。ファイルI/O→履歴→画像処理の順に小さく抽出。
+3. **H** — 低コストな握りつぶし例外を、期待される競合と本当の異常に分けて順次ログ化。
+4. **G** — reference実装との意図的重複を避け、genuineなutil重複だけ統合。
 
 ## 深掘り候補（未実施）
 行単位レビュー対象として: `effects.py`(4787) / `widgets/mask_editor2.py`(5748) / `cores/core.py`(2770) / `pipeline.py`(1495) / `params.py`(1006)。指定あれば個別に精査する。

@@ -2,30 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import importlib
 import os
 from typing import Sequence
 
 import numpy as np
 
+from .backend_utils import (
+    BackendStatus,
+    backend_preference,
+    import_error_detail,
+    optional_backend,
+    strict_enabled,
+)
 from . import image_transform_reference
 
 
-@dataclass(frozen=True)
-class BackendStatus:
-    effect: str
-    backend: str
-    native: bool
-    detail: str = ""
-
-
-try:
-    _metal_backend = importlib.import_module(f"{__package__}._image_transform_metal")
-    _METAL_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on local build state.
-    _metal_backend = None
-    _METAL_IMPORT_ERROR = exc
+_metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_image_transform_metal")
 
 _METAL_DEVICE_AVAILABLE_CACHE: bool | None = None
 
@@ -35,7 +27,7 @@ def native_available() -> bool:
 
 
 def _backend_preference() -> str:
-    return os.getenv("PLATYPUS_IMAGE_TRANSFORM_BACKEND", "").strip().lower()
+    return backend_preference("PLATYPUS_IMAGE_TRANSFORM_BACKEND")
 
 
 def _metal_backend_enabled() -> bool:
@@ -46,8 +38,7 @@ def _metal_backend_enabled() -> bool:
 
 
 def _metal_strict() -> bool:
-    value = os.getenv("PLATYPUS_IMAGE_TRANSFORM_METAL_STRICT", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return strict_enabled("PLATYPUS_IMAGE_TRANSFORM_METAL_STRICT")
 
 
 def _metal_forced() -> bool:
@@ -89,13 +80,13 @@ def backend_status() -> BackendStatus:
         if _metal_backend is not None:
             detail = "Metal backend is built, but no Metal device is available"
         else:
-            detail = "" if _METAL_IMPORT_ERROR is None else str(_METAL_IMPORT_ERROR)
+            detail = import_error_detail(_METAL_IMPORT_ERROR)
         return BackendStatus("image_transform", "effect_backends.image_transform_reference", False, detail)
     return BackendStatus(
         "image_transform",
         "effect_backends.image_transform_reference",
         False,
-        "" if _METAL_IMPORT_ERROR is None else str(_METAL_IMPORT_ERROR),
+        import_error_detail(_METAL_IMPORT_ERROR),
     )
 
 

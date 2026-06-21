@@ -2,36 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import importlib
-import os
-
 import numpy as np
 
+from .backend_utils import (
+    BackendStatus,
+    backend_preference,
+    import_error_detail,
+    optional_backend,
+    strict_enabled,
+)
 from . import cross_filter_reference
 
 
-@dataclass(frozen=True)
-class BackendStatus:
-    effect: str
-    backend: str
-    native: bool
-    detail: str = ""
-
-
-try:
-    _metal_backend = importlib.import_module(f"{__package__}._cross_filter_metal")
-    _METAL_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on local build state.
-    _metal_backend = None
-    _METAL_IMPORT_ERROR = exc
-
-try:
-    _cpu_backend = importlib.import_module(f"{__package__}._cross_filter_cpu")
-    _CPU_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on local build state.
-    _cpu_backend = None
-    _CPU_IMPORT_ERROR = exc
+_metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_cross_filter_metal")
+_cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_cross_filter_cpu")
 
 
 def native_available() -> bool:
@@ -39,7 +23,7 @@ def native_available() -> bool:
 
 
 def _backend_preference() -> str:
-    return os.getenv("PLATYPUS_CROSS_FILTER_BACKEND", "").strip().lower()
+    return backend_preference("PLATYPUS_CROSS_FILTER_BACKEND")
 
 
 def _cpu_backend_enabled() -> bool:
@@ -59,8 +43,7 @@ def _metal_backend_enabled() -> bool:
 
 
 def _metal_strict() -> bool:
-    value = os.getenv("PLATYPUS_CROSS_FILTER_METAL_STRICT", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return strict_enabled("PLATYPUS_CROSS_FILTER_METAL_STRICT")
 
 
 def _metal_device_available() -> bool:
@@ -79,7 +62,7 @@ def backend_status() -> BackendStatus:
         if _metal_backend is not None:
             detail = "Metal backend is built, but no Metal device is available"
         else:
-            detail = "" if _METAL_IMPORT_ERROR is None else str(_METAL_IMPORT_ERROR)
+            detail = import_error_detail(_METAL_IMPORT_ERROR)
         return BackendStatus("cross_filter", "effect_backends.cross_filter_reference", False, detail)
     if _cpu_backend is not None and _cpu_backend_enabled():
         return BackendStatus("cross_filter", "effect_backends._cross_filter_cpu", True)
@@ -90,7 +73,7 @@ def backend_status() -> BackendStatus:
             False,
             "cpu backend available; PLATYPUS_CROSS_FILTER_BACKEND requested reference",
         )
-    detail = "" if _CPU_IMPORT_ERROR is None else str(_CPU_IMPORT_ERROR)
+    detail = import_error_detail(_CPU_IMPORT_ERROR)
     return BackendStatus("cross_filter", "effect_backends.cross_filter_reference", False, detail)
 
 

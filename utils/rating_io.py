@@ -65,7 +65,7 @@ def merge_xmp_star_tags_into_exif(file_path: str, exif: Any) -> None:
 PMCK_RAW_RATING_KEY = "platypus_raw_rating"
 
 
-def read_pmck_dict(pmck_path: str) -> Optional[dict[str, Any]]:
+def read_pmck_dict_or_none(pmck_path: str) -> Optional[dict[str, Any]]:
     return pmck_store.read_path(pmck_path)
 
 

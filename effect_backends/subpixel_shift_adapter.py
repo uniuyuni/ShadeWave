@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import importlib
-import os
-
 import numpy as np
 
+from .backend_utils import (
+    BackendStatus,
+    backend_preference,
+    import_error_detail,
+    native_backend_enabled,
+    optional_backend,
+    strict_enabled,
+)
 from . import subpixel_shift_reference
 
 
-@dataclass(frozen=True)
-class BackendStatus:
-    effect: str
-    backend: str
-    native: bool
-    detail: str = ""
-
-
-try:
-    _cpu_backend = importlib.import_module(f"{__package__}._subpixel_shift_cpu")
-    _CPU_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on local build state.
-    _cpu_backend = None
-    _CPU_IMPORT_ERROR = exc
+_cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_subpixel_shift_cpu")
 
 
 def native_available() -> bool:
@@ -32,19 +23,15 @@ def native_available() -> bool:
 
 
 def _backend_preference() -> str:
-    return os.getenv("PLATYPUS_SUBPIXEL_SHIFT_BACKEND", "").strip().lower()
+    return backend_preference("PLATYPUS_SUBPIXEL_SHIFT_BACKEND")
 
 
 def native_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "off", "0", "false", "no"}:
-        return False
-    return _cpu_backend is not None
+    return native_backend_enabled(_cpu_backend, _backend_preference())
 
 
 def _native_strict() -> bool:
-    value = os.getenv("PLATYPUS_SUBPIXEL_SHIFT_STRICT", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return strict_enabled("PLATYPUS_SUBPIXEL_SHIFT_STRICT")
 
 
 def backend_status() -> BackendStatus:
@@ -57,7 +44,7 @@ def backend_status() -> BackendStatus:
             False,
             "cpu backend available; PLATYPUS_SUBPIXEL_SHIFT_BACKEND requested reference",
         )
-    detail = "" if _CPU_IMPORT_ERROR is None else str(_CPU_IMPORT_ERROR)
+    detail = import_error_detail(_CPU_IMPORT_ERROR)
     return BackendStatus("subpixel_shift", "effect_backends.subpixel_shift_reference", False, detail)
 
 

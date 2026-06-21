@@ -1951,7 +1951,15 @@ class CropEffect(Effect):
 
     def _param_to_aspect_ratio(self, param):
         ar = self._get_param(param, 'aspect_ratio')
-        return eval(ar if ar != "None" else "0")
+        if not ar or ar == "None":
+            return 0
+        try:
+            if "/" in str(ar):
+                numerator, denominator = str(ar).split("/", 1)
+                return float(numerator) / float(denominator)
+            return float(ar)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return 0
 
     def get_param_dict(self, param):
         default_param = {
