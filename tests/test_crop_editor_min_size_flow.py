@@ -71,6 +71,19 @@ class CropEditorMinSizeFlowTest(unittest.TestCase):
 
         self.assertIn("gcd = max(gcd, 1)", source)
 
+    def test_crop_editor_border_draw_can_be_delayed_one_frame(self):
+        update_rect = _load_class_function(CROP_EDITOR_PATH, "CropEditor", "update_rect")
+        update_source = ast.get_source_segment(CROP_EDITOR_PATH.read_text(), update_rect)
+        flush_rect = _load_class_function(CROP_EDITOR_PATH, "CropEditor", "_flush_delayed_update_rect")
+        flush_source = ast.get_source_segment(CROP_EDITOR_PATH.read_text(), flush_rect)
+        source = CROP_EDITOR_PATH.read_text()
+
+        self.assertIn("PLATYPUS_PREVIEW_OVERLAY_FRAME_DELAY", source)
+        self.assertIn('PLATYPUS_PREVIEW_OVERLAY_FRAME_DELAY", "0"', source)
+        self.assertIn("KVClock.schedule_once(self._flush_delayed_update_rect, 0)", update_source)
+        self.assertIn("self._applying_delayed_update_rect = True", flush_source)
+        self.assertIn("self.update_rect()", flush_source)
+
     def test_min_size_enforcement_keeps_rect_inside_rotated_image_and_crop_square(self):
         node = _load_class_function(CROP_EDITOR_PATH, "CropEditor", "_enforce_min_crop_rect")
         source = ast.get_source_segment(CROP_EDITOR_PATH.read_text(), node)

@@ -65,6 +65,18 @@ def _loading_flag_ready_for_heavy_effects(loading_flag):
     return loading_flag <= 0
 
 
+def _geometry_preview_interpolation(crop_editing):
+    if not crop_editing:
+        return "area"
+    value = os.getenv("PLATYPUS_GE_PREVIEW_INTERPOLATION", "linear").strip().lower()
+    # pyramid_linear was too expensive in the synchronous Geometry drag path.
+    if value == "pyramid_linear":
+        return "linear"
+    if value in {"area", "linear", "nearest"}:
+        return value
+    return "linear"
+
+
 def _build_geometry_valid_mask(param):
     width, height = param['original_img_size']
     mask = np.ones((height, width, 3), dtype=np.float32)
@@ -1669,8 +1681,9 @@ class GeometryEffect(Effect):
         lines_hash = tuple(tuple(tuple(p) for p in line) for line in reference_lines) if reference_lines else None
         cp_hash = tuple(sorted((k, tuple(v)) for k, v in control_points.items())) if control_points else None
         mesh_hash = tuple(mesh_size)
+        preview_interpolation = _geometry_preview_interpolation(crop_editing)
         
-        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_editing, full_preview, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
+        param_hash = hash((switch_distortion_correction, ang, ang2, flp, crop_editing, full_preview, preview_interpolation, lens_distortion_strength, lens_distortion_scale, correct_horizontal, correct_vertical, focal_length, fps_hash, lines_hash, mesh_hash, cp_hash))
         lens_active = switch_distortion_correction and (lens_distortion_strength != 0 or lens_distortion_scale != 0)
         deferred_geometry_supported = (
             efconfig.mode != EffectMode.EXPORT
@@ -1705,6 +1718,7 @@ class GeometryEffect(Effect):
                     "border_mode": "constant" if full_preview else "reflect",
                     "lens_strength": lens_distortion_strength if lens_active else 0.0,
                     "lens_scale": 1.0,
+                    "interpolation": preview_interpolation,
                     "mesh_map_x": mesh_map_x,
                     "mesh_map_y": mesh_map_y,
                     "hash": param_hash,
@@ -3288,7 +3302,7 @@ class TonecurveEffect(Effect):
     
     def apply_diff(self, rgb):
         rgb =  core.type_convert(rgb, np.ndarray)
-        return core.apply_lut(rgb, self.diff, overrange="preserve")
+        return core.apply_lut(rgb, self.diff, overrange="scale")
 
 class TonecurveRedEffect(Effect):
     param_bindings = (
@@ -3313,7 +3327,7 @@ class TonecurveRedEffect(Effect):
 
     def apply_diff(self, rgb_r):
         rgb_r =  core.type_convert(rgb_r, np.ndarray)
-        return core.apply_lut(rgb_r, self.diff, overrange="preserve")
+        return core.apply_lut(rgb_r, self.diff, overrange="scale")
 
 class TonecurveGreenEffect(Effect):
     param_bindings = (
@@ -3338,7 +3352,7 @@ class TonecurveGreenEffect(Effect):
 
     def apply_diff(self, rgb_g):
         rgb_g =  core.type_convert(rgb_g, np.ndarray)
-        return core.apply_lut(rgb_g, self.diff, overrange="preserve")
+        return core.apply_lut(rgb_g, self.diff, overrange="scale")
 
 class TonecurveBlueEffect(Effect):
     param_bindings = (
@@ -3364,7 +3378,7 @@ class TonecurveBlueEffect(Effect):
 
     def apply_diff(self, rgb_b):
         rgb_b =  core.type_convert(rgb_b, np.ndarray)
-        return core.apply_lut(rgb_b, self.diff, overrange="preserve")
+        return core.apply_lut(rgb_b, self.diff, overrange="scale")
 
 class GradingEffect(Effect):
 

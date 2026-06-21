@@ -147,6 +147,7 @@ class CurveWidget(KVBoxLayout):
                 if point.collide_point(local_x, local_y, self.width, self.height):
                     self.selected_point = point
                     self.before_edit = self.curve
+                    touch.grab(self)
                     return True # Select existing point
                 
             point = DraggablePoint()
@@ -156,24 +157,24 @@ class CurveWidget(KVBoxLayout):
             self.__update_curve()
             self.before_edit = self.curve
             self.curve += 1
+            touch.grab(self)
             return True
         
         return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
-        if not self.collide_point(*touch.pos):
+        dragging_self = self.selected_point is not None and (
+            self.touch_self or getattr(touch, "grab_current", None) is self
+        )
+        if not dragging_self and not self.collide_point(*touch.pos):
             return False
         
         local_x = (touch.x - self.x)/self.width
         local_y = (touch.y - self.y)/self.height
 
         if self.selected_point:
-            min_x, max_x = 0, self.width - self.selected_point.get_width()
-            min_y, max_y = 0, self.height - self.selected_point.get_height()
-            if self.selected_point in [self.start_point, self.end_point]:
-                min_x, min_y, max_x, max_y = 0, 0, self.width, self.height
-            new_x = min(max(local_x, min_x), max_x)  # Clamp x within appropriate boundaries
-            new_y = min(max(local_y, min_y), max_y)  # Clamp y within appropriate boundaries
+            new_x = float(np.clip(local_x, 0.0, 1.0))
+            new_y = float(np.clip(local_y, 0.0, 1.0))
             self.selected_point.x, self.selected_point.y = new_x, new_y
             self.__update_curve()
             self.curve += 1
@@ -182,6 +183,8 @@ class CurveWidget(KVBoxLayout):
 
     def on_touch_up(self, touch):
         if self.touch_self:
+            if getattr(touch, "grab_current", None) is self:
+                touch.ungrab(self)
             self.selected_point = None
             if self.before_edit != self.curve:
                 self.after_edit = self.curve

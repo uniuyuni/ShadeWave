@@ -7,6 +7,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cores import core
+from effects import TonecurveEffect, TonecurveRedEffect, TonecurveGreenEffect, TonecurveBlueEffect
 
 
 class CurveLutTest(unittest.TestCase):
@@ -65,6 +66,33 @@ class CurveLutTest(unittest.TestCase):
         result = core.apply_lut(values, lut, overrange="preserve")
 
         self.assertAlmostEqual(float(result[0, 0]), 1.05, places=6)
+
+    def test_apply_lut_scale_overrange_uses_endpoint_as_gain(self):
+        lut = np.linspace(0.0, 0.5, 65536, dtype=np.float32)
+        values = np.array([[0.5, 1.0, 1.5, 2.0]], dtype=np.float32)
+
+        result = core.apply_lut(values, lut, overrange="scale")
+
+        self.assertAlmostEqual(float(result[0, 0]), 0.25, delta=1.0 / 65535)
+        self.assertAlmostEqual(float(result[0, 1]), 0.5, places=6)
+        self.assertAlmostEqual(float(result[0, 2]), 0.75, places=6)
+        self.assertAlmostEqual(float(result[0, 3]), 1.0, places=6)
+
+    def test_apply_lut_scale_overrange_can_black_out_hdr(self):
+        lut = np.zeros(65536, dtype=np.float32)
+        values = np.array([[1.0, 1.25, 3.0]], dtype=np.float32)
+
+        result = core.apply_lut(values, lut, overrange="scale")
+
+        np.testing.assert_array_equal(result, np.zeros_like(values))
+
+    def test_tonecurve_effects_use_scale_overrange_mode(self):
+        for cls in (TonecurveEffect, TonecurveRedEffect, TonecurveGreenEffect, TonecurveBlueEffect):
+            with self.subTest(effect=cls.__name__):
+                effect = cls()
+                effect.diff = np.linspace(0.0, 0.5, 65536, dtype=np.float32)
+                result = effect.apply_diff(np.array([[1.5]], dtype=np.float32))
+                self.assertAlmostEqual(float(result[0, 0]), 0.75, places=6)
 
 
 if __name__ == "__main__":

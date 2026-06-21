@@ -43,6 +43,30 @@ _DEBUG_PIPELINE_STATS_LABELS = {
 }
 
 
+def preview_full_render_enabled(current_tab):
+    if current_tab == "Ge":
+        value = os.getenv("PLATYPUS_GE_PREVIEW_RENDER", "full")
+    else:
+        value = os.getenv("PLATYPUS_DRAG_PREVIEW_RENDER", "fast")
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "full", "quality", "complete"}
+
+
+def preview_drain_all_enabled(current_tab):
+    if current_tab == "Ge":
+        value = os.getenv("PLATYPUS_GE_PREVIEW_DRAIN_ALL", "1")
+    else:
+        value = os.getenv("PLATYPUS_DRAG_PREVIEW_DRAIN_ALL", "0")
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "full", "all"}
+
+
+def preview_allow_stale_enabled(current_tab):
+    if current_tab == "Ge":
+        value = os.getenv("PLATYPUS_GE_PREVIEW_ALLOW_STALE", "1")
+    else:
+        value = os.getenv("PLATYPUS_DRAG_PREVIEW_ALLOW_STALE", "1")
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _mask_geom_debug(message, *args):
     if _DEBUG_MASK_GEOMETRY:
         logging.warning("[MASK_GEOM] " + message, *args)
@@ -607,6 +631,7 @@ class AsyncPipelineManager:
 
 
 def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
+    pipeline_drag_preview = bool(is_drag) and not preview_full_render_enabled(current_tab)
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
         _t0 = time.perf_counter()
@@ -640,7 +665,11 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     efconfig.zoom_ratio = zoom_ratio
     efconfig.mode = EffectMode.PREVIEW
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], 1.0)
-    mask2_geometry_full_preview = _configure_preview_effect_config(efconfig, current_tab, mask2_active)
+    mask2_geometry_full_preview = _configure_preview_effect_config(
+        efconfig,
+        current_tab,
+        mask2_active,
+    )
     
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag
@@ -684,6 +713,14 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         )
         deferred_geometry = getattr(efconfig, "deferred_geometry_transform", None)
         if deferred_geometry is not None:
+            _mask_geom_debug(
+                "process_pipeline deferred_geometry interpolation=%s crop_editing=%s is_zoomed=%s crop_none=%s lv1reset=%s",
+                deferred_geometry.get("interpolation"),
+                getattr(efconfig, "crop_editing", False),
+                is_zoomed,
+                crop_image is None,
+                lv1reset,
+            )
             try:
                 if is_zoomed:
                     imgc, disp_info2 = core.transform_zoom_crop_image(
@@ -705,6 +742,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
                         lens_scale=deferred_geometry.get("lens_scale", 1.0),
                         mesh_map_x=deferred_geometry.get("mesh_map_x"),
                         mesh_map_y=deferred_geometry.get("mesh_map_y"),
+                        interpolation=deferred_geometry.get("interpolation"),
                     )
                 else:
                     imgc, disp_info2 = core.transform_crop_image(
@@ -721,6 +759,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
                         lens_scale=deferred_geometry.get("lens_scale", 1.0),
                         mesh_map_x=deferred_geometry.get("mesh_map_x"),
                         mesh_map_y=deferred_geometry.get("mesh_map_y"),
+                        interpolation=deferred_geometry.get("interpolation", "area"),
                     )
             except Exception:
                 logging.exception("deferred geometry preview failed; falling back to two-pass crop")
@@ -764,7 +803,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_update", (time.perf_counter() - _t0) * 1000.0)
     
-    if not is_drag:
+    if not pipeline_drag_preview:
         if timing is not None:
             _t0 = time.perf_counter()
         img2, lv4reset = pipeline2(imgc, None, primary_effects, primary_param, mask_editor2, efconfig, lv1reset, processor=processor)
@@ -783,7 +822,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         crop_image = None
 
     _finalize_pipeline_timing(timing)
-    return img2, crop_image if is_drag else imgc
+    return img2, crop_image if pipeline_drag_preview else imgc
 
 def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     if not params.has_original_img_size(primary_param):

@@ -10,6 +10,51 @@ import pipeline
 
 
 class PipelinePreviewEffectConfigTest(unittest.TestCase):
+    def test_geometry_preview_render_env_controls_full_render(self):
+        old_value = os.environ.get("PLATYPUS_GE_PREVIEW_RENDER")
+        try:
+            os.environ.pop("PLATYPUS_GE_PREVIEW_RENDER", None)
+            self.assertTrue(pipeline.preview_full_render_enabled("Ge"))
+
+            os.environ["PLATYPUS_GE_PREVIEW_RENDER"] = "full"
+            self.assertTrue(pipeline.preview_full_render_enabled("Ge"))
+
+            os.environ["PLATYPUS_GE_PREVIEW_RENDER"] = "fast"
+            self.assertFalse(pipeline.preview_full_render_enabled("Ge"))
+        finally:
+            if old_value is None:
+                os.environ.pop("PLATYPUS_GE_PREVIEW_RENDER", None)
+            else:
+                os.environ["PLATYPUS_GE_PREVIEW_RENDER"] = old_value
+
+    def test_geometry_preview_drain_all_env_is_enabled_by_default_but_can_be_disabled(self):
+        old_value = os.environ.get("PLATYPUS_GE_PREVIEW_DRAIN_ALL")
+        try:
+            os.environ.pop("PLATYPUS_GE_PREVIEW_DRAIN_ALL", None)
+            self.assertTrue(pipeline.preview_drain_all_enabled("Ge"))
+
+            os.environ["PLATYPUS_GE_PREVIEW_DRAIN_ALL"] = "0"
+            self.assertFalse(pipeline.preview_drain_all_enabled("Ge"))
+        finally:
+            if old_value is None:
+                os.environ.pop("PLATYPUS_GE_PREVIEW_DRAIN_ALL", None)
+            else:
+                os.environ["PLATYPUS_GE_PREVIEW_DRAIN_ALL"] = old_value
+
+    def test_geometry_preview_stale_frames_are_allowed_by_default_but_can_be_disabled(self):
+        old_value = os.environ.get("PLATYPUS_GE_PREVIEW_ALLOW_STALE")
+        try:
+            os.environ.pop("PLATYPUS_GE_PREVIEW_ALLOW_STALE", None)
+            self.assertTrue(pipeline.preview_allow_stale_enabled("Ge"))
+
+            os.environ["PLATYPUS_GE_PREVIEW_ALLOW_STALE"] = "0"
+            self.assertFalse(pipeline.preview_allow_stale_enabled("Ge"))
+        finally:
+            if old_value is None:
+                os.environ.pop("PLATYPUS_GE_PREVIEW_ALLOW_STALE", None)
+            else:
+                os.environ["PLATYPUS_GE_PREVIEW_ALLOW_STALE"] = old_value
+
     def test_edit_tab_is_cropped_preview_state(self):
         efconfig = effects.EffectConfig()
 

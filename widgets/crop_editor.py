@@ -12,6 +12,7 @@ import numpy as np
 from enum import Enum
 from typing import List, Tuple
 import math
+import os
 
 import cores.core as core
 import macos as device
@@ -20,6 +21,12 @@ _MIN_CROP_WIDTH = 128
 _MIN_CROP_HEIGHT = 128
 _CROP_MOVE_SLIDE_SOFTNESS = kvdp(4)
 _CROP_MOVE_UNLOCK_MARGIN = kvdp(0.5)
+
+
+def _preview_overlay_frame_delay_enabled():
+    value = os.getenv("PLATYPUS_PREVIEW_OVERLAY_FRAME_DELAY", "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
 
 class CropEditor(KVBoxLayout):
     input_width = KVNumericProperty(kvdp(400))
@@ -38,6 +45,8 @@ class CropEditor(KVBoxLayout):
         self.moving = False
         self.last_touch_pos = None
         self.callback = None
+        self._delayed_update_rect_event = None
+        self._applying_delayed_update_rect = False
 
         self.set_aspect_ratio(self.aspect_ratio)
 
@@ -140,7 +149,23 @@ class CropEditor(KVBoxLayout):
         # 中心にシフトするためのトランスレーションを設定
         self.update_centering()
 
+    def _flush_delayed_update_rect(self, dt=0):
+        self._delayed_update_rect_event = None
+        self._applying_delayed_update_rect = True
+        try:
+            self.update_rect()
+        finally:
+            self._applying_delayed_update_rect = False
+
     def update_rect(self, *args):
+        if (
+            _preview_overlay_frame_delay_enabled()
+            and not self._applying_delayed_update_rect
+        ):
+            if self._delayed_update_rect_event is None:
+                self._delayed_update_rect_event = KVClock.schedule_once(self._flush_delayed_update_rect, 0)
+            return
+
         x1, y1, x2, y2 = self.crop_rect
         width = x2 - x1
         height = y2 - y1

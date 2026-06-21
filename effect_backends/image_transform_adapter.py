@@ -27,6 +27,8 @@ except Exception as exc:  # pragma: no cover - depends on local build state.
     _metal_backend = None
     _METAL_IMPORT_ERROR = exc
 
+_METAL_DEVICE_AVAILABLE_CACHE: bool | None = None
+
 
 def native_available() -> bool:
     return _metal_backend is not None and _metal_device_available()
@@ -62,12 +64,22 @@ def _area_mode() -> str:
 
 
 def _metal_device_available() -> bool:
+    global _METAL_DEVICE_AVAILABLE_CACHE
+    if _METAL_DEVICE_AVAILABLE_CACHE is not None:
+        return _METAL_DEVICE_AVAILABLE_CACHE
     if _metal_backend is None:
+        _METAL_DEVICE_AVAILABLE_CACHE = False
         return False
     try:
-        return bool(_metal_backend.metal_available())
+        _METAL_DEVICE_AVAILABLE_CACHE = bool(_metal_backend.metal_available())
     except Exception:
-        return False
+        _METAL_DEVICE_AVAILABLE_CACHE = False
+    return _METAL_DEVICE_AVAILABLE_CACHE
+
+
+def _clear_metal_device_available_cache() -> None:
+    global _METAL_DEVICE_AVAILABLE_CACHE
+    _METAL_DEVICE_AVAILABLE_CACHE = None
 
 
 def backend_status() -> BackendStatus:

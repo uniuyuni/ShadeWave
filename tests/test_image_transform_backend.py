@@ -2,6 +2,7 @@ import pathlib
 import os
 import sys
 import unittest
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -21,6 +22,28 @@ class ImageTransformBackendTest(unittest.TestCase):
 
         self.assertEqual(status.effect, "image_transform")
         self.assertIn(status.backend, {"effect_backends._image_transform_metal", "effect_backends.image_transform_reference"})
+
+    def test_metal_device_available_result_is_cached(self):
+        previous_backend = image_transform_adapter._metal_backend
+        image_transform_adapter._clear_metal_device_available_cache()
+
+        class FakeMetalBackend:
+            calls = 0
+
+            @classmethod
+            def metal_available(cls):
+                cls.calls += 1
+                return True
+
+        try:
+            image_transform_adapter._metal_backend = FakeMetalBackend
+
+            self.assertTrue(image_transform_adapter._metal_device_available())
+            self.assertTrue(image_transform_adapter._metal_device_available())
+            self.assertEqual(FakeMetalBackend.calls, 1)
+        finally:
+            image_transform_adapter._metal_backend = previous_backend
+            image_transform_adapter._clear_metal_device_available_cache()
 
     def test_fit_crop_to_canvas_matches_current_opencv_path(self):
         previous = os.environ.get("PLATYPUS_IMAGE_TRANSFORM_BACKEND")
@@ -113,6 +136,27 @@ class ImageTransformBackendTest(unittest.TestCase):
 
         np.testing.assert_allclose(actual_img, expected_img, rtol=0.0, atol=0.0)
         self.assertEqual(actual_disp, (4, 8, 62, 38, texture_width / 62))
+
+    def test_transform_crop_image_forwards_interpolation(self):
+        image = np.zeros((12, 16, 3), dtype=np.float32)
+        matrix = np.eye(2, 3, dtype=np.float32)
+        expected = np.ones((10, 14, 3), dtype=np.float32)
+
+        with mock.patch.object(image_transform_adapter, "transform_crop_to_canvas", return_value=expected) as patched:
+            actual, actual_disp = core.transform_crop_image(
+                image,
+                matrix,
+                16,
+                16,
+                (0, 0, 16, 16, 1.0),
+                14,
+                10,
+                interpolation="linear",
+            )
+
+        self.assertIs(actual, expected)
+        self.assertEqual(actual_disp, (0, 0, 16, 16, 14 / 16))
+        self.assertEqual(patched.call_args.kwargs["interpolation"], "linear")
 
     def test_zoom_crop_source_info_matches_crop_image_zoom_path(self):
         previous = os.environ.get("PLATYPUS_IMAGE_TRANSFORM_BACKEND")
@@ -266,8 +310,65 @@ class ImageTransformBackendTest(unittest.TestCase):
             self.assertIsNotNone(efconfig.deferred_geometry_transform)
             self.assertEqual(efconfig.deferred_geometry_transform["transform_type"], "perspective")
             self.assertEqual(efconfig.deferred_geometry_transform["matrix"].shape, (3, 3))
+            self.assertEqual(efconfig.deferred_geometry_transform["interpolation"], "area")
         finally:
             image_transform_adapter.native_available = previous_native_available
+
+    def test_geometry_effect_uses_linear_preview_interpolation_while_crop_editing(self):
+        from effects import EffectConfig, GeometryEffect
+
+        previous_native_available = image_transform_adapter.native_available
+        image_transform_adapter.native_available = lambda: True
+        try:
+            image = np.zeros((48, 72, 3), dtype=np.float32)
+            geometry = GeometryEffect()
+            param = geometry.get_param_dict({"original_img_size": (72, 48)})
+            param["original_img_size"] = (72, 48)
+            param["rotation"] = 11
+            params.set_crop_rect(param, (0, 0, 72, 48))
+            params.set_disp_info(param, (0, 0, 72, 72, 1.0))
+            efconfig = EffectConfig()
+            efconfig.crop_editing = True
+            efconfig.full_preview = True
+
+            diff = geometry.make_diff(image, param, efconfig)
+
+            self.assertIsNone(diff)
+            self.assertIsNotNone(efconfig.deferred_geometry_transform)
+            self.assertEqual(efconfig.deferred_geometry_transform["interpolation"], "linear")
+        finally:
+            image_transform_adapter.native_available = previous_native_available
+
+    def test_geometry_effect_falls_back_to_linear_when_pyramid_linear_is_requested(self):
+        from effects import EffectConfig, GeometryEffect
+
+        previous_native_available = image_transform_adapter.native_available
+        previous_interpolation = os.environ.get("PLATYPUS_GE_PREVIEW_INTERPOLATION")
+        image_transform_adapter.native_available = lambda: True
+        os.environ["PLATYPUS_GE_PREVIEW_INTERPOLATION"] = "pyramid_linear"
+        try:
+            image = np.zeros((48, 72, 3), dtype=np.float32)
+            geometry = GeometryEffect()
+            param = geometry.get_param_dict({"original_img_size": (72, 48)})
+            param["original_img_size"] = (72, 48)
+            param["rotation"] = 11
+            params.set_crop_rect(param, (0, 0, 72, 48))
+            params.set_disp_info(param, (0, 0, 72, 72, 1.0))
+            efconfig = EffectConfig()
+            efconfig.crop_editing = True
+            efconfig.full_preview = True
+
+            diff = geometry.make_diff(image, param, efconfig)
+
+            self.assertIsNone(diff)
+            self.assertIsNotNone(efconfig.deferred_geometry_transform)
+            self.assertEqual(efconfig.deferred_geometry_transform["interpolation"], "linear")
+        finally:
+            image_transform_adapter.native_available = previous_native_available
+            if previous_interpolation is None:
+                os.environ.pop("PLATYPUS_GE_PREVIEW_INTERPOLATION", None)
+            else:
+                os.environ["PLATYPUS_GE_PREVIEW_INTERPOLATION"] = previous_interpolation
 
     def test_geometry_effect_defers_reference_lines_as_perspective_preview(self):
         from effects import EffectConfig, GeometryEffect

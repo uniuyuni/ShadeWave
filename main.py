@@ -1061,6 +1061,10 @@ if __name__ == '__main__':
             self.ids["slider_correct_trapezoid_v"].disabled = not trap_on
             self.ids["slider_focal_length"].disabled = not trap_on
 
+        def _preview_overlay_after_blit_enabled(self):
+            value = os.getenv("PLATYPUS_PREVIEW_OVERLAY_AFTER_BLIT", "0").strip().lower()
+            return value in {"1", "true", "yes", "on"}
+
         @kvmainthread
         def refresh_preview_overlays(self, dt=0):
             # apply_thread 上の draw_image_core から呼ばれるため、ここをメインスレッド化する
@@ -1333,7 +1337,7 @@ if __name__ == '__main__':
             basis = self._get_fast_display_basis(src_space, dst_space, cat)
             return colour_functions.apply_display_color_transform(img, basis, dst_space)
 
-        def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False):
+        def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False, frame_version_override=None):
             self._draw_image_core_active = True
             try:
                 with threads.primary_param_lock:
@@ -1344,25 +1348,38 @@ if __name__ == '__main__':
 
                         if self.update_preview_texture_size():
                             self.crop_image = None
-                        self.refresh_preview_overlays()
 
-                        frame_version = self.pipeline_version
+                        frame_version = self.pipeline_version if frame_version_override is None else frame_version_override
                         current_tab = self.ids["effects"].current_tab.text
+                        overlay_after_blit = self._preview_overlay_after_blit_enabled()
+                        if not overlay_after_blit:
+                            self.refresh_preview_overlays()
                         mask2_on = self._is_mask2_on()
+                        force_full_preview_render = pipeline.preview_full_render_enabled(current_tab)
+                        full_preview_allow_stale = force_full_preview_render and pipeline.preview_allow_stale_enabled(current_tab)
+                        effective_fast_display = False if force_full_preview_render else fast_display
+                        effective_skip_histogram = False if force_full_preview_render else skip_histogram
+                        effective_is_drag = self.is_press_space and not force_full_preview_render
+                        effective_allow_stale = effective_fast_display or full_preview_allow_stale
                         crop_image_view_key = "full" if current_tab == "Ge" else "crop"
                         if self.crop_image_view_key != crop_image_view_key:
                             self.crop_image = None
                             self.crop_image_view_key = crop_image_view_key
                         if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                             logging.warning(
-                                "[MASK_GEOM] draw_image_core start frame_version=%s current_tab=%s center_pos=%s fast_display=%s skip_histogram=%s",
+                                "[MASK_GEOM] draw_image_core start frame_version=%s current_tab=%s center_pos=%s fast_display=%s skip_histogram=%s force_full=%s effective_fast=%s effective_skip_histogram=%s effective_is_drag=%s allow_stale=%s",
                                 frame_version,
                                 current_tab,
                                 center_pos,
                                 fast_display,
                                 skip_histogram,
+                                force_full_preview_render,
+                                effective_fast_display,
+                                effective_skip_histogram,
+                                effective_is_drag,
+                                effective_allow_stale,
                             )
-                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=self.is_press_space, center_pos=center_pos, mask2_active=mask2_on)
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on)
                         self._refresh_mask1_editors()
                         logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                         perf_trace.event("draw_image_core.pipeline_done")
@@ -1371,10 +1388,10 @@ if __name__ == '__main__':
                         if img is None:
                             return
                         stale_frame = frame_version < self.pipeline_version
-                        if stale_frame and not fast_display:
+                        if stale_frame and not effective_allow_stale:
                             self._mask_zoom_sync_log(
-                                "skip_stale frame=%s current=%s fast=%s disp=%s",
-                                frame_version, self.pipeline_version, fast_display,
+                                "skip_stale frame=%s current=%s fast=%s allow_stale=%s disp=%s",
+                                frame_version, self.pipeline_version, effective_fast_display, effective_allow_stale,
                                 params.get_disp_info(self.primary_param),
                             )
                             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
@@ -1385,11 +1402,18 @@ if __name__ == '__main__':
                                 )
                             return
                         elif stale_frame:
+                            self._mask_zoom_sync_log(
+                                "allow_stale frame=%s current=%s fast=%s allow_stale=%s disp=%s",
+                                frame_version, self.pipeline_version, effective_fast_display, effective_allow_stale,
+                                params.get_disp_info(self.primary_param),
+                            )
                             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                                 logging.warning(
-                                    "[MASK_GEOM] draw_image_core allowing stale fast frame frame_version=%s current_version=%s",
+                                    "[MASK_GEOM] draw_image_core allowing stale frame frame_version=%s current_version=%s fast=%s allow_stale=%s",
                                     frame_version,
                                     self.pipeline_version,
+                                    effective_fast_display,
+                                    effective_allow_stale,
                                 )
 
                         debug_mask_geom = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled()
@@ -1402,11 +1426,11 @@ if __name__ == '__main__':
                         dst_space = config.get_config('display_color_gamut')
                         cat = config.get_config('cat')
                         color_t0 = time.perf_counter() if debug_mask_geom else None
-                        if fast_display:
+                        if effective_fast_display:
                             img = self._fast_display_color_transform(img, src_space, dst_space, cat)
                         else:
                             img = colour_functions.display_color_transform(img, src_space, dst_space, cat)
-                        _debug_display_stats("converted fast=%s %s->%s" % (fast_display, src_space, dst_space), img)
+                        _debug_display_stats("converted fast=%s %s->%s" % (effective_fast_display, src_space, dst_space), img)
                         color_ms = (time.perf_counter() - color_t0) * 1000.0 if debug_mask_geom else 0.0
 
                         # Ge タブでは Mask2 モードでも full-preview なので zero-wrap しない。
@@ -1433,28 +1457,28 @@ if __name__ == '__main__':
                         disp_snapshot = params.get_disp_info(self.primary_param)
                         self._mask_zoom_sync_log(
                             "ready_to_blit frame=%s current=%s fast=%s allow_stale=%s disp=%s img_draw_shape=%s",
-                            frame_version, self.pipeline_version, fast_display,
-                            fast_display,
+                            frame_version, self.pipeline_version, effective_fast_display,
+                            effective_allow_stale,
                             disp_snapshot, getattr(img_draw, "shape", None),
                         )
                         self.blit_image(
                             img_draw,
                             frame_version,
-                            allow_stale=fast_display,
+                            allow_stale=effective_allow_stale,
                             disp_snapshot=disp_snapshot,
                         )
 
                         # ヒストグラムは表示画像を投げてから計算する。Mask2 操作中の体感遅延を
                         # 減らすため、プレビュー反映をヒストグラム更新で待たせない。
                         hist_ms = 0.0
-                        if not skip_histogram:
+                        if not effective_skip_histogram:
                             hist_t0 = time.perf_counter() if debug_mask_geom else None
                             img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
                             hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
                             hist_ms = (time.perf_counter() - hist_t0) * 1000.0 if debug_mask_geom else 0.0
                             if frame_version == self.pipeline_version:
                                 self.draw_histogram_view(hist_data)
-                        if frame_version == self.pipeline_version and not fast_display and not self.is_press_space:
+                        if frame_version == self.pipeline_version and not effective_fast_display and not effective_is_drag:
                             self._remember_final_display_image_or_defer(
                                 getattr(self.imgset, "file_path", None),
                                 img_draw,
@@ -1472,8 +1496,8 @@ if __name__ == '__main__':
                             logging.warning(
                                 "[MASK_GEOM] draw_image_core post timings frame_version=%s fast_display=%s skip_histogram=%s color_ms=%.1f preview_ms=%.1f hist_ms=%.1f total_ms=%.1f",
                                 frame_version,
-                                fast_display,
-                                skip_histogram,
+                                effective_fast_display,
+                                effective_skip_histogram,
                                 color_ms,
                                 preview_ms,
                                 hist_ms,
@@ -1505,9 +1529,25 @@ if __name__ == '__main__':
                     center_pos = self.apply_draw_image_center
                     fast_display = self.apply_draw_fast_display
                     skip_histogram = self.apply_draw_skip_histogram
-                    self.draw_image_core(center_pos, fast_display=fast_display, skip_histogram=skip_histogram)
-                    last_processed_version = current_version
-                    self._last_processed_pipeline_version = current_version
+                    try:
+                        current_tab = self.ids["effects"].current_tab.text
+                    except Exception:
+                        current_tab = ""
+                    full_preview_render = pipeline.preview_full_render_enabled(current_tab)
+                    drain_all_preview = pipeline.preview_drain_all_enabled(current_tab)
+                    target_version = (
+                        last_processed_version + 1
+                        if full_preview_render and drain_all_preview and last_processed_version >= 0
+                        else current_version
+                    )
+                    self.draw_image_core(
+                        center_pos,
+                        fast_display=fast_display,
+                        skip_histogram=skip_histogram,
+                        frame_version_override=target_version,
+                    )
+                    last_processed_version = target_version
+                    self._last_processed_pipeline_version = target_version
             
         def start_draw_image(self, center_pos=None, invalidate_crop=False, fast_display=False, skip_histogram=False):
             if invalidate_crop:
@@ -1570,14 +1610,17 @@ if __name__ == '__main__':
         def geometry_callback(self, proc, widget):
             match proc:
                 case 'start':
-                    self.begin_history_effect_ctrl(0, 'geometry')
+                    if self.begin_history_effect_ctrl(0, 'geometry'):
+                        self.crop_image = None
                 case 'update' | 'apply':
+                    self.crop_image = None
                     self.apply_effects_lv(0, 'geometry', sync=True)
                     # Update widget with new params (especially matrix for correct display)
                     #widget.set_correction_params(self.primary_param)
                 case 'end':
                     self.primary_param.update(widget.get_correction_params())
                     self.end_history_effect_ctrl(0, 'geometry')
+                    self.start_draw_image(invalidate_crop=True)
 
         def crop_callback(self, proc, widget):
             match proc:

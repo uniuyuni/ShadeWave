@@ -20,9 +20,10 @@ class DragPreviewCacheFlowTest(unittest.TestCase):
         process_pipeline = _load_function(PIPELINE_PATH, "process_pipeline")
         source = ast.get_source_segment(PIPELINE_PATH.read_text(), process_pipeline)
 
-        self.assertIn("if not is_drag:", source)
+        self.assertIn("pipeline_drag_preview = bool(is_drag) and not preview_full_render_enabled(current_tab)", source)
+        self.assertIn("if not pipeline_drag_preview:", source)
         self.assertIn("crop_image = None", source)
-        self.assertIn("return img2, crop_image if is_drag else imgc", source)
+        self.assertIn("return img2, crop_image if pipeline_drag_preview else imgc", source)
 
 
 if __name__ == "__main__":

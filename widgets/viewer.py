@@ -1,11 +1,13 @@
 import os
 import threading
 import base64
+import io
 import numpy as np
 import cv2
 from watchfiles import watch
 import time
 import pyvips
+from PIL import Image as PILImage, ImageOps as PILImageOps
 
 from kivymd.app import MDApp
 from kivy.core.window import Window as KVWindow
@@ -42,6 +44,8 @@ _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
 _THUMBNAIL_CARD_WIDTH_RATIO = 0.7
 _HOVER_HINT_DELAY = 0.7
+_EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF")
+_EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage",)
 
 
 def _first_value(data, *keys):
@@ -855,7 +859,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             try:
                 exif_data = exif_data_list[i]
 
-                thumb = self._decode_embedded_thumbnail(exif_data)
+                thumb, thumb_source_key = self._decode_embedded_thumbnail(exif_data)
                 if thumb is not None:
                     pass
                 else:
@@ -878,7 +882,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
                 # Orientation
                 orientation = exif_data.get('Orientation')
-                if orientation is not None:
+                if orientation is not None and self._should_apply_parent_orientation(thumb_source_key):
                     if orientation == 'Rotate 180':
                         thumb = cv2.rotate(thumb, cv2.ROTATE_180)
                     elif orientation == 'Rotate 270 CW':
@@ -904,28 +908,59 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
         return thumb_data_list
 
+    def _should_apply_parent_orientation(self, embedded_key):
+        return embedded_key not in _EMBEDDED_PREVIEW_KEYS
+
+    def _decode_embedded_bytes(self, encoded):
+        if isinstance(encoded, str) and encoded.startswith("base64:"):
+            encoded = encoded[7:]
+        elif isinstance(encoded, bytes) and encoded.startswith(b"base64:"):
+            encoded = encoded[7:]
+        return base64.b64decode(encoded)
+
+    def _decode_embedded_preview(self, encoded):
+        data = self._decode_embedded_bytes(encoded)
+        with PILImage.open(io.BytesIO(data)) as img:
+            img = PILImageOps.exif_transpose(img)
+            img = img.convert("RGB")
+            return np.array(img)
+
+    def _decode_embedded_thumbnail_image(self, encoded):
+        data = self._decode_embedded_bytes(encoded)
+        image = np.frombuffer(data, dtype=np.uint8)
+        thumb = cv2.imdecode(image, 1)
+        if thumb is None:
+            return None
+        if thumb.ndim == 2:
+            return cv2.cvtColor(thumb, cv2.COLOR_GRAY2RGB)
+        if thumb.shape[2] == 4:
+            return cv2.cvtColor(thumb, cv2.COLOR_BGRA2RGB)
+        if thumb.shape[2] > 4:
+            return cv2.cvtColor(thumb[:, :, :3], cv2.COLOR_BGR2RGB)
+        return cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+
     def _decode_embedded_thumbnail(self, exif_data):
-        for key in ("PreviewImage", "JpgFromRaw", 'PreviewTIFF', "ThumbnailImage"):
+        for key in _EMBEDDED_PREVIEW_KEYS:
             encoded = exif_data.get(key, None)
             if not encoded:
                 continue
-            if isinstance(encoded, str) and encoded.startswith("base64:"):
-                encoded = encoded[7:]
             try:
-                image = np.frombuffer(base64.b64decode(encoded), dtype=np.uint8)
-                thumb = cv2.imdecode(image, 1)
+                return self._decode_embedded_preview(encoded), key
+            except Exception:
+                continue
+
+        for key in _EMBEDDED_THUMBNAIL_KEYS:
+            encoded = exif_data.get(key, None)
+            if not encoded:
+                continue
+            try:
+                thumb = self._decode_embedded_thumbnail_image(encoded)
             except Exception:
                 continue
             if thumb is None:
                 continue
-            if thumb.ndim == 2:
-                return cv2.cvtColor(thumb, cv2.COLOR_GRAY2RGB)
-            if thumb.shape[2] == 4:
-                return cv2.cvtColor(thumb, cv2.COLOR_BGRA2RGB)
-            if thumb.shape[2] > 4:
-                return cv2.cvtColor(thumb[:, :, :3], cv2.COLOR_BGR2RGB)
-            return cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
-        return None
+            return thumb, key
+        return None, None
 
     def handle_selection(self, index, touch):
         # We also need to notify MainWidget about selection change

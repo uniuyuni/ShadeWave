@@ -586,6 +586,7 @@ def apply_lut(img, lut, max_value=1.0, overrange="clip"):
     overrange:
         "clip"     - 従来通りLUT範囲外を端に丸める
         "preserve" - max_valueを超える値はLUT終端の補正量だけを足して階調を保持する
+        "scale"    - max_valueを超える値はLUT終端値を係数として階調を保持する
     """
     img = np.asarray(img, dtype=np.float32)
 
@@ -601,6 +602,12 @@ def apply_lut(img, lut, max_value=1.0, overrange="clip"):
         if np.any(high_mask):
             result = result.astype(np.float32, copy=True)
             result[high_mask] = img[high_mask] + (np.float32(lut[-1]) - np.float32(max_value))
+    elif overrange == "scale":
+        high_mask = img > max_value
+        if np.any(high_mask):
+            result = result.astype(np.float32, copy=True)
+            gain = np.float32(lut[-1]) / np.float32(max_value)
+            result[high_mask] = img[high_mask] * gain
     
     return result
 
@@ -1018,6 +1025,7 @@ def transform_crop_image(
     lens_scale=1.0,
     mesh_map_x=None,
     mesh_map_y=None,
+    interpolation="area",
 ):
     disp_info = _clamp_disp_info_to_image(disp_info, int(transform_width), int(transform_height))
     new_width, new_height, offset_x, offset_y = crop_size_and_offset_from_texture(texture_width, texture_height, disp_info)
@@ -1041,7 +1049,7 @@ def transform_crop_image(
         int(offset_x),
         int(offset_y),
         transform_type=transform_type,
-        interpolation="area",
+        interpolation=interpolation,
         border_mode=border_mode,
         lens_strength=lens_strength,
         lens_scale=lens_scale,
@@ -1070,6 +1078,7 @@ def transform_zoom_crop_image(
     lens_scale=1.0,
     mesh_map_x=None,
     mesh_map_y=None,
+    interpolation=None,
 ):
     crop_rect = _clamp_crop_rect_to_image(crop_rect, int(transform_width), int(transform_height))
     disp_info = _clamp_disp_info_to_image(disp_info, int(transform_width), int(transform_height))
@@ -1096,7 +1105,8 @@ def transform_zoom_crop_image(
     dx, dy, dw, dh, _ = disp_info
     target_width = max(1, int(texture_width))
     target_height = max(1, int(texture_height))
-    interpolation = "nearest" if float(zoom_ratio) >= 1.0 else "area"
+    if interpolation is None:
+        interpolation = "nearest" if float(zoom_ratio) >= 1.0 else "area"
     result = image_transform_adapter.transform_crop_to_canvas(
         image,
         transform_matrix,
