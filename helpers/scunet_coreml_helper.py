@@ -51,6 +51,12 @@ except Exception:  # pragma: no cover
 
 
 DEFAULT_MODEL = project_root / "models" / "scunet_color_real_psnr_448_fp16.mlpackage"
+_progress_callback = None
+
+
+def set_progress_callback(callback) -> None:
+    global _progress_callback
+    _progress_callback = callback
 
 
 def _set_wait_text(text: str) -> None:
@@ -60,6 +66,11 @@ def _set_wait_text(text: str) -> None:
 
 def _set_progress(done: int, total: int) -> None:
     _set_wait_text(f"SCUNet {done} / {total}")
+    if _progress_callback is not None:
+        try:
+            _progress_callback(int(done), int(total))
+        except Exception:
+            logging.exception("SCUNet progress callback failed")
 
 
 def setup(compute_units: str = "cpu_and_gpu", tile: int = 448, overlap: int = 64):

@@ -43,12 +43,16 @@ def apply_ai_job_process_priority() -> int:
         return 0
 
 
-def run_ai_noise(image: np.ndarray) -> np.ndarray:
+def run_ai_noise(image: np.ndarray, progress_callback=None) -> np.ndarray:
     import helpers.scunet_coreml_helper as scunet_helper
 
     if not hasattr(run_ai_noise, "_engine"):
         run_ai_noise._engine = scunet_helper.setup()
-    return scunet_helper.predict_helper(run_ai_noise._engine, image)
+    scunet_helper.set_progress_callback(progress_callback)
+    try:
+        return scunet_helper.predict_helper(run_ai_noise._engine, image)
+    finally:
+        scunet_helper.set_progress_callback(None)
 
 
 def _read_input_shm(shm_name, shape, dtype_str):
@@ -187,7 +191,17 @@ def ai_job_worker(input_queue, result_queue, stop_event, config_dict, apply_proc
                 )
             kind = task["kind"]
             if kind == "ai_noise_reduction":
-                result = run_ai_noise(image)
+                def _progress(done, total):
+                    result_queue.put(
+                        {
+                            "job_id": job_id,
+                            "status": "progress",
+                            "done": int(done),
+                            "total": int(total),
+                        }
+                    )
+
+                result = run_ai_noise(image, progress_callback=_progress)
             else:
                 raise ValueError(f"unknown AI job kind: {kind}")
             shm_name, shape, dtype = _write_result_shm(result)

@@ -199,6 +199,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     rating = KVNumericProperty(0)
     pmck_exists = KVBooleanProperty(False)
     ai_job_state = KVStringProperty("")
+    ai_job_progress = KVStringProperty("")
     load_pending = KVBooleanProperty(True)
     selected = KVBooleanProperty(False)
     ctx = KVObjectProperty(None)
@@ -250,6 +251,21 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
             opacity=0,
         )
         self.image_box.add_widget(self.ai_job_icon)
+        self.ai_job_progress_label = KVLabel(
+            text="",
+            bold=True,
+            font_size='12sp',
+            size_hint=(None, None),
+            size=(kvdp(54), kvdp(22)),
+            halign="right",
+            valign="middle",
+            color=(1, 1, 1, 0.95),
+            outline_width=1,
+            outline_color=(0, 0, 0, 0.9),
+            opacity=0,
+        )
+        self.ai_job_progress_label.bind(size=self.ai_job_progress_label.setter("text_size"))
+        self.image_box.add_widget(self.ai_job_progress_label)
         self.image_box.bind(pos=self._update_pmck_icon_layout, size=self._update_pmck_icon_layout)
         self.image.bind(
             pos=self._update_pmck_icon_layout,
@@ -316,6 +332,11 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
             image_x + image_w - self.pmck_icon.width - margin,
             image_y + margin,
         )
+        if hasattr(self, "ai_job_progress_label"):
+            self.ai_job_progress_label.pos = (
+                image_x + image_w - self.ai_job_progress_label.width - margin,
+                image_y + margin + self.pmck_icon.height + kvutils.dpi_scale_height(2),
+            )
 
     def update_filename(self, instance, value):
         if value:
@@ -333,9 +354,12 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.exif_data = data.get("exif_data")
         self.pmck_exists = bool(data.get("pmck_exists", False))
         self.ai_job_state = str(data.get("ai_job_state") or "")
+        self.ai_job_progress = str(data.get("ai_job_progress") or "")
         self.load_pending = bool(data.get("load_pending", False))
         self.pmck_icon.opacity = 1.0 if self.pmck_exists else 0.0
         self.ai_job_icon.opacity = 1.0 if self.ai_job_state in {"queued", "running"} else (0.65 if self.ai_job_state == "error" else 0.0)
+        self.ai_job_progress_label.text = self.ai_job_progress
+        self.ai_job_progress_label.opacity = 1.0 if self.ai_job_state == "running" and self.ai_job_progress else 0.0
         self._update_pmck_icon_layout()
         return r
 
@@ -586,6 +610,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             'rating': 0,
             'pmck_exists': os.path.exists(file_path + ".pmck"),
             'ai_job_state': "",
+            'ai_job_progress': "",
         }
 
     def _data_index_for_path(self, file_path):
@@ -733,6 +758,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     'rating': 0,
                     'pmck_exists': os.path.exists(file_path + ".pmck"),
                     'ai_job_state': "",
+                    'ai_job_progress': "",
                 })
                 file_path_dict[file_path] = len(new_data) - 1
 
@@ -866,18 +892,20 @@ class ViewerWidget(RecycleView, DraggableWidget):
         return found
 
     @kvmainthread
-    def set_ai_job_state_for_path(self, file_path, state):
+    def set_ai_job_state_for_path(self, file_path, state, progress_text=""):
         if not file_path:
             return False
         want = self._norm_path_key(file_path)
         found = False
         clean_state = state if state in {"queued", "running", "error"} else ""
+        clean_progress = str(progress_text or "") if clean_state == "running" else ""
         for d in self.data:
             if self._norm_path_key(d.get("file_path") or "") != want:
                 continue
-            if d.get("ai_job_state") == clean_state:
+            if d.get("ai_job_state") == clean_state and d.get("ai_job_progress", "") == clean_progress:
                 return True
             d["ai_job_state"] = clean_state
+            d["ai_job_progress"] = clean_progress
             found = True
             break
         if found:

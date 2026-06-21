@@ -141,6 +141,7 @@ if __name__ == '__main__':
     import macos as device
 
     from cores.coating_simulator import CoatingSimulator
+    from cores import pmck_store
     import config
     import export
     import processing_dialog
@@ -552,12 +553,12 @@ if __name__ == '__main__':
             return True
 
         @kvmainthread
-        def _set_ai_job_viewer_state(self, file_path, state):
+        def _set_ai_job_viewer_state(self, file_path, state, progress_text=""):
             viewer = self.ids.get("viewer")
             if viewer is None or not file_path:
                 return
             try:
-                viewer.set_ai_job_state_for_path(file_path, state)
+                viewer.set_ai_job_state_for_path(file_path, state, progress_text)
             except Exception:
                 logging.exception("failed to update viewer AI job state for %s", file_path)
 
@@ -2461,7 +2462,7 @@ if __name__ == '__main__':
                 if image_path == current_path:
                     continue
                 try:
-                    data = preset_utils.read_pmck_dict(image_path + ".pmck")
+                    data = preset_utils.read_pmck_dict(pmck_store.image_pmck_path(image_path))
                     primary = data.get("primary_param") or {}
                     if ai_noise_enabled(primary):
                         self.ai_job_manager.enqueue_ai_noise_file(image_path, primary)
@@ -2493,7 +2494,7 @@ if __name__ == '__main__':
                 if current_path and os.path.abspath(image_path) == os.path.abspath(current_path):
                     continue
                 try:
-                    data = preset_utils.read_pmck_dict(image_path + ".pmck")
+                    data = preset_utils.read_pmck_dict(pmck_store.image_pmck_path(image_path))
                     primary = data.get("primary_param") or {}
                     if not ai_noise_enabled(primary):
                         continue
@@ -2510,7 +2511,7 @@ if __name__ == '__main__':
             viewer = self.ids.get("viewer")
             if viewer and image_path:
                 viewer.set_pmck_indicator_for_path(
-                    image_path, exists=os.path.exists(image_path + ".pmck")
+                    image_path, exists=pmck_store.exists_image(image_path)
                 )
 
         def show_warning_dialog(self, message):

@@ -124,13 +124,28 @@ class AIJobManager:
     def _result_key(self, job: AIJob) -> tuple[str, str, str]:
         return (job.kind, job.file_path, job.content_key)
 
-    def _set_status(self, job: AIJob, status: AIJobStatus):
-        self.status_by_job[job.job_id] = status
-        if self.viewer_state_callback is not None:
+    def _emit_viewer_state(self, file_path: str, state: str | None, progress_text: str = ""):
+        if self.viewer_state_callback is None:
+            return
+        try:
+            self.viewer_state_callback(file_path, state, progress_text)
+        except TypeError:
             try:
-                self.viewer_state_callback(job.file_path, viewer_state_for_status(status))
+                self.viewer_state_callback(file_path, state)
             except Exception:
                 logging.exception("AI job viewer state callback failed")
+        except Exception:
+            logging.exception("AI job viewer state callback failed")
+
+    def _set_status(self, job: AIJob, status: AIJobStatus):
+        self.status_by_job[job.job_id] = status
+        self._emit_viewer_state(job.file_path, viewer_state_for_status(status), "")
+
+    def _set_progress(self, job: AIJob, done: int, total: int):
+        if total <= 0:
+            return
+        done = max(0, min(int(done), int(total)))
+        self._emit_viewer_state(job.file_path, AIJobStatus.RUNNING.value, f"{done}/{int(total)}")
 
     def get_status_for_path(self, file_path: str, kind: str = AI_NOISE_KIND) -> AIJobStatus | None:
         with self._lock:
@@ -410,7 +425,12 @@ class AIJobManager:
                     self._discard_result_shm(res)
                     continue
 
-                status = AIJobStatus(res.get("status", AIJobStatus.ERROR.value))
+                raw_status = res.get("status", AIJobStatus.ERROR.value)
+                if raw_status == "progress":
+                    self._set_progress(job, int(res.get("done", 0) or 0), int(res.get("total", 0) or 0))
+                    continue
+
+                status = AIJobStatus(raw_status)
                 if status == AIJobStatus.RUNNING:
                     self.pending_payloads.pop(job_id, None)
                     self._set_status(job, AIJobStatus.RUNNING)

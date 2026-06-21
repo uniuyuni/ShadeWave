@@ -7,13 +7,10 @@ import logging
 import os
 import subprocess
 import shutil
-from datetime import datetime as dt
 from typing import Any, Optional
 
-import msgpack
-
 import json
-import define
+from cores import pmck_store
 from utils import rating_utils
 from utils.exiftool_safe import safe_run_exiftool
 
@@ -64,23 +61,12 @@ def merge_xmp_star_tags_into_exif(file_path: str, exif: Any) -> None:
     rating_utils.merge_exiftool_j_row_into_exif(exif, row)
 
 
-def _dt_str() -> str:
-    return dt.now().strftime("%Y/%m/%d")
-
-
 # msgpack ルートの RAW 専用（primary_param には入れない）
 PMCK_RAW_RATING_KEY = "platypus_raw_rating"
 
 
 def read_pmck_dict(pmck_path: str) -> Optional[dict[str, Any]]:
-    try:
-        with open(pmck_path, "rb") as f:
-            return msgpack.unpackb(f.read(), raw=False)
-    except FileNotFoundError:
-        return None
-    except Exception as e:
-        logging.exception("read_pmck_dict: %s", e)
-        return None
+    return pmck_store.read_path(pmck_path)
 
 
 def _clamp_r(v) -> int:
@@ -105,8 +91,7 @@ def raw_rating_from_pmck_dict(d: Optional[dict]) -> int:
 
 
 def read_raw_pmck_rating_value(file_path: str) -> int:
-    p = (file_path or "") + ".pmck"
-    d = read_pmck_dict(p)
+    d = pmck_store.read_image(file_path)
     return raw_rating_from_pmck_dict(d)
 
 
@@ -130,17 +115,10 @@ def merge_raw_pmck_rating(file_path: str, rating: int) -> bool:
     """
     RAW: .pmck ルートに platypus_raw_rating（1～5）のみ。primary_param.rating は廃止のため除去。
     """
-    pmck_path = (file_path or "") + ".pmck"
-    d = read_pmck_dict(pmck_path)
+    d = pmck_store.read_image(file_path)
     if d is None:
-        d = {
-            "make": "Platypus",
-            "date": _dt_str(),
-            "version": define.VERSION,
-            "primary_param": {},
-        }
-    if "primary_param" not in d or d["primary_param"] is None:
-        d["primary_param"] = {}
+        d = pmck_store.empty_pmck()
+    d = pmck_store.ensure_primary_param(d)
     pp = d["primary_param"]
     if isinstance(pp, dict):
         pp.pop("rating", None)
@@ -150,15 +128,10 @@ def merge_raw_pmck_rating(file_path: str, rating: int) -> bool:
     else:
         d[PMCK_RAW_RATING_KEY] = int(rating)
     if not _pmck_has_substance(d):
-        try:
-            if os.path.exists(pmck_path):
-                os.remove(pmck_path)
-        except OSError as e:
-            raise RuntimeError(str(e)) from e
+        pmck_store.delete_image(file_path)
         return True
     try:
-        with open(pmck_path, "wb") as f:
-            f.write(msgpack.packb(d, use_bin_type=True))
+        pmck_store.write_image(file_path, d)
     except OSError as e:
         raise RuntimeError(str(e)) from e
     return True

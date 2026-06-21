@@ -574,6 +574,36 @@ class AIJobManagerTest(unittest.TestCase):
 
         self.assertEqual(0, mgr.completed_results_bytes())
 
+    def test_progress_event_updates_viewer_state_with_tile_count(self):
+        class ListQueue:
+            def __init__(self, items):
+                self.items = list(items)
+
+            def get_nowait(self):
+                if self.items:
+                    return self.items.pop(0)
+                from queue import Empty
+
+                raise Empty
+
+        states = []
+        mgr = AIJobManager(viewer_state_callback=lambda path, state, progress: states.append((path, state, progress)))
+        job = AIJob(1, AI_NOISE_KIND, "/tmp/a.jpg", "content", "source")
+        mgr.jobs[job.job_id] = job
+        mgr.status_by_job[job.job_id] = AIJobStatus.RUNNING
+        mgr.result_queue = ListQueue([
+            {
+                "job_id": job.job_id,
+                "status": "progress",
+                "done": 12,
+                "total": 84,
+            },
+        ])
+
+        self.assertEqual([], mgr.poll_results())
+
+        self.assertIn((job.file_path, "running", "12/84"), states)
+
     def test_cancelled_or_unknown_complete_unlinks_result_shm(self):
         class ListQueue:
             def __init__(self, items):

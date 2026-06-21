@@ -4,11 +4,11 @@ import os
 import shutil
 from datetime import datetime as dt
 
-import msgpack
 import numpy as np
 
 import define
 import params
+from cores import pmck_store
 from utils import paths
 from widgets.switch_reset_map import build_switch_reset_targets
 
@@ -164,36 +164,17 @@ def load_preset_json(file_path):
     return _strip_unwanted(primary_param)
 
 
-def _empty_pmck():
-    return {
-        "make": "Platypus",
-        "date": dt.now().strftime("%Y/%m/%d"),
-        "version": define.VERSION,
-        "primary_param": {},
-    }
-
-
 def read_pmck_dict(pmck_path):
-    try:
-        with open(pmck_path, "rb") as f:
-            data = msgpack.unpackb(f.read(), raw=False)
-    except FileNotFoundError:
-        return _empty_pmck()
-    if not isinstance(data, dict):
-        return _empty_pmck()
-    if not isinstance(data.get("primary_param"), dict):
-        data["primary_param"] = {}
-    return data
+    data = pmck_store.read_path(pmck_path, default_empty=True)
+    return pmck_store.ensure_primary_param(data)
 
 
 def write_pmck_dict(pmck_path, data):
-    os.makedirs(os.path.dirname(pmck_path), exist_ok=True)
-    with open(pmck_path, "wb") as f:
-        f.write(msgpack.packb(data, use_bin_type=True))
+    pmck_store.write_path(pmck_path, data)
 
 
 def apply_partial_to_pmck_file(image_path, partial_param):
-    pmck_path = image_path + ".pmck"
+    pmck_path = pmck_store.image_pmck_path(image_path)
     data = read_pmck_dict(pmck_path)
     primary_param = data.setdefault("primary_param", {})
     apply_partial_primary_param(primary_param, partial_param)
@@ -213,7 +194,7 @@ def cleanup_pmck_backup_files(directory):
 
 
 def backup_pmck_for_batch(image_path):
-    pmck_path = image_path + ".pmck"
+    pmck_path = pmck_store.image_pmck_path(image_path)
     bak_path = pmck_path + ".bak"
     tmp_path = pmck_path + ".swap_tmp"
     for path in (bak_path, tmp_path):

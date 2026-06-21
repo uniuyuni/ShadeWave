@@ -54,6 +54,12 @@ class AIJobProcessingIndicatorFlowTest(unittest.TestCase):
         self.assertIn("_enqueue_unfinished_ai_noise_for_path", source)
         self.assertIn('reason="selection_changed"', source)
 
+    def test_ai_job_viewer_state_accepts_progress_text(self):
+        source = _load_class_function("MainWidget", "_set_ai_job_viewer_state")
+
+        self.assertIn('progress_text=""', source)
+        self.assertIn("viewer.set_ai_job_state_for_path(file_path, state, progress_text)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

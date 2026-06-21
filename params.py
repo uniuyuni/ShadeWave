@@ -4,10 +4,10 @@ import logging
 import numpy as np
 import json
 import math
-import msgpack
 from datetime import datetime as dt
 
 import cores.core as core
+from cores import pmck_store
 import config
 import define
 import effects
@@ -542,13 +542,7 @@ def _deserialize_param(param, load_heavy=True):
         param.pop('heavy_saved_at_fidelity', None)
 
 def _pmck_shell_empty_primary() -> dict:
-    tstr = dt.now().strftime("%Y/%m/%d")
-    return {
-        "make": "Platypus",
-        "date": tstr,
-        "version": define.VERSION,
-        "primary_param": {},
-    }
+    return pmck_store.empty_pmck()
 
 
 def serialize(param, mask_editor2, file_path=None):
@@ -639,11 +633,8 @@ def merge_heavy_from_pmck(file_path, param, mask_editor2, cached_dict=None):
     if cached_dict is not None:
         d = cached_dict
     else:
-        fp = file_path + '.pmck'
-        try:
-            with open(fp, 'rb') as f:
-                d = msgpack.unpackb(f.read(), raw=False)
-        except FileNotFoundError:
+        d = pmck_store.read_image(file_path)
+        if d is None:
             return
     pp = d.get('primary_param')
     if not pp or pp.get('heavy_saved_at_fidelity') != ImageFidelity.FULL.value:
@@ -667,7 +658,6 @@ def merge_heavy_from_pmck(file_path, param, mask_editor2, cached_dict=None):
 def save_json(file_path, param, mask_editor2, raw_sidecar_rating: int = 0):
     if file_path is None:
         return False
-    path_pmck = file_path + '.pmck'
     is_raw = bool(file_path) and rating_utils.is_raw_path(file_path)
     raw_r = int(raw_sidecar_rating or 0) if is_raw else 0
     empty = is_empty_param(param, mask_editor2)
@@ -676,14 +666,8 @@ def save_json(file_path, param, mask_editor2, raw_sidecar_rating: int = 0):
             # RAW で実質編集なしの場合は、古い primary/mask を残さず rating 専用の最小 .pmck を再構築する。
             ser = _pmck_shell_empty_primary()
             ser[PMCK_RAW_RATING_KEY] = raw_r
-            with open(path_pmck, 'wb') as f:
-                f.write(msgpack.packb(ser, use_bin_type=True))
-            return True
-        if os.path.exists(path_pmck):
-            try:
-                os.remove(path_pmck)
-            except OSError:
-                pass
+            return pmck_store.write_image(file_path, ser)
+        pmck_store.delete_image(file_path)
         return False
     ser = serialize(param, mask_editor2, file_path=file_path)
     if is_raw:
@@ -698,27 +682,15 @@ def save_json(file_path, param, mask_editor2, raw_sidecar_rating: int = 0):
         if ser is not None:
             ser.pop(PMCK_RAW_RATING_KEY, None)  # RGB に RAW 専用キーが乗るのを防ぐ
     if ser is not None:
-        with open(path_pmck, 'wb') as f:
-            f.write(msgpack.packb(ser, use_bin_type=True))
-        return True
-    if os.path.exists(path_pmck):
-        try:
-            os.remove(path_pmck)
-        except OSError:
-            pass
+        return pmck_store.write_image(file_path, ser)
+    pmck_store.delete_image(file_path)
     return False
 
 def load_json(file_path, param, mask_editor2, load_heavy=True):
     if file_path is None:
         return None
-    path_pmck = file_path + '.pmck'
-    try:
-        with open(path_pmck, 'rb') as f:
-            dict_ = msgpack.unpackb(f.read(), raw=False)
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as e:
-        logging.exception("load_json read failed: %s", e)
+    dict_ = pmck_store.read_image(file_path)
+    if dict_ is None:
         return None
 
     pp = dict_.get("primary_param") or {}
@@ -760,10 +732,14 @@ def is_empty_param(param, mask_editor2):
 
 def delete_empty_param_json(file_path):
     if file_path is not None:
-        file_path = file_path + '.json'
+        deleted = pmck_store.delete_image(file_path)
+        legacy_json_path = file_path + '.json'
 
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if os.path.exists(legacy_json_path):
+            os.remove(legacy_json_path)
+            return True
+
+        if deleted:
             return True
 
     return False

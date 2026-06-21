@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime as dt
 import hashlib
 import os
-import tempfile
 from typing import Any
 
-import msgpack
 import numpy as np
 
-import define
+from cores import pmck_store
 from enums import ImageFidelity
 import params
 import utils.utils as utils
@@ -169,66 +166,9 @@ def merge_ai_noise_result_into_param(
         param["ai_noise_reduction_source_signature"] = source_signature
 
 
-def _empty_pmck() -> dict[str, Any]:
-    return {
-        "make": "Platypus",
-        "date": dt.now().strftime("%Y/%m/%d"),
-        "version": define.VERSION,
-        "primary_param": {},
-    }
-
-
-def _pmck_stat_token(path: str) -> tuple[int, int, int] | None:
-    try:
-        st = os.stat(path)
-        return (int(st.st_mtime_ns), int(st.st_size), int(getattr(st, "st_ino", 0)))
-    except FileNotFoundError:
-        return None
-
-
 def _read_pmck_with_token(image_path: str) -> tuple[dict[str, Any], tuple[int, int, int] | None]:
-    pmck_path = image_path + ".pmck"
-    token = _pmck_stat_token(pmck_path)
-    try:
-        with open(pmck_path, "rb") as f:
-            data = msgpack.unpackb(f.read(), raw=False)
-    except FileNotFoundError:
-        data = _empty_pmck()
-    if not isinstance(data, dict):
-        data = _empty_pmck()
-    if not isinstance(data.get("primary_param"), dict):
-        data["primary_param"] = {}
-    return data, token
-
-
-def _read_pmck(image_path: str) -> dict[str, Any]:
-    data, _token = _read_pmck_with_token(image_path)
-    return data
-
-
-def _write_pmck(image_path: str, data: dict[str, Any], *, expected_token=None) -> bool:
-    pmck_path = image_path + ".pmck"
-    directory = os.path.dirname(pmck_path) or "."
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-    if expected_token is not None and _pmck_stat_token(pmck_path) != expected_token:
-        return False
-
-    fd, tmp_path = tempfile.mkstemp(prefix=".pmck.", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(msgpack.packb(data, use_bin_type=True))
-        if expected_token is not None and _pmck_stat_token(pmck_path) != expected_token:
-            return False
-        os.replace(tmp_path, pmck_path)
-        tmp_path = None
-        return True
-    finally:
-        if tmp_path is not None:
-            try:
-                os.remove(tmp_path)
-            except FileNotFoundError:
-                pass
+    data, token = pmck_store.read_image_with_token(image_path, default_empty=True)
+    return pmck_store.ensure_primary_param(data), token
 
 
 def _pmck_param_accepts_result(pmck_primary: dict[str, Any]) -> bool:
@@ -256,4 +196,4 @@ def merge_ai_noise_result_into_pmck(
     primary["ai_noise_reduction_source_signature"] = source_signature
     primary["heavy_saved_at_fidelity"] = ImageFidelity.FULL.value
     data["primary_param"] = params._msgpack_safe_value(primary)
-    return _write_pmck(image_path, data, expected_token=token)
+    return pmck_store.write_image(image_path, data, expected_token=token)
