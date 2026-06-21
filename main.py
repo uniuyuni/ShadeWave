@@ -146,6 +146,15 @@ if __name__ == '__main__':
     import processing_dialog
     from processing_dialog import create_processing_dialog
     from async_worker import AsyncWorker
+    from cores.ai_job_manager import (
+        AIJobStatus,
+        AI_NOISE_KIND,
+        AIJobManager,
+        ai_noise_enabled,
+        current_param_accepts_ai_noise_result,
+        merge_ai_noise_result_into_param,
+        merge_ai_noise_result_into_pmck,
+    )
     import waitinfo
     import history
 
@@ -390,6 +399,7 @@ if __name__ == '__main__':
             self.async_worker = AsyncWorker()
             # self.async_worker.start() # Start explicitly after config init
             self.processor = pipeline.AsyncPipelineManager(self.async_worker)
+            self.ai_job_manager = AIJobManager(viewer_state_callback=self._set_ai_job_viewer_state)
             KVClock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
             self._draw_image_core_active = False
@@ -540,6 +550,58 @@ if __name__ == '__main__':
             logging.debug("displayed cached final image for %s", file_path)
             return True
 
+        def _set_ai_job_viewer_state(self, file_path, state):
+            viewer = self.ids.get("viewer")
+            if viewer is None or not file_path:
+                return
+            try:
+                viewer.set_ai_job_state_for_path(file_path, state)
+            except Exception:
+                logging.exception("failed to update viewer AI job state for %s", file_path)
+
+        def _handle_ai_job_result(self, job_result):
+            job = job_result.job
+            if job.kind != AI_NOISE_KIND:
+                return False
+            if job_result.status != AIJobStatus.COMPLETE or job_result.result is None:
+                logging.error("AI job failed: %s %s", job.file_path, job_result.error)
+                return False
+
+            current_path = self.imgset.file_path if self.imgset is not None else None
+            if current_path == job.file_path:
+                with threads.primary_param_lock:
+                    image = self.imgset.img if self.imgset is not None else None
+                    if current_param_accepts_ai_noise_result(
+                        self.primary_param,
+                        file_path=job.file_path,
+                        image=image,
+                        content_key=job.content_key,
+                        source_signature=job.source_signature,
+                    ):
+                        merge_ai_noise_result_into_param(
+                            self.primary_param,
+                            job_result.result,
+                            job.content_key,
+                            job.source_signature,
+                        )
+                        logging.info("AI-NR job merged into current param: %s", job.file_path)
+                        return True
+                logging.info("AI-NR job result is stale for current param: %s", job.file_path)
+                return False
+
+            merged = merge_ai_noise_result_into_pmck(
+                job.file_path,
+                job_result.result,
+                content_key=job.content_key,
+                source_signature=job.source_signature,
+            )
+            if merged:
+                logging.info("AI-NR job merged into pmck: %s", job.file_path)
+                self._refresh_pmck_indicator_for_image_path(job.file_path)
+            else:
+                logging.info("AI-NR job result discarded as stale for pmck: %s", job.file_path)
+            return False
+
         def update_async_results(self, dt):
             if self.async_worker:
                 timed_out_effects = self.async_worker.cancel_timed_out_effects()
@@ -573,6 +635,13 @@ if __name__ == '__main__':
                 if inpaint_failed:
                     self._reset_ai_inpaint_processing_ui()
 
+            if self.ai_job_manager:
+                ai_dirty = False
+                for job_result in self.ai_job_manager.poll_results():
+                    ai_dirty = self._handle_ai_job_result(job_result) or ai_dirty
+                if ai_dirty:
+                    self.start_draw_image()
+
             if self.async_worker:
                 for msg in self.async_worker.poll_messages():
                     if msg['type'] == 'waitinfo':
@@ -581,6 +650,12 @@ if __name__ == '__main__':
             # 処理状態の更新
             if self.async_worker:
                 has_tasks = self.async_worker.has_pending_tasks()
+                if self.ai_job_manager:
+                    current_path = self.imgset.file_path if self.imgset is not None else None
+                    has_tasks = has_tasks or (
+                        bool(current_path)
+                        and self.ai_job_manager.has_pending_job_for_path(current_path)
+                    )
                 ai_inpaint_processing = self.async_worker.has_pending_effect("InpaintEffect")
                 if self.ai_inpaint_processing != ai_inpaint_processing:
                     self.ai_inpaint_processing = ai_inpaint_processing
@@ -1379,7 +1454,7 @@ if __name__ == '__main__':
                                 effective_is_drag,
                                 effective_allow_stale,
                             )
-                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on)
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on, ai_job_manager=self.ai_job_manager)
                         self._refresh_mask1_editors()
                         logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                         perf_trace.event("draw_image_core.pipeline_done")
@@ -2288,6 +2363,63 @@ if __name__ == '__main__':
             self.history_panel.set_history(self.history)
             for item in items:
                 self._refresh_pmck_indicator_for_image_path(item.get("image_path"))
+            self._enqueue_ai_noise_jobs_after_batch_paste(items)
+
+        def _enqueue_ai_noise_jobs_after_batch_paste(self, items):
+            if not self.ai_job_manager:
+                return
+            current_path = self.imgset.file_path if self.imgset is not None else None
+            for item in items or []:
+                image_path = item.get("image_path")
+                if not image_path:
+                    continue
+                if image_path == current_path:
+                    continue
+                try:
+                    data = preset_utils.read_pmck_dict(image_path + ".pmck")
+                    primary = data.get("primary_param") or {}
+                    if ai_noise_enabled(primary):
+                        self.ai_job_manager.enqueue_ai_noise_file(image_path, primary)
+                except Exception:
+                    logging.exception("failed to enqueue AI-NR job after batch paste: %s", image_path)
+
+        def on_import_path_applied(self, directory):
+            if not self.ai_job_manager or not directory:
+                return
+            threading.Thread(
+                target=self._enqueue_resumable_ai_noise_jobs_for_folder,
+                args=(directory,),
+                daemon=True,
+            ).start()
+
+        def _enqueue_resumable_ai_noise_jobs_for_folder(self, directory):
+            try:
+                root = os.path.abspath(directory)
+                file_names = sorted(os.listdir(root))
+            except OSError:
+                return
+            current_path = self.imgset.file_path if self.imgset is not None else None
+            supported = define.SUPPORTED_FORMATS_RGB + define.SUPPORTED_FORMATS_RAW + define.SUPPORTED_FORMATS_EXR
+            restored = 0
+            for file_name in file_names:
+                image_path = os.path.join(root, file_name)
+                if not image_path.lower().endswith(supported):
+                    continue
+                if current_path and os.path.abspath(image_path) == os.path.abspath(current_path):
+                    continue
+                try:
+                    data = preset_utils.read_pmck_dict(image_path + ".pmck")
+                    primary = data.get("primary_param") or {}
+                    if not ai_noise_enabled(primary):
+                        continue
+                    if primary.get("ai_noise_reduction_result") is not None:
+                        continue
+                    self.ai_job_manager.enqueue_ai_noise_file(image_path, primary)
+                    restored += 1
+                except Exception:
+                    logging.exception("failed to restore AI-NR job for %s", image_path)
+            if restored:
+                logging.info("restored %d resumable AI-NR job(s) for folder: %s", restored, root)
 
         def _refresh_pmck_indicator_for_image_path(self, image_path):
             viewer = self.ids.get("viewer")
@@ -2562,6 +2694,7 @@ if __name__ == '__main__':
                     # １回目の時だけパラメータを反映して、編集できる様にする
                     self.primary_param.clear()
                     self.primary_param.update(param)
+                    self.primary_param['_source_file_path'] = file_path
                     if file_path and rating_utils.is_rgb_path(file_path):
                         # サムネ用 get_metadata 由来は param / exif_data 引数（同一参照想定）に。空なら exiftool 追読だけが頼り
                         pex = self.primary_param.get("exif_data")
@@ -2626,6 +2759,7 @@ if __name__ == '__main__':
                     self.primary_effects[0]['crop'].sync_crop_editor_mode_from_widget(self, self.primary_param)
 
                 self.imgset = imgset
+                self.primary_param['_source_file_path'] = file_path
 
                 fid = getattr(imgset, 'fidelity', ImageFidelity.FULL)
                 self.primary_param['image_fidelity'] = fid.value
@@ -4233,6 +4367,8 @@ if __name__ == '__main__':
                         preset_utils.finalize_batch_item(item)
             if self.async_worker:
                 self.async_worker.stop()
+            if self.ai_job_manager:
+                self.ai_job_manager.stop()
             
             if self.apply_thread is not None:
                 t = self.apply_thread

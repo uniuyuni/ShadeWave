@@ -34,6 +34,26 @@ class ViewerSelectionFlowTest(unittest.TestCase):
             plain_click_branch.index("self.clear_selection()"),
         )
 
+    def test_ai_job_state_never_initializes_recycle_data_as_none(self):
+        new_item_source = _load_class_function("ViewerWidget", "_new_image_item")
+        set_path_source = _load_class_function("ViewerWidget", "set_path")
+        set_state_source = _load_class_function("ViewerWidget", "set_ai_job_state_for_path")
+
+        self.assertIn("'ai_job_state': \"\"", new_item_source)
+        self.assertIn("'ai_job_state': \"\"", set_path_source)
+        self.assertIn('else ""', set_state_source)
+        self.assertNotIn("'ai_job_state': None", new_item_source)
+        self.assertNotIn("'ai_job_state': None", set_path_source)
+
+    def test_ai_job_indicator_uses_loading_spinner_size(self):
+        source = _load_class_function("ThumbnailCard", "__init__")
+        ai_icon_block = source.split("self.ai_job_icon = KVImage(", 1)[1].split("self.image_box.add_widget(self.ai_job_icon)", 1)[0]
+
+        self.assertIn("source=rel(\"assets\", \"spinner.gif\")", ai_icon_block)
+        self.assertIn("size_hint=(1, 1)", ai_icon_block)
+        self.assertIn("pos_hint={\"x\": 0, \"y\": 0}", ai_icon_block)
+        self.assertNotIn("_PMCK_ICON_REF_SIZE", ai_icon_block)
+
 
 if __name__ == "__main__":
     unittest.main()

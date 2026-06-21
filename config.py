@@ -95,7 +95,10 @@ def _apply_config(key):
     if key == 'lut_path':
         _main_widget.set_lut_path(_config.get('lut_path', os.getcwd() + "/lut"))
     elif key == 'import_path':
-        _main_widget.ids['viewer'].set_path(_config.get('import_path', os.getcwd()))
+        import_path = _config.get('import_path', os.getcwd())
+        _main_widget.ids['viewer'].set_path(import_path)
+        if hasattr(_main_widget, "on_import_path_applied"):
+            _main_widget.on_import_path_applied(import_path)
     elif key in ['display_output_dither', 'display_output_downscale']:
         _main_widget.texture = None
     elif key == 'preview_size' and _main_widget is not None:

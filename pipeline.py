@@ -630,7 +630,7 @@ class AsyncPipelineManager:
         return len(keys)
 
 
-def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
+def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False, ai_job_manager=None):
     pipeline_drag_preview = bool(is_drag) and not preview_full_render_enabled(current_tab)
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
@@ -674,6 +674,8 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag
     efconfig.image_fidelity = primary_param.get('image_fidelity')
+    efconfig.ai_job_manager = ai_job_manager
+    efconfig.file_path = primary_param.get('_source_file_path')
     efconfig.upstream_hash = hash(id(img))
     efconfig.pipeline_timing = timing
     efconfig.pipeline_layer_label = "primary"

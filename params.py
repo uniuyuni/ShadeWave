@@ -23,6 +23,8 @@ from utils.rating_io import PMCK_RAW_RATING_KEY, merge_raw_pmck_rating
 # pmck 内の「重い」primary_param キー（フル解像時のみシリアライズ／プレビュー時は読み飛ばし）
 HEAVY_PRIMARY_PARAM_KEYS = (
     'ai_noise_reduction_result',
+    'ai_noise_reduction_content_key',
+    'ai_noise_reduction_source_signature',
     'inpaint_diff_list',
     'patchmatch_inpaint_diff_list',
     'color_match_source_image',
@@ -199,6 +201,8 @@ def _param2_strips_nonsubstance_mutable(p: dict) -> None:
         p.pop("color_match_source_image", None)
     if not _param2_has_substantive_heavy_payload(p):
         p.pop("heavy_saved_at_fidelity", None)
+        p.pop("ai_noise_reduction_content_key", None)
+        p.pop("ai_noise_reduction_source_signature", None)
 
 
 def _param2_effective_user_substance_remaining(param2: dict) -> dict:
@@ -220,6 +224,8 @@ SPECIAL_PARAM = [
     #'crop_rect',
     'disp_info',
     '_mask1_restore_view_after_submit',
+    '_source_file_path',
+    '_ai_noise_reduction_result_deferred',
     # セッション中のみ（フル/プレビュー・_serialize 重い判定用）。.pmck primary には出さない
     "image_fidelity",
     # レンズ3のユーザー意図。メモリ・copy_special 用。pmck へは serialize が (T,T,T) 以外のときだけ明示的に書く
@@ -246,8 +252,6 @@ SPECIAL_PARAM = [
     # for effects.AutoExposureEffect
     'rgb_or_raw',
     'auto_exposure',
-    # SCUNet raw の upstream 照合用（セッション内のみ、pmck には出さない）
-    'ai_noise_reduction_content_key',
 ]
 
 DO_NOT_COPY_SPECIAL_PARAM = {
@@ -606,6 +610,8 @@ def deserialize(ser, param, mask_editor2, load_heavy=True):
         pp = pp.copy()
     pp.pop("rating", None)  # 旧形式・レーティングは primary に還元しない
     if not load_heavy:
+        if pp.get("ai_noise_reduction_result") is not None:
+            param["_ai_noise_reduction_result_deferred"] = True
         for k in HEAVY_PRIMARY_PARAM_KEYS:
             pp.pop(k, None)
     param.update(pp)
@@ -642,9 +648,17 @@ def merge_heavy_from_pmck(file_path, param, mask_editor2, cached_dict=None):
     pp = d.get('primary_param')
     if not pp or pp.get('heavy_saved_at_fidelity') != ImageFidelity.FULL.value:
         return
-    for k in ('ai_noise_reduction_result', 'inpaint_diff_list', 'patchmatch_inpaint_diff_list', 'color_match_source_image'):
+    for k in (
+        'ai_noise_reduction_result',
+        'ai_noise_reduction_content_key',
+        'ai_noise_reduction_source_signature',
+        'inpaint_diff_list',
+        'patchmatch_inpaint_diff_list',
+        'color_match_source_image',
+    ):
         if k in pp:
             param[k] = pp[k]
+    param.pop('_ai_noise_reduction_result_deferred', None)
     _ai_noise_reduction_load(param)
     _inpaint_load(param, 'inpaint_diff_list')
     _inpaint_load(param, 'patchmatch_inpaint_diff_list')

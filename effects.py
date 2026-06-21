@@ -226,6 +226,8 @@ class EffectConfig():
         self.full_preview = False
         self.pipeline_layer_label = "primary"
         self.deferred_geometry_transform = None
+        self.ai_job_manager = None
+        self.file_path = None
 
 
 class ParamBinding:
@@ -2256,6 +2258,10 @@ class AINoiseReductonEffect(Effect):
         nr_intensity = self._get_param(param, 'ai_noise_reduction_intensity') 
         nr_result = self._get_param(param, 'ai_noise_reduction_result')         
         if switch_ai_noise_reduction == False or nr == False:
+            ai_job_manager = getattr(efconfig, "ai_job_manager", None)
+            file_path = getattr(efconfig, "file_path", None)
+            if ai_job_manager is not None and file_path:
+                ai_job_manager.cancel_path(file_path)
             if efconfig.processor is not None:
                 efconfig.processor.cancel_effect(self.__class__.__name__)
 
@@ -2271,7 +2277,22 @@ class AINoiseReductonEffect(Effect):
 
             # 強度は render のみ。非同期キャッシュの param_hash には含めない（raw 再利用してブレンドのみ）
             param_hash_async = hash((nr,))
-            content_key = _ai_noise_content_key(nr, efconfig.upstream_hash)
+            ai_job_manager = getattr(efconfig, "ai_job_manager", None)
+            file_path = getattr(efconfig, "file_path", None)
+            source_signature = None
+            if ai_job_manager is not None and file_path and efconfig.mode != EffectMode.EXPORT:
+                from cores.ai_job_manager.ai_noise import (
+                    ai_noise_content_key,
+                    ai_noise_source_signature,
+                    ai_noise_valid_content_keys,
+                )
+
+                source_signature = ai_noise_source_signature(file_path, img, param)
+                content_key = ai_noise_content_key(file_path, img, param, source_signature=source_signature)
+                valid_content_keys = ai_noise_valid_content_keys(file_path, img, param)
+            else:
+                content_key = _ai_noise_content_key(nr, efconfig.upstream_hash)
+                valid_content_keys = {content_key}
             render_hash = hash((content_key, nr_intensity))
 
             logging.debug(
@@ -2287,7 +2308,7 @@ class AINoiseReductonEffect(Effect):
 
             # 保存済み raw + upstream 未変化なら AI NR／ワーカーを呼ばずブレンドのみ
             if isinstance(raw_stored, np.ndarray) and raw_stored.shape == img.shape:
-                if key_stored is None or key_stored == content_key:
+                if key_stored is None or key_stored in valid_content_keys:
                     if key_stored is None:
                         param["ai_noise_reduction_content_key"] = content_key
                     blended = _ai_noise_blend_raw(raw_stored, img, nr_intensity)
@@ -2298,9 +2319,45 @@ class AINoiseReductonEffect(Effect):
                 else:
                     param.pop("ai_noise_reduction_result", None)
                     param.pop("ai_noise_reduction_content_key", None)
+                    param.pop("ai_noise_reduction_source_signature", None)
             elif raw_stored is not None:
                 param.pop("ai_noise_reduction_result", None)
                 param.pop("ai_noise_reduction_content_key", None)
+                param.pop("ai_noise_reduction_source_signature", None)
+
+            if param.get("_ai_noise_reduction_result_deferred"):
+                if efconfig.layer_status is not None:
+                    from enums import PipelineStatus
+                    efconfig.layer_status = PipelineStatus.PREVIEW
+                return None
+
+            if ai_job_manager is not None and file_path and efconfig.mode != EffectMode.EXPORT:
+                from cores.ai_job_manager import merge_ai_noise_result_into_param
+
+                status, raw, content_key, source_signature = ai_job_manager.request_ai_noise(file_path, img, param)
+                if raw is not None:
+                    raw = np.asarray(raw, dtype=np.float32)
+                    merge_ai_noise_result_into_param(param, raw, content_key, source_signature)
+                    blended = _ai_noise_blend_raw(raw, img, nr_intensity)
+                    if blended is None:
+                        self.diff = None
+                        self.hash = None
+                        return None
+                    self.diff = blended
+                    self.hash = render_hash
+                    return self.diff
+
+                if efconfig.layer_status is not None:
+                    from enums import PipelineStatus
+                    efconfig.layer_status = PipelineStatus.PREVIEW
+                self.hash = None
+                if nr_result is not None and nr_result.shape == img.shape:
+                    blended = _ai_noise_blend_raw(nr_result, img, nr_intensity)
+                    if blended is not None:
+                        self.diff = blended
+                        self.hash = hash((render_hash, "ai_job_preview", str(status)))
+                        return self.diff
+                return None
 
             handled, result = self.try_async_execution(img, param, efconfig, param_hash_async)
             if handled:
@@ -2340,7 +2397,7 @@ class AINoiseReductonEffect(Effect):
             if (
                 isinstance(raw_diff, np.ndarray)
                 and raw_diff.shape == img.shape
-                and param.get("ai_noise_reduction_content_key") == content_key
+                and param.get("ai_noise_reduction_content_key") in valid_content_keys
             ):
                 blended = _ai_noise_blend_raw(raw_diff, img, nr_intensity)
                 if blended is not None:

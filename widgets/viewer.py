@@ -198,6 +198,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     thumb_source = KVObjectProperty(None, allownone=True, force_dispatch=True)
     rating = KVNumericProperty(0)
     pmck_exists = KVBooleanProperty(False)
+    ai_job_state = KVStringProperty("")
     load_pending = KVBooleanProperty(True)
     selected = KVBooleanProperty(False)
     ctx = KVObjectProperty(None)
@@ -241,6 +242,14 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.pmck_icon.ref_width = _PMCK_ICON_REF_SIZE
         self.pmck_icon.ref_height = _PMCK_ICON_REF_SIZE
         self.image_box.add_widget(self.pmck_icon)
+        self.ai_job_icon = KVImage(
+            source=rel("assets", "spinner.gif"),
+            anim_delay=0.03,
+            size_hint=(1, 1),
+            pos_hint={"x": 0, "y": 0},
+            opacity=0,
+        )
+        self.image_box.add_widget(self.ai_job_icon)
         self.image_box.bind(pos=self._update_pmck_icon_layout, size=self._update_pmck_icon_layout)
         self.image.bind(
             pos=self._update_pmck_icon_layout,
@@ -323,8 +332,10 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.rating_row.exif_pane = False
         self.exif_data = data.get("exif_data")
         self.pmck_exists = bool(data.get("pmck_exists", False))
+        self.ai_job_state = str(data.get("ai_job_state") or "")
         self.load_pending = bool(data.get("load_pending", False))
         self.pmck_icon.opacity = 1.0 if self.pmck_exists else 0.0
+        self.ai_job_icon.opacity = 1.0 if self.ai_job_state in {"queued", "running"} else (0.65 if self.ai_job_state == "error" else 0.0)
         self._update_pmck_icon_layout()
         return r
 
@@ -574,6 +585,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             'ctx': self,
             'rating': 0,
             'pmck_exists': os.path.exists(file_path + ".pmck"),
+            'ai_job_state': "",
         }
 
     def _data_index_for_path(self, file_path):
@@ -720,6 +732,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     'ctx': self,
                     'rating': 0,
                     'pmck_exists': os.path.exists(file_path + ".pmck"),
+                    'ai_job_state': "",
                 })
                 file_path_dict[file_path] = len(new_data) - 1
 
@@ -850,6 +863,25 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 sync = getattr(main_widget, "_sync_exif_rating_row", None)
                 if sync:
                     sync()
+        return found
+
+    @kvmainthread
+    def set_ai_job_state_for_path(self, file_path, state):
+        if not file_path:
+            return False
+        want = self._norm_path_key(file_path)
+        found = False
+        clean_state = state if state in {"queued", "running", "error"} else ""
+        for d in self.data:
+            if self._norm_path_key(d.get("file_path") or "") != want:
+                continue
+            if d.get("ai_job_state") == clean_state:
+                return True
+            d["ai_job_state"] = clean_state
+            found = True
+            break
+        if found:
+            self.refresh_from_data()
         return found
 
     def process_exif_data(self, file_path_list, exif_data_list):
