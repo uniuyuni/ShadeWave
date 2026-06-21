@@ -24,6 +24,7 @@ from cores.distortion_correction import (
 )
 from effect_backends import cross_filter_adapter as cross_filter
 from effect_backends import color_separation_adapter as color_separation
+from effect_backends import film_grain_adapter as film_grain
 from effect_backends import image_transform_adapter
 from effect_backends import subpixel_shift_adapter as subpixel_shift
 from effect_backends import tone_adapter
@@ -4517,7 +4518,7 @@ class GrainEffect(Effect):
 
                 size_px = 0.60 + 6.40 * ((float(gs) / 100.0) ** 1.4)
                 size_px *= max(0.35, float(efconfig.resolution_scale))
-                self.diff = core.apply_film_grain(
+                self.diff = film_grain.apply_film_grain(
                     rgb,
                     amount=amount,
                     grain_size=size_px,
