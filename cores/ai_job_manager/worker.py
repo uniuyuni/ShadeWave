@@ -19,6 +19,10 @@ from .ai_noise import ai_noise_content_key, ai_noise_enabled, ai_noise_source_si
 _EXIF_SIZE_KEYS = ("RawImageCroppedSize", "FullImageSize", "RawImageSize", "ImageSize")
 
 
+class AIJobCancelled(RuntimeError):
+    pass
+
+
 def ai_job_nice_increment() -> int:
     raw = os.getenv("PLATYPUS_AI_JOB_NICE", "10").strip()
     try:
@@ -43,16 +47,24 @@ def apply_ai_job_process_priority() -> int:
         return 0
 
 
-def run_ai_noise(image: np.ndarray, progress_callback=None) -> np.ndarray:
+def run_ai_noise(image: np.ndarray, progress_callback=None, cancel_callback=None) -> np.ndarray:
     import helpers.scunet_coreml_helper as scunet_helper
 
     if not hasattr(run_ai_noise, "_engine"):
         run_ai_noise._engine = scunet_helper.setup()
     scunet_helper.set_progress_callback(progress_callback)
+    if hasattr(scunet_helper, "set_cancel_callback"):
+        scunet_helper.set_cancel_callback(cancel_callback)
     try:
         return scunet_helper.predict_helper(run_ai_noise._engine, image)
+    except Exception as exc:
+        if getattr(scunet_helper, "is_cancelled_error", lambda _exc: False)(exc):
+            raise AIJobCancelled("AI-NR cancelled") from exc
+        raise
     finally:
         scunet_helper.set_progress_callback(None)
+        if hasattr(scunet_helper, "set_cancel_callback"):
+            scunet_helper.set_cancel_callback(None)
 
 
 def _read_input_shm(shm_name, shape, dtype_str):
@@ -165,7 +177,14 @@ def ai_job_worker(input_queue, result_queue, stop_event, config_dict, apply_proc
 
         job_id = task["job_id"]
         try:
+            cancel_event = task.get("cancel_event")
+
+            def _cancel_requested():
+                return stop_event.is_set() or (cancel_event is not None and cancel_event.is_set())
+
             result_queue.put({"job_id": job_id, "status": AIJobStatus.RUNNING.value})
+            if _cancel_requested():
+                raise AIJobCancelled("AI job cancelled before input load")
             if task.get("shm_name"):
                 image = _read_input_shm(task["shm_name"], task["shape"], task["dtype"])
                 content_key = task.get("content_key")
@@ -192,6 +211,8 @@ def ai_job_worker(input_queue, result_queue, stop_event, config_dict, apply_proc
             kind = task["kind"]
             if kind == "ai_noise_reduction":
                 def _progress(done, total):
+                    if _cancel_requested():
+                        raise AIJobCancelled("AI job cancelled during progress update")
                     result_queue.put(
                         {
                             "job_id": job_id,
@@ -201,9 +222,11 @@ def ai_job_worker(input_queue, result_queue, stop_event, config_dict, apply_proc
                         }
                     )
 
-                result = run_ai_noise(image, progress_callback=_progress)
+                result = run_ai_noise(image, progress_callback=_progress, cancel_callback=_cancel_requested)
             else:
                 raise ValueError(f"unknown AI job kind: {kind}")
+            if _cancel_requested():
+                raise AIJobCancelled("AI job cancelled before result write")
             shm_name, shape, dtype = _write_result_shm(result)
             result_queue.put(
                 {
@@ -216,6 +239,9 @@ def ai_job_worker(input_queue, result_queue, stop_event, config_dict, apply_proc
                     "source_signature": source_signature,
                 }
             )
+        except AIJobCancelled as exc:
+            logging.info("AIJob worker cancelled job_id=%s: %s", job_id, exc)
+            result_queue.put({"job_id": job_id, "status": AIJobStatus.CANCELLED.value, "error": str(exc)})
         except Exception as exc:
             logging.error("AIJob worker failed: %s", exc)
             traceback.print_exc()

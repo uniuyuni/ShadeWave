@@ -597,10 +597,12 @@ if __name__ == '__main__':
                 logging.warning("AI-NR job sidecar pmck merge skipped by backpressure: %s", job.file_path)
                 self.ai_job_manager.discard_completed_result(job)
             else:
+                cache_state = "kept" if self.ai_job_manager.has_completed_result(job) else "not_cached"
                 logging.info(
-                    "AI-NR job queued for sidecar pmck merge and kept in completed cache: file=%s content_key=%s",
+                    "AI-NR job queued for sidecar pmck merge: file=%s content_key=%s completed_cache=%s",
                     job.file_path,
                     job.content_key,
+                    cache_state,
                 )
             return False
 
@@ -685,9 +687,10 @@ if __name__ == '__main__':
                         self.ai_job_manager.discard_completed_result(job_result.job)
                     elif job_result.status == AIJobStatus.COMPLETE:
                         logging.info(
-                            "AI-NR completed cache retained while sidecar merge is pending: file=%s content_key=%s",
+                            "AI-NR sidecar merge is pending: file=%s content_key=%s completed_cache=%s",
                             job_result.job.file_path,
                             job_result.job.content_key,
+                            "kept" if self.ai_job_manager.has_completed_result(job_result.job) else "not_cached",
                         )
                 for merge_result in self.ai_sidecar_merge_queue.poll_results():
                     ai_dirty = self._handle_ai_sidecar_merge_result(merge_result) or ai_dirty

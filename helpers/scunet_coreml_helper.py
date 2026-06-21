@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,11 @@ if package_src.exists() and str(package_src) not in sys.path:
 
 import utils.aiutils as aiutils
 from scunet_coreml import DenoiseConfig, SCUNetCoreML
+try:
+    from scunet_coreml import CancelledError as SCUNetCancelledError
+except ImportError:  # pragma: no cover - older helper package
+    class SCUNetCancelledError(RuntimeError):
+        pass
 
 try:
     import waitinfo
@@ -52,6 +58,7 @@ except Exception:  # pragma: no cover
 
 DEFAULT_MODEL = project_root / "models" / "scunet_color_real_psnr_448_fp16.mlpackage"
 _progress_callback = None
+_cancel_callback = None
 
 
 def set_progress_callback(callback) -> None:
@@ -59,9 +66,66 @@ def set_progress_callback(callback) -> None:
     _progress_callback = callback
 
 
+def set_cancel_callback(callback) -> None:
+    global _cancel_callback
+    _cancel_callback = callback
+
+
+def is_cancelled_error(exc: Exception) -> bool:
+    return isinstance(exc, SCUNetCancelledError)
+
+
 def _set_wait_text(text: str) -> None:
     if waitinfo is not None:
         waitinfo.set_text("ai_noise_reduction", text)
+
+
+def _cancel_requested() -> bool:
+    if _cancel_callback is None:
+        return False
+    try:
+        return bool(_cancel_callback())
+    except Exception:
+        logging.exception("SCUNet cancel callback failed")
+        return False
+
+
+@contextmanager
+def _cancelable_engine_predict(engine: SCUNetCoreML):
+    model = getattr(engine, "model", None)
+    original_predict = getattr(model, "predict", None)
+    if model is None or original_predict is None:
+        yield
+        return
+
+    def predict_with_cancel(*args, **kwargs):
+        if _cancel_requested():
+            raise SCUNetCancelledError("SCUNet CoreML cancelled before tile prediction")
+        return original_predict(*args, **kwargs)
+
+    replaced_model = False
+    try:
+        model.predict = predict_with_cancel
+    except Exception:
+        class _PredictProxy:
+            def __init__(self, wrapped):
+                self._wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self._wrapped, name)
+
+            def predict(self, *args, **kwargs):
+                return predict_with_cancel(*args, **kwargs)
+
+        engine.model = _PredictProxy(model)
+        replaced_model = True
+    try:
+        yield
+    finally:
+        if replaced_model:
+            engine.model = model
+        else:
+            model.predict = original_predict
 
 
 def _set_progress(done: int, total: int) -> None:
@@ -101,10 +165,15 @@ def predict(engine: SCUNetCoreML, np_image: np.ndarray, restore_low_frequency: b
     t0 = time.time()
     k = aiutils.LOG1P_TONEMAP_K_DEFAULT
     work, hdr_white = aiutils.log1p_tonemap_forward_hdr(org_image, k=k, clip_nonnegative=True)
-    result, meta = engine.denoise(work)
+    with _cancelable_engine_predict(engine):
+        result, meta = engine.denoise(work)
+    if _cancel_requested():
+        raise SCUNetCancelledError("SCUNet CoreML cancelled after denoise")
     result = aiutils.log1p_tonemap_inverse_hdr(result, hdr_white, k=k)
 
     if restore_low_frequency:
+        if _cancel_requested():
+            raise SCUNetCancelledError("SCUNet CoreML cancelled before finalizing")
         _set_wait_text("Finalizing...")
         result = low_frequency_transfer_adapter.apply_low_frequency_transfer(
             result,

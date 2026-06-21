@@ -664,7 +664,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         paths = []
         seen = set()
         for file_path in file_paths or []:
-            if not file_path or not self.is_supported_image(file_path):
+            if not file_path or not self.is_visible_image(file_path):
                 continue
             if not self._is_in_current_watch_directory(file_path):
                 continue
@@ -699,7 +699,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         if pmck_image_path is not None:
             self.set_pmck_indicator_for_path(pmck_image_path, True)
             return
-        if self.is_supported_image(file_path):
+        if self.is_visible_image(file_path):
             self.refresh_exported_paths([file_path])
 
     @kvmainthread
@@ -726,7 +726,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         if pmck_image_path is not None:
             self.set_pmck_indicator_for_path(pmck_image_path, os.path.exists(file_path))
             return
-        if not self.is_supported_image(file_path):
+        if not self.is_visible_image(file_path):
             return
         self.refresh_exported_paths([file_path])
 
@@ -746,7 +746,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         file_path_dict = {} # path -> index mapping for loader
         
         for i, file_name in enumerate(file_list):
-            if self.is_supported_image(file_name):
+            if self.is_visible_image(file_name):
                 file_path = os.path.join(directory, file_name)
                 new_data.append({
                     'file_path': file_path,
@@ -856,6 +856,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
         return (file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB)
                 or file_name.lower().endswith(define.SUPPORTED_FORMATS_RAW)
                 or file_name.lower().endswith(define.SUPPORTED_FORMATS_EXR))
+
+    def is_visible_image(self, file_name):
+        basename = os.path.basename(str(file_name or ""))
+        return bool(basename) and not basename.startswith(".") and self.is_supported_image(file_name)
 
     def _image_path_for_pmck_sidecar(self, file_path):
         if not file_path:

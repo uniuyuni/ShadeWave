@@ -34,7 +34,7 @@ class ExportViewerRefreshFlowTest(unittest.TestCase):
     def test_viewer_export_refresh_adds_missing_current_directory_files(self):
         source = _function_source(VIEWER_PATH, "refresh_exported_paths")
 
-        self.assertIn("self.is_supported_image(file_path)", source)
+        self.assertIn("self.is_visible_image(file_path)", source)
         self.assertIn("self._is_in_current_watch_directory(file_path)", source)
         self.assertIn("self._insert_image_item_sorted(file_path)", source)
         self.assertIn("file_path_dict[self.data[idx][\"file_path\"]] = idx", source)
@@ -52,6 +52,21 @@ class ExportViewerRefreshFlowTest(unittest.TestCase):
         self.assertNotIn("self.load_images({file_path: idx})", added_source)
         self.assertIn("self._mapped_or_current_index(file_path_dict, file_path)", load_source)
         self.assertIn("self._mapped_or_current_index(file_path_dict, file_path)", pending_source)
+
+    def test_viewer_ignores_hidden_temp_image_paths(self):
+        refresh_source = _function_source(VIEWER_PATH, "refresh_exported_paths")
+        added_source = _function_source(VIEWER_PATH, "_added_file")
+        modified_source = _function_source(VIEWER_PATH, "_modified_file")
+        set_path_source = _function_source(VIEWER_PATH, "set_path")
+        visible_source = _function_source(VIEWER_PATH, "is_visible_image")
+
+        self.assertIn("not self.is_visible_image(file_path)", refresh_source)
+        self.assertIn("self.is_visible_image(file_path)", added_source)
+        self.assertIn("not self.is_visible_image(file_path)", modified_source)
+        self.assertIn("self.is_visible_image(file_name)", set_path_source)
+        self.assertIn('os.path.basename(str(file_name or ""))', visible_source)
+        self.assertIn('not basename.startswith(".")', visible_source)
+        self.assertIn("self.is_supported_image(file_name)", visible_source)
 
     def test_watch_directory_changes_restart_watchfiles(self):
         viewer_source = VIEWER_PATH.read_text(encoding="utf-8")

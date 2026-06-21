@@ -439,6 +439,7 @@ class AIJobManagerTest(unittest.TestCase):
                 pass
 
         mgr = AIJobManager()
+        mgr.thread_mode = True
         mgr.start = lambda: None
         mgr.input_queue = ListQueue()
         bg1 = mgr.enqueue_ai_noise_file("/tmp/bg1.jpg", {"ai_noise_reduction": True})
@@ -462,15 +463,11 @@ class AIJobManagerTest(unittest.TestCase):
                 source_signature="foreground",
             )
 
-        self.assertEqual([], mgr.input_queue.items)
+        self.assertEqual(AIJobStatus.CANCELLED, mgr.status_by_job[bg1.job_id])
+        self.assertEqual([fg.job_id], [p["job_id"] for p in mgr.input_queue.items])
         self.assertIn(bg2.job_id, mgr.pending_payloads)
         self.assertIn(bg3.job_id, mgr.pending_payloads)
         self.assertIn(fg.job_id, mgr.pending_payloads)
-
-        mgr.result_queue = ListQueue([{"job_id": bg1.job_id, "status": AIJobStatus.ERROR.value, "error": "done"}])
-        mgr.poll_results()
-
-        self.assertEqual([fg.job_id], [p["job_id"] for p in mgr.input_queue.items])
 
     def test_manager_polls_results_without_trusting_queue_empty(self):
         class EmptyLiesQueue:
@@ -573,6 +570,31 @@ class AIJobManagerTest(unittest.TestCase):
         mgr.discard_completed_result(job)
 
         self.assertEqual(0, mgr.completed_results_bytes())
+
+    def test_completed_result_cache_evicts_oldest_when_over_budget(self):
+        mgr = AIJobManager()
+        raw = np.ones((2, 2, 3), dtype=np.float32)
+        job1 = AIJob(1, AI_NOISE_KIND, "/tmp/one.jpg", "content-1", "source-1")
+        job2 = AIJob(2, AI_NOISE_KIND, "/tmp/two.jpg", "content-2", "source-2")
+
+        with patch.dict(os.environ, {"PLATYPUS_AI_COMPLETED_CACHE_MAX_MB": "0.00008"}):
+            self.assertTrue(mgr._store_completed_result(job1, raw))
+            self.assertTrue(mgr._store_completed_result(job2, raw))
+
+        self.assertIsNone(mgr.get_completed_result(AI_NOISE_KIND, job1.file_path, job1.content_key))
+        self.assertIsNotNone(mgr.get_completed_result(AI_NOISE_KIND, job2.file_path, job2.content_key))
+        self.assertLessEqual(mgr.completed_results_bytes(), 83)
+
+    def test_completed_result_larger_than_cache_budget_is_not_stored(self):
+        mgr = AIJobManager()
+        job = AIJob(1, AI_NOISE_KIND, "/tmp/huge.jpg", "content", "source")
+        raw = np.ones((2, 2, 3), dtype=np.float32)
+
+        with patch.dict(os.environ, {"PLATYPUS_AI_COMPLETED_CACHE_MAX_MB": "0.000001"}):
+            self.assertFalse(mgr._store_completed_result(job, raw))
+
+        self.assertEqual(0, mgr.completed_results_bytes())
+        self.assertIsNone(mgr.get_completed_result(AI_NOISE_KIND, job.file_path, job.content_key))
 
     def test_progress_event_updates_viewer_state_with_tile_count(self):
         class ListQueue:
@@ -729,6 +751,119 @@ class AIJobManagerTest(unittest.TestCase):
         self.assertEqual(AIJobStatus.CANCELLED, mgr.status_by_job[job.job_id])
         self.assertIsNone(mgr.dispatched_job_id)
         self.assertEqual([], dispatched)
+
+    def test_foreground_request_preempts_running_background_in_thread_mode(self):
+        dispatched = []
+
+        class FakeSharedMemory:
+            def __init__(self, create=False, size=0, name=None):
+                self.name = name or "fake-input"
+                self.buf = bytearray(size)
+
+            def close(self):
+                pass
+
+            def unlink(self):
+                pass
+
+        mgr = AIJobManager()
+        mgr.thread_mode = True
+        mgr.start = lambda: None
+        mgr.input_queue = SimpleNamespace(
+            put=lambda payload: dispatched.append(payload),
+            get_nowait=lambda: (_ for _ in ()).throw(Exception("unused")),
+        )
+        background = AIJob(
+            job_id=1,
+            kind=AI_NOISE_KIND,
+            file_path="/tmp/bg.jpg",
+            content_key="pending:1",
+            source_signature="pending:1",
+        )
+        cancel_event = threading.Event()
+        mgr.jobs[background.job_id] = background
+        mgr._job_counter = background.job_id
+        mgr.status_by_job[background.job_id] = AIJobStatus.RUNNING
+        mgr.job_by_target[(AI_NOISE_KIND, background.file_path)] = background.job_id
+        mgr.priority_by_job[background.job_id] = 100
+        mgr.cancel_events[background.job_id] = cancel_event
+        mgr.dispatched_job_id = background.job_id
+
+        with patch("cores.ai_job_manager.manager.shared_memory.SharedMemory", FakeSharedMemory):
+            foreground = mgr.enqueue_image_job(
+                kind=AI_NOISE_KIND,
+                file_path="/tmp/current.jpg",
+                image=np.zeros((2, 2, 3), dtype=np.float32),
+                param_snapshot={"ai_noise_reduction": True},
+                content_key="content",
+                source_signature="source",
+                priority=0,
+            )
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(AIJobStatus.CANCELLED, mgr.status_by_job[background.job_id])
+        self.assertEqual(foreground.job_id, mgr.dispatched_job_id)
+        self.assertEqual([foreground.job_id], [payload["job_id"] for payload in dispatched])
+        self.assertIsNotNone(dispatched[0].get("cancel_event"))
+
+    def test_run_ai_noise_maps_helper_cancel_to_worker_cancel(self):
+        class HelperCancelled(RuntimeError):
+            pass
+
+        state = {"progress": object(), "cancel": object()}
+
+        def set_progress_callback(callback):
+            state["progress"] = callback
+
+        def set_cancel_callback(callback):
+            state["cancel"] = callback
+
+        def predict_helper(_engine, _image):
+            if state["cancel"] and state["cancel"]():
+                raise HelperCancelled("cancelled")
+            return _image
+
+        fake_helper = SimpleNamespace(
+            setup=lambda: object(),
+            set_progress_callback=set_progress_callback,
+            set_cancel_callback=set_cancel_callback,
+            predict_helper=predict_helper,
+            is_cancelled_error=lambda exc: isinstance(exc, HelperCancelled),
+        )
+        if hasattr(ai_job_worker_mod.run_ai_noise, "_engine"):
+            delattr(ai_job_worker_mod.run_ai_noise, "_engine")
+
+        with patch.dict(sys.modules, {"helpers.scunet_coreml_helper": fake_helper}):
+            with self.assertRaises(ai_job_worker_mod.AIJobCancelled):
+                ai_job_worker_mod.run_ai_noise(
+                    np.zeros((1, 1, 3), dtype=np.float32),
+                    cancel_callback=lambda: True,
+                )
+
+        self.assertIsNone(state["progress"])
+        self.assertIsNone(state["cancel"])
+
+    def test_scunet_coreml_helper_wraps_tile_predict_with_cancel_check(self):
+        import helpers.scunet_coreml_helper as helper
+
+        calls = {"predict": 0}
+
+        class FakeModel:
+            def predict(self, payload):
+                calls["predict"] += 1
+                return payload
+
+        engine = SimpleNamespace(model=FakeModel())
+        original_predict = engine.model.predict
+        helper.set_cancel_callback(lambda: True)
+        try:
+            with helper._cancelable_engine_predict(engine):
+                with self.assertRaises(helper.SCUNetCancelledError):
+                    engine.model.predict({"input": "tile"})
+            self.assertEqual(original_predict, engine.model.predict)
+            self.assertEqual(0, calls["predict"])
+        finally:
+            helper.set_cancel_callback(None)
 
     def test_finished_jobs_are_pruned_to_retention_limit(self):
         mgr = AIJobManager()

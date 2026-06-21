@@ -11,6 +11,7 @@ class EnvironmentVariablesDocTest(unittest.TestCase):
         text = DOC_PATH.read_text(encoding="utf-8")
         required = [
             "PLATYPUS_AI_DISPLAY_INPUT",
+            "PLATYPUS_AI_COMPLETED_CACHE_MAX_MB",
             "PLATYPUS_AI_JOB_NICE",
             "PLATYPUS_AI_SIDECAR_MERGE_MAX_PENDING",
             "PLATYPUS_SAM3_BBOX_CLIP",

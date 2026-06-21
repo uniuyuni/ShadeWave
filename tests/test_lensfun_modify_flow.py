@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -53,7 +55,80 @@ class _CombinedModifier(_SubpixelOnlyModifier):
         return np.stack([x, y], axis=-1)
 
 
+class _FakeLensfunModifier:
+    initialized = None
+
+    def __init__(self, lens, crop_factor, width, height):
+        self.lens = lens
+        self.crop_factor = crop_factor
+        self.width = width
+        self.height = height
+
+    def initialize(self, focal_length, aperture, distance, *, pixel_format):
+        type(self).initialized = (focal_length, aperture, distance, pixel_format)
+
+
+class _FakeLensfunDatabase:
+    def find_cameras(self, make, model, loose_search=True):
+        return [SimpleNamespace(crop_factor=1.5)]
+
+    def find_lenses(self, camera, lensmake, lensmodel, loose_search=False):
+        return [object()]
+
+
 class LensfunModifyFlowTest(unittest.TestCase):
+    def setUp(self):
+        _FakeLensfunModifier.initialized = None
+        core._lensfun_db_instance = None
+
+    def test_setup_lensfun_normalizes_exiftool_display_values(self):
+        fake_lensfunpy = SimpleNamespace(
+            Database=_FakeLensfunDatabase,
+            Modifier=_FakeLensfunModifier,
+        )
+        exif_data = {
+            "Make": "FUJIFILM",
+            "Model": "X-T5",
+            "LensMake": "FUJIFILM",
+            "LensModel": "XF33mmF1.4 R LM WR",
+            "FocalLength": "33.5 mm",
+            "ApertureValue": "2.97 (f/2.8)",
+            "SubjectDistanceRange": "Unknown",
+        }
+
+        with patch.dict(sys.modules, {"lensfunpy": fake_lensfunpy}):
+            mod = core.setup_lensfun((4000, 3000), exif_data)
+
+        self.assertIsInstance(mod, _FakeLensfunModifier)
+        focal_length, aperture, distance, pixel_format = _FakeLensfunModifier.initialized
+        self.assertEqual(33.5, focal_length)
+        self.assertEqual(2.8, aperture)
+        self.assertEqual(100, distance)
+        self.assertEqual(np.float32, pixel_format)
+
+    def test_setup_lensfun_converts_aperture_value_apex_when_no_f_number_exists(self):
+        fake_lensfunpy = SimpleNamespace(
+            Database=_FakeLensfunDatabase,
+            Modifier=_FakeLensfunModifier,
+        )
+        exif_data = {
+            "Make": "FUJIFILM",
+            "Model": "X-T5",
+            "LensMake": "FUJIFILM",
+            "LensModel": "XF33mmF1.4 R LM WR",
+            "FocalLength": "33 mm",
+            "ApertureValue": "3",
+            "SubjectDistance": "1.25 m",
+        }
+
+        with patch.dict(sys.modules, {"lensfunpy": fake_lensfunpy}):
+            core.setup_lensfun((4000, 3000), exif_data)
+
+        focal_length, aperture, distance, _pixel_format = _FakeLensfunModifier.initialized
+        self.assertEqual(33.0, focal_length)
+        self.assertAlmostEqual(2 ** 1.5, aperture)
+        self.assertEqual(1.25, distance)
+
     def test_subpixel_modifier_does_not_mutate_input_when_color_mod_is_off(self):
         height, width = 8, 9
         img = np.arange(height * width * 3, dtype=np.float32).reshape(height, width, 3)

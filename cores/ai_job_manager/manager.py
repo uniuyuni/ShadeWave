@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import os
+import threading
+from collections import OrderedDict
 from multiprocessing import Event, Process, Queue, shared_memory
 import time
 from dataclasses import replace
-from queue import Empty
+from queue import Empty, Queue as ThreadQueue
 from typing import Any
 
 import numpy as np
@@ -26,26 +29,41 @@ FOREGROUND_PRIORITY = 0
 BACKGROUND_PRIORITY = 100
 FINISHED_JOB_RETENTION = 64
 MAX_WORKER_RESTARTS = 2
+DEFAULT_COMPLETED_RESULTS_CACHE_MB = 512
+
+
+def completed_results_cache_limit_bytes() -> int:
+    raw = os.getenv("PLATYPUS_AI_COMPLETED_CACHE_MAX_MB", str(DEFAULT_COMPLETED_RESULTS_CACHE_MB)).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        logging.warning("Invalid PLATYPUS_AI_COMPLETED_CACHE_MAX_MB=%r; using %s", raw, DEFAULT_COMPLETED_RESULTS_CACHE_MB)
+        value = float(DEFAULT_COMPLETED_RESULTS_CACHE_MB)
+    if value <= 0:
+        return 0
+    return int(value * 1024 * 1024)
 
 
 class AIJobManager:
     def __init__(self, *, viewer_state_callback=None):
         self._lock = threads.ai_job_manager_lock
-        self.input_queue = Queue()
-        self.result_queue = Queue()
-        self.stop_event = Event()
-        self.process = None
         self.thread_mode = should_use_thread_mode()
+        self.input_queue = ThreadQueue() if self.thread_mode else Queue()
+        self.result_queue = ThreadQueue() if self.thread_mode else Queue()
+        self.stop_event = threading.Event() if self.thread_mode else Event()
+        self.process = None
         self.viewer_state_callback = viewer_state_callback
 
         self._job_counter = 0
         self.jobs: dict[int, AIJob] = {}
         self.status_by_job: dict[int, AIJobStatus] = {}
         self.job_by_target: dict[tuple[str, str], int] = {}
-        self.completed_results: dict[tuple[str, str, str], np.ndarray] = {}
+        self.completed_results: OrderedDict[tuple[str, str, str], np.ndarray] = OrderedDict()
         self.active_input_shms: dict[int, shared_memory.SharedMemory] = {}
         self.active_started_at: dict[int, float] = {}
         self.pending_payloads: dict[int, dict[str, Any]] = {}
+        self.cancel_events: dict[int, Any] = {}
+        self.priority_by_job: dict[int, int] = {}
         self.dispatched_job_id: int | None = None
         self.worker_restart_count = 0
 
@@ -205,9 +223,62 @@ class AIJobManager:
                     self.completed_results_bytes(),
                 )
 
+    def has_completed_result(self, job: AIJob) -> bool:
+        with self._lock:
+            return self._result_key(job) in self.completed_results
+
     def completed_results_bytes(self) -> int:
         with self._lock:
             return sum(int(getattr(result, "nbytes", 0) or 0) for result in self.completed_results.values())
+
+    def _store_completed_result(self, job: AIJob, raw: np.ndarray) -> bool:
+        limit = completed_results_cache_limit_bytes()
+        key = self._result_key(job)
+        self.completed_results.pop(key, None)
+        result_bytes = int(getattr(raw, "nbytes", 0) or 0)
+        if limit <= 0:
+            logging.info(
+                "AIJobManager completed cache disabled; result is returned without caching: file=%s bytes=%s",
+                job.file_path,
+                result_bytes,
+            )
+            return False
+        if result_bytes > limit:
+            logging.warning(
+                "AIJobManager completed result exceeds cache limit; result is returned without caching: "
+                "file=%s bytes=%s limit=%s",
+                job.file_path,
+                result_bytes,
+                limit,
+            )
+            return False
+        self.completed_results[key] = raw
+        self._enforce_completed_results_budget(limit)
+        logging.info(
+            "AIJobManager stored completed cache: file=%s content_key=%s bytes=%s total_bytes=%s limit=%s",
+            job.file_path,
+            job.content_key,
+            result_bytes,
+            self.completed_results_bytes(),
+            limit,
+        )
+        return True
+
+    def _enforce_completed_results_budget(self, limit: int | None = None) -> None:
+        if limit is None:
+            limit = completed_results_cache_limit_bytes()
+        while self.completed_results and self.completed_results_bytes() > limit:
+            key, removed = self.completed_results.popitem(last=False)
+            logging.warning(
+                "AIJobManager evicted completed cache to stay within memory budget: "
+                "kind=%s file=%s content_key=%s bytes=%s remaining_bytes=%s limit=%s",
+                key[0],
+                key[1],
+                key[2],
+                int(getattr(removed, "nbytes", 0) or 0),
+                self.completed_results_bytes(),
+                limit,
+            )
 
     def request_ai_noise(self, file_path: str, image: np.ndarray, param: dict[str, Any]):
         source_signature = ai_noise_source_signature(file_path, image, param)
@@ -287,6 +358,7 @@ class AIJobManager:
             self.jobs[job.job_id] = job
             self.job_by_target[target_key] = job.job_id
             self._set_status(job, AIJobStatus.QUEUED)
+            self.priority_by_job[job.job_id] = int(priority)
 
             image32 = np.ascontiguousarray(image, dtype=np.float32)
             shm = shared_memory.SharedMemory(create=True, size=image32.nbytes)
@@ -305,7 +377,13 @@ class AIJobManager:
                 "priority": int(priority),
                 "queued_at": time.monotonic(),
             }
+            if self.thread_mode:
+                cancel_event = threading.Event()
+                self.cancel_events[job.job_id] = cancel_event
+                payload["cancel_event"] = cancel_event
             self.pending_payloads[job.job_id] = payload
+            if priority <= FOREGROUND_PRIORITY:
+                self._preempt_running_background_for_foreground()
             self._dispatch_next_payload()
             self._prune_finished_jobs()
             return job
@@ -334,6 +412,7 @@ class AIJobManager:
             self.jobs[job.job_id] = job
             self.job_by_target[target_key] = job.job_id
             self._set_status(job, AIJobStatus.QUEUED)
+            self.priority_by_job[job.job_id] = BACKGROUND_PRIORITY
             payload = {
                 "job_id": job.job_id,
                 "kind": job.kind,
@@ -342,10 +421,28 @@ class AIJobManager:
                 "priority": BACKGROUND_PRIORITY,
                 "queued_at": time.monotonic(),
             }
+            if self.thread_mode:
+                cancel_event = threading.Event()
+                self.cancel_events[job.job_id] = cancel_event
+                payload["cancel_event"] = cancel_event
             self.pending_payloads[job.job_id] = payload
             self._dispatch_next_payload()
             self._prune_finished_jobs()
             return job
+
+    def _preempt_running_background_for_foreground(self):
+        job_id = self.dispatched_job_id
+        if job_id is None:
+            return
+        if self.status_by_job.get(job_id) not in (AIJobStatus.QUEUED, AIJobStatus.RUNNING):
+            return
+        if self.priority_by_job.get(job_id, BACKGROUND_PRIORITY) <= FOREGROUND_PRIORITY:
+            return
+        job = self.jobs.get(job_id)
+        if job is None:
+            return
+        logging.info("AIJobManager preempting running background AI job for foreground request: %s", job.file_path)
+        self._cancel_job(job_id, restart_running=True)
 
     def _payload_sort_key(self, payload: dict[str, Any]):
         return (
@@ -377,6 +474,12 @@ class AIJobManager:
         self._set_status(job, AIJobStatus.CANCELLED)
         self.job_by_target.pop(self._target_key(job.kind, job.file_path), None)
         self.pending_payloads.pop(job_id, None)
+        cancel_event = self.cancel_events.pop(job_id, None)
+        if cancel_event is not None:
+            try:
+                cancel_event.set()
+            except Exception:
+                logging.exception("failed to signal AI job cancel event")
         if status == AIJobStatus.QUEUED:
             self._rebuild_input_queue_without(job_id)
             if self.dispatched_job_id == job_id:
@@ -445,14 +548,7 @@ class AIJobManager:
                             )
                             self.jobs[job_id] = job
                         raw = self._read_result_shm(res["shm_name"], res["shape"], res["dtype"])
-                        self.completed_results[self._result_key(job)] = raw
-                        logging.info(
-                            "AIJobManager stored completed cache: file=%s content_key=%s bytes=%s total_bytes=%s",
-                            job.file_path,
-                            job.content_key,
-                            int(getattr(raw, "nbytes", 0) or 0),
-                            self.completed_results_bytes(),
-                        )
+                        self._store_completed_result(job, raw)
                         self.pending_payloads.pop(job_id, None)
                         self._set_status(job, AIJobStatus.COMPLETE)
                         self.job_by_target.pop(self._target_key(job.kind, job.file_path), None)
@@ -602,4 +698,6 @@ class AIJobManager:
             self.jobs.pop(job_id, None)
             self.status_by_job.pop(job_id, None)
             self.pending_payloads.pop(job_id, None)
+            self.cancel_events.pop(job_id, None)
+            self.priority_by_job.pop(job_id, None)
             self._cleanup_input_shm(job_id)

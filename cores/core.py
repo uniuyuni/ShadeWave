@@ -4,6 +4,7 @@ import io
 import cv2
 import math
 import os
+import re
 import numpy as np
 
 import logging
@@ -2522,15 +2523,72 @@ def _get_lensfun_db():
         _lensfun_db_instance = lensfunpy.Database()
     return _lensfun_db_instance
 
+
+def _lensfun_number(value, default=None, *, prefer_f_number: bool = False):
+    if value is None:
+        return default
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            parsed = _lensfun_number(item, None, prefer_f_number=prefer_f_number)
+            if parsed is not None:
+                return parsed
+        return default
+    if isinstance(value, (int, float, np.number)):
+        result = float(value)
+        return result if math.isfinite(result) else default
+
+    text = str(value).strip()
+    if not text:
+        return default
+    lower = text.lower()
+    if lower in {"unknown", "undef", "undefined", "inf", "infinity", "nan", "close", "distant"}:
+        return default
+    text = text.replace(",", ".")
+
+    if prefer_f_number:
+        f_match = re.search(r"\bf\s*/\s*([-+]?\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
+        if f_match:
+            return float(f_match.group(1))
+        if text.lower().startswith("f/"):
+            text = text[2:].strip()
+
+    fraction = re.fullmatch(r"\s*([-+]?\d+(?:\.\d+)?)\s*/\s*([-+]?\d+(?:\.\d+)?)\s*", text)
+    if fraction:
+        denominator = float(fraction.group(2))
+        if abs(denominator) > 1e-12:
+            return float(fraction.group(1)) / denominator
+        return default
+
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+    if not match:
+        return default
+    return float(match.group(0))
+
+
+def _lensfun_aperture(exif_data):
+    for key in ("FNumber", "Aperture"):
+        parsed = _lensfun_number(exif_data.get(key), None, prefer_f_number=True)
+        if parsed is not None and parsed > 0:
+            return parsed
+
+    aperture_value = exif_data.get("ApertureValue")
+    parsed = _lensfun_number(aperture_value, None, prefer_f_number=True)
+    if parsed is None or parsed <= 0:
+        return None
+    if isinstance(aperture_value, str) and re.search(r"\bf\s*/", aperture_value, flags=re.IGNORECASE):
+        return parsed
+    return float(2 ** (parsed / 2.0))
+
+
 def setup_lensfun(img_size, exif_data):
 
     make =  exif_data.get('Make', None)
     model = exif_data.get('Model', None)
     lensmake = exif_data.get('LensMake', None)
     lensmodel = exif_data.get('LensModel', None)
-    focal_length = exif_data.get('FocalLength', None)
-    aperture = exif_data.get('ApertureValue',  exif_data.get('Aperture', None))
-    distance = exif_data.get('SubjectDistanceRange', 100)
+    focal_length = _lensfun_number(exif_data.get('FocalLength', None), None)
+    aperture = _lensfun_aperture(exif_data)
+    distance = _lensfun_number(exif_data.get('SubjectDistance', exif_data.get('SubjectDistanceRange', None)), 100)
 
     logging.info(f"{make}, {model}")
     logging.info(f"{lensmake}, {lensmodel}")
@@ -2540,7 +2598,7 @@ def setup_lensfun(img_size, exif_data):
         logging.info("focal_length or aperture is None")
         return
 
-    if distance == 'Unknown' or distance == 'Close':
+    if distance is None:
         distance = 100
 
     import lensfunpy
@@ -2556,7 +2614,7 @@ def setup_lensfun(img_size, exif_data):
         if len(lens) > 0:
             width, height = img_size
             mod = lensfunpy.Modifier(lens[0], cams[0].crop_factor, width, height)
-            mod.initialize(float(focal_length[0:-3]), aperture, distance, pixel_format=np.float32)            
+            mod.initialize(focal_length, aperture, distance, pixel_format=np.float32)
             return mod
 
     return mod
