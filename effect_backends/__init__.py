@@ -8,6 +8,7 @@ changing the high-level Effect classes.
 
 __all__ = [
     "vignette_adapter",
+    "color_separation_adapter",
     "cross_filter_adapter",
     "image_transform_adapter",
     "colour_functions_adapter",

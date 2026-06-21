@@ -23,6 +23,7 @@ from cores.distortion_correction import (
     calculate_mesh_mls_coarse_map
 )
 from effect_backends import cross_filter_adapter as cross_filter
+from effect_backends import color_separation_adapter as color_separation
 from effect_backends import image_transform_adapter
 from effect_backends import subpixel_shift_adapter as subpixel_shift
 from effect_backends import tone_adapter
@@ -3105,7 +3106,7 @@ class ColorSeparationEffect(Effect):
                         and density == 0.0 and subtractive_saturation == 0.0):
                     out = rgb
                 else:
-                    out = core.apply_color_separation(
+                    out = color_separation.apply_color_separation(
                         rgb,
                         shadow_chroma_clean=shadow_clean_core,
                         shadow_threshold=threshold,

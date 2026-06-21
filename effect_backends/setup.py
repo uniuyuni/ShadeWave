@@ -70,6 +70,15 @@ setup(
             extra_compile_args=["-O3"],
         ),
         Extension(
+            "effect_backends._color_separation_cpu",
+            ["color_separation_pybind.cpp", "color_separation_cpu.c"],
+            include_dirs=[pybind11.get_include(), *_openmp_include_dirs],
+            library_dirs=_openmp_library_dirs,
+            language="c++",
+            extra_compile_args=_openmp_compile_args,
+            extra_link_args=_openmp_link_args,
+        ),
+        Extension(
             "effect_backends._subpixel_shift_cpu",
             ["subpixel_shift_pybind.cpp", "subpixel_shift_cpu.c"],
             include_dirs=[pybind11.get_include(), *_openmp_include_dirs],

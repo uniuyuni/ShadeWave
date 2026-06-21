@@ -9,14 +9,53 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cores import core
+from effect_backends import color_separation_adapter
+from effect_backends import color_separation_reference
 import effects
+
+try:
+    from effect_backends import _color_separation_cpu
+except Exception:  # pragma: no cover - depends on local build state.
+    _color_separation_cpu = None
 
 
 class ColorSeparationEffectTest(unittest.TestCase):
+    def test_backend_status_is_reported(self):
+        status = color_separation_adapter.backend_status()
+
+        self.assertEqual(status.effect, "color_separation")
+        self.assertIn(
+            status.backend,
+            {
+                "effect_backends._color_separation_cpu",
+                "effect_backends.color_separation_reference",
+            },
+        )
+
+    def test_native_backend_matches_reference_when_available(self):
+        if _color_separation_cpu is None:
+            self.skipTest("native color separation backend is not built")
+
+        image = np.random.default_rng(17).random((32, 40, 3), dtype=np.float32) * 1.6 - 0.1
+        params = {
+            "shadow_chroma_clean": 0.55,
+            "shadow_threshold": 0.22,
+            "color_separation": 0.65,
+            "chroma_clarity": 0.55,
+            "color_density": -0.35,
+            "subtractive_saturation": 0.4,
+            "opponent_contrast": 0.25,
+        }
+
+        expected = color_separation_reference.apply_color_separation(image, **params)
+        actual = _color_separation_cpu.apply_color_separation(image, **params)
+
+        np.testing.assert_allclose(actual, expected, rtol=2.0e-3, atol=2.0e-3)
+
     def test_zero_parameters_are_identity_object(self):
         image = np.random.default_rng(1).random((16, 12, 3), dtype=np.float32)
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -35,7 +74,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         )
         ycbcr_before = core.hlsrgb.linear_rgb_to_ycbcr(image)
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=1.0,
             shadow_threshold=0.2,
@@ -58,7 +97,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
             dtype=np.float32,
         )
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -72,7 +111,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         image = np.array([[[0.45, 0.32, 0.22], [0.22, 0.32, 0.45]]], dtype=np.float32)
         ycbcr_before = core.hlsrgb.linear_rgb_to_ycbcr(image)
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -89,7 +128,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         image = np.array([[[0.45, 0.32, 0.22], [0.22, 0.32, 0.45]]], dtype=np.float32)
         ycbcr_before = core.hlsrgb.linear_rgb_to_ycbcr(image)
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -108,7 +147,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         image[:, 12:] = (0.20, 0.32, 0.45)
         ycbcr_before = core.hlsrgb.linear_rgb_to_ycbcr(image)
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -127,7 +166,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         image[:, 12:] = (0.20, 0.32, 0.45)
         ycbcr_before = core.hlsrgb.linear_rgb_to_ycbcr(image)
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -145,7 +184,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         ycbcr_before = core.hlsrgb.linear_rgb_to_ycbcr(image)
         luma_before = 0.2126 * image[..., 0] + 0.7152 * image[..., 1] + 0.0722 * image[..., 2]
 
-        out = core.apply_color_separation(
+        out = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=0.0,
             shadow_threshold=0.2,
@@ -176,7 +215,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         }
 
         out = effect.make_diff(image, param, efconfig)
-        expected = core.apply_color_separation(
+        expected = color_separation_adapter.apply_color_separation(
             image,
             shadow_chroma_clean=1.0,
             shadow_threshold=0.2,
@@ -223,6 +262,9 @@ class ColorSeparationEffectTest(unittest.TestCase):
         effect_sets = effects.create_effects()
 
         self.assertIn("color_separation", effect_sets[2])
+
+    def test_core_no_longer_exposes_color_separation_wrapper(self):
+        self.assertFalse(hasattr(core, "apply_color_separation"))
 
 
 if __name__ == "__main__":
