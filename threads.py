@@ -37,3 +37,7 @@ ai_job_manager_lock = threading.RLock()
 
 # AI-NR完了後の .pmck merge queue はUI pollとworker callbackで共有される。
 ai_sidecar_merge_lock = threading.Lock()
+
+# .pmck は通常保存、RAW rating、batch paste、AI-NR sidecar merge から触られる。
+# read-modify-write を pmck_store.py の単一窓口で直列化するための再入可能ロック。
+pmck_store_lock = threading.RLock()

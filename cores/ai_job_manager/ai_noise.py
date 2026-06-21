@@ -166,11 +166,6 @@ def merge_ai_noise_result_into_param(
         param["ai_noise_reduction_source_signature"] = source_signature
 
 
-def _read_pmck_with_token(image_path: str) -> tuple[dict[str, Any], tuple[int, int, int] | None]:
-    data, token = pmck_store.read_image_with_token(image_path, default_empty=True)
-    return pmck_store.ensure_primary_param(data), token
-
-
 def _pmck_param_accepts_result(pmck_primary: dict[str, Any]) -> bool:
     if not ai_noise_enabled(pmck_primary):
         return False
@@ -184,16 +179,23 @@ def merge_ai_noise_result_into_pmck(
     content_key: str,
     source_signature: str,
 ) -> bool:
-    data, token = _read_pmck_with_token(image_path)
-    primary = data.setdefault("primary_param", {})
     raw = np.ascontiguousarray(raw_result, dtype=np.float32)
-    if not _pmck_param_accepts_result(primary):
-        return False
+    merged = False
 
-    primary = copy.deepcopy(primary)
-    primary["ai_noise_reduction_result"] = utils.convert_image_to_list(raw)
-    primary["ai_noise_reduction_content_key"] = content_key
-    primary["ai_noise_reduction_source_signature"] = source_signature
-    primary["heavy_saved_at_fidelity"] = ImageFidelity.FULL.value
-    data["primary_param"] = params._msgpack_safe_value(primary)
-    return pmck_store.write_image(image_path, data, expected_token=token)
+    def _merge(data):
+        nonlocal merged
+        data = pmck_store.ensure_primary_param(data)
+        primary = data.setdefault("primary_param", {})
+        if not _pmck_param_accepts_result(primary):
+            return pmck_store.NO_CHANGE
+
+        primary = copy.deepcopy(primary)
+        primary["ai_noise_reduction_result"] = utils.convert_image_to_list(raw)
+        primary["ai_noise_reduction_content_key"] = content_key
+        primary["ai_noise_reduction_source_signature"] = source_signature
+        primary["heavy_saved_at_fidelity"] = ImageFidelity.FULL.value
+        data["primary_param"] = params._msgpack_safe_value(primary)
+        merged = True
+        return data
+
+    return pmck_store.update_image(image_path, _merge, default_empty=True) and merged

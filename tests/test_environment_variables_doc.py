@@ -24,6 +24,7 @@ class EnvironmentVariablesDocTest(unittest.TestCase):
             "PLATYPUS_DEBUG_PIPELINE_STATS",
             "PLATYPUS_LOAD_STALL_WARN_SECONDS",
             "PLATYPUS_MEMORY_DEBUG",
+            "PLATYPUS_SPLASH_SCREEN",
             "RUNWARE_API_KEY",
             "DASHSCOPE_API_KEY",
         ]

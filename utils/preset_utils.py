@@ -1,7 +1,6 @@
 import copy
 import json
 import os
-import shutil
 from datetime import datetime as dt
 
 import numpy as np
@@ -175,10 +174,13 @@ def write_pmck_dict(pmck_path, data):
 
 def apply_partial_to_pmck_file(image_path, partial_param):
     pmck_path = pmck_store.image_pmck_path(image_path)
-    data = read_pmck_dict(pmck_path)
-    primary_param = data.setdefault("primary_param", {})
-    apply_partial_primary_param(primary_param, partial_param)
-    write_pmck_dict(pmck_path, data)
+    def _apply(data):
+        data = pmck_store.ensure_primary_param(data)
+        primary_param = data.setdefault("primary_param", {})
+        apply_partial_primary_param(primary_param, partial_param)
+        return data
+
+    pmck_store.update_path(pmck_path, _apply, default_empty=True)
     return pmck_path
 
 
@@ -204,7 +206,7 @@ def backup_pmck_for_batch(image_path):
             pass
     had_pmck = os.path.exists(pmck_path)
     if had_pmck:
-        shutil.copy2(pmck_path, bak_path)
+        pmck_store.copy_path_to_path(pmck_path, bak_path)
     return {
         "image_path": image_path,
         "pmck_path": pmck_path,
@@ -220,14 +222,11 @@ def undo_batch_item(item):
     bak_path = item["bak_path"]
     tmp_path = item["tmp_path"]
     if item.get("had_pmck"):
-        os.replace(pmck_path, tmp_path)
-        os.replace(bak_path, pmck_path)
-        os.replace(tmp_path, bak_path)
+        pmck_store.swap_paths(pmck_path, bak_path, tmp_path)
     else:
         if os.path.exists(bak_path):
             os.remove(bak_path)
-        if os.path.exists(pmck_path):
-            os.replace(pmck_path, bak_path)
+        pmck_store.move_path_to_path(pmck_path, bak_path)
     item["bak_role"] = "after"
 
 
@@ -236,12 +235,9 @@ def redo_batch_item(item):
     bak_path = item["bak_path"]
     tmp_path = item["tmp_path"]
     if item.get("had_pmck"):
-        os.replace(pmck_path, tmp_path)
-        os.replace(bak_path, pmck_path)
-        os.replace(tmp_path, bak_path)
+        pmck_store.swap_paths(pmck_path, bak_path, tmp_path)
     else:
-        if os.path.exists(bak_path):
-            os.replace(bak_path, pmck_path)
+        pmck_store.move_path_to_path(bak_path, pmck_path)
     item["bak_role"] = "before"
 
 

@@ -7,18 +7,16 @@ from typing import Any
 
 import numpy as np
 
+from utils.envutils import env_flag
+
 try:
     import psutil
 except Exception:
     psutil = None
 
 
-def _truthy_env(name: str, default: str = "0") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def debug_enabled() -> bool:
-    return _truthy_env("PLATYPUS_MEMORY_DEBUG")
+    return env_flag("PLATYPUS_MEMORY_DEBUG")
 
 
 def _env_float(name: str, default: float) -> float:

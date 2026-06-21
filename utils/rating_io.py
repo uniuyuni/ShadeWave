@@ -115,26 +115,24 @@ def merge_raw_pmck_rating(file_path: str, rating: int) -> bool:
     """
     RAW: .pmck ルートに platypus_raw_rating（1～5）のみ。primary_param.rating は廃止のため除去。
     """
-    d = pmck_store.read_image(file_path)
-    if d is None:
-        d = pmck_store.empty_pmck()
-    d = pmck_store.ensure_primary_param(d)
-    pp = d["primary_param"]
-    if isinstance(pp, dict):
-        pp.pop("rating", None)
-    d["primary_param"] = pp
-    if int(rating) == 0:
-        d.pop(PMCK_RAW_RATING_KEY, None)
-    else:
-        d[PMCK_RAW_RATING_KEY] = int(rating)
-    if not _pmck_has_substance(d):
-        pmck_store.delete_image(file_path)
-        return True
+    def _merge(d):
+        d = pmck_store.ensure_primary_param(d)
+        pp = d["primary_param"]
+        if isinstance(pp, dict):
+            pp.pop("rating", None)
+        d["primary_param"] = pp
+        if int(rating) == 0:
+            d.pop(PMCK_RAW_RATING_KEY, None)
+        else:
+            d[PMCK_RAW_RATING_KEY] = int(rating)
+        if not _pmck_has_substance(d):
+            return pmck_store.DELETE
+        return d
+
     try:
-        pmck_store.write_image(file_path, d)
+        return pmck_store.update_image(file_path, _merge, default_empty=True)
     except OSError as e:
         raise RuntimeError(str(e)) from e
-    return True
 
 
 def _run_exiftool(argv: list[str]) -> None:

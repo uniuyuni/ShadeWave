@@ -1,12 +1,34 @@
-
-#from splashscreen import display_splash_screen, close_splash_screen
-#display_splash_screen("assets/Shade Wave.png")
-
 if __name__ == '__main__':
     import sys as _sys_early
     import os as _os_early
     import multiprocessing as _mp_early
     import logging as _logging_early
+
+    _SPLASH_ENV = "PLATYPUS_SPLASH_SCREEN"
+    _SPLASH_IMAGE = "assets/Shade Wave.png"
+    _splash_close_screen = None
+
+    def _display_startup_splash():
+        if not env_flag(_SPLASH_ENV):
+            return None
+        try:
+            from splashscreen import display_splash_screen, close_splash_screen
+            display_splash_screen(_SPLASH_IMAGE)
+            return close_splash_screen
+        except Exception:
+            _logging_early.exception("Failed to display startup splash screen")
+            return None
+
+    def _close_startup_splash():
+        global _splash_close_screen
+        if _splash_close_screen is None:
+            return
+        try:
+            _splash_close_screen()
+        except Exception:
+            _logging_early.exception("Failed to close startup splash screen")
+        finally:
+            _splash_close_screen = None
 
     def _install_frozen_startup_logging():
         if not getattr(_sys_early, "frozen", False):
@@ -80,6 +102,10 @@ if __name__ == '__main__':
         tk = tk.Tk()
         tk.withdraw()
         tk.destroy()
+
+    from utils.envutils import env_flag
+
+    _splash_close_screen = _display_startup_splash()
 
     from kivy.config import Config
     Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
@@ -4597,7 +4623,7 @@ if __name__ == '__main__':
             KVWindow.left = (display["width"] - display["width"] * 0.9) // 2
             KVWindow.top = (display["height"] - display["height"] * 0.9) // 2
             """
-            #close_splash_screen()
+            _close_startup_splash()
             return super().on_start()
 
         def on_stop(self):
@@ -4639,6 +4665,7 @@ if __name__ == '__main__':
         raise
     finally:
         # 終了時にクリーンアップ
+        _close_startup_splash()
         if cache_system is not None:
             try:
                 cache_system.shutdown()
