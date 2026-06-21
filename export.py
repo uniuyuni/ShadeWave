@@ -5,6 +5,7 @@ import numpy as np
 import json
 import exiftool
 import struct
+import tempfile
 from effect_backends import colour_functions_adapter as colour_functions
 import pyvips
 import subprocess
@@ -29,6 +30,29 @@ def _export_cancel_requested(cancel_event):
 
 class ExportFormatError(RuntimeError):
     pass
+
+
+def _make_temp_output_path(final_path):
+    directory = os.path.dirname(final_path) or "."
+    base, ext = os.path.splitext(os.path.basename(final_path))
+    fd, tmp_path = tempfile.mkstemp(prefix=f".{base}.", suffix=ext, dir=directory)
+    os.close(fd)
+    try:
+        os.remove(tmp_path)
+    except FileNotFoundError:
+        pass
+    return tmp_path
+
+
+def _cleanup_temp_output(path):
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logging.exception("failed to remove temporary export file: %s", path)
 
 
 _ICC_PROFILE_ALIASES = {
@@ -569,6 +593,7 @@ class ExportFile():
         #self.mask_editor2.update()
 
         params.load_json(self.file_path, self.param, self.mask_editor2, load_heavy=True)
+        self.param['_source_file_path'] = self.file_path
         self.param['image_fidelity'] = getattr(self.imgset, 'fidelity', ImageFidelity.FULL).value
         self.param.pop("rating", None)  # 星は param に入れない（er で書き出し）
         er = max(0, min(5, int(self.export_rating)))
@@ -598,18 +623,26 @@ class ExportFile():
         # ディレクトリがなかったら作成
         ex_dir = os.path.dirname(self.ex_path)
         os.makedirs(ex_dir, exist_ok=True)
+        tmp_ex_path = _make_temp_output_path(self.ex_path)
 
         if format == '.EXR':
-            img = _prepare_output_array(img, format, resize_str, sharpen, dithering)
-            if _export_cancel_requested(cancel_event):
-                return False
-            _write_openexr_file(
-                self.ex_path,
-                img,
-                chromaticities=_openexr_chromaticities_for_profile(self.icc_profile),
-                aces_image_container_flag=_openexr_aces_image_container_flag(self.icc_profile),
-            )
-            return True
+            try:
+                img = _prepare_output_array(img, format, resize_str, sharpen, dithering)
+                if _export_cancel_requested(cancel_event):
+                    return False
+                _write_openexr_file(
+                    tmp_ex_path,
+                    img,
+                    chromaticities=_openexr_chromaticities_for_profile(self.icc_profile),
+                    aces_image_container_flag=_openexr_aces_image_container_flag(self.icc_profile),
+                )
+                if _export_cancel_requested(cancel_event):
+                    return False
+                os.replace(tmp_ex_path, self.ex_path)
+                tmp_ex_path = None
+                return True
+            finally:
+                _cleanup_temp_output(tmp_ex_path)
 
         vips_image = _prepare_output_vips_image(img, format, resize_str, sharpen, dithering)
 
@@ -635,25 +668,32 @@ class ExportFile():
         if _export_cancel_requested(cancel_event):
             return False
 
-        vips_image.write_to_file(self.ex_path, **save_options)
-        del vips_image
+        try:
+            vips_image.write_to_file(tmp_ex_path, **save_options)
+            del vips_image
 
-        # 元EXIF 等の一括コピー（メタData プリセット）
-        if exifsw and format != '.EXR':
+            # 元EXIF 等の一括コピー（メタData プリセット）
+            if exifsw and format != '.EXR':
+                if _export_cancel_requested(cancel_event):
+                    return False
+                with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
+                    ex_src = dict(self.exif_data) if self.exif_data else {}
+                    ex_src.pop("Rating", None)
+                    safe_metadata = make_safe_metadata(ex_src, gpssw)
+                    safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
+                    et.set_tags(tmp_ex_path, tags=safe_metadata)
+
+            # 星はメタ一括の ON/OFF に依存しない。メタ OFF でも exiftool で付与。
+            if format != '.EXR' and not _export_cancel_requested(cancel_event) and os.path.isfile(tmp_ex_path):
+                try:
+                    rating_io.write_exported_file_rating(tmp_ex_path, int(er))
+                except Exception:
+                    logging.exception("export write rating to output file")
+
             if _export_cancel_requested(cancel_event):
                 return False
-            with exiftool.ExifToolHelper(common_args=['-P', '-overwrite_original']) as et:
-                ex_src = dict(self.exif_data) if self.exif_data else {}
-                ex_src.pop("Rating", None)
-                safe_metadata = make_safe_metadata(ex_src, gpssw)
-                safe_metadata["Software"] = define.APPNAME + " " + define.VERSION
-                et.set_tags(self.ex_path, tags=safe_metadata)
-
-        # 星はメタ一括の ON/OFF に依存しない。メタ OFF でも exiftool で付与。
-        if format != '.EXR' and not _export_cancel_requested(cancel_event) and os.path.isfile(self.ex_path):
-            try:
-                rating_io.write_exported_file_rating(self.ex_path, int(er))
-            except Exception:
-                logging.exception("export write rating to output file")
-
-        return True
+            os.replace(tmp_ex_path, self.ex_path)
+            tmp_ex_path = None
+            return True
+        finally:
+            _cleanup_temp_output(tmp_ex_path)

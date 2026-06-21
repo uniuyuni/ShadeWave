@@ -61,6 +61,24 @@ class AIJobManagerTest(unittest.TestCase):
         self.assertEqual(preview_sig, full_sig)
         self.assertEqual(preview_key, full_key)
 
+    def test_ai_noise_content_key_does_not_depend_on_absolute_path(self):
+        image = np.zeros((4, 5, 3), dtype=np.float32)
+        param = {"ai_noise_reduction": True, "image_fidelity": ImageFidelity.FULL.value}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path1 = os.path.join(tmp, "a.jpg")
+            path2 = os.path.join(tmp, "nested", "a.jpg")
+            pathlib.Path(path1).write_bytes(b"image")
+            pathlib.Path(path2).parent.mkdir()
+            pathlib.Path(path2).write_bytes(b"image")
+            sig1 = ai_noise_source_signature(path1, image, param)
+            key1 = ai_noise_content_key(path1, image, param, source_signature=sig1)
+            sig2 = ai_noise_source_signature(path2, image, param)
+            key2 = ai_noise_content_key(path2, image, param, source_signature=sig2)
+
+        self.assertEqual(sig1, sig2)
+        self.assertEqual(key1, key2)
+
     def test_ai_noise_content_key_changes_when_input_pixels_shift(self):
         image = np.zeros((8, 8, 3), dtype=np.float32)
         image[1:3, 1:3] = 1.0

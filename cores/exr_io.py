@@ -75,6 +75,8 @@ def read_exr(file_path):
     """
     # separate_channels=False で R/G/B(/A) を自動結合
     with OpenEXR.File(file_path, separate_channels=False) as f:
+        if not f.parts:
+            raise ValueError(f"EXR に読み取り可能な part がありません: {file_path}")
         part = f.parts[0]
         chroma = part.header.get('chromaticities', None)
         if chroma is not None:
@@ -85,6 +87,8 @@ def read_exr(file_path):
         except ValueError:
             # combined で取れない場合は separate で読み直す
             with OpenEXR.File(file_path, separate_channels=True) as f2:
+                if not f2.parts:
+                    raise ValueError(f"EXR に読み取り可能な part がありません: {file_path}")
                 img = _extract_rgb(f2.parts[0])
 
     return img, chroma

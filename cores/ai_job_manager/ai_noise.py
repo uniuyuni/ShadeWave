@@ -26,12 +26,12 @@ def ai_noise_enabled(param: dict[str, Any] | None) -> bool:
 
 def _file_fingerprint(file_path: str | None) -> tuple[Any, ...]:
     if not file_path:
-        return ("", None, None)
+        return ("file", None)
     try:
         st = os.stat(file_path)
-        return (os.path.abspath(file_path), int(st.st_mtime_ns), int(st.st_size))
+        return ("file", int(st.st_size))
     except OSError:
-        return (os.path.abspath(file_path), None, None)
+        return ("file", None)
 
 
 def _image_sample_digest(image: np.ndarray | None) -> str:

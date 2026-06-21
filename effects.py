@@ -2280,7 +2280,7 @@ class AINoiseReductonEffect(Effect):
             ai_job_manager = getattr(efconfig, "ai_job_manager", None)
             file_path = getattr(efconfig, "file_path", None)
             source_signature = None
-            if ai_job_manager is not None and file_path and efconfig.mode != EffectMode.EXPORT:
+            if file_path:
                 from cores.ai_job_manager.ai_noise import (
                     ai_noise_content_key,
                     ai_noise_source_signature,

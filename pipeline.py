@@ -845,6 +845,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.crop_editing = False
     efconfig.full_preview = False
     efconfig.image_fidelity = primary_param.get('image_fidelity')
+    efconfig.file_path = primary_param.get('_source_file_path')
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
 
     # 背景レイヤー
