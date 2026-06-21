@@ -44,8 +44,8 @@ _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
 _THUMBNAIL_CARD_WIDTH_RATIO = 0.7
 _HOVER_HINT_DELAY = 0.7
-_EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF")
-_EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage",)
+_EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF", "OtherImage")
+_EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage", "ThumbnailTIFF")
 
 
 def _first_value(data, *keys):

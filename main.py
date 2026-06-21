@@ -149,11 +149,11 @@ if __name__ == '__main__':
     from cores.ai_job_manager import (
         AIJobStatus,
         AI_NOISE_KIND,
+        AISidecarMergeQueue,
         AIJobManager,
         ai_noise_enabled,
         current_param_accepts_ai_noise_result,
         merge_ai_noise_result_into_param,
-        merge_ai_noise_result_into_pmck,
     )
     import waitinfo
     import history
@@ -400,6 +400,7 @@ if __name__ == '__main__':
             # self.async_worker.start() # Start explicitly after config init
             self.processor = pipeline.AsyncPipelineManager(self.async_worker)
             self.ai_job_manager = AIJobManager(viewer_state_callback=self._set_ai_job_viewer_state)
+            self.ai_sidecar_merge_queue = AISidecarMergeQueue()
             KVClock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
             self._draw_image_core_active = False
@@ -550,6 +551,7 @@ if __name__ == '__main__':
             logging.debug("displayed cached final image for %s", file_path)
             return True
 
+        @kvmainthread
         def _set_ai_job_viewer_state(self, file_path, state):
             viewer = self.ids.get("viewer")
             if viewer is None or not file_path:
@@ -589,18 +591,54 @@ if __name__ == '__main__':
                 logging.info("AI-NR job result is stale for current param: %s", job.file_path)
                 return False
 
-            merged = merge_ai_noise_result_into_pmck(
-                job.file_path,
-                job_result.result,
-                content_key=job.content_key,
-                source_signature=job.source_signature,
-            )
-            if merged:
+            future = self.ai_sidecar_merge_queue.submit_ai_noise_result(job, job_result.result)
+            if future is None:
+                logging.warning("AI-NR job sidecar pmck merge skipped by backpressure: %s", job.file_path)
+                self.ai_job_manager.discard_completed_result(job)
+            else:
+                logging.info(
+                    "AI-NR job queued for sidecar pmck merge and kept in completed cache: file=%s content_key=%s",
+                    job.file_path,
+                    job.content_key,
+                )
+            return False
+
+        def _handle_ai_sidecar_merge_result(self, merge_result):
+            job = merge_result.job
+            if merge_result.error:
+                logging.error("AI-NR sidecar pmck merge failed: %s %s", job.file_path, merge_result.error)
+                self.ai_job_manager.discard_completed_result(job)
+                return False
+            if merge_result.merged:
                 logging.info("AI-NR job merged into pmck: %s", job.file_path)
                 self._refresh_pmck_indicator_for_image_path(job.file_path)
             else:
                 logging.info("AI-NR job result discarded as stale for pmck: %s", job.file_path)
-            return False
+                self.ai_job_manager.discard_completed_result(job)
+                return False
+            self.ai_job_manager.discard_completed_result(job)
+
+            current_path = self.imgset.file_path if self.imgset is not None else None
+            if current_path != job.file_path or merge_result.result is None:
+                return False
+            with threads.primary_param_lock:
+                image = self.imgset.img if self.imgset is not None else None
+                if not current_param_accepts_ai_noise_result(
+                    self.primary_param,
+                    file_path=job.file_path,
+                    image=image,
+                    content_key=job.content_key,
+                    source_signature=job.source_signature,
+                ):
+                    return False
+                merge_ai_noise_result_into_param(
+                    self.primary_param,
+                    merge_result.result,
+                    job.content_key,
+                    job.source_signature,
+                )
+                logging.info("AI-NR sidecar merge also applied to current param: %s", job.file_path)
+            return True
 
         def update_async_results(self, dt):
             if self.async_worker:
@@ -639,6 +677,19 @@ if __name__ == '__main__':
                 ai_dirty = False
                 for job_result in self.ai_job_manager.poll_results():
                     ai_dirty = self._handle_ai_job_result(job_result) or ai_dirty
+                    if (
+                        job_result.status == AIJobStatus.COMPLETE
+                        and not self.ai_sidecar_merge_queue.has_pending_job(job_result.job)
+                    ):
+                        self.ai_job_manager.discard_completed_result(job_result.job)
+                    elif job_result.status == AIJobStatus.COMPLETE:
+                        logging.info(
+                            "AI-NR completed cache retained while sidecar merge is pending: file=%s content_key=%s",
+                            job_result.job.file_path,
+                            job_result.job.content_key,
+                        )
+                for merge_result in self.ai_sidecar_merge_queue.poll_results():
+                    ai_dirty = self._handle_ai_sidecar_merge_result(merge_result) or ai_dirty
                 if ai_dirty:
                     self.start_draw_image()
 
@@ -652,9 +703,14 @@ if __name__ == '__main__':
                 has_tasks = self.async_worker.has_pending_tasks()
                 if self.ai_job_manager:
                     current_path = self.imgset.file_path if self.imgset is not None else None
+                    current_ai_status = (
+                        self.ai_job_manager.get_status_for_path(current_path)
+                        if current_path
+                        else None
+                    )
                     has_tasks = has_tasks or (
                         bool(current_path)
-                        and self.ai_job_manager.has_pending_job_for_path(current_path)
+                        and current_ai_status in (AIJobStatus.QUEUED, AIJobStatus.RUNNING)
                     )
                 ai_inpaint_processing = self.async_worker.has_pending_effect("InpaintEffect")
                 if self.ai_inpaint_processing != ai_inpaint_processing:
@@ -663,7 +719,16 @@ if __name__ == '__main__':
                 active_count = len(self.async_worker.active_shms)
                 should_processing = has_tasks or self._actively_loading
                 if self.is_processing != should_processing:
-                    logging.info(f"is_processing changed: {self.is_processing} -> {should_processing} (queue_empty={queue_empty}, active_shms={active_count}, actively_loading={self._actively_loading})")
+                    logging.info(
+                        "is_processing changed: %s -> %s (queue_empty=%s, active_shms=%s, actively_loading=%s, current_ai_status=%s, ai_sidecar_pending=%s)",
+                        self.is_processing,
+                        should_processing,
+                        queue_empty,
+                        active_count,
+                        self._actively_loading,
+                        getattr(current_ai_status, "value", current_ai_status) if self.ai_job_manager else None,
+                        self.ai_sidecar_merge_queue.pending_count() if getattr(self, "ai_sidecar_merge_queue", None) else 0,
+                    )
                     self.is_processing = should_processing
 
         def _schedule_ai_inpaint_ui_sync(self, delay=0.15, retries=8):
@@ -2259,6 +2324,26 @@ if __name__ == '__main__':
                 if viewer:
                     viewer.set_pmck_indicator_for_path(self.imgset.file_path)
 
+        def _enqueue_unfinished_ai_noise_for_path(self, file_path, param, *, reason):
+            if not self.ai_job_manager or not file_path or not isinstance(param, dict):
+                return
+            if not ai_noise_enabled(param):
+                return
+            if param.get("ai_noise_reduction_result") is not None:
+                return
+            if param.get("_ai_noise_reduction_result_deferred"):
+                return
+            try:
+                self.ai_job_manager.enqueue_ai_noise_file(file_path, param)
+                logging.info(
+                    "AI-NR unfinished file job enqueued: file=%s reason=%s image_fidelity=%s",
+                    file_path,
+                    reason,
+                    param.get("image_fidelity"),
+                )
+            except Exception:
+                logging.exception("failed to enqueue unfinished AI-NR job: %s", file_path)
+
         def _snapshot_current_param(self):
             snap = params.serialize(self.primary_param, self.ids['mask_editor2']) or {"primary_param": {}}
             params.copy_special_param(snap["primary_param"], self.primary_param)
@@ -2575,6 +2660,11 @@ if __name__ == '__main__':
                 self._cancel_mask1_mode(redraw=False)
                 # 前の設定を保存
                 self.save_current_sidecar()
+                self._enqueue_unfinished_ai_noise_for_path(
+                    previous_file_path,
+                    self.primary_param,
+                    reason="selection_changed",
+                )
                 self.cache_system.on_image_selection_changed(
                     owner=self,
                     previous_file_path=previous_file_path,
@@ -3639,6 +3729,14 @@ if __name__ == '__main__':
                 panel = getattr(self, panel_name, None)
                 if panel is not None:
                     panel.disabled = disabled
+            self._set_disabled_for_ids(
+                (
+                    "switch_ai_noise_reduction",
+                    "chip_ai_noise_reduction",
+                    "slider_ai_noise_reduction_intensity",
+                ),
+                disabled,
+            )
 
         def _enable_mask2(self):
             self.ids['mask_editor2'].opacity = 1
@@ -4369,6 +4467,8 @@ if __name__ == '__main__':
                 self.async_worker.stop()
             if self.ai_job_manager:
                 self.ai_job_manager.stop()
+            if self.ai_sidecar_merge_queue:
+                self.ai_sidecar_merge_queue.shutdown()
             
             if self.apply_thread is not None:
                 t = self.apply_thread

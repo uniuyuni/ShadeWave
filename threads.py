@@ -30,3 +30,10 @@ def lock_primary_param(func):
         with primary_param_lock:
             return func(*args, **kwargs)
     return wrapper
+
+# AIJobManager はフォルダ走査スレッド、Kivyメインスレッド、描画経路から触られる。
+# キュー投入・poll・キャンセルの再入を許すため RLock にする。
+ai_job_manager_lock = threading.RLock()
+
+# AI-NR完了後の .pmck merge queue はUI pollとworker callbackで共有される。
+ai_sidecar_merge_lock = threading.Lock()

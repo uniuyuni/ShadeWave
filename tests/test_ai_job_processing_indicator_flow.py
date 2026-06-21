@@ -24,7 +24,7 @@ class AIJobProcessingIndicatorFlowTest(unittest.TestCase):
         source = _load_class_function("MainWidget", "update_async_results")
 
         self.assertIn("current_path = self.imgset.file_path if self.imgset is not None else None", source)
-        self.assertIn("has_pending_job_for_path(current_path)", source)
+        self.assertIn("current_ai_status in (AIJobStatus.QUEUED, AIJobStatus.RUNNING)", source)
         self.assertNotIn("has_tasks = has_tasks or self.ai_job_manager.has_pending_jobs()", source)
 
     def test_import_path_applies_ai_job_resume_hook(self):
@@ -39,6 +39,20 @@ class AIJobProcessingIndicatorFlowTest(unittest.TestCase):
         self.assertIn("ai_noise_enabled(primary)", source)
         self.assertIn('primary.get("ai_noise_reduction_result") is not None', source)
         self.assertIn("enqueue_ai_noise_file(image_path, primary)", source)
+
+    def test_ai_noise_controls_are_disabled_until_full_decode(self):
+        source = _load_class_function("MainWidget", "update_load_dependent_panels_enabled")
+
+        self.assertIn("disabled = bool(self.mask2_wait_full_load) or not bool(self.image_loaded)", source)
+        self.assertIn('"switch_ai_noise_reduction"', source)
+        self.assertIn('"chip_ai_noise_reduction"', source)
+        self.assertIn('"slider_ai_noise_reduction_intensity"', source)
+
+    def test_selection_change_queues_unfinished_ai_noise_job(self):
+        source = _load_class_function("MainWidget", "on_select")
+
+        self.assertIn("_enqueue_unfinished_ai_noise_for_path", source)
+        self.assertIn('reason="selection_changed"', source)
 
 
 if __name__ == "__main__":

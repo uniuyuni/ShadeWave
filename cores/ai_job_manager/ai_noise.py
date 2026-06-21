@@ -4,6 +4,7 @@ import copy
 from datetime import datetime as dt
 import hashlib
 import os
+import tempfile
 from typing import Any
 
 import msgpack
@@ -16,6 +17,20 @@ import utils.utils as utils
 
 
 AI_NOISE_KIND = "ai_noise_reduction"
+_AI_NOISE_EXIF_KEYS = {
+    "RawImageCropTopLeft",
+    "RawImageCroppedSize",
+    "FullImageSize",
+    "RawImageSize",
+    "ImageSize",
+    "ExifImageWidth",
+    "ExifImageHeight",
+    "Orientation",
+    "WB_GRBLevels",
+    "Make",
+    "Model",
+    "FujiLayout",
+}
 
 
 def ai_noise_enabled(param: dict[str, Any] | None) -> bool:
@@ -29,7 +44,16 @@ def _file_fingerprint(file_path: str | None) -> tuple[Any, ...]:
         return ("file", None)
     try:
         st = os.stat(file_path)
-        return ("file", int(st.st_size))
+        size = int(st.st_size)
+        digest = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            if size <= 192 * 1024:
+                digest.update(f.read())
+            else:
+                for offset in (0, max(0, size // 2 - 32 * 1024), max(0, size - 64 * 1024)):
+                    f.seek(offset)
+                    digest.update(f.read(64 * 1024))
+        return ("file", size, digest.hexdigest())
     except OSError:
         return ("file", None)
 
@@ -55,7 +79,7 @@ def ai_noise_source_signature(file_path: str | None, image: np.ndarray | None, p
     shape = tuple(getattr(image, "shape", ()) or ())
     dtype = str(getattr(image, "dtype", ""))
     sample_digest = _image_sample_digest(image)
-    payload = repr(("scunet_source_v3", _file_fingerprint(file_path), shape, dtype, sample_digest)).encode("utf-8")
+    payload = repr(("scunet_source_v5", _file_fingerprint(file_path), shape, dtype, sample_digest)).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -83,6 +107,27 @@ def ai_noise_valid_content_keys(file_path: str | None, image: np.ndarray | None,
     }
 
 
+def ai_noise_source_debug_info(file_path: str | None, image: np.ndarray | None) -> dict[str, Any]:
+    return {
+        "file_fingerprint": _file_fingerprint(file_path),
+        "shape": tuple(getattr(image, "shape", ()) or ()),
+        "dtype": str(getattr(image, "dtype", "")),
+        "sample_digest": _image_sample_digest(image),
+    }
+
+
+def _clone_ai_noise_exif(exif_data: Any) -> dict[str, Any]:
+    if not isinstance(exif_data, dict):
+        return {}
+    cloned: dict[str, Any] = {}
+    for key, value in exif_data.items():
+        if key in _AI_NOISE_EXIF_KEYS or (
+            isinstance(key, str) and key.rsplit(":", 1)[-1] in _AI_NOISE_EXIF_KEYS
+        ):
+            cloned[key] = copy.deepcopy(value)
+    return cloned
+
+
 def clone_ai_noise_param_snapshot(param: dict[str, Any]) -> dict[str, Any]:
     snapshot = {
         "switch_ai_noise_reduction": bool(param.get("switch_ai_noise_reduction", True)),
@@ -90,6 +135,9 @@ def clone_ai_noise_param_snapshot(param: dict[str, Any]) -> dict[str, Any]:
         "ai_noise_reduction_intensity": float(param.get("ai_noise_reduction_intensity", 70.0)),
         "image_fidelity": param.get("image_fidelity"),
     }
+    exif_data = _clone_ai_noise_exif(param.get("exif_data"))
+    if exif_data:
+        snapshot["exif_data"] = exif_data
     return snapshot
 
 
@@ -130,9 +178,19 @@ def _empty_pmck() -> dict[str, Any]:
     }
 
 
-def _read_pmck(image_path: str) -> dict[str, Any]:
+def _pmck_stat_token(path: str) -> tuple[int, int, int] | None:
     try:
-        with open(image_path + ".pmck", "rb") as f:
+        st = os.stat(path)
+        return (int(st.st_mtime_ns), int(st.st_size), int(getattr(st, "st_ino", 0)))
+    except FileNotFoundError:
+        return None
+
+
+def _read_pmck_with_token(image_path: str) -> tuple[dict[str, Any], tuple[int, int, int] | None]:
+    pmck_path = image_path + ".pmck"
+    token = _pmck_stat_token(pmck_path)
+    try:
+        with open(pmck_path, "rb") as f:
             data = msgpack.unpackb(f.read(), raw=False)
     except FileNotFoundError:
         data = _empty_pmck()
@@ -140,15 +198,37 @@ def _read_pmck(image_path: str) -> dict[str, Any]:
         data = _empty_pmck()
     if not isinstance(data.get("primary_param"), dict):
         data["primary_param"] = {}
+    return data, token
+
+
+def _read_pmck(image_path: str) -> dict[str, Any]:
+    data, _token = _read_pmck_with_token(image_path)
     return data
 
 
-def _write_pmck(image_path: str, data: dict[str, Any]) -> None:
-    directory = os.path.dirname(image_path + ".pmck")
+def _write_pmck(image_path: str, data: dict[str, Any], *, expected_token=None) -> bool:
+    pmck_path = image_path + ".pmck"
+    directory = os.path.dirname(pmck_path) or "."
     if directory:
         os.makedirs(directory, exist_ok=True)
-    with open(image_path + ".pmck", "wb") as f:
-        f.write(msgpack.packb(data, use_bin_type=True))
+    if expected_token is not None and _pmck_stat_token(pmck_path) != expected_token:
+        return False
+
+    fd, tmp_path = tempfile.mkstemp(prefix=".pmck.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(msgpack.packb(data, use_bin_type=True))
+        if expected_token is not None and _pmck_stat_token(pmck_path) != expected_token:
+            return False
+        os.replace(tmp_path, pmck_path)
+        tmp_path = None
+        return True
+    finally:
+        if tmp_path is not None:
+            try:
+                os.remove(tmp_path)
+            except FileNotFoundError:
+                pass
 
 
 def _pmck_param_accepts_result(pmck_primary: dict[str, Any]) -> bool:
@@ -164,7 +244,7 @@ def merge_ai_noise_result_into_pmck(
     content_key: str,
     source_signature: str,
 ) -> bool:
-    data = _read_pmck(image_path)
+    data, token = _read_pmck_with_token(image_path)
     primary = data.setdefault("primary_param", {})
     raw = np.ascontiguousarray(raw_result, dtype=np.float32)
     if not _pmck_param_accepts_result(primary):
@@ -176,5 +256,4 @@ def merge_ai_noise_result_into_pmck(
     primary["ai_noise_reduction_source_signature"] = source_signature
     primary["heavy_saved_at_fidelity"] = ImageFidelity.FULL.value
     data["primary_param"] = params._msgpack_safe_value(primary)
-    _write_pmck(image_path, data)
-    return True
+    return _write_pmck(image_path, data, expected_token=token)

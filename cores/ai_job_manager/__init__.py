@@ -12,6 +12,7 @@ from .ai_noise import (
     merge_ai_noise_result_into_pmck,
 )
 from .manager import AIJobManager
+from .sidecar_merge import AISidecarMergeQueue, AISidecarMergeResult
 from .types import AIJob, AIJobResult, AIJobStatus
 
 __all__ = [
@@ -19,6 +20,8 @@ __all__ = [
     "AIJobManager",
     "AIJobResult",
     "AIJobStatus",
+    "AISidecarMergeQueue",
+    "AISidecarMergeResult",
     "AI_NOISE_KIND",
     "ai_noise_content_key",
     "ai_noise_enabled",

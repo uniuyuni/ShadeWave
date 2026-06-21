@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import logging
+import os
 from multiprocessing import shared_memory
 from queue import Empty
 import sys
@@ -11,7 +13,34 @@ import numpy as np
 
 import config
 from .types import AIJobStatus
-from .ai_noise import ai_noise_content_key, ai_noise_source_signature
+from .ai_noise import ai_noise_content_key, ai_noise_enabled, ai_noise_source_signature
+
+
+_EXIF_SIZE_KEYS = ("RawImageCroppedSize", "FullImageSize", "RawImageSize", "ImageSize")
+
+
+def ai_job_nice_increment() -> int:
+    raw = os.getenv("PLATYPUS_AI_JOB_NICE", "10").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        logging.warning("Invalid PLATYPUS_AI_JOB_NICE=%r; using 10", raw)
+        value = 10
+    return max(0, min(20, value))
+
+
+def apply_ai_job_process_priority() -> int:
+    increment = ai_job_nice_increment()
+    if increment <= 0:
+        logging.info("AIJob worker nice adjustment disabled.")
+        return 0
+    try:
+        applied = os.nice(increment)
+        logging.info("AIJob worker nice adjusted by +%s; current nice=%s", increment, applied)
+        return applied
+    except Exception:
+        logging.exception("AIJob worker nice adjustment failed")
+        return 0
 
 
 def run_ai_noise(image: np.ndarray) -> np.ndarray:
@@ -40,12 +69,52 @@ def _write_result_shm(result: np.ndarray):
     return shm.name, result.shape, str(result.dtype)
 
 
+def _snapshot_exif_data(param_snapshot):
+    exif_data = (param_snapshot or {}).get("exif_data")
+    if isinstance(exif_data, dict):
+        return copy.deepcopy(exif_data)
+    return {}
+
+
+def _has_decode_size_hint(exif_data):
+    return isinstance(exif_data, dict) and any(exif_data.get(key) for key in _EXIF_SIZE_KEYS)
+
+
+def _load_exif_for_file(file_path, param_snapshot):
+    exif_data = _snapshot_exif_data(param_snapshot)
+    if _has_decode_size_hint(exif_data):
+        logging.info("AIJob worker using snapshot EXIF for file decode: file=%s keys=%s", file_path, sorted(exif_data.keys()))
+        return exif_data
+    try:
+        from utils.exiftool_safe import safe_get_metadata
+
+        rows = safe_get_metadata(
+            [file_path],
+            common_args=["-s", "-a", "-G1"],
+            timeout=60,
+        )
+        loaded = rows[0] if rows else {}
+        if isinstance(loaded, dict):
+            logging.info(
+                "AIJob worker loaded EXIF for file decode: file=%s has_size_hint=%s keys=%s",
+                file_path,
+                _has_decode_size_hint(loaded),
+                sorted(k for k in loaded.keys() if k in _EXIF_SIZE_KEYS or k in ("Orientation", "WB_GRBLevels")),
+            )
+            return loaded
+    except Exception:
+        logging.exception("AIJob worker failed to load EXIF for file decode: %s", file_path)
+    return exif_data
+
+
 def _load_file_image(file_path, param_snapshot):
     import file_cache_system
     import imageset
 
-    exif_data = {}
+    exif_data = _load_exif_for_file(file_path, param_snapshot)
     param = dict(param_snapshot or {})
+    if exif_data:
+        param["exif_data"] = copy.deepcopy(exif_data)
     imgset = imageset.ImageSet()
     tasks = imgset.preload(file_path, exif_data, param)
     if not tasks:
@@ -72,9 +141,11 @@ def _load_file_image(file_path, param_snapshot):
     return loaded.img, loaded_param
 
 
-def ai_job_worker(input_queue, result_queue, stop_event, config_dict):
+def ai_job_worker(input_queue, result_queue, stop_event, config_dict, apply_process_nice=True):
     config._config = config_dict
     logging.basicConfig(level=logging.INFO, format="[%(levelname)-7s] %(message)s")
+    if apply_process_nice:
+        apply_ai_job_process_priority()
 
     while not stop_event.is_set():
         try:
@@ -95,8 +166,18 @@ def ai_job_worker(input_queue, result_queue, stop_event, config_dict):
                 image = _read_input_shm(task["shm_name"], task["shape"], task["dtype"])
                 content_key = task.get("content_key")
                 source_signature = task.get("source_signature")
+                loaded_param = task.get("param_snapshot") or {}
             else:
                 image, loaded_param = _load_file_image(task["file_path"], task.get("param_snapshot") or {})
+                if not ai_noise_enabled(loaded_param):
+                    result_queue.put(
+                        {
+                            "job_id": job_id,
+                            "status": AIJobStatus.STALE.value,
+                            "error": "AI-NR disabled before inference",
+                        }
+                    )
+                    continue
                 source_signature = ai_noise_source_signature(task["file_path"], image, loaded_param)
                 content_key = ai_noise_content_key(
                     task["file_path"],
@@ -135,7 +216,7 @@ def start_thread_worker(input_queue, result_queue, stop_event, config_dict):
     worker = threading.Thread(
         target=ai_job_worker,
         name="AIJobWorkerThread",
-        args=(input_queue, result_queue, stop_event, config_dict),
+        args=(input_queue, result_queue, stop_event, config_dict, False),
         daemon=True,
     )
     worker.start()

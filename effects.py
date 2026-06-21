@@ -35,7 +35,7 @@ import params
 import utils.utils as utils
 import utils.aiutils as aiutils
 import macos as device
-from enums import EffectMode, ExecutionMode
+from enums import EffectMode, ExecutionMode, ImageFidelity
 from image_fidelity import heavy_ai_allowed
 
 
@@ -2279,10 +2279,24 @@ class AINoiseReductonEffect(Effect):
             param_hash_async = hash((nr,))
             ai_job_manager = getattr(efconfig, "ai_job_manager", None)
             file_path = getattr(efconfig, "file_path", None)
+            if file_path and param.get("image_fidelity") == ImageFidelity.PREVIEW.value:
+                logging.info(
+                    "AI-NR waiting for FULL_DECODE before inference: file=%s image_fidelity=%s shape=%s",
+                    file_path,
+                    param.get("image_fidelity"),
+                    getattr(img, "shape", None),
+                )
+                if efconfig.layer_status is not None:
+                    from enums import PipelineStatus
+                    efconfig.layer_status = PipelineStatus.PREVIEW
+                self.diff = None
+                self.hash = None
+                return None
             source_signature = None
             if file_path:
                 from cores.ai_job_manager.ai_noise import (
                     ai_noise_content_key,
+                    ai_noise_source_debug_info,
                     ai_noise_source_signature,
                     ai_noise_valid_content_keys,
                 )
@@ -2313,14 +2327,32 @@ class AINoiseReductonEffect(Effect):
                         param["ai_noise_reduction_content_key"] = content_key
                     blended = _ai_noise_blend_raw(raw_stored, img, nr_intensity)
                     if blended is not None:
+                        logging.info("AI-NR reused stored raw result: file=%s content_key=%s", file_path, content_key)
                         self.diff = blended
                         self.hash = render_hash
                         return self.diff
                 else:
+                    logging.info(
+                        "AI-NR discarded stored raw result due to source mismatch: file=%s stored_key=%s valid_keys=%s stored_source=%s current_source=%s raw_shape=%s image_shape=%s current_debug=%s",
+                        file_path,
+                        key_stored,
+                        sorted(valid_content_keys),
+                        param.get("ai_noise_reduction_source_signature"),
+                        source_signature,
+                        getattr(raw_stored, "shape", None),
+                        getattr(img, "shape", None),
+                        ai_noise_source_debug_info(file_path, img),
+                    )
                     param.pop("ai_noise_reduction_result", None)
                     param.pop("ai_noise_reduction_content_key", None)
                     param.pop("ai_noise_reduction_source_signature", None)
             elif raw_stored is not None:
+                logging.info(
+                    "AI-NR discarded stored raw result due to shape mismatch: file=%s stored_shape=%s image_shape=%s",
+                    file_path,
+                    getattr(raw_stored, "shape", None),
+                    getattr(img, "shape", None),
+                )
                 param.pop("ai_noise_reduction_result", None)
                 param.pop("ai_noise_reduction_content_key", None)
                 param.pop("ai_noise_reduction_source_signature", None)
@@ -2335,6 +2367,13 @@ class AINoiseReductonEffect(Effect):
                 from cores.ai_job_manager import merge_ai_noise_result_into_param
 
                 status, raw, content_key, source_signature = ai_job_manager.request_ai_noise(file_path, img, param)
+                logging.info(
+                    "AI-NR job manager request: file=%s status=%s content_key=%s has_raw=%s",
+                    file_path,
+                    getattr(status, "value", status),
+                    content_key,
+                    raw is not None,
+                )
                 if raw is not None:
                     raw = np.asarray(raw, dtype=np.float32)
                     merge_ai_noise_result_into_param(param, raw, content_key, source_signature)

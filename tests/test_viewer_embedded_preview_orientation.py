@@ -28,7 +28,7 @@ class ViewerEmbeddedPreviewOrientationTest(unittest.TestCase):
         decode_source = _load_class_function("ViewerWidget", "_decode_embedded_thumbnail")
         preview_source = _load_class_function("ViewerWidget", "_decode_embedded_preview")
 
-        self.assertIn('_EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF")', source)
+        self.assertIn('_EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF", "OtherImage")', source)
         self.assertIn("for key in _EMBEDDED_PREVIEW_KEYS:", decode_source)
         self.assertIn("PILImageOps.exif_transpose(img)", preview_source)
         self.assertIn("return self._decode_embedded_preview(encoded), key", decode_source)

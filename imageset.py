@@ -269,7 +269,7 @@ class ImageSet:
 
             # exifのプレビューを展開
             preview_base64 = None
-            for key in ('PreviewImage', 'JpgFromRaw', 'PreviewTIFF'):
+            for key in ('PreviewImage', 'JpgFromRaw', 'PreviewTIFF', 'OtherImage'):
                 preview_base64 = exif_data.get(key, None)
                 if preview_base64 is not None:
                     break

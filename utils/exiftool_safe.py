@@ -70,6 +70,8 @@ _UNGROUPED_ALIAS_PRIORITY: dict[str, tuple[str, ...]] = {
     "PreviewImage": ("File:PreviewImage", "IFD0:PreviewImage", "Pentax:PreviewImage"),
     "JpgFromRaw": ("IFD2:JpgFromRaw",),
     "PreviewTIFF": ("IFD0:PreviewTIFF", "IFD1:PreviewTIFF", "SubIFD1:PreviewTIFF"),
+    "OtherImage": ("All:OtherImage", "File:OtherImage", "IFD0:OtherImage", "IFD1:OtherImage", "SubIFD1:OtherImage"),
+    "ThumbnailTIFF": ("All:ThumbnailTIFF", "JFXX:ThumbnailTIFF", "IFD1:ThumbnailTIFF", "IFD0:ThumbnailTIFF", "SubIFD1:ThumbnailTIFF"),
     "WB_GRBLevels": ("FujiIFD:WB_GRBLevels",),
 
     # Rating must prefer XMP over embedded/camera maker tags.
