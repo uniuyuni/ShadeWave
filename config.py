@@ -31,6 +31,10 @@ def init_config(widget):
         'display_output_dither': False,
         'display_output_downscale': True,
         'debug_nan_inf_check': False,
+        # float32 画像を .pmck などへ保存する際の圧縮形式。
+        # 1: Zstd + byte shuffle (互換読み込み用)
+        # 2: radiance_codec exact lossless (default)
+        'image_codec_version': 2,
         # mesh warp (画像 mesh / マスク mesh) の変形手法。
         # 'mls' (default, Moving Least Squares affine: 補間性+局所性、内側シフトなし) |
         # 'thin_plate' (TPS, scipy 仕様で affine 遠方項) |

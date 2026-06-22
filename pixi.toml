@@ -15,6 +15,7 @@ build-macos-app = { cmd = "python scripts/build_macos_app_pyinstaller.py" }
 build-libraw = { cmd = "bash scripts/build_libraw_from_external.sh" }
 # 拡張モジュールのみ再ビルド（ローカル LibRaw は .pixi/libraw-install を参照）
 install-libraw-enhanced = { cmd = "CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip --disable-pip-version-check install -e external/libraw_enhanced --no-build-isolation --force-reinstall --no-deps --no-cache-dir" }
+install-radiance-codec = { cmd = "python -m pip --disable-pip-version-check install -e external/radiance_codec --no-build-isolation --force-reinstall --no-deps --no-cache-dir" }
 install-sam3 = { cmd = "python -m pip install -e external/SAM3" }
 # 初回: LibRaw を取得してビルド → editable インストール（毎回フルビルドしたい場合はこちら）
 setup-libraw-enhanced = { cmd = "bash -c 'set -euo pipefail; bash scripts/build_libraw_from_external.sh && CC=/usr/bin/clang CXX=/usr/bin/clang++ python -m pip --disable-pip-version-check install -e external/libraw_enhanced --no-build-isolation --force-reinstall --no-deps --no-cache-dir'" }

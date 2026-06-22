@@ -306,6 +306,16 @@ def _kivy_pyinstaller_flags() -> list[str]:
     return extra
 
 
+def _radiance_codec_binary_args(root: Path) -> list[str]:
+    lib = root / "external" / "radiance_codec" / "codec" / "build" / "libradiance_codec.dylib"
+    if not lib.is_file():
+        raise FileNotFoundError(
+            "radiance_codec dylib がありません。先に 'pixi run install-radiance-codec' を実行してください: "
+            f"{lib}"
+        )
+    return ["--add-binary", f"{lib}:."]
+
+
 def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> list[str]:
     datas: list[str] = []
 
@@ -402,9 +412,12 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
 
     rth_dir = root / "scripts" / "pyinstaller"
     rth_libintl = rth_dir / "rth_darwin_libintl.py"
+    rth_radiance_codec = rth_dir / "rth_radiance_codec.py"
     rth_torch_mps = rth_dir / "rth_torch_mps_fallback.py"
     if not rth_libintl.is_file():
         print("警告: rth_darwin_libintl がありません:", rth_libintl, file=sys.stderr)
+    if not rth_radiance_codec.is_file():
+        print("警告: rth_radiance_codec がありません:", rth_radiance_codec, file=sys.stderr)
     if not rth_torch_mps.is_file():
         print("警告: rth_torch_mps_fallback がありません:", rth_torch_mps, file=sys.stderr)
 
@@ -420,6 +433,7 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
         "--osx-bundle-identifier",
         bundle_id,
         f"--paths={root}",
+        f"--paths={root / 'external' / 'radiance_codec'}",
         f"--paths={root / 'external' / 'radiance_denoise'}",
         f"--paths={root / 'external' / 'libraw_enhanced'}",
         f"--paths={root / 'external' / 'SAM3'}",
@@ -434,6 +448,8 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # cv2 / lensfunpy の libintl 競合対策（main より前に実行）
     if rth_libintl.is_file():
         args.extend(["--runtime-hook", str(rth_libintl)])
+    if rth_radiance_codec.is_file():
+        args.extend(["--runtime-hook", str(rth_radiance_codec)])
     # SAM3 on MPS may require PyTorch CPU fallback for unsupported fused ops.
     if rth_torch_mps.is_file():
         args.extend(["--runtime-hook", str(rth_torch_mps)])
@@ -443,6 +459,7 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
 
     # Kivy: 公式フック + hiddenimports（collect-all は使用しない）
     args.extend(_kivy_pyinstaller_flags())
+    args.extend(_radiance_codec_binary_args(root))
 
     for h in hidden:
         args.extend(["--hidden-import", h])
@@ -458,6 +475,7 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     # External ML/native packages used through dynamic imports or editable installs.
     args.extend(["--collect-data", "mediapipe"])
     args.extend(["--collect-submodules", "mediapipe.python.solutions"])
+    args.extend(["--hidden-import", "radiance_codec"])
     for package in ("libraw_enhanced", "radiance_denoise", "sam3", "depth_pro", "scunet_coreml", "coremltools"):
         args.extend(["--collect-all", package])
 

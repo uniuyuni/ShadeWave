@@ -17,6 +17,7 @@ Real-ESRGAN/
 NAFNet_AppleSilicon/
 SCUNet_CoreML/
 external/libraw_enhanced/
+external/radiance_codec/
 external/radiance_denoise/
 external/SAM3/
 external/SCUNet/

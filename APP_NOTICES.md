@@ -64,6 +64,7 @@ Common optional projects to verify:
 - SAM3
 - Depth Pro
 - SCUNet
+- radiance_codec
 - radiance_denoise
 - demosaicnet_torch
 

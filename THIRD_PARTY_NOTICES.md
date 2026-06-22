@@ -94,6 +94,7 @@ are redistributed.
 - `external/SAM3`: Meta SAM License.
 - `external/depth_pro`: Apple license in `external/depth_pro/LICENSE`.
 - `external/SCUNet`: Apache-2.0.
+- `external/radiance_codec`: see the upstream project notice.
 - `external/radiance_denoise`: see the upstream project notice.
 - `external/demosaicnet_torch`: research implementation; verify upstream
   license and model-weight terms before redistribution.

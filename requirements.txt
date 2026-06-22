@@ -9,6 +9,7 @@
 # macOS .app ビルド用
 
 -e ./external/libraw_enhanced
+-e ./external/radiance_codec
 -e ./external/SAM3
 -e ./external/radiance_denoise
 

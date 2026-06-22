@@ -160,6 +160,7 @@ ensure_sam3() {
 }
 
 ensure_external_repos() {
+  clone_if_missing https://github.com/uniuyuni/radiance_codec.git "$EXTERNAL_DIR/radiance_codec"
   clone_if_missing https://github.com/uniuyuni/radiance_denoise.git "$EXTERNAL_DIR/radiance_denoise"
   clone_if_missing https://github.com/cszn/SCUNet.git "$EXTERNAL_DIR/SCUNet"
   clone_if_missing https://github.com/gfacciol/demosaicnet_torch.git "$EXTERNAL_DIR/demosaicnet_torch"
@@ -191,7 +192,7 @@ cleanup_requirements_tmp() {
   rm -f "$REQ_NO_LOCAL"
 }
 trap cleanup_requirements_tmp EXIT
-grep -v -E '^[[:space:]]*-e[[:space:]].*external/(libraw_enhanced|depth_pro)' requirements.txt >"$REQ_NO_LOCAL"
+grep -v -E '^[[:space:]]*-e[[:space:]].*external/(libraw_enhanced|radiance_codec|depth_pro)' requirements.txt >"$REQ_NO_LOCAL"
 pixi run python -m pip install -r "$REQ_NO_LOCAL"
 cleanup_requirements_tmp
 trap - EXIT
@@ -216,6 +217,7 @@ pixi run build-libraw
 CC=/usr/bin/clang CXX=/usr/bin/clang++ \
   pixi run python -m pip install -e ./external/libraw_enhanced --no-build-isolation --force-reinstall --no-deps --no-cache-dir
 
+pixi run install-radiance-codec
 pixi run build-denoise-native
 pixi run install-effect-backends
 

@@ -11,8 +11,13 @@ import io
 from contextlib import redirect_stdout, redirect_stderr
 import time
 
-_IMAGE_SERIALIZE_VERSION = 1
+import config
+
+_IMAGE_SERIALIZE_VERSION_ZSTD = 1
+_IMAGE_SERIALIZE_VERSION_RADIANCE_CODEC = 2
+_IMAGE_SERIALIZE_VERSION = _IMAGE_SERIALIZE_VERSION_ZSTD
 _IMAGE_ZSTD_LEVEL = 3
+_IMAGE_RADIANCE_CODEC_PRESET = "quality"
 
 def to_texture(pos, widget):
     # ウィンドウ座標からローカルイメージ座標に変換
@@ -173,13 +178,19 @@ def _byte_unshuffle_array(raw: bytes, dtype: np.dtype, shape) -> np.ndarray:
     return unshuffled.view(dtype).reshape(shape).copy()
 
 
-def convert_image_to_list(img):
-    arr = np.ascontiguousarray(img)
+def _image_codec_version():
+    try:
+        return int(config.get_config("image_codec_version"))
+    except Exception:
+        return _IMAGE_SERIALIZE_VERSION_RADIANCE_CODEC
+
+
+def _convert_image_to_zstd_list(arr):
     raw, shuffle = _byte_shuffle_array(arr)
     buffer = zstd.ZstdCompressor(level=_IMAGE_ZSTD_LEVEL).compress(raw)
 
     return {
-        "version": _IMAGE_SERIALIZE_VERSION,
+        "version": _IMAGE_SERIALIZE_VERSION_ZSTD,
         "codec": "zstd",
         "level": _IMAGE_ZSTD_LEVEL,
         "shuffle": shuffle,
@@ -189,9 +200,40 @@ def convert_image_to_list(img):
     }
 
 
-def convert_image_from_list(save_data):
-    if save_data.get("version") != _IMAGE_SERIALIZE_VERSION:
-        raise ValueError(f"Unsupported image serialization version: {save_data.get('version')}")
+def _convert_image_to_radiance_codec_list(arr):
+    if arr.dtype != np.float32:
+        raise ValueError(f"radiance_codec image serialization requires float32, got {arr.dtype}")
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"radiance_codec image serialization requires 2D or 3D image, got shape {arr.shape}")
+    if arr.ndim == 3 and not (1 <= arr.shape[2] <= 4):
+        raise ValueError(f"radiance_codec image serialization requires 1..4 channels, got shape {arr.shape}")
+
+    import radiance_codec
+
+    buffer = radiance_codec.encode_lossless(arr, preset=_IMAGE_RADIANCE_CODEC_PRESET)
+
+    return {
+        "version": _IMAGE_SERIALIZE_VERSION_RADIANCE_CODEC,
+        "codec": "radiance_codec",
+        "mode": "lossless",
+        "preset": _IMAGE_RADIANCE_CODEC_PRESET,
+        "shape": arr.shape,
+        "dtype": str(arr.dtype),
+        "data": buffer,
+    }
+
+
+def convert_image_to_list(img):
+    arr = np.ascontiguousarray(img)
+    codec_version = _image_codec_version()
+    if codec_version == _IMAGE_SERIALIZE_VERSION_ZSTD:
+        return _convert_image_to_zstd_list(arr)
+    if codec_version == _IMAGE_SERIALIZE_VERSION_RADIANCE_CODEC:
+        return _convert_image_to_radiance_codec_list(arr)
+    raise ValueError(f"Unsupported image serialization version: {codec_version}")
+
+
+def _convert_image_from_zstd_list(save_data):
     if save_data.get("codec") != "zstd":
         raise ValueError(f"Unsupported image serialization codec: {save_data.get('codec')}")
 
@@ -202,6 +244,31 @@ def convert_image_from_list(save_data):
     if save_data.get("shuffle") == "byte":
         return _byte_unshuffle_array(raw, dtype, shape)
     return np.frombuffer(raw, dtype=dtype).reshape(shape).copy()
+
+
+def _convert_image_from_radiance_codec_list(save_data):
+    if save_data.get("codec") != "radiance_codec":
+        raise ValueError(f"Unsupported image serialization codec: {save_data.get('codec')}")
+    if save_data.get("mode") not in (None, "lossless"):
+        raise ValueError(f"Unsupported radiance_codec image serialization mode: {save_data.get('mode')}")
+
+    import radiance_codec
+
+    dtype = np.dtype(save_data.get("dtype", "float32"))
+    if dtype != np.float32:
+        raise ValueError(f"radiance_codec image serialization requires float32, got {dtype}")
+    shape = tuple(save_data["shape"])
+    arr = radiance_codec.decode(save_data["data"])
+    return np.asarray(arr, dtype=np.float32).reshape(shape).copy()
+
+
+def convert_image_from_list(save_data):
+    version = save_data.get("version")
+    if version == _IMAGE_SERIALIZE_VERSION_ZSTD:
+        return _convert_image_from_zstd_list(save_data)
+    if version == _IMAGE_SERIALIZE_VERSION_RADIANCE_CODEC:
+        return _convert_image_from_radiance_codec_list(save_data)
+    raise ValueError(f"Unsupported image serialization version: {version}")
 
 def pack_uint8_to_uint32(uint8_arr):
     """
