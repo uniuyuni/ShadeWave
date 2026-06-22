@@ -5,7 +5,6 @@ from kivy.core.window import Window as KVWindow
 from kivy.properties import StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, DictProperty as KVDictProperty, ListProperty as KVListProperty
 from kivy.uix.popup import Popup as KVPopup
 from kivy.uix.modalview import ModalView as KVModalView
-from kivy.uix.textinput import TextInput as KVTextInput
 from kivy.uix.button import Button as KVButton
 from kivy.metrics import dp as kv_dp
 from functools import partial
@@ -28,49 +27,6 @@ def _available_icc_profiles():
         return export.get_available_icc_profiles()
     except Exception:
         return ['sRGB IEC61966-2.1']
-
-class PresetNameDialog(KVPopup):
-    def __init__(self, save_callback, **kwargs):
-        super().__init__(**kwargs)
-        self.title = "Save Preset"
-        self.size_hint = (None, None)
-        self.ref_width = 280
-        self.ref_height = 120
-        
-        layout = KVBoxLayout(orientation='vertical')
-        #layout.pos_hint = {'left': 0, 'top': 0}
-        layout.ref_layout_padding = 5
-        layout.ref_layout_spacing = 5
-
-        self.preset_name = KVTextInput(multiline=False, size_hint_y=None)
-        self.preset_name.ref_height = 28
-
-        button_layout = KVBoxLayout(orientation='horizontal', size_hint_y=None)
-        button_layout.ref_height = 30
-        button_layout.ref_layout_spacing = 5
-
-        cancel_button = KVButton(text='Cancel', size_hint_y=None)
-        cancel_button.ref_height = 30
-        cancel_button.bind(on_press=lambda x: self.dismiss())
-        button_layout.add_widget(cancel_button)
-
-        save_button = KVButton(text='Save', size_hint_y=None)
-        save_button.ref_height = 30
-        save_button.bind(on_press=lambda x: self.save_preset(save_callback))        
-        button_layout.add_widget(save_button)
-
-        layout.add_widget(self.preset_name)
-        layout.add_widget(button_layout)
-        self.content = layout
-        dialogutils.install_ref_scaling(self)
-
-    def save_preset(self, callback):
-        if self.preset_name.text:
-            callback(self.preset_name.text)
-            self.dismiss()
-        
-    def on_popup_resize(self, instance, value):
-        kvutils.traverse_widget(instance)
 
 class ExportConfirmDialog(KVPopup):
 
@@ -237,10 +193,19 @@ class ExportDialog(KVModalView):
             self.output_path = selection[0].decode()
 
     def save_preset(self):
-        # プリセット保存ダイアログを表示
-        #dialog = ExportConfirmDialog(None, None)
-        dialog = PresetNameDialog(self._save_preset_with_name)
-        dialog.open()
+        try:
+            preset_name = device.prompt_native(
+                message="Preset name",
+                title="Save Preset",
+                default="",
+                show_cancel=True,
+                ascii_only=False,
+            )
+        except Exception as e:
+            logging.warning("export preset name prompt failed: %s", e)
+            return
+        if preset_name:
+            self._save_preset_with_name(preset_name)
 
     def _save_preset_with_name(self, preset_name):
         if preset_name and preset_name != 'Default':

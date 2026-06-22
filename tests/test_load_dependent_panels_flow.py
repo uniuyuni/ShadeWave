@@ -58,6 +58,29 @@ class LoadDependentPanelsFlowTest(unittest.TestCase):
         self.assertNotIn("KVTextInput", dialog_source)
         self.assertNotIn("KVPopup", dialog_source)
 
+    def test_simple_warning_dialog_uses_native_macos_alert(self):
+        source = MAIN_PATH.read_text()
+        node = _load_function_node("show_warning_dialog")
+        dialog_source = ast.get_source_segment(source, node)
+
+        self.assertIn("device.alert(", dialog_source)
+        self.assertIn('title="Warning"', dialog_source)
+        self.assertIn('icon="caution"', dialog_source)
+        self.assertNotIn("KVPopup", dialog_source)
+        self.assertNotIn("KVButton", dialog_source)
+
+    def test_delete_preset_confirmation_uses_native_macos_confirm(self):
+        source = MAIN_PATH.read_text()
+        node = _load_function_node("confirm_delete_preset")
+        dialog_source = ast.get_source_segment(source, node)
+
+        self.assertIn("device.confirm(", dialog_source)
+        self.assertIn('title="Delete Preset"', dialog_source)
+        self.assertIn('ok_label="Delete"', dialog_source)
+        self.assertIn('cancel_label="Cancel"', dialog_source)
+        self.assertIn("os.remove(preset_path)", dialog_source)
+        self.assertNotIn("KVPopup", dialog_source)
+
 
 if __name__ == "__main__":
     unittest.main()

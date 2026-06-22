@@ -125,8 +125,6 @@ if __name__ == '__main__':
     from kivy.graphics.transformation import Matrix as KVMatrix
     from kivy.uix.label import Label as KVLabel
     from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
-    from kivy.uix.button import Button as KVButton
-    from kivy.uix.popup import Popup as KVPopup
     from kivy.uix.textinput import TextInput as KVTextInput
     from kivy.metrics import dp as kvdp
 
@@ -158,7 +156,6 @@ if __name__ == '__main__':
     import pipeline
     import utils.utils as utils
     import utils.kvutils as kvutils
-    import utils.dialogutils as dialogutils
     from utils import perf_trace
     from utils import preset_utils
     from utils import rating_utils
@@ -2543,19 +2540,7 @@ if __name__ == '__main__':
                 )
 
         def show_warning_dialog(self, message):
-            layout = KVBoxLayout(orientation="vertical")
-            layout.ref_layout_padding = 10
-            layout.ref_layout_spacing = 10
-            layout.add_widget(KVLabel(text=message))
-            btn = KVButton(text="OK", size_hint_y=None)
-            btn.ref_height = 40
-            layout.add_widget(btn)
-            popup = KVPopup(title="Warning", content=layout, size_hint=(None, None), auto_dismiss=True)
-            popup.ref_width = 420
-            popup.ref_height = 160
-            dialogutils.install_ref_scaling(popup)
-            btn.bind(on_release=popup.dismiss)
-            popup.open()
+            device.alert(str(message), title="Warning", icon="caution")
 
         def start_add_preset(self):
             if self.mask2_wait_full_load:
@@ -2615,37 +2600,22 @@ if __name__ == '__main__':
         def confirm_delete_preset(self, preset_name, preset_path):
             if self.mask2_wait_full_load:
                 return
-            layout = KVBoxLayout(orientation="vertical")
-            layout.ref_layout_padding = 10
-            layout.ref_layout_spacing = 10
-            layout.add_widget(KVLabel(text=f'Delete preset "{preset_name}"?'))
-            buttons = KVBoxLayout(orientation="horizontal", size_hint_y=None)
-            buttons.ref_height = 40
-            buttons.ref_layout_spacing = 8
-            cancel_btn = KVButton(text="Cancel")
-            delete_btn = KVButton(text="Delete")
-            buttons.add_widget(cancel_btn)
-            buttons.add_widget(delete_btn)
-            layout.add_widget(buttons)
-            popup = KVPopup(title="Delete Preset", content=layout, size_hint=(None, None), auto_dismiss=False)
-            popup.ref_width = 440
-            popup.ref_height = 180
-            dialogutils.install_ref_scaling(popup)
-
-            def _delete(*_args):
-                try:
-                    os.remove(preset_path)
-                except FileNotFoundError:
-                    pass
-                except OSError as e:
-                    self.show_warning_dialog(str(e))
-                    return
-                popup.dismiss()
-                self.refresh_preset_panel()
-
-            cancel_btn.bind(on_release=popup.dismiss)
-            delete_btn.bind(on_release=_delete)
-            popup.open()
+            if not device.confirm(
+                f'Delete preset "{preset_name}"?',
+                title="Delete Preset",
+                ok_label="Delete",
+                cancel_label="Cancel",
+                icon="caution",
+            ):
+                return
+            try:
+                os.remove(preset_path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self.show_warning_dialog(str(e))
+                return
+            self.refresh_preset_panel()
 
         def _log_slow_load_step(self, label, start_time, threshold=0.05):
             elapsed = time.perf_counter() - start_time

@@ -92,14 +92,18 @@ class FileChooser:
 
         selection = None
 
-        if panel.runModal():
-            if self.mode == "save" or not self.multiple:
-                selection = [panel.filename().UTF8String()]
-            else:
-                filename = panel.filenames()
-                selection = [
-                    filename.objectAtIndex_(x).UTF8String()
-                    for x in range(filename.count())]
+        try:
+            _center_window_on_app(panel)
+            if panel.runModal():
+                if self.mode == "save" or not self.multiple:
+                    selection = [panel.filename().UTF8String()]
+                else:
+                    filename = panel.filenames()
+                    selection = [
+                        filename.objectAtIndex_(x).UTF8String()
+                        for x in range(filename.count())]
+        finally:
+            _restore_app_window_focus()
 
         self._handle_selection(selection)
 
@@ -428,6 +432,163 @@ def _escape(s: Any) -> str:
     return str(s).replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _alert_style(icon: str) -> int:
+    styles = {
+        "note": AppKit.NSAlertStyleInformational,
+        "info": AppKit.NSAlertStyleInformational,
+        "informational": AppKit.NSAlertStyleInformational,
+        "caution": AppKit.NSAlertStyleWarning,
+        "warning": AppKit.NSAlertStyleWarning,
+        "stop": AppKit.NSAlertStyleCritical,
+        "critical": AppKit.NSAlertStyleCritical,
+    }
+    return styles.get(str(icon or "").lower(), AppKit.NSAlertStyleInformational)
+
+
+def _app_main_window():
+    try:
+        return get_window(define.APPNAME)
+    except Exception:
+        return None
+
+
+def _center_window_on_app(win) -> bool:
+    parent = _app_main_window()
+    if parent is None or win is None:
+        return False
+    try:
+        parent_frame = parent.frame()
+        frame = win.frame()
+        x = parent_frame.origin.x + (parent_frame.size.width - frame.size.width) / 2.0
+        y = parent_frame.origin.y + (parent_frame.size.height - frame.size.height) / 2.0
+        win.setFrameOrigin_(AppKit.NSMakePoint(x, y))
+        return True
+    except Exception:
+        return False
+
+
+def _restore_app_window_focus() -> bool:
+    app = NSApplication.sharedApplication()
+    try:
+        if not app.isActive():
+            return False
+    except Exception:
+        pass
+    win = _app_main_window()
+    if win is None:
+        return False
+    try:
+        win.makeMainWindow()
+        win.makeKeyAndOrderFront_(None)
+        return True
+    except Exception:
+        return False
+
+
+class _AlertController(NSObject):
+    """Button target for the native app-modal alert window."""
+
+    def choose_(self, sender):
+        NSApplication.sharedApplication().stopModalWithCode_(int(sender.tag()))
+
+
+def _run_native_alert(
+    message: str,
+    title: str,
+    icon: str,
+    buttons: list[str],
+) -> Optional[str]:
+    app = NSApplication.sharedApplication()
+    controller = _AlertController.alloc().init()
+    clean_buttons = [str(button) for button in (buttons or ["OK"])]
+
+    pad = 20.0
+    right_pad = 10.0
+    bottom_pad = 10.0
+    center_gap = 10.0
+    gap = 12.0
+    btn_w, btn_h = 92.0, 32.0
+    icon_w = 34.0
+    content_w = 360.0
+    title_h = 24.0 if title else 0.0
+    message_h = max(44.0, min(180.0, 18.0 * (str(message or "").count("\n") + 2)))
+    button_count = max(1, len(clean_buttons))
+    buttons_w = button_count * btn_w + (button_count - 1) * gap
+    win_w = max(content_w + icon_w + pad + center_gap + right_pad, buttons_w + pad + right_pad)
+    y_btn = bottom_pad
+    y_msg = y_btn + btn_h + gap
+    y_title = y_msg + message_h
+    win_h = y_title + title_h + pad
+
+    win = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        AppKit.NSMakeRect(0.0, 0.0, win_w, win_h),
+        AppKit.NSWindowStyleMaskTitled,
+        AppKit.NSBackingStoreBuffered,
+        False,
+    )
+    win.setTitle_(str(title or ""))
+    content = win.contentView()
+
+    icon = AppKit.NSImageView.alloc().initWithFrame_(
+        AppKit.NSMakeRect(pad, y_msg + max(0.0, message_h - icon_w) / 2.0, icon_w, icon_w)
+    )
+    icon.setImage_(AppKit.NSImage.imageNamed_(AppKit.NSImageNameCaution))
+    content.addSubview_(icon)
+
+    text_x = pad + icon_w + center_gap
+    if title:
+        title_label = AppKit.NSTextField.alloc().initWithFrame_(
+            AppKit.NSMakeRect(text_x, y_title, win_w - text_x - right_pad, title_h)
+        )
+        title_label.setStringValue_(str(title))
+        title_label.setBezeled_(False)
+        title_label.setDrawsBackground_(False)
+        title_label.setEditable_(False)
+        title_label.setSelectable_(False)
+        title_label.setFont_(AppKit.NSFont.boldSystemFontOfSize_(13.0))
+        content.addSubview_(title_label)
+
+    message_label = AppKit.NSTextField.alloc().initWithFrame_(
+        AppKit.NSMakeRect(text_x, y_msg, win_w - text_x - right_pad, message_h)
+    )
+    message_label.setStringValue_(str(message or ""))
+    message_label.setBezeled_(False)
+    message_label.setDrawsBackground_(False)
+    message_label.setEditable_(False)
+    message_label.setSelectable_(False)
+    content.addSubview_(message_label)
+
+    start_x = win_w - right_pad - buttons_w
+    for i, label in enumerate(reversed(clean_buttons)):
+        button = AppKit.NSButton.alloc().initWithFrame_(
+            AppKit.NSMakeRect(start_x + i * (btn_w + gap), y_btn, btn_w, btn_h)
+        )
+        button.setTitle_(label)
+        button.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        button.setTarget_(controller)
+        button.setAction_("choose:")
+        index = clean_buttons.index(label)
+        button.setTag_(index + 1)
+        if index == 0:
+            button.setKeyEquivalent_("\r")
+        if label.lower() in {"cancel", "キャンセル"}:
+            button.setKeyEquivalent_("\x1b")
+        content.addSubview_(button)
+
+    if not _center_window_on_app(win):
+        win.center()
+    win.makeKeyAndOrderFront_(None)
+    try:
+        code = int(app.runModalForWindow_(win))
+    finally:
+        win.orderOut_(None)
+        _restore_app_window_focus()
+    index = code - 1
+    if 0 <= index < len(clean_buttons):
+        return clean_buttons[index]
+    return None
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 公開 API
 # ────────────────────────────────────────────────────────────────────────────
@@ -457,20 +618,10 @@ def alert(
     押されたボタンのラベル。キャンセル時は None。
     """
     buttons = buttons or ["OK"]
-    btn_str = "{" + ", ".join(f'"{_escape(b)}"' for b in buttons) + "}"
-    default_str = f'default button "{_escape(default_button)}"' if default_button else ""
-    sub_str = f'as "{_escape(subtitle)}"' if subtitle else ""
-
-    script = f"""
-    set result to display alert "{_escape(title)}" ¬
-        message "{_escape(message)}" ¬
-        as {icon} ¬
-        buttons {btn_str} ¬
-        {default_str}
-    return button returned of result
-    """
-    raw = _run_applescript(script)
-    return raw if raw else None
+    text = f"{subtitle}\n\n{message}" if subtitle else message
+    if default_button and default_button in buttons:
+        buttons = [default_button] + [button for button in buttons if button != default_button]
+    return _run_native_alert(text, title, icon, buttons)
 
 
 def confirm(
@@ -487,17 +638,12 @@ def confirm(
     -------
     True: OK が押された, False: キャンセル
     """
-    script = f"""
-    set result to display alert "{_escape(title)}" ¬
-        message "{_escape(message)}" ¬
-        as {icon} ¬
-        buttons {{"{_escape(cancel_label)}", "{_escape(ok_label)}"}} ¬
-        default button "{_escape(ok_label)}" ¬
-        cancel button "{_escape(cancel_label)}"
-    return button returned of result
-    """
-    raw = _run_applescript(script)
-    return raw == ok_label
+    return _run_native_alert(
+        message,
+        title,
+        icon,
+        [ok_label, cancel_label],
+    ) == ok_label
 
 
 # prompt_native の ascii_only フラグ。ダイアログは常にメインスレッドで modal（同時に1つ）の
@@ -628,9 +774,9 @@ def prompt_native(
         cancel_btn.setKeyEquivalent_("\x1b")  # Esc
         content.addSubview_(cancel_btn)
 
-    # 表示 + 最前面化 + テキストフィールドにフォーカス + modal
-    win.center()
-    app.activateIgnoringOtherApps_(True)
+    # 表示 + テキストフィールドにフォーカス + modal
+    if not _center_window_on_app(win):
+        win.center()
     win.makeKeyAndOrderFront_(None)
     win.makeFirstResponder_(field)
 
@@ -649,8 +795,11 @@ def prompt_native(
                     [AppKit.NSAllRomanInputSourcesLocaleIdentifier]
                 )
 
-    code = app.runModalForWindow_(win)
-    win.orderOut_(None)
+    try:
+        code = app.runModalForWindow_(win)
+    finally:
+        win.orderOut_(None)
+        _restore_app_window_focus()
 
     if show_cancel and code == 0:
         return None
