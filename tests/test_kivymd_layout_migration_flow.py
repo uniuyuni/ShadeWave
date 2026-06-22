@@ -93,7 +93,7 @@ class KivyMDLayoutMigrationFlowTest(unittest.TestCase):
         self.assertIn("class ThumbnailCard(RecycleDataViewBehavior, PlainCard):", viewer_source)
         self.assertIn("self.bg_color = [0.1, 0.1, 0.1, 1]", viewer_source)
         self.assertIn("self.shadow_color = [0, 0, 0, 0.5]", viewer_source)
-        self.assertIn("self.bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]", viewer_source)
+        self.assertIn("self.bg_color = [0.32, 0.32, 0.32, 1] if value else [0.1, 0.1, 0.1, 1]", viewer_source)
         self.assertIn("class CWColorPreview(PlainCard):", color_picker_source)
         self.assertIn("class CWColorPicker(PlainCard):", color_picker_source)
         self.assertNotIn("md_bg_color", viewer_source)

@@ -8,6 +8,7 @@ import logging
 import traceback
 import sys
 import copy
+import pickle
 import threading
 
 import effects
@@ -17,6 +18,43 @@ import waitinfo
 EFFECT_TIMEOUT_SECONDS = {
     "InpaintEffect": 300.0,
 }
+
+_AI_NOISE_WORKER_ONLY_KEYS = (
+    "ai_noise_reduction_result",
+    "ai_noise_reduction_content_key",
+    "_ai_noise_reduction_result_deferred",
+)
+
+
+def _task_params_for_worker(effect_name, params):
+    if effect_name == "AINoiseReductonEffect" or not isinstance(params, dict):
+        return params
+
+    worker_params = params.copy()
+    for key in _AI_NOISE_WORKER_ONLY_KEYS:
+        worker_params.pop(key, None)
+    return worker_params
+
+
+def _worker_param_summary(params):
+    if not isinstance(params, dict):
+        return f"type={type(params).__name__}"
+    heavy_keys = []
+    for key, value in params.items():
+        if isinstance(value, np.ndarray):
+            heavy_keys.append(f"{key}:{value.shape}/{value.dtype}/{value.nbytes}")
+    return f"keys={len(params)} heavy=[{', '.join(heavy_keys[:6])}]"
+
+
+def _worker_result_image(effect_name, params, target_effect, input_image, diff):
+    if effect_name == "AINoiseReductonEffect":
+        raw_nr = params.get("ai_noise_reduction_result")
+        if raw_nr is not None and isinstance(raw_nr, np.ndarray):
+            return np.ascontiguousarray(raw_nr, dtype=np.float32)
+    if diff is not None:
+        return target_effect.apply_diff(input_image)
+    return input_image
+
 
 def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict, latest_tasks):    
     """
@@ -57,6 +95,15 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                 continue
                 
             task_id, effect_name, shm_name, shape, dtype_str, params, efconfig = task
+            task_started_at = time.monotonic()
+            logging.info(
+                "AsyncWorker task received: task_id=%s effect=%s shape=%s dtype=%s params=%s",
+                task_id,
+                effect_name,
+                shape,
+                dtype_str,
+                _worker_param_summary(params),
+            )
             
             # Check if this task is already cancelled
             if effect_name in latest_tasks:
@@ -71,6 +118,12 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                     # But SHM cleanup needs to happen.
                     
                     # Simplest: Send "cancelled" result so Main can cleanup SHM
+                    logging.info(
+                        "AsyncWorker task cancelled before run: task_id=%s effect=%s latest=%s",
+                        task_id,
+                        effect_name,
+                        latest_tasks.get(effect_name),
+                    )
                     result_queue.put({'task_id': task_id, 'status': 'cancelled'})
                     
                     # Close input SHM
@@ -126,17 +179,14 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                     # Update effect internal state if needed (some effects might need set2param logic equivalent?)
                     # Generally parameters are passed to make_diff.
                     
-                    result_image = None
                     diff = target_effect.make_diff(input_image, params, efconfig)
-                    # AINoise: make_diff が param に SCUNet 素出力を入れる。apply_diff はブレンド済みのため
-                    # メインで raw を保存・upstream キー照合するには素出力を送る。
-                    raw_nr = params.get("ai_noise_reduction_result")
-                    if raw_nr is not None and isinstance(raw_nr, np.ndarray):
-                        result_image = np.ascontiguousarray(raw_nr, dtype=np.float32)
-                    elif diff is not None:
-                        result_image = target_effect.apply_diff(input_image)
-                    else:
-                        result_image = input_image # No change
+                    result_image = _worker_result_image(
+                        effect_name,
+                        params,
+                        target_effect,
+                        input_image,
+                        diff,
+                    )
                     
                     # Write result to NEW shared memory
                     # (We cannot reuse input SHM as it might be read by others or main process?)
@@ -155,6 +205,14 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                         'shape': result_image.shape,
                         'dtype': str(result_image.dtype)
                     })
+                    logging.info(
+                        "AsyncWorker task success: task_id=%s effect=%s elapsed=%.3fs result_shape=%s result_dtype=%s",
+                        task_id,
+                        effect_name,
+                        time.monotonic() - task_started_at,
+                        result_image.shape,
+                        result_image.dtype,
+                    )
                     
                     # Close result_shm in worker (it's still open in main via name)
                     result_shm.close()
@@ -167,7 +225,13 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                 existing_shm.close()
 
             except Exception as e:
-                logging.error(f"Worker processing error: {e}")
+                logging.error(
+                    "Worker processing error: task_id=%s effect=%s elapsed=%.3fs error=%s",
+                    task_id,
+                    effect_name,
+                    time.monotonic() - task_started_at,
+                    e,
+                )
                 traceback.print_exc()
                 result_queue.put({'task_id': task_id, 'status': 'error', 'message': str(e)})
                 
@@ -192,6 +256,42 @@ class AsyncWorker:
             self.latest_tasks = {}
         else:
             self.latest_tasks = multiprocessing.Manager().dict() # effect_name -> task_id
+
+    def _cleanup_active_task(self, task_id):
+        self.active_effects.pop(task_id, None)
+        self.active_started_at.pop(task_id, None)
+
+        to_remove = None
+        for tid, shm in self.active_shms:
+            if tid == task_id:
+                try:
+                    shm.close()
+                    shm.unlink()
+                except Exception as e:
+                    logging.warning("AsyncWorker failed to cleanup input SHM: task_id=%s error=%s", task_id, e)
+                to_remove = (tid, shm)
+                break
+        if to_remove:
+            self.active_shms.remove(to_remove)
+
+    def reap_dead_worker(self):
+        process = getattr(self, "process", None)
+        if getattr(self, "thread_mode", False) or process is None or process.is_alive():
+            return False
+        if not self.active_effects and not self.active_shms:
+            return False
+
+        pending = dict(self.active_effects)
+        logging.error(
+            "AsyncWorker process exited with pending tasks: exitcode=%s pending=%s active_shms=%s",
+            getattr(process, "exitcode", None),
+            pending,
+            len(self.active_shms),
+        )
+        for task_id in list({task_id for task_id, _ in self.active_shms} | set(self.active_effects)):
+            self._cleanup_active_task(task_id)
+        self.process = None
+        return True
 
     def start(self):
         if self.process is None or not self.process.is_alive():
@@ -322,17 +422,37 @@ class AsyncWorker:
         
         # Let's track input SHMs associated with tasks.
         
-        task = (task_id, effect_name, shm.name, image.shape, str(image.dtype), params, efconfig)
-        
-        # Safely copy efconfig to remove non-picklable objects (processor)
-        # Assuming efconfig is a simple object, we can use copy.copy or create new.
-        # But efconfig doesn't have clone method.
-        # We can just manually copy key attributes we need.
         safe_efconfig = copy.copy(efconfig)
         safe_efconfig.processor = None
         
-        task = (task_id, effect_name, shm.name, image.shape, str(image.dtype), params, safe_efconfig)
+        task_params = _task_params_for_worker(effect_name, params)
+        task = (task_id, effect_name, shm.name, image.shape, str(image.dtype), task_params, safe_efconfig)
+        try:
+            pickle.dumps(task, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception as e:
+            try:
+                shm.close()
+                shm.unlink()
+            except Exception:
+                pass
+            logging.exception(
+                "AsyncWorker task is not picklable: task_id=%s effect=%s params=%s error=%s",
+                task_id,
+                effect_name,
+                _worker_param_summary(task_params),
+                e,
+            )
+            raise
         self.input_queue.put(task)
+        logging.info(
+            "AsyncWorker task submitted: task_id=%s effect=%s shape=%s dtype=%s params=%s active_before=%s",
+            task_id,
+            effect_name,
+            image.shape,
+            image.dtype,
+            _worker_param_summary(task_params),
+            len(self.active_effects),
+        )
         
         # Update latest task ID for this effect
         self.latest_tasks[effect_name] = task_id
@@ -391,8 +511,10 @@ class AsyncWorker:
         Returns:
             bool: 処理中のタスクがある場合はTrue
         """
-        # キューに待機中のタスクがあるか、または実行中のタスクがあるかをチェック
-        return not self.input_queue.empty() or len(self.active_shms) > 0
+        self.reap_dead_worker()
+        # multiprocessing.Queue.empty() can report stale state after a worker
+        # consumes a task, so use only the task ids tracked by this process.
+        return len(self.active_shms) > 0 or bool(self.active_effects)
 
     def has_pending_effect(self, effect_name):
         return any(name == effect_name for name in self.active_effects.values())
@@ -428,23 +550,12 @@ class AsyncWorker:
         Yields (task_id, result_image_or_None, error_msg).
         """
         results = []
-        while not self.result_queue.empty():
+        while True:
             try:
                 res = self.result_queue.get_nowait()
                 task_id = res['task_id']
-                self.active_effects.pop(task_id, None)
-                self.active_started_at.pop(task_id, None)
-                
-                # Cleanup Input SHM for this task
-                to_remove = None
-                for tid, shm in self.active_shms:
-                    if tid == task_id:
-                        shm.close()
-                        shm.unlink()
-                        to_remove = (tid, shm)
-                        break
-                if to_remove:
-                    self.active_shms.remove(to_remove)
+                effect_name = self.active_effects.get(task_id)
+                self._cleanup_active_task(task_id)
 
                 if res['status'] == 'success':
                     # Get result from SHM
@@ -460,16 +571,33 @@ class AsyncWorker:
                         r_shm.close()
                         r_shm.unlink() # We own the result SHM now
                         
+                        logging.info(
+                            "AsyncWorker result received: task_id=%s effect=%s shape=%s dtype=%s active_left=%s",
+                            task_id,
+                            effect_name,
+                            shape,
+                            dtype_str,
+                            len(self.active_effects),
+                        )
                         results.append((task_id, img, None))
                     except Exception as e:
                         logging.error(f"Failed to read result SHM: {e}")
                         results.append((task_id, None, str(e)))
                 else:
+                    logging.warning(
+                        "AsyncWorker result status=%s: task_id=%s effect=%s message=%s active_left=%s",
+                        res.get('status'),
+                        task_id,
+                        effect_name,
+                        res.get('message', ''),
+                        len(self.active_effects),
+                    )
                     results.append((task_id, None, res.get('message', 'Unknown error')))
                     
             except Empty:
                 break
         
+        self.reap_dead_worker()
         
         return results
 
@@ -477,7 +605,7 @@ class AsyncWorker:
         """
         Yields messages from the worker process (e.g. waitinfo updates).
         """
-        while not self.msg_queue.empty():
+        while True:
             try:
                 msg = self.msg_queue.get_nowait()
                 yield msg

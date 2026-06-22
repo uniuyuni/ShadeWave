@@ -147,7 +147,7 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         self.assertIn("self.shadow_color = [0, 0, 0, 0.5]", init_source)
         self.assertIn("self.shadow_offset = [0, -3]", init_source)
         self.assertIn("self.shadow_spread = [2, 2]", init_source)
-        self.assertIn("self.bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]", selected_source)
+        self.assertIn("self.bg_color = [0.32, 0.32, 0.32, 1] if value else [0.1, 0.1, 0.1, 1]", selected_source)
         self.assertNotIn("MDCard", source)
         self.assertNotIn("md_bg_color", source)
 

@@ -9,7 +9,7 @@ if __name__ == '__main__':
     _splash_close_screen = None
 
     def _display_startup_splash():
-        if not env_flag(_SPLASH_ENV):
+        if not env_flag(_SPLASH_ENV, default=True):
             return None
         try:
             from splashscreen import display_splash_screen, close_splash_screen
@@ -423,6 +423,7 @@ if __name__ == '__main__':
             # self.async_worker.start() # Start explicitly after config init
             self.processor = pipeline.AsyncPipelineManager(self.async_worker)
             self.ai_job_manager = AIJobManager(viewer_state_callback=self._set_ai_job_viewer_state)
+            effects.bind_ai_job_manager(self.primary_effects, self.ai_job_manager)
             self.ai_sidecar_merge_queue = AISidecarMergeQueue()
             KVClock.schedule_interval(self.update_async_results, 0.1)
             self.pipeline_version = 0
@@ -1289,6 +1290,7 @@ if __name__ == '__main__':
                     distortion_callback=self.distortion_callback,
                     geometry_callback=self.geometry_callback,
                     crop_callback=self.crop_callback)
+                effects.bind_ai_job_manager(self.primary_effects, self.ai_job_manager)
                 self.reset_param(self.primary_param)
                 self.ids['mask_editor2'].clear_mask()
         
@@ -1545,7 +1547,7 @@ if __name__ == '__main__':
                                 effective_is_drag,
                                 effective_allow_stale,
                             )
-                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on, ai_job_manager=self.ai_job_manager)
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on)
                         self._refresh_mask1_editors()
                         logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                         perf_trace.event("draw_image_core.pipeline_done")

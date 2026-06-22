@@ -56,7 +56,6 @@
                 //"PLATYPUS_AI_MASK_EDGE_REFINE": "1",
                 //"PLATYPUS_FORCE_THREAD_LOAD_POOL": "1",
                 //"PLATYPUS_LOW_FREQUENCY_TRANSFER_DOWNSAMPLE": "auto",
-                //"PLATYPUS_DEBUG_PIPELINE_STATS": "1",
                 //"PLATYPUS_DEBUG_MASK_GEOMETRY": "0",
                 //"PLATYPUS_DEBUG_MESH_WARP": "0",
                 //"PLATYPUS_DEBUG_MASK_ZOOM_SYNC": "0",
@@ -113,7 +112,7 @@
                 "host": "127.0.0.1",
                 "port": 5678
             },
-            "console": "integratedTerminal",
+            //"console": "integratedTerminal",
             "justMyCode": false,
             "subProcess": true,
             "preLaunchTask": "platypus: py-spy launch (main.py + debugpy)"

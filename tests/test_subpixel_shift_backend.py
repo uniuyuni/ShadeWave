@@ -69,6 +69,54 @@ class SubpixelShiftBackendTest(unittest.TestCase):
         self.assertIs(actual, expected)
         patched.assert_called_once_with(image)
 
+    def test_native_effect_bypasses_async_worker_copy(self):
+        image = np.ones((6, 8, 3), dtype=np.float32)
+        expected = np.ones_like(image) * np.float32(0.5)
+        effect = SubpixelShiftEffect()
+        param = {
+            "switch_details": True,
+            "subpixel_shift": True,
+        }
+        efconfig = SimpleNamespace(
+            loading_flag=0,
+            processor=object(),
+            effect_hash_snapshot=None,
+            upstream_hash=1,
+            effect_cache={},
+        )
+
+        with (
+            mock.patch.object(subpixel_shift_adapter, "native_enabled", return_value=True),
+            mock.patch.object(subpixel_shift_adapter, "create_enhanced_image", return_value=expected),
+            mock.patch.object(effect, "try_async_execution") as async_mock,
+        ):
+            actual = effect.make_diff(image, param, efconfig)
+
+        self.assertIs(actual, expected)
+        async_mock.assert_not_called()
+
+    def test_effect_recomputes_when_hash_matches_but_diff_was_cleared(self):
+        image = np.ones((6, 8, 3), dtype=np.float32)
+        expected = np.ones_like(image) * np.float32(0.75)
+        effect = SubpixelShiftEffect()
+        param = {
+            "switch_details": True,
+            "subpixel_shift": True,
+        }
+        efconfig = SimpleNamespace(
+            loading_flag=0,
+            processor=None,
+            upstream_hash=7,
+        )
+        effect.hash = hash((hash((True)), efconfig.upstream_hash))
+        effect.diff = None
+
+        with mock.patch.object(subpixel_shift_adapter, "create_enhanced_image", return_value=expected) as patched:
+            actual = effect.make_diff(image, param, efconfig)
+
+        self.assertIs(actual, expected)
+        patched.assert_called_once_with(image)
+
     def test_reference_can_be_forced(self):
         old_value = os.environ.get("PLATYPUS_SUBPIXEL_SHIFT_BACKEND")
         os.environ["PLATYPUS_SUBPIXEL_SHIFT_BACKEND"] = "reference"

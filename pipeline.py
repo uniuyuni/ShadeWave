@@ -532,6 +532,13 @@ class AsyncPipelineManager:
         for key in [key for key in self.cache if key[0] == effect_name]:
             del self.cache[key]
 
+    def _discard_running_results(self):
+        keys = [key for key, value in self.cache.items() if value.get('status') == 'RUNNING']
+        if keys:
+            logger.warning("Discarding async RUNNING cache entries after worker restart: %s", keys)
+        for key in keys:
+            del self.cache[key]
+
     def submit_task(self, effect_name, img, params, efconfig, param_hash):
         key = (effect_name, param_hash)
         
@@ -556,11 +563,13 @@ class AsyncPipelineManager:
         # Check if ANY task for this effect is running (to support cancellation/restart)
         # If we are submitting a NEW task for the same effect, it means parameters changed.
         # We should kill the old one to save resources.
-        for existing_key, info in self.cache.items():
+        restarted_worker = False
+        for existing_key, info in list(self.cache.items()):
             if existing_key[0] == effect_name and info['status'] == 'RUNNING':
                 # Found a running task for this effect but with different params (since we define key by param_hash)
                 # Restart worker to kill it
                 self.worker.restart()
+                restarted_worker = True
                 # Mark as cancelled in cache? 
                 # Actually restart clears the worker, so all running tasks are dead.
                 # We should probably clear 'RUNNING' status in cache?
@@ -568,20 +577,35 @@ class AsyncPipelineManager:
                 # Actually if we restart locally, we should clear the cache of running items.
                 break
         
-        # Also clean cache for running items if we restarted?
-        # For simplicity, just submit.
+        if restarted_worker:
+            self._discard_running_results()
                 
         # Submit
         # We need to ensure 'img' is CPU accessible and ready
         if isinstance(img, np.ndarray):
             # Clone efconfig just in case
             # efconfig object might not be picklable? It seems simple enough.
-            task_id = self.worker.submit_task(effect_name, img, params, efconfig)
+            try:
+                task_id = self.worker.submit_task(effect_name, img, params, efconfig)
+            except Exception:
+                logger.exception(
+                    "Async task submit failed: effect=%s param_hash=%s image_shape=%s",
+                    effect_name,
+                    param_hash,
+                    getattr(img, "shape", None),
+                )
+                return None
             self.cache[key] = {
                 'status': 'RUNNING',
                 'task_id': task_id,
                 'result': None
             }
+            logger.info(
+                "Async task cached as RUNNING: effect=%s param_hash=%s task_id=%s",
+                effect_name,
+                param_hash,
+                task_id,
+            )
             return self.cache[key]
         else:
             logging.error(f"Cannot submit task for {effect_name}: Image is not ndarray")
@@ -601,10 +625,11 @@ class AsyncPipelineManager:
         
         if running:
             self.worker.cancel_effect(effect_name)
+            self._discard_running_results()
             
-        # Also clean cache
+        # Also remove the explicitly cancelled running entries; they may already be gone.
         for k in keys_to_remove:
-            del self.cache[k]
+            self.cache.pop(k, None)
 
     def update_result(self, task_id, result_image):
         # Update cache with result
@@ -613,6 +638,12 @@ class AsyncPipelineManager:
                 value['status'] = 'COMPLETE'
                 value['result'] = result_image
                 return key
+        logger.warning(
+            "Async result had no cache entry: task_id=%s result_shape=%s cache_keys=%s",
+            task_id,
+            getattr(result_image, "shape", None),
+            list(self.cache.keys()),
+        )
         return None
     
     def cancel_all(self, restart_idle=True):
@@ -630,7 +661,7 @@ class AsyncPipelineManager:
         return len(keys)
 
 
-def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False, ai_job_manager=None):
+def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
     pipeline_drag_preview = bool(is_drag) and not preview_full_render_enabled(current_tab)
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
@@ -674,7 +705,6 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag
     efconfig.image_fidelity = primary_param.get('image_fidelity')
-    efconfig.ai_job_manager = ai_job_manager
     efconfig.file_path = primary_param.get('_source_file_path')
     efconfig.upstream_hash = hash(id(img))
     efconfig.pipeline_timing = timing

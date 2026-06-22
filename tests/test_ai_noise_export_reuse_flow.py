@@ -52,6 +52,7 @@ class AINoiseExportReuseFlowTest(unittest.TestCase):
             source.index("if file_path:"),
             source.index("else:\n                content_key = _ai_noise_content_key"),
         )
+        self.assertIn("ai_job_manager = self.ai_job_manager", source)
         self.assertIn("if ai_job_manager is not None and file_path and efconfig.mode != EffectMode.EXPORT:", source)
 
 

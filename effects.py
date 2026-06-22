@@ -226,7 +226,6 @@ class EffectConfig():
         self.full_preview = False
         self.pipeline_layer_label = "primary"
         self.deferred_geometry_transform = None
-        self.ai_job_manager = None
         self.file_path = None
 
 
@@ -373,7 +372,10 @@ class Effect():
                 return True, None # Return None as preview while running
                     
             # Submit new task
-            efconfig.processor.submit_task(self.__class__.__name__, img, param, efconfig, combined_hash)
+            submitted = efconfig.processor.submit_task(self.__class__.__name__, img, param, efconfig, combined_hash)
+            if not submitted:
+                self._last_cache_event = "async_submit_failed"
+                return False, None
             if efconfig.layer_status is not None:
                     efconfig.layer_status = PipelineStatus.PREVIEW
             
@@ -564,13 +566,13 @@ class LensModifierEffect(Effect):
 
     def set2widget(self, widget, param):
         is_cm, is_sd, is_gd = params.get_lensfun_effective_tuple(param)
-        widget.ids["switch_lens_modifier"].enabled = self._get_param(param, 'switch_lens_modifier')
+        widget.ids["switch_lens_modifier"].active = self._get_param(param, 'switch_lens_modifier')
         widget.ids["checkbox_color_modification"].active = is_cm
         widget.ids["checkbox_subpixel_distortion"].active = is_sd
         widget.ids["checkbox_geometry_distortion"].active = is_gd
 
     def set2param(self, param, widget):
-        nsw = widget.ids["switch_lens_modifier"].enabled
+        nsw = widget.ids["switch_lens_modifier"].active
         ncm = widget.ids["checkbox_color_modification"].active
         nsd = widget.ids["checkbox_subpixel_distortion"].active
         ngd = widget.ids["checkbox_geometry_distortion"].active
@@ -591,17 +593,15 @@ class LensModifierEffect(Effect):
         lm = self._get_param(param, 'lens_modifier')
         cd, sd, gd = params.get_lensfun_user_tuple(param)
         if switch_lm == False or lm == False or (cd == False and sd == False and gd == False) or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
+            lensfun_state_before = dict(param.get(params.LENSFUN_STATE_KEY, {}))
             self.diff = None
             self.hash = None
             params.set_lensfun_effective_tuple(param, (cd, sd, gd))
             params.clear_lensfun_capability(param)
+            if self.callback and param.get(params.LENSFUN_STATE_KEY, {}) != lensfun_state_before:
+                self.callback()
         else:
             param_hash = hash((cd, sd, gd))
-
-            # Async Processing Logic
-            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
-            if handled:
-                return result
 
             needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
             if needed:
@@ -650,11 +650,17 @@ class SubpixelShiftEffect(Effect):
             if not needed and self.diff is not None:
                 return self.diff
 
-            handled, result = self.try_async_execution(img, param, efconfig, param_hash)
-            if handled:
-                return result
+            native_ready = (
+                subpixel_shift.native_enabled()
+                and img.ndim == 3
+                and img.shape[-1] == 3
+            )
+            if not native_ready:
+                handled, result = self.try_async_execution(img, param, efconfig, param_hash)
+                if handled:
+                    return result
 
-            if needed:
+            if needed or self.diff is None:
                 self.hash = combined_hash
                 self.diff = subpixel_shift.create_enhanced_image(img)
         
@@ -1098,6 +1104,10 @@ class CrossFilterEffect(Effect):
         SliderBinding('cross_filter_distance', 100, "slider_cross_filter_distance"),
         SliderBinding('cross_filter_random', 50, "slider_cross_filter_random"),
     )
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.execution_mode = ExecutionMode.ASYNC
 
     def make_diff(self, rgb, param, efconfig):
         switch_cross_filter = self._get_param(param, 'switch_cross_filter')
@@ -2250,10 +2260,11 @@ class AINoiseReductonEffect(Effect):
 
     __net = None
     
-    def __init__(self, **kwargs):
+    def __init__(self, ai_job_manager=None, **kwargs):
         super().__init__(**kwargs)
         self.execution_mode = ExecutionMode.ASYNC
         self.keep_async_result = False
+        self.ai_job_manager = ai_job_manager
 
     def get_param_dict(self, param):
         param_dict = super().get_param_dict(param)
@@ -2266,7 +2277,7 @@ class AINoiseReductonEffect(Effect):
         nr_intensity = self._get_param(param, 'ai_noise_reduction_intensity') 
         nr_result = self._get_param(param, 'ai_noise_reduction_result')         
         if switch_ai_noise_reduction == False or nr == False:
-            ai_job_manager = getattr(efconfig, "ai_job_manager", None)
+            ai_job_manager = self.ai_job_manager
             file_path = getattr(efconfig, "file_path", None)
             if ai_job_manager is not None and file_path:
                 ai_job_manager.cancel_path(file_path)
@@ -2285,7 +2296,7 @@ class AINoiseReductonEffect(Effect):
 
             # 強度は render のみ。非同期キャッシュの param_hash には含めない（raw 再利用してブレンドのみ）
             param_hash_async = hash((nr,))
-            ai_job_manager = getattr(efconfig, "ai_job_manager", None)
+            ai_job_manager = self.ai_job_manager
             file_path = getattr(efconfig, "file_path", None)
             if file_path and param.get("image_fidelity") == ImageFidelity.PREVIEW.value:
                 logging.info(
@@ -4670,12 +4681,19 @@ class VignetteEffect(Effect):
         return self.diff
     
 
-def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None):
+def bind_ai_job_manager(effect_sets, ai_job_manager):
+    try:
+        effect_sets[0]['ai_noise_reduction'].ai_job_manager = ai_job_manager
+    except Exception:
+        logging.exception("failed to bind AI job manager to AI-NR effect")
+
+
+def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
     lv0['loading_wait'] = LoadingWaitEffect()
-    lv0['ai_noise_reduction'] = AINoiseReductonEffect()
+    lv0['ai_noise_reduction'] = AINoiseReductonEffect(ai_job_manager=ai_job_manager)
     lv0['remove_chromatic_aberration'] = RemoveChromaticAberrationEffect()
     lv0['lens_modifier'] = LensModifierEffect(lens_modifier_callback=lens_modifier_callback)
     lv0['subpixel_shift'] = SubpixelShiftEffect()

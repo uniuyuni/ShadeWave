@@ -12,7 +12,7 @@ class StartupSplashEnvTests(unittest.TestCase):
         self.assertIn('"PLATYPUS_SPLASH_SCREEN"', source)
         self.assertIn("from utils.envutils import env_flag", source)
         self.assertIn("_splash_close_screen = _display_startup_splash()", source)
-        self.assertIn("if not env_flag(_SPLASH_ENV):", source)
+        self.assertIn("if not env_flag(_SPLASH_ENV, default=True):", source)
         self.assertIn("_close_startup_splash()", source)
 
     def test_old_commented_splash_hooks_are_removed(self):

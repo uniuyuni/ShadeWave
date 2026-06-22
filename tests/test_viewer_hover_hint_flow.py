@@ -67,6 +67,15 @@ class ViewerHoverHintFlowTest(unittest.TestCase):
         self.assertIn("_build_file_hint_text(file_path, exif_data)", source)
         self.assertIn("self._file_hint.hide()", source)
 
+    def test_file_hint_moves_left_when_right_side_would_clamp(self):
+        source = _function_source("show")
+
+        self.assertIn("right_limit = max(left_margin, KVWindow.width - width - left_margin)", source)
+        self.assertIn("x = mouse_pos[0] + gap", source)
+        self.assertIn("if x > right_limit:", source)
+        self.assertIn("x = mouse_pos[0] - width - gap", source)
+        self.assertIn("x = min(max(left_margin, x), right_limit)", source)
+
     def test_scroll_resyncs_hover_under_stationary_mouse(self):
         source = _class_source("ViewerWidget")
 

@@ -188,7 +188,6 @@ class AINRHeadlessStressFlowTest(unittest.TestCase):
             "Ed",
             loading_flag=-1,
             is_drag=is_drag,
-            ai_job_manager=ai_manager,
         )
         assert_float_image(self, out, (self.preview_size, self.preview_size))
         assert_float_image(self, crop, (self.preview_size, self.preview_size))
@@ -204,6 +203,7 @@ class AINRHeadlessStressFlowTest(unittest.TestCase):
             params_by_path = [make_param(img, path) for img, path in zip(images, paths)]
             primary_effects = effects.create_effects()
             ai_manager = QueuedThenCompleteAIManager()
+            effects.bind_ai_job_manager(primary_effects, ai_manager)
 
             for index, (img, param) in enumerate(zip(images, params_by_path)):
                 effects.reeffect_all(primary_effects)

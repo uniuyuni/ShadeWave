@@ -185,9 +185,14 @@ class FileHint(FloatLayout):
         self.label.texture_update()
         height = self.label.texture_size[1] + pad * 2
         self.size = (width, height)
-        x = mouse_pos[0] + kvdp(14)
+        gap = kvdp(14)
+        left_margin = kvdp(4)
+        right_limit = max(left_margin, KVWindow.width - width - left_margin)
+        x = mouse_pos[0] + gap
+        if x > right_limit:
+            x = mouse_pos[0] - width - gap
         y = mouse_pos[1] - height - kvdp(14)
-        x = min(max(kvdp(4), x), max(kvdp(4), KVWindow.width - width - kvdp(4)))
+        x = min(max(left_margin, x), right_limit)
         y = min(max(kvdp(4), y), max(kvdp(4), KVWindow.height - height - kvdp(4)))
         self.pos = (x, y)
         self.opacity = 1
@@ -478,7 +483,7 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         return r
 
     def on_selected(self, instance, value):
-        self.bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]
+        self.bg_color = [0.32, 0.32, 0.32, 1] if value else [0.1, 0.1, 0.1, 1]
 
     def on_thumb_source(self, instance, thumb):
         self._configure_thumbnail_image_widget()

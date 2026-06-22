@@ -1173,7 +1173,7 @@ class AIJobManagerTest(unittest.TestCase):
             def get_result(self, *args, **kwargs):
                 return None
 
-        effect = effects.AINoiseReductonEffect()
+        effect = effects.AINoiseReductonEffect(ai_job_manager=Manager())
         param = {
             "switch_ai_noise_reduction": True,
             "ai_noise_reduction": True,
@@ -1181,7 +1181,6 @@ class AIJobManagerTest(unittest.TestCase):
             "image_fidelity": ImageFidelity.FULL.value,
         }
         efconfig = SimpleNamespace(
-            ai_job_manager=Manager(),
             file_path="/tmp/a.jpg",
             processor=Processor(),
             mode=EffectMode.PREVIEW,
@@ -1203,7 +1202,7 @@ class AIJobManagerTest(unittest.TestCase):
             def request_ai_noise(self, *args, **kwargs):
                 raise AssertionError("AI-NR must not run from RAW preview data")
 
-        effect = effects.AINoiseReductonEffect()
+        effect = effects.AINoiseReductonEffect(ai_job_manager=Manager())
         param = {
             "switch_ai_noise_reduction": True,
             "ai_noise_reduction": True,
@@ -1211,7 +1210,6 @@ class AIJobManagerTest(unittest.TestCase):
             "image_fidelity": ImageFidelity.PREVIEW.value,
         }
         efconfig = SimpleNamespace(
-            ai_job_manager=Manager(),
             file_path="/tmp/a.raw",
             processor=None,
             mode=EffectMode.PREVIEW,
@@ -1248,9 +1246,8 @@ class AIJobManagerTest(unittest.TestCase):
                 def request_ai_noise(self, *args, **kwargs):
                     raise AssertionError("stored raw should be reused")
 
-            effect = effects.AINoiseReductonEffect()
+            effect = effects.AINoiseReductonEffect(ai_job_manager=Manager())
             efconfig = SimpleNamespace(
-                ai_job_manager=Manager(),
                 file_path=path,
                 processor=None,
                 mode=EffectMode.PREVIEW,
