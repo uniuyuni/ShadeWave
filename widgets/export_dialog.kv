@@ -30,7 +30,7 @@
                 ParamLabel:
                     text: 'Preset'
                 
-                Spinner:
+                ParamSpinner:
                     id: preset_spinner
                     text: 'Default'
                     values: list(root.presets.keys())
@@ -49,11 +49,11 @@
                 ParamLabel:
                     text: 'Output Format'
 
-                Spinner:
+                ParamSpinner:
                     text: root.format_value
                     values: ['.JPG', '.TIFF', '.EXR', '.JXL', '.PNG']
                     size_hint_x: None
-                    ref_width: 80
+                    ref_width: 60
                     on_text: root.format_value = self.text
 
                 ParamSlider:
@@ -109,7 +109,7 @@
                 ParamLabel:
                     text: 'Output Size'
 
-                Spinner:
+                ParamSpinner:
                     text: root.size_mode
                     values: ['Original', 'Long Edge', 'Pixels', 'Percentage']
                     size_hint_x: None
@@ -175,7 +175,7 @@
 
                 ParamLabel:
                     text: "ICC Profile"
-                Spinner:
+                ParamSpinner:
                     text: root.icc_profile
                     values: root.icc_profile_values
                     size_hint_x: None
