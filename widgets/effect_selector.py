@@ -9,11 +9,12 @@ from kivy.properties import (
     NumericProperty as KVNumericProperty,
     StringProperty as KVStringProperty,
 )
+from kivy.graphics import Color as KVColor, Rectangle as KVRectangle
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label as KVLabel
 from kivy.uix.popup import Popup as KVPopup
 from kivy.uix.widget import Widget as KVWidget
-from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.label import MDLabel
 
 from utils import dialogutils
 from utils import kvutils
@@ -169,7 +170,19 @@ def _sh(ref):
     return kvutils.dpi_scale_height(ref)
 
 
-class EffectSelectionItem(MDBoxLayout):
+def _install_background(widget, color):
+    with widget.canvas.before:
+        widget._bg_color_instruction = KVColor(*color)
+        widget._bg_rect_instruction = KVRectangle(pos=widget.pos, size=widget.size)
+
+    def _sync_bg_rect(instance, *_args):
+        instance._bg_rect_instruction.pos = instance.pos
+        instance._bg_rect_instruction.size = instance.size
+
+    widget.bind(pos=_sync_bg_rect, size=_sync_bg_rect)
+
+
+class EffectSelectionItem(KVBoxLayout):
     text = KVStringProperty("")
     key = KVStringProperty("")
     is_selected = KVBooleanProperty(False)
@@ -255,36 +268,35 @@ class EffectSelector(KVPopup):
         Clock.schedule_once(lambda _dt: self._sync_sections_height(), 0)
 
     def _create_section(self, title, keys, rows):
-        section = MDBoxLayout(
+        section = KVBoxLayout(
             orientation="vertical",
             size_hint_y=None,
             spacing=0,
-            md_bg_color=_SECTION_BG,
         )
+        _install_background(section, _SECTION_BG)
 
-        header = MDBoxLayout(
+        header = KVBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
             height=_sh(_REF_SECTION_HEADER_H),
             padding=_sw([10, 0, 12, 0]),
             spacing=_sw(8),
-            md_bg_color=_HEADER_BG,
         )
+        _install_background(header, _HEADER_BG)
         header.ref_height = _REF_SECTION_HEADER_H
         header.ref_layout_spacing = 8
         section_checkbox = self._create_checkbox()
         header.add_widget(section_checkbox)
-        header.add_widget(
-            MDLabel(
-                text=title,
-                bold=True,
-                font_size=_sh(_REF_TITLE_FONT),
-                halign="left",
-                valign="middle",
-                theme_text_color="Custom",
-                text_color=_TEXT_HEADER,
-            )
+        title_label = KVLabel(
+            text=title,
+            bold=True,
+            font_size=_sh(_REF_TITLE_FONT),
+            halign="left",
+            valign="middle",
+            color=_TEXT_HEADER,
         )
+        title_label.bind(size=title_label.setter("text_size"))
+        header.add_widget(title_label)
         section.add_widget(header)
 
         grid = GridLayout(
@@ -498,11 +510,11 @@ class EffectSelector(KVPopup):
 
 
 if __name__ == "__main__":
+    from kivy.app import App as KVApp
     from kivy.uix.anchorlayout import AnchorLayout
-    from kivymd.app import MDApp
     from widgets.scaled_button import ScaledButton
 
-    class EffectSelectorDebugApp(MDApp):
+    class EffectSelectorDebugApp(KVApp):
         def build(self):
             root = AnchorLayout()
             btn = ScaledButton(text="Open effect selector", size_hint=(None, None), size=(180, 32))

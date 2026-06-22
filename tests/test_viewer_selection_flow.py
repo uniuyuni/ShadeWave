@@ -54,6 +54,79 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         self.assertIn("pos_hint={\"x\": 0, \"y\": 0}", ai_icon_block)
         self.assertNotIn("_PMCK_ICON_REF_SIZE", ai_icon_block)
 
+    def test_thumbnail_image_layout_is_reset_for_recycled_cards(self):
+        init_source = _load_class_function("ThumbnailCard", "__init__")
+        configure_source = _load_class_function("ThumbnailCard", "_configure_thumbnail_image_widget")
+        refresh_source = _load_class_function("ThumbnailCard", "refresh_view_attrs")
+        thumb_source = _load_class_function("ThumbnailCard", "on_thumb_source")
+
+        self.assertIn("self.loading_spinner = KVImage(", init_source)
+        self.assertIn("fit_mode=\"scale-down\"", init_source)
+        self.assertIn("self.image = ThumbnailImage(", init_source)
+        self.assertIn("max_display_side=_THUMBNAIL_DISPLAY_MAX_SIDE", init_source)
+        self.assertIn("self.loading_spinner, self.image", configure_source)
+        self.assertIn("widget.size_hint = (1, 1)", configure_source)
+        self.assertIn("widget.pos_hint = {\"x\": 0, \"y\": 0}", configure_source)
+        self.assertIn("widget.allow_stretch = False", configure_source)
+        self.assertIn("widget.keep_ratio = True", configure_source)
+        self.assertIn("widget.fit_mode = \"scale-down\"", configure_source)
+        self.assertIn("self.image.max_display_side = _THUMBNAIL_DISPLAY_MAX_SIDE", configure_source)
+        self.assertIn("self._configure_thumbnail_image_widget()", refresh_source)
+        self.assertIn("self._configure_thumbnail_image_widget()", thumb_source)
+
+    def test_thumbnail_image_draws_texture_with_own_capped_scale_down_rect(self):
+        source = _load_class_function("ThumbnailImage", "_update_rect")
+        init_source = _load_class_function("ThumbnailImage", "__init__")
+        layout_source = _load_class_function("ThumbnailCard", "refresh_view_layout")
+        viewer_source = VIEWER_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("_THUMBNAIL_DISPLAY_MAX_SIDE = 120", viewer_source)
+        self.assertIn("max_display_side = KVNumericProperty(_THUMBNAIL_DISPLAY_MAX_SIDE)", viewer_source)
+        self.assertIn("max_display_side=self._update_rect", init_source)
+        self.assertIn("scale = min(1.0, self.width / tex_w, self.height / tex_h)", source)
+        self.assertIn("self.max_display_side / max(tex_w, tex_h)", source)
+        self.assertIn("self._rect.texture = texture", source)
+        self.assertIn("self._rect.size = (draw_w, draw_h)", source)
+        self.assertIn("self.x + (self.width - draw_w) / 2", source)
+        self.assertIn("self.y + (self.height - draw_h) / 2", source)
+        self.assertIn("self.norm_image_size = [draw_w, draw_h]", source)
+        self.assertIn("self.image._update_rect()", layout_source)
+        self.assertIn("self._update_pmck_icon_layout()", layout_source)
+
+    def test_thumbnail_resize_never_upscales_small_embedded_previews(self):
+        source = _load_class_function("ViewerWidget", "_calc_resize_image")
+
+        self.assertIn("scale_factor = min(1.0, max_length / max(width, height))", source)
+        self.assertIn("max(1, int(round(width * scale_factor)))", source)
+        self.assertIn("max(1, int(round(height * scale_factor)))", source)
+        self.assertNotIn("scale_factor = max_length / width", source)
+        self.assertNotIn("scale_factor = max_length / height", source)
+
+    def test_thumbnail_texture_buffer_format_matches_uploaded_float_data(self):
+        source = _load_class_function("ThumbnailCard", "on_thumb_source")
+
+        self.assertIn("bufferfmt='float'", source)
+        self.assertNotIn("bufferfmt='ushort'", source)
+        self.assertIn("self.texture = None", source)
+        self.assertNotIn("self.image.source = ''", source)
+        self.assertIn("self.loading_spinner.opacity = 1.0", source)
+        self.assertIn("self.loading_spinner.opacity = 0.0", source)
+
+    def test_thumbnail_card_uses_plain_card_background(self):
+        source = VIEWER_PATH.read_text(encoding="utf-8")
+        init_source = _load_class_function("ThumbnailCard", "__init__")
+        selected_source = _load_class_function("ThumbnailCard", "on_selected")
+
+        self.assertIn("from widgets.plain_card import PlainCard", source)
+        self.assertIn("class ThumbnailCard(RecycleDataViewBehavior, PlainCard):", source)
+        self.assertIn("self.bg_color = [0.1, 0.1, 0.1, 1]", init_source)
+        self.assertIn("self.shadow_color = [0, 0, 0, 0.5]", init_source)
+        self.assertIn("self.shadow_offset = [0, -3]", init_source)
+        self.assertIn("self.shadow_spread = [2, 2]", init_source)
+        self.assertIn("self.bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]", selected_source)
+        self.assertNotIn("MDCard", source)
+        self.assertNotIn("md_bg_color", source)
+
 
 if __name__ == "__main__":
     unittest.main()

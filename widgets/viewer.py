@@ -9,17 +9,17 @@ import time
 import pyvips
 from PIL import Image as PILImage, ImageOps as PILImageOps
 
-from kivymd.app import MDApp
+from kivy.app import App as KVApp
 from kivy.core.window import Window as KVWindow
-from kivymd.uix.boxlayout import MDBoxLayout
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.uix.image import Image as KVImage
 from kivy.uix.label import Label as KVLabel
 from kivy.uix.floatlayout import FloatLayout
-from kivymd.uix.card import MDCard
+from kivy.uix.widget import Widget as KVWidget
 from kivy.graphics.texture import Texture as KVTexture
 from kivy.graphics import Color as KVColor, Rectangle as KVRectangle
 from kivy.metrics import dp as kvdp
-from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty
+from kivy.properties import Property as KVProperty, StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty, BooleanProperty as KVBooleanProperty, ListProperty as KVListProperty
 from kivy.clock import Clock as KVClock
 from kivy.clock import mainthread as kvmainthread
 from kivy.uix.recycleview import RecycleView
@@ -35,6 +35,7 @@ from utils import rating_utils
 from utils import rating_io
 from utils.exiftool_safe import safe_get_metadata
 from widgets.draggable_widget import DraggableWidget
+from widgets.plain_card import PlainCard
 from widgets.rating_row import RatingRow
 from utils.paths import rel
 from utils import preset_utils
@@ -43,6 +44,7 @@ from utils import preset_utils
 _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
 _THUMBNAIL_CARD_WIDTH_RATIO = 0.7
+_THUMBNAIL_DISPLAY_MAX_SIDE = 120
 _HOVER_HINT_DELAY = 0.7
 _EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF", "OtherImage")
 _EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage", "ThumbnailTIFF")
@@ -193,7 +195,57 @@ class FileHint(FloatLayout):
     def hide(self):
         self.opacity = 0
 
-class ThumbnailCard(RecycleDataViewBehavior, MDCard):
+
+class ThumbnailImage(KVWidget):
+    texture = KVObjectProperty(None, allownone=True, force_dispatch=True)
+    norm_image_size = KVListProperty([0, 0])
+    max_display_side = KVNumericProperty(_THUMBNAIL_DISPLAY_MAX_SIDE)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas:
+            KVColor(1, 1, 1, 1)
+            self._rect = KVRectangle(pos=self.pos, size=(0, 0))
+        self.bind(
+            pos=self._update_rect,
+            size=self._update_rect,
+            texture=self._update_rect,
+            max_display_side=self._update_rect,
+        )
+        KVClock.schedule_once(lambda _dt: self._update_rect(), 0)
+
+    def _update_rect(self, *_args):
+        texture = self.texture
+        if texture is None or self.width <= 0 or self.height <= 0:
+            self._rect.texture = None
+            self._rect.pos = self.pos
+            self._rect.size = (0, 0)
+            self.norm_image_size = [0, 0]
+            return
+
+        tex_w, tex_h = texture.size
+        if tex_w <= 0 or tex_h <= 0:
+            self._rect.texture = None
+            self._rect.pos = self.pos
+            self._rect.size = (0, 0)
+            self.norm_image_size = [0, 0]
+            return
+
+        scale = min(1.0, self.width / tex_w, self.height / tex_h)
+        if self.max_display_side > 0:
+            scale = min(scale, self.max_display_side / max(tex_w, tex_h))
+        draw_w = tex_w * scale
+        draw_h = tex_h * scale
+        self._rect.texture = texture
+        self._rect.size = (draw_w, draw_h)
+        self._rect.pos = (
+            self.x + (self.width - draw_w) / 2,
+            self.y + (self.height - draw_h) / 2,
+        )
+        self.norm_image_size = [draw_w, draw_h]
+
+
+class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
     file_path = KVStringProperty()
     thumb_source = KVObjectProperty(None, allownone=True, force_dispatch=True)
     rating = KVNumericProperty(0)
@@ -212,21 +264,31 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         self.exif_data = None
         self.orientation = 'vertical'
         self.size_hint = (None, 1)
-        self.md_bg_color = [0.1, 0.1, 0.1, 1]
+        self.bg_color = [0.1, 0.1, 0.1, 1]
         self.radius = [5, 5, 5, 5]
-        self.elevation = 2
+        self.shadow_color = [0, 0, 0, 0.5]
+        self.shadow_offset = [0, -3]
+        self.shadow_spread = [2, 2]
 
-        vbox = MDBoxLayout(orientation='vertical')
+        vbox = KVBoxLayout(orientation='vertical')
         vbox.ref_layout_padding = 8
 
         # サムネイル表示
         self.image_box = FloatLayout(size_hint_y=0.62)
-        self.image = KVImage(
+        self.loading_spinner = KVImage(
             source=rel("assets", "spinner.gif"),
             anim_delay=0.02,
             size_hint=(1, 1),
             pos_hint={"x": 0, "y": 0},
+            fit_mode="scale-down",
         )
+        self.image_box.add_widget(self.loading_spinner)
+        self.image = ThumbnailImage(
+            max_display_side=_THUMBNAIL_DISPLAY_MAX_SIDE,
+            size_hint=(1, 1),
+            pos_hint={"x": 0, "y": 0},
+        )
+        self._configure_thumbnail_image_widget()
         self.image_box.add_widget(self.image)
         self.pmck_icon = KVImage(
             source=rel("assets", "pmck_indicator.png"),
@@ -296,6 +358,18 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
 
         self.bind(file_path=self.update_filename)
 
+    def _configure_thumbnail_image_widget(self):
+        for widget in (self.loading_spinner, self.image):
+            widget.size_hint = (1, 1)
+            widget.pos_hint = {"x": 0, "y": 0}
+            if hasattr(widget, "allow_stretch"):
+                widget.allow_stretch = False
+            if hasattr(widget, "keep_ratio"):
+                widget.keep_ratio = True
+            if hasattr(widget, "fit_mode"):
+                widget.fit_mode = "scale-down"
+        self.image.max_display_side = _THUMBNAIL_DISPLAY_MAX_SIDE
+
     def on_parent(self, instance, value):
         if self._bound_layout_parent is not None:
             self._bound_layout_parent.unbind(height=self._set_width)
@@ -346,6 +420,7 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
         """ Catch and handle the view changes """
         self.index = index
         self._set_width()
+        self._configure_thumbnail_image_widget()
         r = super(ThumbnailCard, self).refresh_view_attrs(rv, index, data)
         self.rating_row.rating = int(data.get("rating", 0) or 0)
         self.rating_row.card_index = index
@@ -366,23 +441,26 @@ class ThumbnailCard(RecycleDataViewBehavior, MDCard):
     def refresh_view_layout(self, rv, index, layout, viewport):
         r = super().refresh_view_layout(rv, index, layout, viewport)
         self._set_width()
+        self.image._update_rect()
+        self._update_pmck_icon_layout()
         return r
 
     def on_selected(self, instance, value):
-        self.md_bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]
+        self.bg_color = [0.8, 0.8, 0.8, 1] if value else [0.1, 0.1, 0.1, 1]
 
     def on_thumb_source(self, instance, thumb):
+        self._configure_thumbnail_image_widget()
         if thumb is None:
-            self.image.source = rel("assets", "spinner.gif")
+            self.texture = None
             self.image.texture = None
+            self.loading_spinner.opacity = 1.0
             return
 
-        self.texture = KVTexture.create(size=(thumb.shape[1], thumb.shape[0]), colorfmt='rgb', bufferfmt='ushort')
+        self.texture = KVTexture.create(size=(thumb.shape[1], thumb.shape[0]), colorfmt='rgb', bufferfmt='float')
         self.texture.flip_vertical()
         self.texture.blit_buffer(thumb.tobytes(), colorfmt='rgb', bufferfmt='float')
-        self.image.source = ''
-        #self.image.size = (thumb.shape[1], thumb.shape[0])
         self.image.texture = self.texture
+        self.loading_spinner.opacity = 0.0
         self._update_pmck_icon_layout()
 
     def on_touch_down(self, touch):
@@ -886,7 +964,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
             break
         if found:
             self.refresh_from_data()
-            app = MDApp.get_running_app()
+            app = KVApp.get_running_app()
             main_widget = getattr(app, "main_widget", None) if app else None
             imgset = getattr(main_widget, "imgset", None) if main_widget else None
             if imgset and self._norm_path_key(getattr(imgset, "file_path", "") or "") == want:
@@ -1073,7 +1151,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
     def notify_selection_change(self, index):
         if not self._is_item_ready(index):
             return
-        app = MDApp.get_running_app()
+        app = KVApp.get_running_app()
         if app and hasattr(app, 'main_widget'):
              # Create a mock card object for the newly selected item
              # If multiple items selected, MainWidget usually takes the last one or iterates.
@@ -1184,11 +1262,13 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def _calc_resize_image(self, original_size, max_length):
         width, height = original_size
-        if width > height:
-            scale_factor = max_length / width
-        else:
-            scale_factor = max_length / height
-        return (int(width * scale_factor), int(height * scale_factor))
+        width = max(1, int(width))
+        height = max(1, int(height))
+        scale_factor = min(1.0, max_length / max(width, height))
+        return (
+            max(1, int(round(width * scale_factor))),
+            max(1, int(round(height * scale_factor))),
+        )
 
     def on_scroll_start(self, touch, check_children=True):
         # マウスホイールの縦スクロールを横スクロールに変換する
@@ -1247,6 +1327,6 @@ class ViewerWidget(RecycleView, DraggableWidget):
             target_paths = [self.data[i]["file_path"] for i in sorted(self.selected_indices)]
         else:
             target_paths = [self.data[index]["file_path"]]
-        app = MDApp.get_running_app()
+        app = KVApp.get_running_app()
         if app and hasattr(app, "main_widget"):
             app.main_widget.apply_paths_rating(target_paths, new_r)

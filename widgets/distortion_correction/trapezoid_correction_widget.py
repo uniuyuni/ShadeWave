@@ -1,7 +1,5 @@
 """
 台形補正Widget（水平・垂直）
-
-KivyMDベースのGUIウィジェット
 """
 
 from kivy.uix.floatlayout import FloatLayout as KVFloatLayout

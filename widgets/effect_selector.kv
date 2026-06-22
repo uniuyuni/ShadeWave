@@ -29,15 +29,14 @@
         active: root.is_selected
         on_active: root.is_selected = self.active
 
-    MDLabel:
+    Label:
         id: effect_lbl
         text: root.text
-        font_style: "Caption"
         line_height: 1.0
+        text_size: self.size
         halign: "left"
         valign: "middle"
-        theme_text_color: "Custom"
-        text_color: 0.9, 0.915, 0.94, 1
+        color: 0.9, 0.915, 0.94, 1
         size_hint_x: 1
         size_hint_y: 1
         shorten: True
@@ -53,11 +52,16 @@
     ref_height: 560
     overlay_color: 0, 0, 0, 0.70
 
-    MDBoxLayout:
+    BoxLayout:
         id: main_column
         orientation: "vertical"
         ref_layout_spacing: 8
-        md_bg_color: 0.08, 0.08, 0.11, 1
+        canvas.before:
+            Color:
+                rgba: 0.08, 0.08, 0.11, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
 
         ScrollView:
             id: sections_scroll
@@ -67,7 +71,7 @@
             scroll_type: ['bars', 'content']
             do_scroll_x: False
 
-            MDBoxLayout:
+            BoxLayout:
                 id: sections_box
                 orientation: 'vertical'
                 size_hint_y: None
@@ -86,7 +90,7 @@
                     pos: self.pos
                     size: self.size
 
-        MDBoxLayout:
+        BoxLayout:
             id: footer_bar
             orientation: 'horizontal'
             size_hint_y: None

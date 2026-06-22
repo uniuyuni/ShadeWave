@@ -1,5 +1,5 @@
 
-from kivymd.app import MDApp
+from kivy.app import App as KVApp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.uix.widget import Widget as KVWidget
@@ -296,7 +296,7 @@ class HeadLabel(KVBoxLayout):
     def on_label_touch_down(self, touch):
         if not touch.is_double_tap:
             return False
-        app = MDApp.get_running_app()
+        app = KVApp.get_running_app()
         main_widget = getattr(app, "main_widget", None) if app else None
         if main_widget and hasattr(main_widget, "reset_switch_defaults_for_label"):
             return bool(main_widget.reset_switch_defaults_for_label(self))
@@ -722,12 +722,9 @@ class ParamSlider(KVBoxLayout):
         self.ids['slider'].anchor_value = self.reset_value
         self._sync_bar_to_slider()
     
-class Param_SliderApp(MDApp):
+class Param_SliderApp(KVApp):
     def __init__(self, **kwargs):
         super(Param_SliderApp, self).__init__(**kwargs)
-        
-        self.theme_cls.theme_style = "Dark"
-        self.theme_cls.primary_palette = "Blue"
 
     def build(self): 
         widget = ParamSlider()

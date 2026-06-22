@@ -1,11 +1,7 @@
 
-from kivymd.app import MDApp
-from kivymd.uix.screen import MDScreen
-from kivymd.uix.card import MDCard
-from kivymd.uix.slider import MDSlider
-from kivymd.uix.label import MDLabel
-from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.gridlayout import MDGridLayout
+from kivy.app import App as KVApp
+from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
+from kivy.uix.screenmanager import Screen as KVScreen
 from kivy.properties import ListProperty as KVListProperty, NumericProperty as KVNumericProperty
 from kivy.graphics import Color, Ellipse, Quad
 from kivy.clock import Clock as KVClock
@@ -19,8 +15,10 @@ import threading
 import macos as device
 import widgets.param_slider
 import utils.kvutils as kvutils
+from widgets.plain_card import PlainCard
 
-class CWColorPreview(MDCard):
+
+class CWColorPreview(PlainCard):
     color = KVListProperty([0.5, 0.5, 0.5, 1])
 
     # 親 CWColorPicker への参照（on_kv_post で設定）
@@ -68,7 +66,7 @@ class CWColorPreview(MDCard):
 
         threading.Thread(target=worker, daemon=True).start()
 
-class CWColorWheel(MDBoxLayout):
+class CWColorWheel(KVBoxLayout):
     selected_color = KVListProperty([0, 0.5, 0])
     hue = KVNumericProperty(0)
     lightness = KVNumericProperty(0.5)
@@ -247,7 +245,7 @@ class CWColorWheel(MDBoxLayout):
         # マーカーの位置を更新
         self.update_marker()
 
-class CWColorPicker(MDCard):
+class CWColorPicker(PlainCard):
     current_color = KVListProperty([0, 0.5, 0])
     before_edit = KVNumericProperty(0)
     after_edit = KVNumericProperty(0)
@@ -322,12 +320,11 @@ class CWColorPicker(MDCard):
     def on_slider_after_edit(self):
         self.after_edit += 1
 
-class MainScreen(MDScreen):
+class MainScreen(KVScreen):
     pass
 
-class CustomColorPickerApp(MDApp):
+class CustomColorPickerApp(KVApp):
     def build(self):
-        self.theme_cls.theme_style = "Dark"
         KVBuilder.load_file('color_picker.kv')
         screen = MainScreen()
         screen.add_widget(CWColorPicker(id='color_picker'))

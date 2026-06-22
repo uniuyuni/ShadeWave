@@ -25,7 +25,6 @@ google-genai
 huggingface_hub
 iopath
 kivy
-kivymd
 lensfunpy
 llama-cpp-python
 matplotlib

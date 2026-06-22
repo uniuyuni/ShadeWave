@@ -1,12 +1,9 @@
 
 from kivy.uix.recycleview.views import RecycleDataViewBehavior as KVRecycleDataViewBehavior
 from kivy.properties import StringProperty as KVStringProperty, BooleanProperty as KVBooleanProperty, NumericProperty as KVNumericProperty, ObjectProperty as KVObjectProperty
-from kivymd.uix.expansionpanel import MDExpansionPanel, MDExpansionPanelOneLine
 from kivy.uix.recycleboxlayout import RecycleBoxLayout as KVRecycleBoxLayout
 from kivy.uix.behaviors import FocusBehavior
 from kivy.uix.recycleview.layout import LayoutSelectionBehavior
-from kivymd.uix.list import OneLineListItem as MDOneLineListItem
-from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.core.window import Window as KVWindow
 from utils import dialogutils, kvutils
@@ -43,7 +40,7 @@ def _add_mask_popup_ref_height(item_count):
     except Exception:
         return desired_height
 
-class Mask2CustomHeader(MDExpansionPanelOneLine):
+class Mask2CustomHeader(KVBoxLayout):
     pass
 
 class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):

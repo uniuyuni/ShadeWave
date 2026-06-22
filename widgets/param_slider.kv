@@ -41,10 +41,12 @@
         on_release:
             root.release = not root.release
 
-    MDLabel:
+    Label:
         text: root.text
         font_size: '10pt'
+        text_size: self.size
         halign: 'left'
+        valign: 'middle'
         on_touch_down: root.on_label_touch_down(args[1]) if self.collide_point(*args[1].pos) else False
         #size_hint_y: None
         #ref_height: 18
@@ -54,9 +56,11 @@
     size_hint_y: None
     ref_height: 22
 
-<ParamLabel@MDLabel>:
+<ParamLabel@Label>:
     font_size: '9pt'
+    text_size: self.size
     halign: 'right'
+    valign: 'middle'
     color: 'b0b0b0'
     size_hint_x: None
     ref_width: 100

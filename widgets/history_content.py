@@ -4,8 +4,6 @@ from kivy.properties import StringProperty as KVStringProperty, BooleanProperty 
 from kivy.uix.recycleboxlayout import RecycleBoxLayout as KVRecycleBoxLayout
 from kivy.uix.behaviors import FocusBehavior as KVFocusBehavior
 from kivy.uix.recycleview.layout import LayoutSelectionBehavior as KVLayoutSelectionBehavior
-from kivymd.uix.list import OneLineListItem as MDOneLineListItem
-from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from utils import kvutils
 
@@ -128,16 +126,16 @@ class HistoryContentPanel(KVBoxLayout):
              return {'col1_text': op.name, 'col2_text': '', 'col3_text': '', 'active': is_active}
 
         # matrix操作の場合はバックアップを優先して表示
-        if len(op.diff) <= 1 or op.diff[0][0] is not "matrix":
+        if len(op.diff) <= 1 or op.diff[0][0] != "matrix":
             result = op.diff[0]
         else:
             result = op.diff[1]
         
-        if result[2] is "Reset": # Reset操作の場合
+        if result[2] == "Reset": # Reset操作の場合
             title = "Reset"
             bps = ""
             ups = ""
-        elif result[0] is "crop_rect": # Crop操作の場合
+        elif result[0] == "crop_rect": # Crop操作の場合
             title = "Crop"
             maxsize = max(op.effects_param['original_img_size'])
             bp_w = int((result[1][2] - result[1][0]) * maxsize)
@@ -146,7 +144,7 @@ class HistoryContentPanel(KVBoxLayout):
             up_h = int((result[2][3] - result[2][1]) * maxsize)
             bps = _format_value((bp_w, bp_h))
             ups = _format_value((up_w, up_h))
-        elif result[0] is "flip_mode": # Flip操作の場合
+        elif result[0] == "flip_mode": # Flip操作の場合
 
             def _format_flip(value):
                 if value == 0:

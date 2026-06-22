@@ -28,7 +28,7 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
     print(f"子プロセス {multiprocessing.current_process().name} で読み込まれているモジュール:")
     
     # 特定のモジュールをチェック
-    check_modules = ['matplotlib', 'kivy', 'kivymd']
+    check_modules = ['matplotlib', 'kivy']
     for module in check_modules:
         if any(module in m for m in loaded_modules):
             print(f"  ⚠️ {module} が読み込まれています")

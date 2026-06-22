@@ -1,5 +1,5 @@
 
-from kivymd.app import MDApp
+from kivy.app import App as KVApp
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.properties import StringProperty as KVStringProperty
 
@@ -8,12 +8,9 @@ class MetaInfo(KVBoxLayout):
     value = KVStringProperty()
 
 
-class MetaInfoApp(MDApp):
+class MetaInfoApp(KVApp):
     def __init__(self, **kwargs):
         super(MetaInfoApp, self).__init__(**kwargs)
-        
-        self.theme_cls.theme_style = "Dark"
-        self.theme_cls.primary_palette = "Blue"
 
     def build(self): 
         widget = MetaInfo()
@@ -22,4 +19,3 @@ class MetaInfoApp(MDApp):
 
 if __name__ == '__main__':
     MetaInfoApp().run()
-

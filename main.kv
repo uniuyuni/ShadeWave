@@ -15,10 +15,22 @@
 #:include widgets/compact_switch.kv
 #:include widgets/define.kv
 #:import iconutils utils.iconutils
-#:import md_icons kivymd.icon_definitions.md_icons
+#:import kvutils utils.kvutils
 #:import ScaledButton widgets.scaled_button.ScaledButton
 #:import ScaledToggleButton widgets.scaled_button.ScaledToggleButton
 #:import LongPressScaledButton widgets.scaled_button.LongPressScaledButton
+#:import StableTabbedPanel widgets.stable_tabbed_panel.StableTabbedPanel
+#:import IconTabbedPanelItem widgets.stable_tabbed_panel.IconTabbedPanelItem
+#:import TextTabbedPanelItem widgets.stable_tabbed_panel.TextTabbedPanelItem
+
+<BgBoxLayout@BoxLayout>:
+    bg_color: 0, 0, 0, 0
+    canvas.before:
+        Color:
+            rgba: self.bg_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
 
 <Button>:
     background_down: ''
@@ -94,25 +106,32 @@
     font_size: '9pt'
     #option_cls: "MainSpinnerOption"
 
-<IconTabbedPanelItem@TabbedPanelItem>:
+<IconTabbedPanelItem>:
     icon_source: ''
     text: ''
+    icon_scale: 0.82 if self.text else 0.7
+    size_hint_y: None
+    font_size: max(1, self.height * self.font_scale)
     background_color: tabbed_panel_color
     background_down: tabbed_panel_down
     canvas.after:
         Color:
             rgba: 1, 1, 1, 1
         Rectangle:
-            pos: self.center_x - (self.height * 0.7) / 2, self.center_y - (self.height * 0.7) / 2
-            size: self.height * 0.7, self.height * 0.7
-            source: iconutils.variant_source(root.icon_source, self.height * 0.7)
+            pos: self.center_x - (self.height * self.icon_scale) / 2, self.center_y - (self.height * self.icon_scale) / 2
+            size: self.height * self.icon_scale, self.height * self.icon_scale
+            source: iconutils.variant_source(root.icon_source, self.height * self.icon_scale)
 
-<TextTabbedPanelItem@TabbedPanelItem>:
+<TextTabbedPanelItem>:
     text: ''
+    size_hint_y: None
+    font_size: max(1, self.height * self.font_scale)
+    halign: 'center'
+    valign: 'middle'
     background_color: tabbed_panel_color
     background_down: tabbed_panel_down
 
-<CurveTabbedPanel@TabbedPanel>:
+<CurveTabbedPanel@StableTabbedPanel>:
     size_hint: None, None
     width: self.parent.width
     height: self.parent.width
@@ -122,11 +141,19 @@
     do_default_tab: False
     on_kv_post: self.switch_to(root.tab_list[0]) if root.tab_list else None
 
-<SelectableListItem@OneLineListItem>:
+<SelectableListItem@Button>:
+    size_hint_y: None
+    ref_height: 24
+    height: kvutils.dpi_scale_height(self.ref_height)
+    font_size: '10pt'
+    halign: 'left'
+    valign: 'middle'
+    text_size: self.size
     on_release: app.item_selected(self.text)
 
-<WaitInfo@MDLabel>:
+<WaitInfo@Label>:
     font_size: '10pt'
+    text_size: self.size
     valign: 'middle'
     halign: 'right'
     color: 'b0b0b0'
@@ -139,16 +166,21 @@
     keep_ratio: True
     mipmap: True
     background_normal: 'gray'
-    md_bg_color: 'gray'
 
 <IconToggleButton@ScaledToggleButton>:
+    icon_source: ''
+    text: ''
     bg_color_normal: 0.12, 0.13, 0.16, 0.92
     bg_color_down: 0.13, 0.23, 0.74, 0.95
-    text: md_icons.get(self.icon, "")
-    font_name: "Icons"
     font_size: self.icon_size if self.icon_size else '21dp'
     color: [0.78, 0.78, 0.78, 1] if self.state == 'normal' else [0.1, 0.1, 0.1, 1]
     canvas.after:
+        Color:
+            rgba: [0.78, 0.78, 0.78, 1] if self.state == 'normal' else [0.1, 0.1, 0.1, 1]
+        Rectangle:
+            pos: self.center_x - min(self.width, self.height) * 0.45, self.center_y - min(self.width, self.height) * 0.45
+            size: min(self.width, self.height) * 0.9, min(self.width, self.height) * 0.9
+            source: iconutils.variant_source(root.icon_source, min(self.width, self.height))
         Color:
             rgba: [0.4, 0.4, 0.4, 1] if self.state == 'normal' else [1, 1, 1, 1]
         Line:
@@ -213,7 +245,7 @@
                                 
                                 IconToggleButton:
                                     id: toggle_underexposure
-                                    icon: 'arrow-bottom-left-bold-box'
+                                    icon_source: 'assets/ExposureUnderArrow.png'
                                     font_size: '8pt'
                                     icon_size: '21dp'
                                     size_hint: None, None
@@ -227,7 +259,7 @@
 
                                 IconToggleButton:
                                     id: toggle_overexposure
-                                    icon: 'arrow-top-right-bold-box-outline'
+                                    icon_source: 'assets/ExposureOverArrow.png'
                                     font_size: '8pt'
                                     icon_size: '21dp'
                                     size_hint: None, None
@@ -550,11 +582,12 @@
                         on_release: root.on_auto_adjust_press()
 
 
-                TabbedPanel:
+                StableTabbedPanel:
                     id: effects
                     do_default_tab: False
                     tab_width: self.width * 0.12
-                    tab_height: self.height * 0.05
+                    ref_tab_height: 28
+                    tab_height: kvutils.dpi_scale_height(self.ref_tab_height)
                     # image_loaded==False は loading==True を内包するので 1 条件で十分。
                     disabled: root.image_loaded == False
                     on_current_tab: root.on_current_tab(self.current_tab)
@@ -570,11 +603,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:
@@ -878,7 +911,7 @@
                                     on_active: root.apply_effects_lv(2, 'hls')
                                     on_release: root.end_history_effect_ctrl(2, 'hls')
 
-                                TabbedPanel:
+                                StableTabbedPanel:
                                     size_hint_y: None
                                     ref_height: 22*3+20+22+20+12
                                     ref_tab_width: 25
@@ -888,9 +921,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Red.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
 
                                             HeadLabel:
                                                 id: switch_hls_red
@@ -945,9 +978,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Orange.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
 
                                             HeadLabel:
                                                 id: switch_hls_orange
@@ -1002,9 +1035,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Yellow.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
                                             
                                             HeadLabel:
                                                 id: switch_hls_yellow
@@ -1059,9 +1092,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Green.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
                                             
                                             HeadLabel:
                                                 id: switch_hls_green
@@ -1116,9 +1149,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Cyan.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
                                             
                                             HeadLabel:
                                                 id: switch_hls_cyan
@@ -1173,9 +1206,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Blue.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
                                             
                                             HeadLabel:
                                                 id: switch_hls_blue
@@ -1230,9 +1263,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Purple.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
                                             
                                             HeadLabel:
                                                 id: switch_hls_purple
@@ -1287,9 +1320,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Magenta.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
                                             
                                             HeadLabel:
                                                 id: switch_hls_magenta
@@ -1344,9 +1377,9 @@
                                     IconTabbedPanelItem:
                                         icon_source: 'assets/Skin.png'
 
-                                        MDBoxLayout:
+                                        BgBoxLayout:
                                             orientation: "vertical"
-                                            md_bg_color: dark_color
+                                            bg_color: dark_color
 
                                             HeadLabel:
                                                 id: switch_hls_skin
@@ -1486,7 +1519,7 @@
                                     size_hint_y: None
                                     ref_height: 24
 
-                                    MDGridLayout:
+                                    GridLayout:
                                         size_hint: None, None
                                         ref_width: 256
                                         ref_height: 20
@@ -1531,11 +1564,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:
@@ -1781,11 +1814,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:
@@ -2226,11 +2259,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:
@@ -2784,11 +2817,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
 
@@ -3067,7 +3100,7 @@
                                         size_hint_y: None
                                         ref_height: 24
 
-                                        MDGridLayout:
+                                        GridLayout:
                                             size_hint: None, None
                                             ref_width: 256
                                             ref_height: 20
@@ -3166,11 +3199,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:
@@ -3318,12 +3351,12 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 id: mask2_panel
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:
@@ -3339,7 +3372,7 @@
                                     size_hint_y: None
                                     ref_height: 24
 
-                                    MDGridLayout:
+                                    GridLayout:
                                         size_hint: None, None
                                         ref_width: 256
                                         ref_height: 20
@@ -3627,7 +3660,7 @@
                                     size_hint_y: None
                                     ref_height: 24
 
-                                    MDGridLayout:
+                                    GridLayout:
                                         size_hint: None, None
                                         ref_width: 256
                                         ref_height: 20
@@ -3724,7 +3757,7 @@
                                     size_hint_y: None
                                     ref_height: 44
 
-                                    MDGridLayout:
+                                    GridLayout:
                                         id: grid_mask2_face
                                         size_hint: None, None
                                         cols: 6
@@ -3796,11 +3829,11 @@
                             #bar_width: 10
                             scroll_type: ['content']
 
-                            MDBoxLayout:
+                            BgBoxLayout:
                                 orientation: "vertical"
                                 size_hint_y: None
                                 height: self.minimum_height
-                                md_bg_color: dark_color
+                                bg_color: dark_color
                                 ref_layout_padding: 4
 
                                 HeadLabel:

@@ -3,7 +3,7 @@ from kivy.clock import Clock as KVClock
 from kivy.app import App as KVApp
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
-from kivymd.uix.scrollview import MDScrollView
+from kivy.uix.scrollview import ScrollView as KVScrollView
 #from screeninfo import get_monitors
 import macos as device
 
@@ -102,7 +102,7 @@ def traverse_widget(root):
             #    child.size_hint_max = (dpi_scale_width(child.ref_size_hint_max[0]), dpi_scale_height(child.ref_size_hint_max[1]))
         
         for child in get_entire_widget_tree(root):
-            if isinstance(child, MDScrollView):
+            if isinstance(child, KVScrollView):
                 child.children[0].height = child.children[0].minimum_height
 
 

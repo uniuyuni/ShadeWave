@@ -72,6 +72,23 @@ class ParamSliderEditEventFlowTest(unittest.TestCase):
         self.assertIn("self.reset_values = list(value)", set_reset_source)
         self.assertIn("self.reset_value = self.reset_values[0]", set_reset_source)
 
+    def test_head_label_text_uses_full_row_for_left_alignment(self):
+        source = PARAM_SLIDER_KV_PATH.read_text()
+        head_label_block = source.split("<HeadLabel>:", 1)[1].split("<ParamBoxLayout@BoxLayout>:", 1)[0]
+        label_block = head_label_block.split("Label:", 1)[1]
+
+        self.assertIn("text_size: self.size", label_block)
+        self.assertIn("halign: 'left'", label_block)
+        self.assertIn("valign: 'middle'", label_block)
+
+    def test_param_label_text_uses_full_row_for_alignment(self):
+        source = PARAM_SLIDER_KV_PATH.read_text()
+        label_rule = source.split("<ParamLabel@Label>:", 1)[1].split("<ParamSlider>:", 1)[0]
+
+        self.assertIn("text_size: self.size", label_rule)
+        self.assertIn("halign: 'right'", label_rule)
+        self.assertIn("valign: 'middle'", label_rule)
+
     def test_multi_slider_starts_edit_before_touch_value_update(self):
         source_text = MULTI_SLIDER_PATH.read_text()
         on_touch_down = _load_class_function(MULTI_SLIDER_PATH, "MultiSlider", "on_touch_down")
@@ -82,6 +99,46 @@ class ParamSliderEditEventFlowTest(unittest.TestCase):
             source.index("self.interaction_start_callback()"),
             source.index("self._update_value_from_touch_x(touch.x)"),
         )
+
+    def test_param_slider_uses_custom_multi_slider_not_kivymd_slider(self):
+        param_source = PARAM_SLIDER_PATH.read_text()
+        kv_source = PARAM_SLIDER_KV_PATH.read_text()
+        multi_source = MULTI_SLIDER_PATH.read_text()
+
+        self.assertIn("MultiSlider:", kv_source)
+        self.assertIn("class MultiSlider(Widget):", multi_source)
+        self.assertNotIn("MDSlider", param_source)
+        self.assertNotIn("from kivymd.uix.slider", param_source)
+        self.assertNotIn("MDSlider", kv_source)
+
+    def test_colored_bar_texture_path_is_preserved(self):
+        param_source = PARAM_SLIDER_PATH.read_text()
+        multi_source = MULTI_SLIDER_PATH.read_text()
+        sync_source = ast.get_source_segment(
+            param_source,
+            _load_class_function(PARAM_SLIDER_PATH, "ParamSlider", "_sync_bar_to_slider"),
+        )
+        make_texture_source = ast.get_source_segment(
+            param_source,
+            _load_class_function(PARAM_SLIDER_PATH, "ParamSlider", "_make_bar_texture"),
+        )
+        refresh_source = ast.get_source_segment(
+            multi_source,
+            _load_class_function(MULTI_SLIDER_PATH, "MultiSlider", "_refresh_view"),
+        )
+
+        self.assertIn("\"color_temperature\": _make_color_temperature_bar_texture", param_source)
+        self.assertIn("\"color_tint\": _make_color_tint_bar_texture", param_source)
+        self.assertIn("\"hls_hue_shift\": _make_hls_hue_shift_bar_texture", param_source)
+        self.assertIn("return renderer(self)", make_texture_source)
+        self.assertIn("slider.track_texture = self._make_bar_texture()", sync_source)
+        self.assertIn("slider.track_show_active_overlay = self.bar_show_active_overlay", sync_source)
+        self.assertIn("slider.track_show_anchor_marker = self.bar_show_anchor_marker", sync_source)
+        self.assertIn("has_track_image = self.track_texture is not None or bool(self.track_source)", refresh_source)
+        self.assertIn("RoundedRectangle(texture=self.track_texture", refresh_source)
+        self.assertIn("RoundedRectangle(source=self.track_source", refresh_source)
+        self.assertIn("if self.track_show_active_overlay:", refresh_source)
+        self.assertIn("if self.track_show_anchor_marker and self.draw_from_anchor:", refresh_source)
 
     def test_param_slider_wires_multi_slider_interaction_callbacks(self):
         kv_source = PARAM_SLIDER_KV_PATH.read_text()

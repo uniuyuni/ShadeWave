@@ -342,5 +342,5 @@ class History:
         return info
 
 def get_history_ctrl():
-    from kivymd.app import MDApp
-    return MDApp.get_running_app().main_widget
+    from kivy.app import App as KVApp
+    return KVApp.get_running_app().main_widget

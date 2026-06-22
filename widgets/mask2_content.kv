@@ -22,9 +22,6 @@
             size: self.size
 
     # インデント用スペーサー（BoxLayoutなのでWidgetで代用、またはpaddingで調整）
-    # MDOneLineListItem継承だとBoxLayout的な追加がしにくいので、BoxLayout継承に変更したほうがよかったかも。
-    # python側で MDOneLineListItem を継承しているが、中身をカスタマイズするなら BoxLayout に変えるべき。
-    # ここでは MDOneLineListItem の構造をハックするより BoxLayout で作り直す定義にする。
     
     Label:
         text: root.text
@@ -64,7 +61,6 @@
     orientation: "vertical"
     size_hint_y: None
     height: self.minimum_height
-    disabled: True if root.disabled == True else False
 
     Button:
         text: "Add Layer"

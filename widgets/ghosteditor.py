@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import copy
 
-from kivymd.app import MDApp
+from kivy.app import App as KVApp
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.clock import Clock as KVClock
 from kivy.graphics.texture import Texture as KVTexture
@@ -94,7 +94,7 @@ class GhostEditor(KVBoxLayout):
         texture.blit_buffer(buf.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
         self.image_widget.texture = texture
 
-class GhostEditorApp(MDApp):
+class GhostEditorApp(KVApp):
     def build(self):
         return GhostEditor()
 

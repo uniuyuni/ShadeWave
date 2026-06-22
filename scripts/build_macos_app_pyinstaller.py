@@ -394,7 +394,6 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
             uniq_datas.append(d)
 
     hidden = [
-        "kivymd",
         "PIL",
         "PIL._imagingtk",
         "mediapipe.python.solutions.face_mesh",
@@ -447,10 +446,6 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
 
     for h in hidden:
         args.extend(["--hidden-import", h])
-
-    # KivyMD: サブモジュールとデータ（アセット）
-    args.extend(["--collect-submodules", "kivymd"])
-    args.extend(["--collect-data", "kivymd"])
 
     # pyvips（C 拡張 _libvips とバイナリ）
     args.extend(["--collect-all", "pyvips"])

@@ -66,7 +66,7 @@ class ScaledButtonMixin:
 
 
 class ScaledButton(ScaledButtonMixin, Button):
-    """Fixed-size Kivy button that does not impose KivyMD minimum sizes."""
+    """Fixed-size Kivy button with project styling."""
 
 
 class ScaledToggleButton(ScaledButtonMixin, ToggleButton):

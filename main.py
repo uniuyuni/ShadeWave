@@ -112,8 +112,7 @@ if __name__ == '__main__':
     Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
     Config.set('kivy', 'kivy_clock', 'interrupt')
 
-    from kivymd.app import MDApp
-    from kivymd.uix.boxlayout import MDBoxLayout
+    from kivy.app import App as KVApp
     from kivy.core.window import Window as KVWindow
     from kivy.graphics.texture import Texture as KVTexture
     from kivy.properties import (
@@ -335,7 +334,7 @@ if __name__ == '__main__':
             return True
         return False
 
-    class GeModePanel(MDBoxLayout):
+    class GeModePanel(KVBoxLayout):
         visible = KVBooleanProperty(True)
 
         def on_touch_down(self, touch):
@@ -353,7 +352,7 @@ if __name__ == '__main__':
                 return False
             return super().on_touch_up(touch)
 
-    class MainWidget(MDBoxLayout):
+    class MainWidget(KVBoxLayout):
         # === 読み込み状態フラグの役割分担 ===
         # loading:              on_select 直後 〜 最初のピクセル表示可能 (FIRST_PAINTABLE/RGB_DONE)
         #                       Select/Export 等の「ロード中は触らせたくない」UI を無効化する短期フラグ。
@@ -390,7 +389,7 @@ if __name__ == '__main__':
         PREVIEW_CLICK_MARGIN_DP = 6.0
 
         def __init__(self, cache_system, **kwargs):
-            super(MainWidget, self).__init__(**kwargs)
+            super().__init__(**kwargs)
 
             self.texture = None
             self.preview_sample_image = None
@@ -1099,7 +1098,7 @@ if __name__ == '__main__':
                 self._debug_resize_label.pos = (4, 4)
 
         def on_kv_post(self, *args, **kwargs):
-            super(MainWidget, self).on_kv_post(*args, **kwargs)
+            super().on_kv_post(*args, **kwargs)
 
             self.ids['mask_editor2'].opacity = 0
             self.ids['mask_editor2'].disabled = True
@@ -4583,13 +4582,11 @@ if __name__ == '__main__':
                 self.sync_draw_image_and_crop(self.imgset)
                 return True
         
-    class MainApp(MDApp):
+    class MainApp(KVApp):
         def __init__(self, cache_system, **kwargs):
             super(MainApp, self).__init__(**kwargs)
             
             self.title = define.APPNAME
-            self.theme_cls.theme_style = 'Dark'
-            self.theme_cls.primary_palette = 'Blue'
             
             self.cache_system = cache_system
             self._setup_window_handle = None

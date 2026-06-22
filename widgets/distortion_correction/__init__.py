@@ -1,7 +1,5 @@
 """
 画像歪み補正ウィジェット集
-
-KivyMD用のGUIウィジェット
 """
 
 from .lens_distortion_widget import LensDistortionWidget

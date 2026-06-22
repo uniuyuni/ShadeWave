@@ -4,9 +4,6 @@ from kivy.uix.widget import Widget
 from kivy.properties import BooleanProperty, ColorProperty, ObjectProperty, NumericProperty
 from kivy.animation import Animation
 from kivy.metrics import dp
-from kivymd.app import MDApp
-from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.label import MDLabel
 
 class CompactSwitch(ButtonBehavior, Widget):
     active = BooleanProperty(False)

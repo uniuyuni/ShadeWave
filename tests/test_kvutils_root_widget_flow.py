@@ -26,16 +26,14 @@ def _load_kvutils_with_stubs():
         "kivy.core.window": types.ModuleType("kivy.core.window"),
         "kivy.uix": types.ModuleType("kivy.uix"),
         "kivy.uix.widget": types.ModuleType("kivy.uix.widget"),
-        "kivymd": types.ModuleType("kivymd"),
-        "kivymd.uix": types.ModuleType("kivymd.uix"),
-        "kivymd.uix.scrollview": types.ModuleType("kivymd.uix.scrollview"),
+        "kivy.uix.scrollview": types.ModuleType("kivy.uix.scrollview"),
         "macos": types.ModuleType("macos"),
     }
     stubs["kivy.clock"].Clock = object()
     stubs["kivy.app"].App = FakeApp
     stubs["kivy.core.window"].Window = object()
     stubs["kivy.uix.widget"].Widget = object
-    stubs["kivymd.uix.scrollview"].MDScrollView = type("MDScrollView", (), {})
+    stubs["kivy.uix.scrollview"].ScrollView = type("ScrollView", (), {})
     stubs["macos"].dpi_scale = lambda: 1.0
     stubs["macos"].get_self_window_position = lambda: (0, 0, 0, 0, None)
 

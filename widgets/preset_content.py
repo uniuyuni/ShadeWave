@@ -9,7 +9,7 @@ from kivy.uix.popup import Popup as KVPopup
 from kivy.uix.recycleboxlayout import RecycleBoxLayout as KVRecycleBoxLayout
 from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivy.uix.recycleview.views import RecycleDataViewBehavior
-from kivymd.app import MDApp
+from kivy.app import App as KVApp
 
 from utils import preset_utils
 
@@ -34,14 +34,14 @@ class PresetItem(KVBoxLayout, RecycleDataViewBehavior):
         if super().on_touch_down(touch):
             return True
         if self.collide_point(*touch.pos):
-            app = MDApp.get_running_app()
+            app = KVApp.get_running_app()
             if app and hasattr(app, "main_widget"):
                 app.main_widget.apply_preset_path(self.path)
             return True
         return False
 
     def delete_item(self):
-        app = MDApp.get_running_app()
+        app = KVApp.get_running_app()
         if app and hasattr(app, "main_widget"):
             app.main_widget.confirm_delete_preset(self.text, self.path)
 
@@ -64,7 +64,7 @@ class PresetContentPanel(KVBoxLayout):
         self.ids["preset_rv"].data = data
 
     def add_preset(self):
-        app = MDApp.get_running_app()
+        app = KVApp.get_running_app()
         if app and hasattr(app, "main_widget"):
             app.main_widget.start_add_preset()
 

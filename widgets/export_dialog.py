@@ -1,5 +1,5 @@
 
-from kivymd.app import MDApp
+from kivy.app import App as KVApp
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.core.window import Window as KVWindow
 from kivy.properties import StringProperty as KVStringProperty, NumericProperty as KVNumericProperty, BooleanProperty as KVBooleanProperty, DictProperty as KVDictProperty, ListProperty as KVListProperty
@@ -295,15 +295,12 @@ class DummyWidget(KVBoxLayout):
         super().__init__(**kwargs)
 
         dialog = ExportDialog(None)
-        dialog.bind(pos=MDApp.get_running_app().on_window_resize)
+        dialog.bind(pos=KVApp.get_running_app().on_window_resize)
         dialog.open()
 
-class Export_DialogApp(MDApp):
+class Export_DialogApp(KVApp):
 
     def build(self):
-        self.theme_cls.theme_style = 'Dark'
-        self.theme_cls.primary_palette = 'Blue'
-
         KVWindow.size = (kv_dp(300), kv_dp(200))
 
         return DummyWidget()
