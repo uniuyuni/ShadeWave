@@ -272,8 +272,9 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         self.shadow_offset = [0, -3]
         self.shadow_spread = [2, 2]
 
-        vbox = KVBoxLayout(orientation='vertical')
-        vbox.ref_layout_padding = 8
+        self.content_box = KVBoxLayout(orientation='vertical')
+        self.content_box.ref_layout_padding = 8
+        self._sync_content_box_layout_metrics()
 
         # サムネイル表示
         self.image_box = FloatLayout(size_hint_y=0.62)
@@ -336,7 +337,7 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
             size=self._update_pmck_icon_layout,
             norm_image_size=self._update_pmck_icon_layout,
         )
-        vbox.add_widget(self.image_box)
+        self.content_box.add_widget(self.image_box)
 
         # ファイル名ラベル
         self.label = KVLabel(
@@ -351,12 +352,12 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
             valign="middle",
         )
         self.label.bind(size=self.label.setter("text_size"))
-        vbox.add_widget(self.label)
+        self.content_box.add_widget(self.label)
 
         self.rating_row = RatingRow(size_hint_y=0.1)
-        vbox.add_widget(self.rating_row)
+        self.content_box.add_widget(self.rating_row)
 
-        self.add_widget(vbox)
+        self.add_widget(self.content_box)
 
         self.bind(file_path=self.update_filename)
 
@@ -370,9 +371,19 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
                 self._refresh_thumbnail_geometry, 0.05
             )
 
+    def _sync_content_box_layout_metrics(self):
+        if hasattr(self, "content_box"):
+            self.content_box.padding = kvutils.dpi_scale_width(self.content_box.ref_layout_padding)
+
     def _refresh_thumbnail_geometry(self, *_args):
         self._thumbnail_geometry_event = None
         self._thumbnail_geometry_late_event = None
+        if hasattr(self, "content_box"):
+            self._sync_content_box_layout_metrics()
+            self.do_layout()
+            self.content_box.do_layout()
+        if hasattr(self, "image_box") and hasattr(self.image_box, "do_layout"):
+            self.image_box.do_layout()
         if hasattr(self, "image"):
             self.image._update_rect()
         self._update_pmck_icon_layout()
