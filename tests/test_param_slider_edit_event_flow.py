@@ -7,6 +7,7 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 PARAM_SLIDER_PATH = PROJECT_ROOT / "widgets" / "param_slider.py"
 PARAM_SLIDER_KV_PATH = PROJECT_ROOT / "widgets" / "param_slider.kv"
 MULTI_SLIDER_PATH = PROJECT_ROOT / "widgets" / "multi_slider.py"
+FLOAT_INPUT_PATH = PROJECT_ROOT / "widgets" / "float_input.py"
 
 
 def _load_class_function(path, class_name, function_name):
@@ -157,6 +158,13 @@ class ParamSliderEditEventFlowTest(unittest.TestCase):
         self.assertNotIn("return self.ids['slider'].on_touch_down(touch)", source)
         self.assertNotIn("return self.ids['slider'].on_touch_move(touch)", source)
         self.assertNotIn("return self.ids['slider'].on_touch_up(touch)", source)
+
+    def test_float_input_allows_leading_minus_for_signed_sliders(self):
+        source = FLOAT_INPUT_PATH.read_text()
+
+        self.assertIn("if '-' in substring and old_cursor_pos == 0", source)
+        self.assertIn("not self._internal_value.startswith('-')", source)
+        self.assertIn("s = sign + s", source)
 
     def test_split_mode_places_up_to_three_value_boxes_under_slider(self):
         source = PARAM_SLIDER_KV_PATH.read_text()

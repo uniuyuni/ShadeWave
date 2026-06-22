@@ -3418,7 +3418,7 @@
                                 ParamSlider:
                                     id: slider_mask2_hue_distance
                                     text: "Distance"
-                                    min: 0
+                                    min: -179
                                     max: 179
                                     value: 179
                                     step: 1
@@ -3509,9 +3509,9 @@
                                 ParamSlider:
                                     id: slider_mask2_lum_distance
                                     text: "Distance"
-                                    min: 0
-                                    max: 127
-                                    value: 127
+                                    min: -255
+                                    max: 255
+                                    value: 255
                                     step: 1
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
@@ -3538,9 +3538,9 @@
                                 ParamSlider:
                                     id: slider_mask2_sat_distance
                                     text: "Distance"
-                                    min: 0
-                                    max: 127
-                                    value: 127
+                                    min: -255
+                                    max: 255
+                                    value: 255
                                     step: 1
                                     on_slider: root.apply_effects_lv(3, 'mask2')
                                     on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')

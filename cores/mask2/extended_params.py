@@ -15,6 +15,7 @@ import effects
 import params
 from cores.mask2 import edge_refine
 from cores.mask2 import mask_rasters
+from cores.mask2 import hls_mask
 from cores.mask2.coordinate_context import Mask2CoordinateContext
 
 from cores.mask2.mask_mesh import mesh_cps_hash_key as _mesh_cps_hash_key
@@ -1071,51 +1072,23 @@ def _apply_mask_blur(effects_param, image):
 
 
 def _draw_hls_mask(ctx, effects_param, mask, hls_str, center_tcg):
-    HLS_NUM = {"hue": 0, "lum": 1, "sat": 2}
-    HLS_DIS_MAX = {"hue": 179, "lum": 127, "sat": 127}
-    HLS_MAX = {"hue": 359, "lum": 255, "sat": 255}
-
     crop_image_hls = ctx.get_crop_image_hls()
-    if crop_image_hls is not None:
-        cimg = crop_image_hls[..., HLS_NUM[hls_str]]
-        dmax = HLS_DIS_MAX[hls_str]
-        mmax = HLS_MAX[hls_str]
+    if crop_image_hls is None:
+        return mask
 
-        ndis = effects.Mask2Effect.get_param(effects_param, f"mask2_{hls_str}_distance", dmax)
-        if ndis != dmax:
-            cx, cy = ctx.tcg_to_crop_image(*center_tcg)
-            center_n = cimg[int(cy), int(cx)]
-
-            if hls_str == "hue":
-                _min = (center_n - ndis) % 360
-                _max = (center_n + ndis) % 360
-            else:
-                ndis = ndis / 255
-                _min = (((center_n - ndis) * 65535) % 65536) / 65535
-                _max = (((center_n + ndis) * 65535) % 65536) / 65535
-
-            if _min <= _max:
-                nimg = np.where((cimg < _min) | (_max < cimg), 0, mask)
-            else:
-                nimg = np.where(((cimg < _min) & (_max < cimg)), 0, mask)
-        else:
-            nimg = mask
-
-        _min = effects.Mask2Effect.get_param(effects_param, f"mask2_{hls_str}_min")
-        _max = effects.Mask2Effect.get_param(effects_param, f"mask2_{hls_str}_max", mmax)
-        if _min != 0 or _max != mmax:
-            if hls_str != "hue":
-                _min = _min / mmax
-                _max = _max / mmax
-
-            if _min <= _max:
-                nimg = np.where((cimg < _min) | (_max < cimg), 0, nimg)
-            else:
-                nimg = np.where(((cimg < _min) & (_max < cimg)), 0, nimg)
-
-        return nimg
-
-    return mask
+    cx, cy = ctx.tcg_to_crop_image(*center_tcg)
+    ndis = effects.Mask2Effect.get_param(
+        effects_param,
+        f"mask2_{hls_str}_distance",
+        hls_mask.DISTANCE_FULL[hls_str],
+    )
+    _min = effects.Mask2Effect.get_param(effects_param, f"mask2_{hls_str}_min")
+    _max = effects.Mask2Effect.get_param(
+        effects_param,
+        f"mask2_{hls_str}_max",
+        hls_mask.RANGE_FULL[hls_str],
+    )
+    return hls_mask.apply_channel_mask(crop_image_hls, mask, hls_str, (cx, cy), ndis, _min, _max)
 
 
 def _draw_hue_mask(ctx, effects_param, mask, center_tcg):

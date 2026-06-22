@@ -6,6 +6,8 @@ from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import effects
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EFFECTS_PATH = ROOT / "effects.py"
@@ -35,6 +37,12 @@ class Mask2RangeSliderFlowTest(unittest.TestCase):
         self.assertIn("id: slider_mask2_lum_range", kv)
         self.assertIn("id: slider_mask2_sat_range", kv)
         self.assertIn("slider_values: [0, 255]", kv)
+        self.assertIn("id: slider_mask2_lum_distance", kv)
+        self.assertIn("id: slider_mask2_sat_distance", kv)
+        self.assertIn("min: -179", kv)
+        self.assertIn("min: -255", kv)
+        self.assertIn("max: 255", kv)
+        self.assertIn("value: 255", kv)
         self.assertNotIn("id: slider_mask2_lum_min", kv)
         self.assertNotIn("id: slider_mask2_lum_max", kv)
         self.assertNotIn("id: slider_mask2_sat_min", kv)
@@ -63,6 +71,12 @@ class Mask2RangeSliderFlowTest(unittest.TestCase):
         self.assertIn("param['mask2_sat_max'] = sat_values[-1]", source)
         self.assertNotIn('widget.ids["slider_mask2_sat_min"].value', source)
         self.assertNotIn('widget.ids["slider_mask2_sat_max"].value', source)
+
+    def test_mask2_lum_sat_distance_defaults_cover_full_range(self):
+        defaults = effects.Mask2Effect.get_param_dict({})
+
+        self.assertEqual(defaults["mask2_lum_distance"], 255)
+        self.assertEqual(defaults["mask2_sat_distance"], 255)
 
     def test_color_shortcut_updates_range_values_with_events(self):
         source = _function_source(MAIN_PATH, "set_mask2_hue_range")

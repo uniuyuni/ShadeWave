@@ -17,6 +17,11 @@ class FloatInput(KVTextInput):
         
     def insert_text(self, substring, from_undo=False):
         pat = self.pat
+        old_cursor_pos = self.cursor[0]
+        sign = ''
+        if '-' in substring and old_cursor_pos == 0 and not self._internal_value.startswith('-'):
+            sign = '-'
+
         if '.' in self._internal_value:
             s = re.sub(pat, '', substring)
         else:
@@ -24,9 +29,10 @@ class FloatInput(KVTextInput):
                 re.sub(pat, '', s)
                 for s in substring.split('.', 1)
             )
+        if sign:
+            s = sign + s
         
         # 内部値を更新
-        old_cursor_pos = self.cursor[0]
         cursor_pos = old_cursor_pos
         
         if cursor_pos > len(self._internal_value):

@@ -4202,11 +4202,11 @@ class Mask2Effect(Effect):
             'mask2_hue_min': 0,
             'mask2_hue_max': 359,
             'switch_mask2_lum': True,
-            'mask2_lum_distance': 127,
+            'mask2_lum_distance': 255,
             'mask2_lum_min': 0,
             'mask2_lum_max': 255,
             'switch_mask2_sat': True,
-            'mask2_sat_distance': 127,
+            'mask2_sat_distance': 255,
             'mask2_sat_min': 0,
             'mask2_sat_max': 255,
             'switch_mask2_options': True,
@@ -4511,8 +4511,8 @@ class Mask2Effect(Effect):
         close_space = self._get_param(param, 'mask2_close_space')
         if  (invert == False and dmin == 0 and dmax == 255 and
              hdis == 179 and hmin == 0 and hmax == 359 and
-             ldis == 127 and lmin == 0 and lmax == 255 and
-             sdis == 127 and smin == 0 and smax == 255 and
+             ldis == 255 and lmin == 0 and lmax == 255 and
+             sdis == 255 and smin == 0 and smax == 255 and
              blur == 0):
             self.diff = None
             self.hash = None

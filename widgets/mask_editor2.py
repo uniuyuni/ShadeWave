@@ -36,7 +36,6 @@ from kivy.uix.label import Label as KVLabel
 
 import cores.core as core
 import cores.expand_mask as expand_mask
-import cores.hlsrgb as hlsrgb
 from cores.mask2 import mask_geometry as mask_geometry_mod
 import params
 import effects
@@ -52,6 +51,7 @@ from cores.mask2 import mask_rasters
 from cores.mask2 import edge_refine
 from cores.mask2 import extended_params
 from cores.mask2 import cache_keys
+from cores.mask2 import hls_mask
 
 
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -1123,75 +1123,23 @@ class BaseMask(KVWidget):
         return image
 
     def _draw_hls_mask(self, mask, hls_str):
-        HLS_NUM = {
-            'hue': 0,
-            'lum': 1,
-            'sat': 2,
-        }
-        HLS_DIS_MAX = {
-            'hue': 179,
-            'lum': 127,
-            'sat': 127,
-        }
-        HLS_MAX = {
-            'hue': 359,
-            'lum': 255,
-            'sat': 255,
-        }
-
-        #original_image_hls = self.editor.get_original_image_hls()
         crop_image_hls = self.editor.get_crop_image_hls()
-        #if original_image_hls is not None:            
-        if crop_image_hls is not None:            
-            #oimg = original_image_hls[..., HLS_NUM[hls_str]]
-            cimg = crop_image_hls[..., HLS_NUM[hls_str]]
-            dmax = HLS_DIS_MAX[hls_str]
-            mmax = HLS_MAX[hls_str]
-            
-            ndis = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_distance', dmax)
-            if ndis != dmax:
-                #cx, cy = self.editor.tcg_to_original_image(*self.center)
-                #print(f"point: {cx}, {cy}, {oimg[int(cy), int(cx)]}")
-                #center_n = oimg[int(cy), int(cx)]
-                cx, cy = self.editor.tcg_to_crop_image(*self.center)
-                logging.debug("point: %s, %s, %s", cx, cy, cimg[int(cy), int(cx)])
-                center_n = cimg[int(cy), int(cx)] 
-                
-                if hls_str == 'hue':
-                    # 色相の範囲チェック（0-360の円状ループを考慮）
-                    _min = (center_n - ndis) % 360
-                    _max = (center_n + ndis) % 360
-                else:
-                    ndis = ndis / 255
-                    _min = (((center_n - ndis) * 65535) % 65536) / 65535
-                    _max = (((center_n + ndis) * 65535) % 65536) / 65535
-                
-                if _min <= _max:
-                    # 通常の範囲チェック
-                    nimg = np.where((cimg < _min) | (_max < cimg), 0, mask)
-                else:
-                    # 0をまたぐ場合の範囲チェック
-                    nimg = np.where(((cimg < _min) & (_max < cimg)), 0, mask)
-            else:
-                nimg = mask
-            
-            _min = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_min')
-            _max = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_max', mmax)
-            if _min != 0 or _max != mmax:
-                if hls_str != 'hue':
-                    _min = _min / mmax
-                    _max = _max / mmax
+        if crop_image_hls is None:
+            return mask
 
-                if _min <= _max:
-                    # 通常の範囲チェック
-                    nimg = np.where((cimg < _min) | (_max < cimg), 0, nimg)
-                else:
-                    # 0をまたぐ場合の範囲チェック
-                    nimg = np.where(((cimg < _min) & (_max < cimg)), 0, nimg)
-
-            return nimg
-        
-        return mask
+        cx, cy = self.editor.tcg_to_crop_image(*self.center)
+        ndis = effects.Mask2Effect.get_param(
+            self.effects_param,
+            f'mask2_{hls_str}_distance',
+            hls_mask.DISTANCE_FULL[hls_str],
+        )
+        _min = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_min')
+        _max = effects.Mask2Effect.get_param(
+            self.effects_param,
+            f'mask2_{hls_str}_max',
+            hls_mask.RANGE_FULL[hls_str],
+        )
+        return hls_mask.apply_channel_mask(crop_image_hls, mask, hls_str, (cx, cy), ndis, _min, _max)
 
     def _draw_hue_mask(self, mask):
         switch_mask2_hue = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_hue')
@@ -4430,7 +4378,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     def get_crop_image_hls(self):
         if self.crop_image_hls is None and self.crop_image_rgb is not None:
-            self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
+            self.crop_image_hls = hls_mask.rgb_to_selection_hls(self.crop_image_rgb)
             # Keep the RGB crop alive. Edge-refine and its debug views must use
             # the current zoom crop, even after HLS-based masks have run.
         return self.crop_image_hls
@@ -4440,7 +4388,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     def get_original_image_hls(self):
         if self.original_image_hls is None and self.original_image_rgb is not None:
-            self.original_image_hls = hlsrgb.rgb_to_hlc_gain(self.original_image_rgb)
+            self.original_image_hls = hls_mask.rgb_to_selection_hls(self.original_image_rgb)
         return self.original_image_hls
 
     def set_texture_size(self, tx, ty):

@@ -8,8 +8,8 @@ import numpy as np
 
 import cores.core as core
 import params
-import cores.hlsrgb as hlsrgb
 import macos as device
+from cores.mask2 import hls_mask
 
 
 class Mask2CoordinateContext:
@@ -41,7 +41,7 @@ class Mask2CoordinateContext:
 
     def get_crop_image_hls(self):
         if self.crop_image_hls is None and self.crop_image_rgb is not None:
-            self.crop_image_hls = hlsrgb.rgb_to_hlc_gain(self.crop_image_rgb)
+            self.crop_image_hls = hls_mask.rgb_to_selection_hls(self.crop_image_rgb)
             # Keep the RGB crop alive. Edge-refine and its debug views must use
             # the current zoom crop, even after HLS-based masks have run.
         return self.crop_image_hls
@@ -51,7 +51,7 @@ class Mask2CoordinateContext:
 
     def get_original_image_hls(self):
         if self.original_image_hls is None and self.original_image_rgb is not None:
-            self.original_image_hls = hlsrgb.rgb_to_hlc_gain(self.original_image_rgb)
+            self.original_image_hls = hls_mask.rgb_to_selection_hls(self.original_image_rgb)
         return self.original_image_hls
 
     @property
