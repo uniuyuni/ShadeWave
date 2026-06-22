@@ -257,7 +257,7 @@ Shade Wave 2.22.42
 
 Shade Wave / PLATYPUS は GNU General Public License version 3 or later で公開します。詳細は `LICENSE` を参照してください。
 
-このリポジトリには、`libraw_enhanced` 内の RawTherapee 由来デモザイクコード、LibRaw、Adobe DNG SDK 由来の色温度ヘルパー、Colour Science 互換の色変換コード、SAM3、Depth Pro、SCUNet、radiance_codec、radiance_denoise など、個別条件を持つ外部コードや外部プロジェクトが含まれます。ソース、バイナリ、モデルウェイト、`.app` ビルドを再配布する前に `THIRD_PARTY_NOTICES.md` を確認してください。
+このリポジトリには、`libraw_enhanced` 内の RawTherapee 由来デモザイクコード、LibRaw、Lensfun/lensfunpy、Adobe DNG SDK 由来の色温度ヘルパー、Colour Science 互換の色変換コード、SAM3、Depth Pro、SCUNet、radiance_codec、radiance_denoise など、個別条件を持つ外部コードや外部プロジェクトが含まれます。ソース、バイナリ、モデルウェイト、`.app` ビルドを再配布する前に `THIRD_PARTY_NOTICES.md` を確認してください。
 
 ## リンク
 

@@ -44,6 +44,7 @@ the source for GPL-covered components required to rebuild the distributed app.
 
 - RawTherapee-derived demosaicing code in `external/libraw_enhanced`
 - LibRaw
+- Lensfun and lensfunpy
 - Adobe DNG SDK-derived temperature/tint conversion helpers
 - Colour Science compatible colour conversion code
 - optional external AI and image-processing projects
@@ -83,6 +84,8 @@ inside the bundle, for example:
 - Confirm `define.py` contains the intended release version.
 - Confirm the distributed source revision matches the built app.
 - Include `LICENSE`, `THIRD_PARTY_NOTICES.md`, and DNG SDK license text.
+- Include license terms for bundled `lensfunpy`, `liblensfun`, and Lensfun
+  database files.
 - Include notices for all bundled runtime libraries and codecs.
 - Include license terms for any bundled AI models or optional external projects.
 - Keep Adobe and DNG trademark references factual; do not imply endorsement.

@@ -44,7 +44,7 @@ from utils import preset_utils
 _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
 _THUMBNAIL_CARD_WIDTH_RATIO = 0.7
-_THUMBNAIL_DISPLAY_MAX_SIDE = 120
+_THUMBNAIL_DISPLAY_MAX_SIDE = 240
 _HOVER_HINT_DELAY = 0.7
 _EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF", "OtherImage")
 _EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage", "ThumbnailTIFF")
@@ -261,6 +261,8 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         super().__init__(**kwargs)
 
         self._bound_layout_parent = None
+        self._thumbnail_geometry_event = None
+        self._thumbnail_geometry_late_event = None
         self.exif_data = None
         self.orientation = 'vertical'
         self.size_hint = (None, 1)
@@ -358,6 +360,23 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
 
         self.bind(file_path=self.update_filename)
 
+    def _schedule_thumbnail_geometry_refresh(self):
+        if self._thumbnail_geometry_event is None:
+            self._thumbnail_geometry_event = KVClock.schedule_once(
+                self._refresh_thumbnail_geometry, 0
+            )
+        if self._thumbnail_geometry_late_event is None:
+            self._thumbnail_geometry_late_event = KVClock.schedule_once(
+                self._refresh_thumbnail_geometry, 0.05
+            )
+
+    def _refresh_thumbnail_geometry(self, *_args):
+        self._thumbnail_geometry_event = None
+        self._thumbnail_geometry_late_event = None
+        if hasattr(self, "image"):
+            self.image._update_rect()
+        self._update_pmck_icon_layout()
+
     def _configure_thumbnail_image_widget(self):
         for widget in (self.loading_spinner, self.image):
             widget.size_hint = (1, 1)
@@ -436,6 +455,7 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         self.ai_job_progress_label.text = self.ai_job_progress
         self.ai_job_progress_label.opacity = 1.0 if self.ai_job_state == "running" and self.ai_job_progress else 0.0
         self._update_pmck_icon_layout()
+        self._schedule_thumbnail_geometry_refresh()
         return r
 
     def refresh_view_layout(self, rv, index, layout, viewport):
@@ -443,6 +463,7 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         self._set_width()
         self.image._update_rect()
         self._update_pmck_icon_layout()
+        self._schedule_thumbnail_geometry_refresh()
         return r
 
     def on_selected(self, instance, value):
@@ -462,6 +483,7 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         self.image.texture = self.texture
         self.loading_spinner.opacity = 0.0
         self._update_pmck_icon_layout()
+        self._schedule_thumbnail_geometry_refresh()
 
     def on_touch_down(self, touch):
         # 子（星スロット）へ先に伝播。ここで丸呑みするとタッチが RatingRow に届かない。

@@ -17,11 +17,26 @@ class LicenseNoticeFlowTest(unittest.TestCase):
 
         self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text)
         self.assertIn("Version 3", license_text)
-        for required in ("RawTherapee", "Adobe DNG SDK", "Colour Science", "LibRaw"):
+        for required in ("RawTherapee", "Adobe DNG SDK", "Colour Science", "LibRaw", "Lensfun", "lensfunpy"):
             self.assertIn(required, notices)
         self.assertIn("GPL-3.0-or-later", app_distribution_notices)
         self.assertIn("THIRD_PARTY_NOTICES.md", app_distribution_notices)
         self.assertIn("licenses/DNG_SDK_LICENSE.txt", app_distribution_notices)
+        self.assertIn("lensfunpy", app_distribution_notices)
+
+    def test_lensfun_notice_declares_wrapper_and_native_library_terms(self):
+        notices = read_text("THIRD_PARTY_NOTICES.md")
+        readme = read_text("README.md")
+        readme_ja = read_text("README_JA.md")
+
+        self.assertIn("lensfunpy", notices)
+        self.assertIn("MIT License", notices)
+        self.assertIn("Lensfun", notices)
+        self.assertIn("LGPL-3.0-or-later", notices)
+        self.assertIn("https://github.com/letmaik/lensfunpy", notices)
+        self.assertIn("https://github.com/lensfun/lensfun", notices)
+        self.assertIn("Lensfun/lensfunpy", readme)
+        self.assertIn("Lensfun/lensfunpy", readme_ja)
 
     def test_libraw_enhanced_declares_gpl_3_or_later(self):
         pyproject = read_text("external/libraw_enhanced/pyproject.toml")

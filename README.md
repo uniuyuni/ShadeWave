@@ -257,7 +257,7 @@ The active pixi environment targets `osx-arm64` and Python `>=3.11.13,<3.12`.
 
 Shade Wave / PLATYPUS is licensed under the GNU General Public License version 3 or later. See `LICENSE`.
 
-The repository includes and integrates third-party code and optional external projects with their own terms, including RawTherapee-derived demosaicing code in `libraw_enhanced`, LibRaw, Adobe DNG SDK-derived temperature helpers, Colour Science-compatible colour conversion code, SAM3, Depth Pro, SCUNet, radiance_codec, and radiance_denoise. See `THIRD_PARTY_NOTICES.md` before redistributing source, binaries, model weights, or packaged `.app` builds.
+The repository includes and integrates third-party code and optional external projects with their own terms, including RawTherapee-derived demosaicing code in `libraw_enhanced`, LibRaw, Lensfun/lensfunpy, Adobe DNG SDK-derived temperature helpers, Colour Science-compatible colour conversion code, SAM3, Depth Pro, SCUNet, radiance_codec, and radiance_denoise. See `THIRD_PARTY_NOTICES.md` before redistributing source, binaries, model weights, or packaged `.app` builds.
 
 ## Links
 

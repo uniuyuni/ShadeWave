@@ -73,6 +73,22 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         self.assertIn("self.image.max_display_side = _THUMBNAIL_DISPLAY_MAX_SIDE", configure_source)
         self.assertIn("self._configure_thumbnail_image_widget()", refresh_source)
         self.assertIn("self._configure_thumbnail_image_widget()", thumb_source)
+        self.assertIn("self._schedule_thumbnail_geometry_refresh()", refresh_source)
+        self.assertIn("self._schedule_thumbnail_geometry_refresh()", thumb_source)
+
+    def test_thumbnail_geometry_refresh_is_deferred_after_recycle_layout(self):
+        init_source = _load_class_function("ThumbnailCard", "__init__")
+        schedule_source = _load_class_function("ThumbnailCard", "_schedule_thumbnail_geometry_refresh")
+        refresh_source = _load_class_function("ThumbnailCard", "_refresh_thumbnail_geometry")
+        layout_source = _load_class_function("ThumbnailCard", "refresh_view_layout")
+
+        self.assertIn("self._thumbnail_geometry_event = None", init_source)
+        self.assertIn("self._thumbnail_geometry_late_event = None", init_source)
+        self.assertIn("KVClock.schedule_once(", schedule_source)
+        self.assertIn("self._refresh_thumbnail_geometry, 0.05", schedule_source)
+        self.assertIn("self.image._update_rect()", refresh_source)
+        self.assertIn("self._update_pmck_icon_layout()", refresh_source)
+        self.assertIn("self._schedule_thumbnail_geometry_refresh()", layout_source)
 
     def test_thumbnail_image_draws_texture_with_own_capped_scale_down_rect(self):
         source = _load_class_function("ThumbnailImage", "_update_rect")
@@ -80,7 +96,7 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         layout_source = _load_class_function("ThumbnailCard", "refresh_view_layout")
         viewer_source = VIEWER_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("_THUMBNAIL_DISPLAY_MAX_SIDE = 120", viewer_source)
+        self.assertIn("_THUMBNAIL_DISPLAY_MAX_SIDE = 240", viewer_source)
         self.assertIn("max_display_side = KVNumericProperty(_THUMBNAIL_DISPLAY_MAX_SIDE)", viewer_source)
         self.assertIn("max_display_side=self._update_rect", init_source)
         self.assertIn("scale = min(1.0, self.width / tex_w, self.height / tex_h)", source)

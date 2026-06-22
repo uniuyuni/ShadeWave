@@ -35,6 +35,21 @@ explicitly documents otherwise.
 
 Upstream: https://www.libraw.org/
 
+## Lensfun and lensfunpy
+
+Lens correction uses `lensfunpy`, a Python wrapper around the Lensfun lens
+database and correction library.
+
+`lensfunpy` is licensed under the MIT License.
+Lensfun is licensed under LGPL-3.0-or-later. Binary distributions that bundle
+`lensfunpy`, `liblensfun`, or Lensfun database files must include the license
+texts and notices from the exact bundled packages.
+
+Upstreams:
+
+- https://github.com/letmaik/lensfunpy
+- https://github.com/lensfun/lensfun
+
 ## Adobe DNG SDK
 
 Files:

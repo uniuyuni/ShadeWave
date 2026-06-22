@@ -29,7 +29,7 @@ class ImageCodecSerializationTest(unittest.TestCase):
         self.assertEqual(2, encoded["version"])
         self.assertEqual("radiance_codec", encoded["codec"])
         self.assertEqual("lossless", encoded["mode"])
-        self.assertEqual("quality", encoded["preset"])
+        self.assertEqual("compact", encoded["preset"])
         self.assertEqual(image.shape, decoded.shape)
         self.assertEqual(np.float32, decoded.dtype)
         self.assertEqual(image.tobytes(), decoded.tobytes())
