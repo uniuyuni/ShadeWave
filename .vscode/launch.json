@@ -197,7 +197,7 @@
             "name": "Platypus: 現在のファイル",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/main.py",
+            "program": "${file}",
             "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
             "pythonArgs": ["-X", "frozen_modules=off"],
             "cwd": "${workspaceFolder}",
