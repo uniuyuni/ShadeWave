@@ -698,8 +698,9 @@ class HeadlessSegmentMask:
 
 
 class HeadlessDepthMapMask:
-    def __init__(self, ctx):
+    def __init__(self, ctx, pipeline):
         self.ctx = ctx
+        self.pipeline = pipeline
         self.name = "Depth Map"
         self.effects = effects.create_effects()
         self.effects_param = {}
@@ -709,8 +710,6 @@ class HeadlessDepthMapMask:
         )
         self.center = (0.0, 0.0)
         self.initializing = False
-        self.image_mask_cache = None
-        self.image_mask_cache_key = None
         self.depth_map_mask_cache = None
         self.depth_map_mask_cache_hash = None
         self.is_draw_mask = True
@@ -730,10 +729,6 @@ class HeadlessDepthMapMask:
         self.name = d["name"]
         self.effects_param.update(d["effects_param"])
         self.center = params.denorm_param(self.effects_param, (cx, cy))
-        self.image_mask_cache = d.get("image_mask_cache", None)
-        if self.image_mask_cache is not None:
-            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_key = d.get("image_mask_cache_key", None)
 
     def get_hash_items(self):
         return extended_params.get_mask_hash_tuple(self.effects_param)
@@ -746,26 +741,22 @@ class HeadlessDepthMapMask:
         cache_key = cache_keys.depth_cache_key(
             original_image_size, inference_runtime.DEPTH_MAP_ALGORITHM_VERSION
         )
-        if (
-            self.image_mask_cache is None or self.image_mask_cache_key != cache_key
-        ) and not self.initializing:
-            self.image_mask_cache_key = cache_key
-            img = self.ctx.get_original_image_rgb()
-            depth_map_mask = inference_runtime.predict_depth_map(img)
-            self.image_mask_cache = depth_map_mask
+        if not self.initializing:
+            depth_map_mask = self.pipeline.get_ai_depth_map(
+                cache_key,
+                lambda: inference_runtime.predict_depth_map(self.ctx.get_original_image_rgb()),
+            )
 
         newhash2 = hash((self.get_hash_items(), self.ctx.get_hash_items(), image_size))
         if (
-            self.image_mask_cache is not None
+            depth_map_mask is not None
             and (
-                self.image_mask_cache is depth_map_mask
-                or self.depth_map_mask_cache is None
+                self.depth_map_mask_cache is None
                 or self.depth_map_mask_cache_hash != newhash2
             )
             and not self.initializing
         ):
             self.depth_map_mask_cache_hash = newhash2
-            depth_map_mask = self.image_mask_cache
             _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             depth_map_mask = core.rotation(
                 depth_map_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3)
@@ -1020,7 +1011,7 @@ def instantiate_mask_from_type(ctx, pipeline, mask_type: str):
     if mt == MaskTypeStr.SEGMENT:
         return HeadlessSegmentMask(ctx)
     if mt == MaskTypeStr.DEPTHMAP:
-        return HeadlessDepthMapMask(ctx)
+        return HeadlessDepthMapMask(ctx, pipeline)
     if mt == MaskTypeStr.FACE:
         return HeadlessFaceMask(ctx)
     if mt == MaskTypeStr.TARGET_TEXT:

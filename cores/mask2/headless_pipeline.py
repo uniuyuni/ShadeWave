@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from cores.mask2.coordinate_context import Mask2CoordinateContext
 from cores.mask2.headless_masks import instantiate_mask_from_type
+from cores.ai_image_cache import AIImageCache
 
 
 def _normalize_mask_type(t) -> str:
@@ -19,6 +20,19 @@ class Mask2HeadlessPipeline:
     def __init__(self):
         self.ctx = Mask2CoordinateContext()
         self.mask_list = []
+        self.ai_image_cache = AIImageCache()
+
+    def set_ai_image_cache(self, cache):
+        self.ai_image_cache = cache if cache is not None else AIImageCache()
+
+    def set_serialized_ai_image_cache(self, serialized):
+        self.ai_image_cache.deserialize(serialized)
+
+    def serialize_ai_image_cache(self):
+        return self.ai_image_cache.serialize()
+
+    def get_ai_depth_map(self, cache_key, compute_func):
+        return self.ai_image_cache.get_depth_map(cache_key, compute_func)
 
     def set_texture_size(self, tx, ty):
         self.ctx.set_texture_size(tx, ty)
@@ -36,6 +50,7 @@ class Mask2HeadlessPipeline:
         self.mask_list.clear()
 
     def deserialize(self, d):
+        self.set_serialized_ai_image_cache(d.get("ai_image_cache"))
         ml = d.get("mask2")
         if not ml:
             self.clear_mask()

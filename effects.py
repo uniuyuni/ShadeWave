@@ -235,6 +235,7 @@ class EffectConfig():
         self.pipeline_layer_label = "primary"
         self.deferred_geometry_transform = None
         self.file_path = None
+        self.get_ai_depth_map = None
 
 
 class ParamBinding:

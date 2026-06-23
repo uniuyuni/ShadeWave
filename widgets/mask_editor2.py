@@ -36,6 +36,7 @@ from kivy.uix.label import Label as KVLabel
 
 import cores.core as core
 import cores.expand_mask as expand_mask
+from cores.ai_image_cache import AIImageCache
 from cores.mask2 import mask_geometry as mask_geometry_mod
 import params
 import effects
@@ -3704,10 +3705,6 @@ class DepthMapMask(BaseMask):
             'center': [cx, cy],
             'effects_param': param
         }
-        # マスクデータ保存
-        if self.image_mask_cache is not None:
-            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_key'] = self.image_mask_cache_key
 
         return dict
 
@@ -3717,11 +3714,6 @@ class DepthMapMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
         self.center = params.denorm_param(self.effects_param, (cx, cy))
-        # マスクデータ展開
-        self.image_mask_cache = dict.get('image_mask_cache', None)
-        if self.image_mask_cache is not None:
-            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
 
         # 描き直し
         self.create_control_points()
@@ -3759,19 +3751,16 @@ class DepthMapMask(BaseMask):
 
         from cores.mask2 import inference_runtime as mask2_inference_runtime
         cache_key = cache_keys.depth_cache_key(original_image_size, mask2_inference_runtime.DEPTH_MAP_ALGORITHM_VERSION)
-        if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
-            depth_map_mask = self._get_or_compute_image_mask_cache(
+        if self.initializing == False:
+            depth_map_mask = self.editor.get_ai_depth_map(
                 cache_key,
                 lambda: wait_processing(self.draw_depth_map, original_image_size),
-                "DepthMapMask",
             )
             #depth_map_mask = self.draw_depth_map(original_image_size)
 
         newhash = hash((self.get_hash_items(), self.editor.get_hash_items(), image_size))
-        if self.image_mask_cache is not None and (self.image_mask_cache is depth_map_mask or self.depth_map_mask_cache is None or self.depth_map_mask_cache_hash != newhash) and self.initializing == False:
+        if depth_map_mask is not None and (self.depth_map_mask_cache is None or self.depth_map_mask_cache_hash != newhash) and self.initializing == False:
             self.depth_map_mask_cache_hash = newhash
-
-            depth_map_mask = self.image_mask_cache
 
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
@@ -4230,6 +4219,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.crop_image_hls = None
         self.original_image_rgb = None
         self.original_image_hls = None
+        self.ai_image_cache = AIImageCache()
 
         # mask Geometry: image Geom のみの matrix を退避し、active Composit の
         # mask Geom matrix を左乗算したものを tcg_info['matrix'] に書き込む。
@@ -4293,6 +4283,22 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     def get_original_image_rgb(self):
         return self.original_image_rgb
+
+    def set_ai_image_cache(self, cache):
+        self.ai_image_cache = cache if cache is not None else AIImageCache()
+
+    def serialize_ai_image_cache(self):
+        return self.ai_image_cache.serialize() if self.ai_image_cache is not None else None
+
+    def set_serialized_ai_image_cache(self, serialized):
+        if self.ai_image_cache is None:
+            self.ai_image_cache = AIImageCache()
+        self.ai_image_cache.deserialize(serialized)
+
+    def get_ai_depth_map(self, cache_key, compute_func):
+        if self.ai_image_cache is None:
+            return compute_func()
+        return self.ai_image_cache.get_depth_map(cache_key, compute_func)
 
     def get_original_image_hls(self):
         if self.original_image_hls is None and self.original_image_rgb is not None:
@@ -5048,6 +5054,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             for attr in key_attrs:
                 if hasattr(mask, attr):
                     setattr(mask, attr, None)
+        if self.ai_image_cache is not None:
+            cache_result = self.ai_image_cache.clear()
+            removed += int(cache_result.get("ai_image_cache_entries", 0) or 0)
+            removed_bytes += int(cache_result.get("ai_image_cache_bytes", 0) or 0)
         if removed:
             logging.info(
                 "MaskEditor2 cleared AI intermediate caches entries=%d bytes=%d",

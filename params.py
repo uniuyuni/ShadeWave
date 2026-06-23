@@ -549,6 +549,10 @@ def serialize(param, mask_editor2, file_path=None):
     tdatetime = dt.now()
     tstr = tdatetime.strftime('%Y/%m/%d')
     mask_dict = mask_editor2.serialize()
+    ai_image_cache = None
+    serialize_ai_image_cache = getattr(mask_editor2, "serialize_ai_image_cache", None)
+    if callable(serialize_ai_image_cache):
+        ai_image_cache = serialize_ai_image_cache()
 
     # セーブしないパラメータを削除
     param2 = delete_special_param(param)
@@ -593,10 +597,16 @@ def serialize(param, mask_editor2, file_path=None):
     }
     if mask_dict is not None:
         ser.update(mask_dict)
+    if ai_image_cache is not None:
+        ser["ai_image_cache"] = ai_image_cache
 
     return _msgpack_safe_value(ser)
 
 def deserialize(ser, param, mask_editor2, load_heavy=True):
+    set_ai_image_cache = getattr(mask_editor2, "set_serialized_ai_image_cache", None)
+    if callable(set_ai_image_cache):
+        set_ai_image_cache(ser.get("ai_image_cache"))
+
     pp = ser.get("primary_param")
     if not isinstance(pp, dict):
         pp = {}
@@ -691,7 +701,13 @@ def load_json(file_path, param, mask_editor2, load_heavy=True):
         return None
     dict_ = pmck_store.read_image(file_path)
     if dict_ is None:
+        set_ai_image_cache = getattr(mask_editor2, "set_serialized_ai_image_cache", None)
+        if callable(set_ai_image_cache):
+            set_ai_image_cache(None)
         return None
+    set_ai_image_cache = getattr(mask_editor2, "set_serialized_ai_image_cache", None)
+    if callable(set_ai_image_cache):
+        set_ai_image_cache(dict_.get("ai_image_cache"))
 
     pp = dict_.get("primary_param") or {}
     has_geometry_or_mask = (

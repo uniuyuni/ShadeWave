@@ -296,6 +296,250 @@ def _effective_mask2_draw_effect_param(composit_mask):
     return composit_mask.effects_param
 
 
+def _depth_map_as_rgb(depth_map):
+    depth_map = np.asarray(depth_map, dtype=np.float32)
+    if depth_map.ndim == 2:
+        return np.repeat(depth_map[:, :, np.newaxis], 3, axis=2)
+    if depth_map.ndim == 3 and depth_map.shape[2] == 1:
+        return np.repeat(depth_map, 3, axis=2)
+    return depth_map
+
+
+def _depth_map_from_rgb(depth_map):
+    depth_map = np.asarray(depth_map, dtype=np.float32)
+    if depth_map.ndim == 3:
+        return depth_map[:, :, 0]
+    return depth_map
+
+
+def _apply_primary_geometry_to_depth_map(depth_map, primary_param, efconfig):
+    geometry_param = dict(primary_param)
+    geometry_effect = effects.GeometryEffect()
+    geometry_efconfig = effects.EffectConfig()
+    geometry_efconfig.mode = getattr(efconfig, "mode", EffectMode.PREVIEW)
+    geometry_efconfig.crop_editing = getattr(efconfig, "crop_editing", False)
+    geometry_efconfig.full_preview = getattr(efconfig, "full_preview", False)
+    geometry_efconfig.loading_flag = getattr(efconfig, "loading_flag", -1)
+    depth_rgb = _depth_map_as_rgb(depth_map)
+    transformed = geometry_effect.make_diff(depth_rgb, geometry_param, geometry_efconfig)
+    if transformed is None:
+        transformed = depth_rgb
+    return _depth_map_from_rgb(transformed)
+
+
+def _ai_image_cache_from_state(state):
+    if state.get("ai_image_cache") is not None:
+        return state.get("ai_image_cache")
+    return getattr(state.get("mask_editor2"), "ai_image_cache", None)
+
+
+def _primary_geometry_depth_cache_key(primary_param, efconfig):
+    keys = (
+        "rotation",
+        "rotation2",
+        "flip_mode",
+        "switch_distortion_correction",
+        "lens_distortion_strength",
+        "lens_distortion_scale",
+        "correct_horizontal",
+        "correct_vertical",
+        "focal_length",
+        "four_points",
+        "reference_lines",
+        "mesh_size",
+        "control_points",
+    )
+    return {
+        "params": {key: primary_param.get(key) for key in keys if key in primary_param},
+        "mode": getattr(efconfig, "mode", EffectMode.PREVIEW).value,
+        "crop_editing": bool(getattr(efconfig, "crop_editing", False)),
+        "full_preview": bool(getattr(efconfig, "full_preview", False)),
+    }
+
+
+def _deferred_geometry_depth_cache_key(deferred_geometry):
+    if deferred_geometry is None:
+        return None
+    return {
+        "hash": deferred_geometry.get("hash"),
+        "width": deferred_geometry.get("width"),
+        "height": deferred_geometry.get("height"),
+        "matrix": deferred_geometry.get("matrix"),
+        "transform_type": deferred_geometry.get("transform_type"),
+        "border_mode": deferred_geometry.get("border_mode"),
+        "lens_strength": deferred_geometry.get("lens_strength", 0.0),
+        "lens_scale": deferred_geometry.get("lens_scale", 1.0),
+        "interpolation": deferred_geometry.get("interpolation"),
+    }
+
+
+def _current_depth_map_cache_key(depth_cache_key, state, efconfig):
+    context = state.get("current_context") or {}
+    return [
+        "depth-current",
+        depth_cache_key,
+        {
+            "mode": context.get("mode"),
+            "disp_info": context.get("disp_info"),
+            "texture": [context.get("texture_width"), context.get("texture_height")],
+            "crop_rect": context.get("crop_rect"),
+            "is_zoomed": context.get("is_zoomed", False),
+            "click": [context.get("click_x"), context.get("click_y")],
+            "center_pos": context.get("center_pos"),
+            "zoom_ratio": context.get("zoom_ratio", 1.0),
+            "deferred_geometry": _deferred_geometry_depth_cache_key(context.get("deferred_geometry")),
+            "geometry": (
+                None
+                if context.get("deferred_geometry") is not None
+                else _primary_geometry_depth_cache_key(state["primary_param"], efconfig)
+            ),
+        },
+    ]
+
+
+def _fit_depth_map_to_current_context(depth_map, depth_cache_key, state, efconfig):
+    context = state.get("current_context") or {}
+    if context.get("space") != "current":
+        return depth_map
+
+    frame_cache_key = (
+        id(depth_map),
+        tuple(int(v) for v in getattr(depth_map, "shape", ())),
+        int(state.get("context_version", 0)),
+    )
+    if state.get("current_depth_cache_key") == frame_cache_key:
+        return state.get("current_depth_cache")
+
+    def compute_current_depth():
+        deferred_geometry = context.get("deferred_geometry")
+        if deferred_geometry is not None:
+            if context.get("is_zoomed"):
+                current_depth, _ = core.transform_zoom_crop_image(
+                    depth_map,
+                    deferred_geometry["matrix"],
+                    deferred_geometry["width"],
+                    deferred_geometry["height"],
+                    context["disp_info"],
+                    context["crop_rect"],
+                    context["texture_width"],
+                    context["texture_height"],
+                    context["click_x"],
+                    context["click_y"],
+                    context.get("center_pos"),
+                    zoom_ratio=context.get("zoom_ratio", 1.0),
+                    border_mode=deferred_geometry.get("border_mode", "reflect"),
+                    transform_type=deferred_geometry.get("transform_type", "affine"),
+                    lens_strength=deferred_geometry.get("lens_strength", 0.0),
+                    lens_scale=deferred_geometry.get("lens_scale", 1.0),
+                    mesh_map_x=deferred_geometry.get("mesh_map_x"),
+                    mesh_map_y=deferred_geometry.get("mesh_map_y"),
+                    interpolation=deferred_geometry.get("interpolation"),
+                )
+            else:
+                current_depth, _ = core.transform_crop_image(
+                    depth_map,
+                    deferred_geometry["matrix"],
+                    deferred_geometry["width"],
+                    deferred_geometry["height"],
+                    context["disp_info"],
+                    context["texture_width"],
+                    context["texture_height"],
+                    border_mode=deferred_geometry.get("border_mode", "reflect"),
+                    transform_type=deferred_geometry.get("transform_type", "affine"),
+                    lens_strength=deferred_geometry.get("lens_strength", 0.0),
+                    lens_scale=deferred_geometry.get("lens_scale", 1.0),
+                    mesh_map_x=deferred_geometry.get("mesh_map_x"),
+                    mesh_map_y=deferred_geometry.get("mesh_map_y"),
+                    interpolation=deferred_geometry.get("interpolation", "area"),
+                )
+        else:
+            transformed_depth = _apply_primary_geometry_to_depth_map(depth_map, state["primary_param"], efconfig)
+            if context.get("mode") == "export":
+                x1, y1, x2, y2 = params.get_crop_rect(state["primary_param"])
+                current_depth = transformed_depth[y1:y2, x1:x2]
+            else:
+                current_depth, _ = core.crop_image(
+                    transformed_depth,
+                    context["disp_info"],
+                    context["crop_rect"],
+                    context["texture_width"],
+                    context["texture_height"],
+                    context["click_x"],
+                    context["click_y"],
+                    context.get("is_zoomed", False),
+                    context.get("center_pos"),
+                    zoom_ratio=context.get("zoom_ratio", 1.0),
+                )
+        return np.asarray(current_depth, dtype=np.float32)
+
+    derived_cache_key = _current_depth_map_cache_key(depth_cache_key, state, efconfig)
+    ai_image_cache = _ai_image_cache_from_state(state)
+    if ai_image_cache is not None and hasattr(ai_image_cache, "get_derived_depth_map"):
+        current_depth = ai_image_cache.get_derived_depth_map(derived_cache_key, compute_current_depth)
+    else:
+        current_depth = compute_current_depth()
+
+    state["current_depth_cache_key"] = frame_cache_key
+    state["current_depth_cache"] = current_depth
+    return current_depth
+
+
+def _set_ai_depth_map_current_context(efconfig, **context):
+    setter = getattr(efconfig, "_set_ai_depth_map_current_context", None)
+    if callable(setter):
+        setter(**context)
+
+
+def _install_ai_depth_map_getter(efconfig, source_image, primary_param, mask_editor2=None, ai_image_cache=None):
+    state = {
+        "source_image": source_image,
+        "primary_param": primary_param,
+        "mask_editor2": mask_editor2,
+        "ai_image_cache": ai_image_cache,
+        "current_context": {"space": "original"},
+        "context_version": 0,
+        "current_depth_cache_key": None,
+        "current_depth_cache": None,
+    }
+
+    def set_current_context(**context):
+        state["current_context"] = context
+        state["context_version"] += 1
+        state["current_depth_cache_key"] = None
+        state["current_depth_cache"] = None
+
+    def get_ai_depth_map(space="current"):
+        from cores.mask2 import cache_keys, inference_runtime
+
+        original_image_size = tuple(primary_param["original_img_size"])
+        cache_key = cache_keys.depth_cache_key(
+            original_image_size,
+            inference_runtime.DEPTH_MAP_ALGORITHM_VERSION,
+        )
+
+        def compute_depth_map():
+            if source_image is None:
+                raise RuntimeError("source image is required to compute AI depth map")
+            return inference_runtime.predict_depth_map(source_image)
+
+        editor_getter = getattr(mask_editor2, "get_ai_depth_map", None)
+        if callable(editor_getter):
+            depth_map = editor_getter(cache_key, compute_depth_map)
+        elif ai_image_cache is not None:
+            depth_map = ai_image_cache.get_depth_map(cache_key, compute_depth_map)
+        else:
+            depth_map = compute_depth_map()
+
+        if space == "original":
+            return depth_map
+        if space != "current":
+            raise ValueError(f"unsupported AI depth map space: {space!r}")
+        return _fit_depth_map_to_current_context(depth_map, cache_key, state, efconfig)
+
+    efconfig._set_ai_depth_map_current_context = set_current_context
+    efconfig.get_ai_depth_map = get_ai_depth_map
+
+
 def _is_nan_inf_debug_enabled():
     env = os.getenv("PLATYPUS_DEBUG_NAN_INF")
     if env is not None:
@@ -661,7 +905,7 @@ class AsyncPipelineManager:
         return len(keys)
 
 
-def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False):
+def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False, ai_image_cache=None):
     pipeline_drag_preview = bool(is_drag) and not preview_full_render_enabled(current_tab)
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
@@ -710,6 +954,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     efconfig.pipeline_timing = timing
     efconfig.pipeline_layer_label = "primary"
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
+    _install_ai_depth_map_getter(efconfig, img, primary_param, mask_editor2=mask_editor2, ai_image_cache=ai_image_cache)
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_setup", (time.perf_counter() - _t0) * 1000.0)
 
@@ -832,6 +1077,21 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         _t0 = time.perf_counter()
     efconfig.disp_info = disp_info2
     efconfig.resolution_scale = core.calc_resolution_scale(primary_param['original_img_size'], disp_info2[4])
+    _set_ai_depth_map_current_context(
+        efconfig,
+        space="current",
+        mode="preview",
+        disp_info=disp_info2,
+        crop_rect=params.get_crop_rect(primary_param),
+        texture_width=texture_width,
+        texture_height=texture_height,
+        click_x=click_x,
+        click_y=click_y,
+        is_zoomed=is_zoomed,
+        center_pos=center_pos,
+        zoom_ratio=zoom_ratio,
+        deferred_geometry=getattr(efconfig, "deferred_geometry_transform", None),
+    )
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_update", (time.perf_counter() - _t0) * 1000.0)
     
@@ -877,6 +1137,7 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.file_path = primary_param.get('_source_file_path')
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
+    _install_ai_depth_map_getter(efconfig, img, primary_param, mask_editor2=mask_editor2)
 
     # 背景レイヤー
     img0, lv1reset, pre_rotation_img, _ = pipeline_lv0(img, primary_effects, primary_param, efconfig, processor=None)
@@ -884,6 +1145,21 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     # ここでクロップ (Export: Apply Crop FIRST)
     x1, y1, x2, y2 = params.get_crop_rect(primary_param)
     imgc = img0[y1:y2, x1:x2]
+    _set_ai_depth_map_current_context(
+        efconfig,
+        space="current",
+        mode="export",
+        disp_info=disp_info,
+        crop_rect=params.get_crop_rect(primary_param),
+        texture_width=imgc.shape[1],
+        texture_height=imgc.shape[0],
+        click_x=0,
+        click_y=0,
+        is_zoomed=True,
+        center_pos=None,
+        zoom_ratio=1.0,
+        deferred_geometry=None,
+    )
     
     mask_editor2.set_texture_size(imgc.shape[1], imgc.shape[0])
     mask_editor2.set_primary_param(primary_param, disp_info)    
