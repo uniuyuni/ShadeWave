@@ -3611,6 +3611,17 @@
                                     on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
 
                                 ParamSlider:
+                                    id: slider_mask2_depth_balance
+                                    text: "Depth Balance"
+                                    min: -100
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(3, 'mask2')
+                                    on_before_edit: root.begin_history_effect_ctrl(3, 'mask2')
+                                    on_after_edit: root.end_history_effect_ctrl(3, 'mask2')
+
+                                ParamSlider:
                                     id: slider_mask2_open_space
                                     text: "Open space"
                                     min: -100

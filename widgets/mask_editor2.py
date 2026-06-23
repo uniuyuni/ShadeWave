@@ -3762,6 +3762,12 @@ class DepthMapMask(BaseMask):
         if depth_map_mask is not None and (self.depth_map_mask_cache is None or self.depth_map_mask_cache_hash != newhash) and self.initializing == False:
             self.depth_map_mask_cache_hash = newhash
 
+            # Depth Balance: 生 depth の値分布を near↔far で再配分(キャッシュは非破壊)
+            depth_map_mask = extended_params.apply_depth_balance(
+                depth_map_mask,
+                effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_balance', 0),
+            )
+
             # パラメータに従って画像を変形
             disp_info, rotate_rad, flip, matrix = self.editor.get_hash_items()
             depth_map_mask = core.rotation(depth_map_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3))
@@ -4299,6 +4305,12 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if self.ai_image_cache is None:
             return compute_func()
         return self.ai_image_cache.get_depth_map(cache_key, compute_func)
+
+    def peek_ai_depth_map(self, cache_key):
+        # 既に作成済みの depth のみ返す(未作成なら None)。新規推論はしない。
+        if self.ai_image_cache is None:
+            return None
+        return self.ai_image_cache.peek_depth_map(cache_key)
 
     def get_original_image_hls(self):
         if self.original_image_hls is None and self.original_image_rgb is not None:

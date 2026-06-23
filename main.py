@@ -1558,6 +1558,10 @@ if __name__ == '__main__':
                             )
                         img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on, ai_image_cache=self.ai_image_cache)
                         self._refresh_mask1_editors()
+                        # depth はパイプラインのマスク描画中にキャッシュされるため、
+                        # 描画後に lens の depth 連動 UI を再評価する(構造変化イベント外で
+                        # depth が確定するケースに追従)。
+                        self.update_lens_simulator_depth_enabled()
                         logging.debug("[PERF] draw_image_core: process_pipeline finished. Time: %s", time.time())
                         perf_trace.event("draw_image_core.pipeline_done")
                         if self._restore_mask1_view_after_submit():
@@ -3968,6 +3972,7 @@ if __name__ == '__main__':
                     'slider_mask2_sat_range',
                     'switch_mask2_options',
                     'slider_mask2_blur',
+                    'slider_mask2_depth_balance',
                     'slider_mask2_open_space',
                     'slider_mask2_close_space',
                     'switch_mask2_quick_select',
@@ -4044,6 +4049,45 @@ if __name__ == '__main__':
                     "switch_ai_noise_reduction",
                     "chip_ai_noise_reduction",
                     "slider_ai_noise_reduction_intensity",
+                ),
+                disabled,
+            )
+            self.update_lens_simulator_depth_enabled()
+
+        def _ai_depth_map_cached(self):
+            """AI depth map が既にキャッシュ済みか(App 保有の ai_image_cache を直接 peek)。
+            マスクの存在ではなく『実際に推論済みか』を見るので、作成途中(キャンセル可能)
+            では有効にならない。"""
+            cache = getattr(self, "ai_image_cache", None)
+            if cache is None:
+                return False
+            try:
+                from cores.mask2 import cache_keys, inference_runtime
+                size = self.primary_param.get("original_img_size")
+                if not size or len(size) < 2:
+                    return False
+                key = cache_keys.depth_cache_key(
+                    tuple(size), inference_runtime.DEPTH_MAP_ALGORITHM_VERSION
+                )
+                return cache.peek_depth_map(key) is not None
+            except Exception:
+                return False
+
+        def update_lens_simulator_depth_enabled(self):
+            # LensSimulator の depth 連動コントロール(軸上CA/球面収差/フォーカス/絞り)は、
+            # AI depth map が実際にキャッシュされている時だけ有効化する。coating / lateral CA は
+            # depth 非依存なので常時有効。
+            disabled = (
+                bool(self.mask2_wait_full_load)
+                or not bool(self.image_loaded)
+                or not self._ai_depth_map_cached()
+            )
+            self._set_disabled_for_ids(
+                (
+                    "slider_longitudinal_ca",
+                    "slider_spherical_ca",
+                    "slider_lens_focus_depth",
+                    "slider_lens_aperture",
                 ),
                 disabled,
             )

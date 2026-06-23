@@ -4089,14 +4089,6 @@ class LUTEffect(Effect):
 
         return self.diff
 
-def _lens_sim_synthetic_depth(h, w):
-    cy, cx = h / 2.0, w / 2.0
-    y, x = np.ogrid[:h, :w]
-    d = np.sqrt((x.astype(np.float32) - cx) ** 2 + (y.astype(np.float32) - cy) ** 2)
-    d /= np.sqrt(cx * cx + cy * cy) + 1e-6
-    return np.clip(d, 0.0, 1.0)
-
-
 class LensSimulatorEffect(Effect):
     param_bindings = (
         SwitchBinding('switch_lens_simulator', True, "switch_lens_simulator", widget_attr="enabled"),
@@ -4133,7 +4125,25 @@ class LensSimulatorEffect(Effect):
 
         coat_key = self._coating_label_to_key(coat_label)
         coat_on = coat_key is not None and coat_strength > 0
-        aber_on = (lateral > 1e-5 or longitudinal > 1e-5 or spherical > 1e-5)
+        lateral_on = lateral > 1e-5
+        depth_aber_requested = (longitudinal > 1e-5 or spherical > 1e-5)
+
+        # 軸上色収差(longitudinal)と球面収差(spherical)は AI depth map を要求する。
+        # ここで生成すると重いので、mask2 側で既に作成済みの depth のみ peek で取得し、
+        # 無ければこれらの収差はスキップする(= depth がある時だけ効果が出る)。
+        depth_map = None
+        if depth_aber_requested:
+            getter = getattr(efconfig, "get_ai_depth_map", None)
+            if callable(getter):
+                try:
+                    depth_map = getter(space="current", allow_compute=False)
+                except Exception:
+                    logging.exception("LensSimulator: AI depth map の取得に失敗")
+                    depth_map = None
+        depth_available = depth_map is not None
+        eff_longitudinal = longitudinal if depth_available else 0.0
+        eff_spherical = spherical if depth_available else 0.0
+        aber_on = lateral_on or (depth_available and depth_aber_requested)
 
         if not switch or (not coat_on and not aber_on):
             self.diff = None
@@ -4144,6 +4154,8 @@ class LensSimulatorEffect(Effect):
             coat_label, coat_strength, round(coat_light, 4),
             round(lateral, 4), round(longitudinal, 4), round(spherical, 4),
             round(focus_d, 4), round(aperture, 4),
+            depth_available, getattr(efconfig, "upstream_hash", 0),
+            round(float(getattr(efconfig, "resolution_scale", 1.0)), 4),
         ))
         if self.hash == param_hash:
             return self.diff
@@ -4151,17 +4163,27 @@ class LensSimulatorEffect(Effect):
         self.hash = param_hash
         rgb = core.type_convert(rgb, np.ndarray)
         work = np.asarray(rgb, dtype=np.float32).copy()
+        res_scale = float(getattr(efconfig, "resolution_scale", 1.0))
 
         if aber_on:
             h, w = work.shape[:2]
-            depth_map = _lens_sim_synthetic_depth(h, w)
-            sim = LensAberrationSimulator((h, w))
+            dm = None
+            if depth_available:
+                dm = np.asarray(depth_map, dtype=np.float32)
+                if dm.ndim == 3:
+                    dm = dm[..., 0]
+                if dm.shape[:2] != (h, w):
+                    dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_LINEAR)
+                # Depth Pro は inverse-depth 正規化(近=1.0 / 遠=0.0)。収差シミュは
+                # near=0.0 / far=1.0 を期待するため反転して規約を合わせる。
+                dm = np.clip(1.0 - dm, 0.0, 1.0).astype(np.float32, copy=False)
+            sim = LensAberrationSimulator((h, w), resolution_scale=res_scale)
             processed = sim.apply_all_aberrations(
                 work,
-                depth_map=depth_map,
+                depth_map=dm,
                 lateral_strength=lateral,
-                longitudinal_strength=longitudinal,
-                spherical_strength=spherical,
+                longitudinal_strength=eff_longitudinal,
+                spherical_strength=eff_spherical,
                 focus_depth=focus_d,
                 aperture=max(0.5, aperture),
             )
@@ -4169,7 +4191,7 @@ class LensSimulatorEffect(Effect):
             processed = work
 
         if coat_on:
-            coated = self._coating_sim.apply_preset(processed.copy(), coat_key, light_source_intensity=coat_light)
+            coated = self._coating_sim.apply_preset(processed.copy(), coat_key, light_source_intensity=coat_light, resolution_scale=res_scale)
             t = coat_strength / 100.0
             processed = processed * (1.0 - t) + coated * t
 
@@ -4349,6 +4371,7 @@ class Mask2Effect(Effect):
             'mask2_sat_max': 255,
             'switch_mask2_options': True,
             'mask2_blur': 0,
+            'mask2_depth_balance': 0,
             'mask2_open_space': 0,
             'mask2_close_space': 0,
             'mask2_freedraw_brush_size': 300,
@@ -4455,6 +4478,7 @@ class Mask2Effect(Effect):
                 for key in (
                     'switch_mask2_options',
                     'mask2_blur',
+                    'mask2_depth_balance',
                     'mask2_open_space',
                     'mask2_close_space',
                     'mask2_freedraw_brush_size',
@@ -4532,6 +4556,7 @@ class Mask2Effect(Effect):
         ])
         widget.ids["switch_mask2_options"].active = self._get_param(param, 'switch_mask2_options')
         widget.ids["slider_mask2_blur"].set_slider_value(self._get_param(param, 'mask2_blur'))
+        widget.ids["slider_mask2_depth_balance"].set_slider_value(self._get_param(param, 'mask2_depth_balance'))
         widget.ids["slider_mask2_open_space"].set_slider_value(self._get_param(param, 'mask2_open_space'))
         widget.ids["slider_mask2_close_space"].set_slider_value(self._get_param(param, 'mask2_close_space'))
         widget.ids["slider_mask2_freedraw_brush_size"].set_slider_value(self._get_param(param, 'mask2_freedraw_brush_size'))
@@ -4598,6 +4623,7 @@ class Mask2Effect(Effect):
             param['mask2_sat_max'] = widget.ids["slider_mask2_sat_range"].value
         param['switch_mask2_options'] = widget.ids["switch_mask2_options"].active
         param['mask2_blur'] = widget.ids["slider_mask2_blur"].value
+        param['mask2_depth_balance'] = widget.ids["slider_mask2_depth_balance"].value
         param['mask2_open_space'] = widget.ids["slider_mask2_open_space"].value
         param['mask2_close_space'] = widget.ids["slider_mask2_close_space"].value
         param['mask2_freedraw_brush_size'] = widget.ids["slider_mask2_freedraw_brush_size"].value

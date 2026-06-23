@@ -757,6 +757,11 @@ class HeadlessDepthMapMask:
             and not self.initializing
         ):
             self.depth_map_mask_cache_hash = newhash2
+            # Depth Balance: 生 depth の値分布を near↔far で再配分(キャッシュは非破壊)
+            depth_map_mask = extended_params.apply_depth_balance(
+                depth_map_mask,
+                effects.Mask2Effect.get_param(self.effects_param, "mask2_depth_balance", 0),
+            )
             _, rotate_rad, flip, matrix = self.ctx.get_hash_items()
             depth_map_mask = core.rotation(
                 depth_map_mask, np.rad2deg(rotate_rad), flip, np.array(matrix).reshape(3, 3)

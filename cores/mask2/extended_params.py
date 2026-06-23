@@ -21,6 +21,21 @@ from cores.mask2.coordinate_context import Mask2CoordinateContext
 from cores.mask2.mask_mesh import mesh_cps_hash_key as _mesh_cps_hash_key
 
 
+def apply_depth_balance(depth, balance):
+    """AI depth map の値分布を near↔far で再配分する単調リマップ(Depth Balance)。
+
+    balance: -100..100 (0=無変化)。depth は 0..1 を想定(helper 規約: near=1 / far=0)。
+    +balance で gamma<1 となり低値域(=遠景側)を伸張 → 奥寄せ。-balance はその逆(手前寄せ)。
+    要素ごとのべき乗のみで負荷は無視できる。向きが逆に感じる場合は符号を反転すればよい。
+    """
+    b = float(balance)
+    if abs(b) < 1e-6:
+        return depth
+    d = np.clip(np.asarray(depth, dtype=np.float32), 0.0, 1.0)
+    gamma = float(2.0 ** (-b / 100.0))   # b=+100 -> 0.5, b=-100 -> 2.0
+    return np.power(d, gamma).astype(np.float32, copy=False)
+
+
 def get_mask_hash_tuple(effects_param):
     return (
         effects.Mask2Effect.get_param(effects_param, "switch_mask2_settings"),
@@ -44,6 +59,7 @@ def get_mask_hash_tuple(effects_param):
         effects.Mask2Effect.get_param(effects_param, "mask2_sat_max"),
         effects.Mask2Effect.get_param(effects_param, "switch_mask2_options"),
         effects.Mask2Effect.get_param(effects_param, "mask2_blur"),
+        effects.Mask2Effect.get_param(effects_param, "mask2_depth_balance", 0),
         effects.Mask2Effect.get_param(effects_param, "mask2_open_space"),
         effects.Mask2Effect.get_param(effects_param, "mask2_close_space"),
         effects.Mask2Effect.get_param(effects_param, "mask2_freedraw_brush_hardness"),

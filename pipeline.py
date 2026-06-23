@@ -508,7 +508,7 @@ def _install_ai_depth_map_getter(efconfig, source_image, primary_param, mask_edi
         state["current_depth_cache_key"] = None
         state["current_depth_cache"] = None
 
-    def get_ai_depth_map(space="current"):
+    def get_ai_depth_map(space="current", allow_compute=True):
         from cores.mask2 import cache_keys, inference_runtime
 
         original_image_size = tuple(primary_param["original_img_size"])
@@ -522,13 +522,25 @@ def _install_ai_depth_map_getter(efconfig, source_image, primary_param, mask_edi
                 raise RuntimeError("source image is required to compute AI depth map")
             return inference_runtime.predict_depth_map(source_image)
 
-        editor_getter = getattr(mask_editor2, "get_ai_depth_map", None)
-        if callable(editor_getter):
-            depth_map = editor_getter(cache_key, compute_depth_map)
-        elif ai_image_cache is not None:
-            depth_map = ai_image_cache.get_depth_map(cache_key, compute_depth_map)
+        if allow_compute:
+            editor_getter = getattr(mask_editor2, "get_ai_depth_map", None)
+            if callable(editor_getter):
+                depth_map = editor_getter(cache_key, compute_depth_map)
+            elif ai_image_cache is not None:
+                depth_map = ai_image_cache.get_depth_map(cache_key, compute_depth_map)
+            else:
+                depth_map = compute_depth_map()
         else:
-            depth_map = compute_depth_map()
+            # peek のみ: 既に作成済みの depth だけ使い、重い推論は走らせない。
+            editor_peek = getattr(mask_editor2, "peek_ai_depth_map", None)
+            if callable(editor_peek):
+                depth_map = editor_peek(cache_key)
+            elif ai_image_cache is not None:
+                depth_map = ai_image_cache.peek_depth_map(cache_key)
+            else:
+                depth_map = None
+            if depth_map is None:
+                return None
 
         if space == "original":
             return depth_map

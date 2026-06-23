@@ -83,6 +83,14 @@ class AIImageCache:
                 event.set()
         return result
 
+    def peek_depth_map(self, cache_key):
+        """既に格納済みの深度マップのみ返す(未計算なら None)。重い推論はしない。"""
+        frozen_key = _freeze_key(cache_key)
+        with self._lock:
+            if self._depth_map is not None and self._depth_cache_key == frozen_key:
+                return self._depth_map
+        return None
+
     def get_derived_depth_map(self, cache_key, compute_func):
         frozen_key = ("derived-depth", _freeze_key(cache_key))
         while True:

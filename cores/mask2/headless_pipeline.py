@@ -34,6 +34,9 @@ class Mask2HeadlessPipeline:
     def get_ai_depth_map(self, cache_key, compute_func):
         return self.ai_image_cache.get_depth_map(cache_key, compute_func)
 
+    def peek_ai_depth_map(self, cache_key):
+        return self.ai_image_cache.peek_depth_map(cache_key)
+
     def set_texture_size(self, tx, ty):
         self.ctx.set_texture_size(tx, ty)
 

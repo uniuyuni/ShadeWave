@@ -93,7 +93,7 @@ class CoatingSimulator:
         m = np.asarray(matrix, dtype=np.float32)
         return np.matmul(image, m.T)
     
-    def apply_veiling_glare(self, image: np.ndarray, flare_factor: float) -> np.ndarray:
+    def apply_veiling_glare(self, image: np.ndarray, flare_factor: float, resolution_scale: float = 1.0) -> np.ndarray:
         """
         ベーリングフレア（光の散乱）をシミュレート
         
@@ -114,8 +114,8 @@ class CoatingSimulator:
         luminance = np.mean(image, axis=2, keepdims=True, dtype=np.float32)
         
         # 輝度の高い部分ほどフレアが強くなるようにマスク作成
-        # 簡易的にガウシアンブラーで光の広がりを表現
-        glow = cv2.GaussianBlur(luminance, (0, 0), sigmaX=50)
+        # 簡易的にガウシアンブラーで光の広がりを表現(縮尺対応)
+        glow = cv2.GaussianBlur(luminance, (0, 0), sigmaX=max(1.0, 50.0 * float(resolution_scale)))
         if glow.ndim == 2:
             glow = glow[:, :, np.newaxis]
         glow = np.asarray(glow, dtype=np.float32)
@@ -130,7 +130,7 @@ class CoatingSimulator:
         
         return result
     
-    def apply_micro_contrast(self, image: np.ndarray, contrast_factor: float) -> np.ndarray:
+    def apply_micro_contrast(self, image: np.ndarray, contrast_factor: float, resolution_scale: float = 1.0) -> np.ndarray:
         """
         マイクロコントラスト（立体感）の調整
         
@@ -150,8 +150,8 @@ class CoatingSimulator:
         luminance = np.mean(image, axis=2, keepdims=True, dtype=np.float32)
         
         # アンシャープマスク的な手法でローカルコントラストを強調/抑制
-        # ぼかし画像を作成
-        blurred = cv2.GaussianBlur(luminance, (0, 0), sigmaX=10)
+        # ぼかし画像を作成(縮尺対応)
+        blurred = cv2.GaussianBlur(luminance, (0, 0), sigmaX=max(1.0, 10.0 * float(resolution_scale)))
         if blurred.ndim == 2:
             blurred = blurred[:, :, np.newaxis]
         blurred = np.asarray(blurred, dtype=np.float32)
@@ -180,8 +180,9 @@ class CoatingSimulator:
         result = luminance + (image - luminance) * np.float32(factor)
         return result
     
-    def apply_preset(self, image: np.ndarray, preset_name: str, 
-                     light_source_intensity: float = 1.0) -> np.ndarray:
+    def apply_preset(self, image: np.ndarray, preset_name: str,
+                     light_source_intensity: float = 1.0,
+                     resolution_scale: float = 1.0) -> np.ndarray:
         """
         定義されたプリセットを一键適用
         
@@ -205,10 +206,10 @@ class CoatingSimulator:
         # 2. フレア耐性（光の散乱）
         # 光源が強いほどフレア効果が増すように調整
         effective_flare = float(preset['flare_factor'] * light_source_intensity)
-        result = self.apply_veiling_glare(result, effective_flare)
-        
+        result = self.apply_veiling_glare(result, effective_flare, resolution_scale=resolution_scale)
+
         # 3. マイクロコントラスト（内部反射の抑制）
-        result = self.apply_micro_contrast(result, preset['contrast_factor'])
+        result = self.apply_micro_contrast(result, preset['contrast_factor'], resolution_scale=resolution_scale)
         
         # 4. 彩度（発色の傾向）
         result = self.apply_saturation(result, preset['saturation_factor'])
