@@ -455,6 +455,10 @@ if __name__ == '__main__':
             self._copied_effect_param = None
 
             self.run_set2widget_all = False
+            self._sticky_distortion_tool_values = {
+                'distortion_brush_size': None,
+                'distortion_strength': None,
+            }
 
             self.is_press_space = False
             # on_select で選んだパス。FCS の遅延コールバックが別ファイル向けなら無視する（primary_param と imgset の不整合防止）
@@ -1100,6 +1104,7 @@ if __name__ == '__main__':
 
             self.ids['mask_editor2'].opacity = 0
             self.ids['mask_editor2'].disabled = True
+            self._unmount_mask_editor2_from_preview()
             self._set_lens_presets()
 
             self.apply_preview_focus_layout()
@@ -1754,26 +1759,129 @@ if __name__ == '__main__':
             finally:
                 self.run_set2widget_all = False
 
+        def _liquify_debug(self, message, *args):
+            if os.getenv("PLATYPUS_DEBUG_LIQUIFY", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                logging.warning("[LIQUIFY] " + message, *args)
+
+        def _distortion_callback_target(self, proc, widget):
+            if proc != 'focus':
+                effect, current_param, owner_is_active = self._get_distortion_effect_and_param_for_painter(widget)
+                if not owner_is_active:
+                    self._liquify_debug("ignored inactive painter callback proc=%s", proc)
+                    active_effect, _active_param = self._get_active_distortion_effect_and_param()
+                    self._close_inactive_distortion_painters(active_effect)
+                    self._sync_liquify_mask_editor_input_lock()
+                    return None, None, False
+                return effect, current_param, True
+            return None, None, True
+
+        def _log_distortion_callback(self, proc, widget, owner_is_active):
+            try:
+                editor = self.ids.get('mask_editor2')
+                active = editor.get_active_mask() if editor is not None else None
+                self._liquify_debug(
+                    "callback proc=%s mask2=%s active=%s owner_active=%s records=%s buffer=%s current_id=%s pipeline_version=%s",
+                    proc,
+                    self._is_mask2_enabled(),
+                    getattr(active, 'mask_id', None),
+                    owner_is_active,
+                    len(getattr(widget, 'recorded', []) or []),
+                    len(getattr(widget, 'points_buffer', []) or []),
+                    id(getattr(widget, 'current_image', None)) if getattr(widget, 'current_image', None) is not None else None,
+                    self.pipeline_version,
+                )
+            except Exception:
+                logging.exception("[LIQUIFY] callback debug failed")
+
+        def _apply_distortion_painter_params(self, widget, effect, current_param):
+            current_param.update(widget.get_distortion_params())
+
+        def _sync_distortion_brush_from_painter(self, widget, current_param):
+            current_param['distortion_brush_size'] = widget.brush_size
+            slider = self.ids.get("slider_distortion_brush_size")
+            if slider is not None:
+                slider.set_slider_value(widget.brush_size)
+            self._remember_distortion_tool_values_from_widgets(current_param)
+
         def distortion_callback(self, proc, widget):
+            effect, current_param, owner_is_active = self._distortion_callback_target(proc, widget)
+            if not owner_is_active:
+                return
+            self._log_distortion_callback(proc, widget, owner_is_active)
             match proc:
                 case 'focus':
                     self._clear_text_input_focus()
                 case 'start':
                     self.begin_history_effect_ctrl(1, 'distortion')
+                    current_param['switch_distortion'] = True
+                    switch = self.ids.get("switch_distortion")
+                    if switch is not None:
+                        switch.enabled = True
                 case 'update' | 'apply':
-                    self.apply_effects_lv(1, 'distortion')
+                    self._apply_distortion_painter_params(widget, effect, current_param)
+                    if self._is_mask2_enabled():
+                        self._request_active_liquify_mask_render_update(redraw_pipeline=True)
+                    else:
+                        self.apply_effects_lv(1, 'distortion')
                 case 'end':
-                    self.primary_param.update(widget.get_distortion_params())
+                    self._apply_distortion_painter_params(widget, effect, current_param)
+                    self._request_active_liquify_mask_render_update(redraw_pipeline=True)
                     self.end_history_effect_ctrl(1, 'distortion')
                 case 'brush_size':
-                    self.primary_param['distortion_brush_size'] = widget.brush_size
-                    self.ids["slider_distortion_brush_size"].set_slider_value(widget.brush_size)
+                    self._sync_distortion_brush_from_painter(widget, current_param)
+
+        def _request_active_liquify_mask_render_update(self, redraw_pipeline=False):
+            if not self._is_mask2_enabled():
+                return
+            editor = self.ids.get('mask_editor2')
+            if editor is None:
+                return
+            try:
+                mask = editor.get_active_mask()
+                if mask is None:
+                    return
+                if not mask.is_composit():
+                    composit = editor.find_composit_mask(mask)
+                    if composit is not None:
+                        mask = composit
+                updater = getattr(editor, 'request_mask_render_update', None)
+                if callable(updater):
+                    self._liquify_debug(
+                        "request_mask_render_update mask=%s redraw_pipeline=%s",
+                        getattr(mask, 'mask_id', None),
+                        redraw_pipeline,
+                    )
+                    updater(
+                        mask,
+                        reason="liquify",
+                        structure_changed=False,
+                        refresh_visibility=False,
+                        redraw_overlay=False,
+                        redraw_pipeline=False,
+                    )
+                    if redraw_pipeline:
+                        self.start_draw_image(fast_display=False)
+            except Exception:
+                logging.exception("failed to invalidate liquify mask render cache")
 
         def reset_distortion_painter_action(self):
-            effect = self.primary_effects[1].get('distortion')
+            if not self.can_open_liquify_editor():
+                return
+            effect, current_param = self._get_active_distortion_effect_and_param()
             painter = getattr(effect, 'distortion_painter', None) if effect is not None else None
             if painter is not None:
-                painter.reset_image()
+                self.begin_history_effect_ctrl(1, 'distortion')
+                painter.reset_image(notify=False)
+                current_param['distortion_recorded'] = []
+                current_param['switch_distortion'] = True
+                switch = self.ids.get("switch_distortion")
+                if switch is not None:
+                    switch.enabled = True
+                effect.reeffect()
+                self._request_active_liquify_mask_render_update(redraw_pipeline=True)
+                if not self._is_mask2_enabled():
+                    self.start_draw_image()
+                self.end_history_effect_ctrl(1, 'distortion')
 
         def geometry_callback(self, proc, widget):
             match proc:
@@ -1801,6 +1909,8 @@ if __name__ == '__main__':
 
         def _get_active_effects(self, mask_id=None, lv=None, subname=None):
             editor = self.ids['mask_editor2']
+            if mask_id is None and not self._is_mask2_enabled():
+                return (self.primary_effects, self.primary_param, None)
             if mask_id is None:
                 mask = editor.get_created_mask() or editor.get_active_mask()
             else:
@@ -1834,7 +1944,166 @@ if __name__ == '__main__':
 
             effects_owner = composit_mask if composit_mask is not None else mask
             return (effects_owner.effects, mask.effects_param, mask.mask_id)
-        
+
+        def _get_active_distortion_effect_and_param(self):
+            if not self._is_mask2_enabled():
+                effect = None
+                try:
+                    effect = self.primary_effects[1].get('distortion')
+                except Exception:
+                    effect = None
+                return effect, self.primary_param
+            current_effects, current_param, _mask_id = self._get_active_effects(
+                lv=1,
+                subname='distortion',
+            )
+            effect = None
+            try:
+                effect = current_effects[1].get('distortion')
+            except Exception:
+                effect = None
+            return effect, current_param
+
+        def _get_distortion_effect_and_param_for_painter(self, painter):
+            active_effect, active_param = self._get_active_distortion_effect_and_param()
+            for effect, param in self._iter_distortion_effect_targets():
+                if effect is not None and getattr(effect, 'distortion_painter', None) is painter:
+                    return effect, param, effect is active_effect and param is active_param
+            return active_effect, active_param, True
+
+        def _iter_distortion_effect_targets(self):
+            try:
+                yield self.primary_effects[1].get('distortion'), self.primary_param
+            except Exception:
+                pass
+
+            editor = self.ids.get('mask_editor2')
+            if editor is None:
+                return
+            try:
+                mask_list = list(editor.get_mask_list())
+            except Exception:
+                mask_list = []
+            for mask in mask_list:
+                try:
+                    if not mask.is_composit():
+                        continue
+                    yield mask.effects[1].get('distortion'), mask.effects_param
+                except Exception:
+                    continue
+
+        def _close_inactive_distortion_painters(self, active_effect):
+            for effect, param in self._iter_distortion_effect_targets():
+                if effect is None or effect is active_effect:
+                    continue
+                if getattr(effect, 'distortion_painter', None) is None:
+                    continue
+                try:
+                    effect._close_distortion_painter(param, self)
+                except Exception:
+                    logging.exception("failed to close inactive distortion painter")
+
+        def is_liquify_editor_active(self):
+            try:
+                return self._get_active_distortion_painter() is not None
+            except Exception:
+                return False
+
+        def _get_active_distortion_painter(self):
+            if not self.can_open_liquify_editor():
+                return None
+            current_tab = self.ids["effects"].current_tab
+            if getattr(current_tab, "text", None) != "Li":
+                return None
+            effect, _current_param = self._get_active_distortion_effect_and_param()
+            return getattr(effect, 'distortion_painter', None) if effect is not None else None
+
+        def _sync_liquify_mask_editor_input_lock(self):
+            editor = self.ids.get('mask_editor2')
+            if editor is None:
+                return
+            locked = self._get_active_distortion_painter() is not None
+            self._liquify_debug("mask_editor_input_lock=%s", locked)
+            if locked:
+                # Liquify owns preview touch/scroll while its painter is active.
+                # Keep MaskEditor2 state readable, but remove it from Kivy dispatch.
+                self._unmount_mask_editor2_from_preview()
+            elif self._is_mask2_enabled():
+                self._mount_mask_editor2_to_preview()
+
+        def _has_distortion_effect(self, effects_map):
+            try:
+                return effects_map is not None and effects_map[1].get('distortion') is not None
+            except Exception:
+                return False
+
+        def _distortion_tool_specs(self):
+            return (
+                ('distortion_brush_size', 'slider_distortion_brush_size'),
+                ('distortion_strength', 'slider_distortion_strength'),
+            )
+
+        def _remember_distortion_tool_values_from_widgets(self, param=None):
+            sticky = getattr(self, '_sticky_distortion_tool_values', None)
+            if sticky is None:
+                return
+            for key, widget_id in self._distortion_tool_specs():
+                slider = self.ids.get(widget_id)
+                if slider is None:
+                    continue
+                value = getattr(slider, 'value', None)
+                if value is None:
+                    continue
+                sticky[key] = value
+                if param is not None:
+                    param[key] = value
+
+        def _restore_distortion_tool_values_to_widgets(self, param=None):
+            sticky = getattr(self, '_sticky_distortion_tool_values', None)
+            if sticky is None:
+                return
+            for key, widget_id in self._distortion_tool_specs():
+                slider = self.ids.get(widget_id)
+                if slider is None:
+                    continue
+                value = sticky.get(key)
+                if value is None:
+                    value = param.get(key) if isinstance(param, dict) else None
+                    if value is not None:
+                        sticky[key] = value
+                    continue
+                if param is not None:
+                    param[key] = value
+                setter = getattr(slider, 'set_slider_value', None)
+                if callable(setter):
+                    setter(value)
+                else:
+                    slider.value = value
+
+        def _mount_mask_editor2_to_preview(self):
+            editor = self.ids.get('mask_editor2')
+            preview = self.ids.get('preview_widget')
+            if editor is None or preview is None:
+                return
+            if editor.parent is preview:
+                return
+            if editor.parent is not None:
+                try:
+                    editor.parent.remove_widget(editor)
+                except Exception:
+                    logging.exception("failed to detach MaskEditor2 before remount")
+            preview.add_widget(editor, index=0)
+
+        def _unmount_mask_editor2_from_preview(self):
+            editor = self.ids.get('mask_editor2')
+            preview = self.ids.get('preview_widget')
+            if editor is None or preview is None or editor.parent is not preview:
+                return
+            try:
+                preview.remove_widget(editor)
+            except Exception:
+                logging.exception("failed to unmount MaskEditor2 from preview")
+
         def apply_effects_lv(self, lv, effect, sync=False, subname=None, defer_draw=False, overlay_reason="param_change"):
             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and (
                 lv == 3 or subname == 'mask_geometry' or effect == 'mask_geometry'
@@ -1860,6 +2129,13 @@ if __name__ == '__main__':
                     )
                 return
 
+            if lv == 1 and (effect is None or effect == 'distortion' or (
+                    isinstance(effect, list) and 'distortion' in effect)):
+                if not self.can_open_liquify_editor():
+                    self._close_inactive_distortion_painters(None)
+                    self._sync_liquify_mask_editor_input_lock()
+                    return
+
             current_effects, current_param, mask_id = self._get_active_effects(lv=lv, subname=subname or effect)
             if effect is None:
                 effects.set2param_all(current_effects, current_param, self)
@@ -1870,6 +2146,15 @@ if __name__ == '__main__':
                         self._apply_mask1_exclusive_buttons(e)
                 for e in effect:
                     current_effects[lv][e].set2param(current_param, self)
+            if lv == 1 and (effect is None or 'distortion' in effect):
+                self._remember_distortion_tool_values_from_widgets(current_param)
+                active_distortion = None
+                try:
+                    active_distortion = current_effects[1].get('distortion')
+                except Exception:
+                    active_distortion = None
+                self._close_inactive_distortion_painters(active_distortion)
+                self._sync_liquify_mask_editor_input_lock()
             # Remember Quick Select / edge-refine as a sticky tool setting so a
             # freshly created draw mask inherits it (it is a tool mode, not a
             # per-mask one). Only genuine user edits reach here; set2widget echoes
@@ -1982,9 +2267,16 @@ if __name__ == '__main__':
         def set_effect_param(self, lv, effect, arg):
             if self.run_set2widget_all == True:
                 return
+            if lv == 1 and effect == 'distortion' and not self.can_open_liquify_editor():
+                self._close_inactive_distortion_painters(None)
+                self._sync_liquify_mask_editor_input_lock()
+                return
 
             current_effects, current_param, _ = self._get_active_effects(lv=lv)
             current_effects[lv][effect].set2param2(current_param, arg)
+            if lv == 1 and effect == 'distortion':
+                self._close_inactive_distortion_painters(current_effects[lv][effect])
+                self._sync_liquify_mask_editor_input_lock()
             self._apply_mask_overlay_policy(lv, effect)
             #self.apply_rotation_flip_for_wrapper()
             self.start_draw_image()
@@ -1997,6 +2289,8 @@ if __name__ == '__main__':
             effect_list = effect if isinstance(effect, list) else [effect] if effect is not None else []
             mask2_group = subname or (effect_list[0] if len(effect_list) == 1 else None)
 
+            if lv == 1 and mask2_group == "distortion" and self._is_mask2_enabled():
+                return "preserve"
             if lv == 3 and mask2_group in ("mask2", "mask2_quick_select", "mask_geometry"):
                 return "show"
             if lv == 3 and mask2_group == "mask2_draw_effects":
@@ -2321,6 +2615,8 @@ if __name__ == '__main__':
             self.run_set2widget_all = True
             try:
                 effects.set2widget_all(self, _effects, param, reset_effects=reset_effects)
+                if self._has_distortion_effect(_effects):
+                    self._restore_distortion_tool_values_to_widgets(param)
             finally:
                 self.run_set2widget_all = False
 
@@ -3547,32 +3843,41 @@ if __name__ == '__main__':
                     return tab
             return None
 
-        def _set_li_tab_disabled_for_mask2(self):
-            effects_panel = self.ids.get("effects")
-            li_tab = self.ids.get("tab_li") or self._find_effect_tab("Li")
-            if effects_panel is None or li_tab is None:
-                return False
-
-            disabled = self._is_mask2_enabled()
-            li_tab.disabled = disabled
-            if not disabled:
-                return False
-
-            current_tab = getattr(effects_panel, "current_tab", None)
-            if getattr(current_tab, "text", None) != "Li":
-                return False
-
-            fallback = self.ids.get("tab_mask2") or self._find_effect_tab("M2")
-            if fallback is None or getattr(fallback, "disabled", False):
-                fallback = self.ids.get("tab_basic") or self._find_effect_tab("Ba")
-            if fallback is None or getattr(fallback, "disabled", False):
-                for tab in reversed(getattr(effects_panel, "tab_list", [])):
-                    if getattr(tab, "text", None) != "Li" and not getattr(tab, "disabled", False):
-                        fallback = tab
-                        break
-            if fallback is not None:
-                effects_panel.switch_to(fallback)
+        def can_open_liquify_editor(self):
+            if not self._is_mask2_enabled():
                 return True
+            editor = self.ids.get('mask_editor2')
+            if editor is None:
+                return False
+            try:
+                active = editor.get_active_mask()
+            except Exception:
+                active = None
+            if active is None or not active.is_composit():
+                return False
+            if self.is_mask_mesh_editor_active():
+                return False
+            if self._has_initializing_mask():
+                return False
+            try:
+                created = editor.get_created_mask()
+                return not bool(created is not None and getattr(created, 'initializing', False))
+            except Exception:
+                return True
+
+        def _is_li_tab_blocked_for_mask2(self):
+            return False
+
+        def _set_li_tab_disabled_for_mask2(self):
+            li_tab = self.ids.get("tab_li") or self._find_effect_tab("Li")
+            if li_tab is None:
+                return False
+
+            disabled = self._is_li_tab_blocked_for_mask2()
+            li_tab.disabled = disabled
+            if not self.can_open_liquify_editor():
+                self._close_inactive_distortion_painters(None)
+            self._sync_liquify_mask_editor_input_lock()
             return False
 
         def _set_disabled_for_ids(self, id_names, disabled):
@@ -3740,6 +4045,7 @@ if __name__ == '__main__':
             )
 
         def _enable_mask2(self):
+            self._mount_mask_editor2_to_preview()
             self.ids['mask_editor2'].opacity = 1
             self.ids['mask_editor2'].disabled = False
             self._set_li_tab_disabled_for_mask2()
@@ -3751,11 +4057,29 @@ if __name__ == '__main__':
             self.update_mask2_options_enabled()
 
         def _disable_mask2(self):
+            primary_distortion = None
+            try:
+                primary_distortion = self.primary_effects[1].get('distortion')
+            except Exception:
+                primary_distortion = None
+            self._close_inactive_distortion_painters(primary_distortion)
             self.ids['mask_editor2'].opacity = 0
             self.ids['mask_editor2'].disabled = True
             self.ids['mask_editor2'].set_active_mask(None)
             self.ids['mask_editor2'].end()
+            self._unmount_mask_editor2_from_preview()
             self._set_li_tab_disabled_for_mask2()
+            try:
+                current_tab = self.ids["effects"].current_tab
+                if getattr(current_tab, "text", None) == "Li":
+                    self.apply_effects_lv(
+                        1,
+                        "distortion",
+                        defer_draw=True,
+                        overlay_reason="tab_sync",
+                    )
+            except Exception:
+                logging.exception("failed to restore primary Liquify editor after Mask2 off")
             self.update_mask2_options_enabled()
 
         def on_mask2_press(self, value):
@@ -4228,7 +4552,7 @@ if __name__ == '__main__':
         def on_current_tab(self, current):
             self._clear_text_input_focus()
             self._cancel_mask1_mode(redraw=False)
-            if getattr(current, "text", None) == "Li" and self._is_mask2_enabled():
+            if getattr(current, "text", None) == "Li" and self._is_li_tab_blocked_for_mask2():
                 if self._set_li_tab_disabled_for_mask2():
                     return
 

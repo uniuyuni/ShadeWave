@@ -56,6 +56,7 @@ from cores.mask2 import hls_mask
 
 _DEBUG_MASK_GEOMETRY = os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"}
 _DEBUG_MASK_ZOOM_SYNC = os.getenv("PLATYPUS_DEBUG_MASK_ZOOM_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+_DEBUG_LIQUIFY = os.getenv("PLATYPUS_DEBUG_LIQUIFY", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _mask_geom_debug(message, *args):
@@ -66,6 +67,11 @@ def _mask_geom_debug(message, *args):
 def _mask_zoom_sync_debug(message, *args):
     if _DEBUG_MASK_ZOOM_SYNC:
         logging.warning("[MASK_ZOOM_SYNC] " + message, *args)
+
+
+def _liquify_debug(message, *args):
+    if _DEBUG_LIQUIFY:
+        logging.warning("[LIQUIFY] " + message, *args)
 
 
 def _mask_geom_id(mask):
@@ -399,7 +405,7 @@ class BaseMask(KVWidget):
         self.bind(active=self.on_active_changed)
 
         # エフェクトパラメータ保持
-        self.effects = effects.create_effects()
+        self.effects = self._create_effects()
         self.effects_param = {}
         params.set_image_param_for_mask2(self.effects_param, self.editor.get_image_size())
         params.set_temperature_to_param(self.effects_param, *core.invert_RGB2TempTint((1.0, 1.0, 1.0)))
@@ -414,6 +420,15 @@ class BaseMask(KVWidget):
         self._image_mask_pending_event = None
         self._image_mask_pending_key = None
         self._image_mask_pending_error = None
+
+    def _create_effects(self):
+        root = getattr(self.editor, 'root', None)
+        distortion_callback = getattr(root, 'distortion_callback', None)
+        view_param_provider = getattr(self.editor, 'get_effect_view_param', None)
+        return effects.create_effects(
+            distortion_callback=distortion_callback if callable(distortion_callback) else None,
+            view_param_provider=view_param_provider if callable(view_param_provider) else None,
+        )
 
     def _get_or_compute_image_mask_cache(self, cache_key, compute_func, label):
         while True:
@@ -2614,6 +2629,16 @@ class FreeDrawMask(BaseMask):
         # __init__ で KVWindow.bind(mouse_pos=self.on_mouse_pos) しているので、
         # マスクを選択していない / 別マスクを選択中でも mouse_pos イベントは飛んでくる。
         # 表示制御は brush_color の alpha で行う。
+        root = getattr(self.editor, 'root', None)
+        is_liquify_active = False
+        try:
+            check = getattr(root, 'is_liquify_editor_active', None)
+            is_liquify_active = bool(check()) if callable(check) else False
+        except Exception:
+            is_liquify_active = False
+        if is_liquify_active:
+            self.brush_color.rgba = (0, 0, 0, 0)
+            return
         is_active = self.editor.get_active_mask() is self
         is_created = self.editor.get_created_mask() is self
         if not (is_active or is_created):
@@ -4512,6 +4537,23 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             matrix = np.array(self.tcg_info['matrix'], dtype=np.float64, copy=True)
             return (params.get_disp_info(self.tcg_info), self.tcg_info['rotation'] + self.tcg_info['rotation2'], self.tcg_info['flip_mode'], tuple(matrix.flatten()))
 
+    def get_effect_view_param(self):
+        with self._matrix_lock:
+            tcg_info = getattr(self, 'tcg_info', None)
+            if not isinstance(tcg_info, dict):
+                return None
+            matrix = self._image_only_matrix if self._image_only_matrix is not None else tcg_info.get('matrix')
+            view_param = {
+                'original_img_size': tuple(tcg_info.get('original_img_size', self.texture_size)),
+                'disp_info': tcg_info.get('disp_info'),
+                'rotation': math.degrees(float(tcg_info.get('rotation', 0.0))),
+                'rotation2': math.degrees(float(tcg_info.get('rotation2', 0.0))),
+                'flip_mode': tcg_info.get('flip_mode', 0),
+                'matrix': np.array(matrix, dtype=np.float64, copy=True) if matrix is not None else np.eye(3),
+            }
+            view_param['img_size'] = view_param['original_img_size']
+            return view_param
+
     def __set_image_info(self):
         for mask in reversed(self.mask_list):
             #pass    # 無限ループ対策
@@ -4890,12 +4932,24 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         except Exception:
             return False
 
+    def _liquify_editor_locks_input(self):
+        """Preview直下の Liquify editor が active の間は MaskEditor2 側の入力を止める。"""
+        try:
+            from kivy.app import App as _App
+            app = _App.get_running_app()
+            if app is None or app.root is None:
+                return False
+            check = getattr(app.root, 'is_liquify_editor_active', None)
+            return bool(check()) if callable(check) else False
+        except Exception:
+            return False
+
     def on_touch_down(self, touch):
         if self.disabled == True:
             return False
-        if self._mask_mesh_editor_locks_input():
-            # Mesh モード中: MaskEditor2 と全 child mask のイベント連鎖を抑止して、
-            # preview_widget 直下にマウントされた MeshWarpWidget に処理を委ねる。
+        if self._mask_mesh_editor_locks_input() or self._liquify_editor_locks_input():
+            # 編集専用 widget が preview_widget 直下にいる間は MaskEditor2 と
+            # child mask のイベント連鎖を抑止する。
             return False
 
         # アクティブなマスクを先に処理
@@ -4913,7 +4967,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def on_touch_up(self, touch):
         if self.disabled == True:
             return False
-        if self._mask_mesh_editor_locks_input():
+        if self._mask_mesh_editor_locks_input() or self._liquify_editor_locks_input():
             return False
         if (self.created_mask is not None
                 and getattr(self.created_mask, 'initializing', False)
@@ -5515,9 +5569,22 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if self.active_mask is mask:
             if mask is not None:
                 self._last_active_mask_id = mask.mask_id
+            _liquify_debug(
+                "set_active_mask same mask=%s composit=%s",
+                _mask_geom_id(mask),
+                mask.is_composit() if mask is not None else None,
+            )
             self._set_active_composit_matrix()
             return
 
+        _liquify_debug(
+            "set_active_mask change prev=%s next=%s next_composit=%s current_tab=%s",
+            _mask_geom_id(self.active_mask),
+            _mask_geom_id(mask),
+            mask.is_composit() if mask is not None else None,
+            getattr(getattr(self.root.ids.get("effects"), "current_tab", None), "text", None)
+            if self.root is not None else None,
+        )
         if self.active_mask is not None:
             self.active_mask.active = False
             self.active_mask.end()
@@ -5529,6 +5596,13 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             mask.active = True
             if mask.is_composit():
                 # コンポジットなら通常属性のみ反映
+                _liquify_debug(
+                    "set_active_mask set2widget composit mask=%s brush=%s strength=%s records=%s",
+                    _mask_geom_id(mask),
+                    mask.effects_param.get("distortion_brush_size"),
+                    mask.effects_param.get("distortion_strength"),
+                    len(mask.effects_param.get("distortion_recorded") or []),
+                )
                 self.root.set2widget_all(mask.effects, mask.effects_param)
             else:
                 # コンポジットでないならコンポジットの属性と合わせて反映
@@ -5536,9 +5610,30 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 if composit_mask is not None:
                     marge_param = composit_mask.effects_param.copy()
                     marge_param.update(mask.effects_param)
+                    _liquify_debug(
+                        "set_active_mask set2widget child mask=%s composit=%s brush=%s strength=%s records=%s",
+                        _mask_geom_id(mask),
+                        _mask_geom_id(composit_mask),
+                        marge_param.get("distortion_brush_size"),
+                        marge_param.get("distortion_strength"),
+                        len(marge_param.get("distortion_recorded") or []),
+                    )
                     self.root.set2widget_all(composit_mask.effects, marge_param)
                 else:
                     logging.error(f"MaskEditor: 親が見つかりませんでした。マスクを反映できません。")
+
+            try:
+                current_tab = self.root.ids["effects"].current_tab if self.root is not None else None
+                if getattr(current_tab, "text", None) == "Li":
+                    _liquify_debug("set_active_mask tab_sync distortion mask=%s", _mask_geom_id(mask))
+                    self.root.apply_effects_lv(
+                        1,
+                        "distortion",
+                        defer_draw=True,
+                        overlay_reason="tab_sync",
+                    )
+            except Exception:
+                logging.exception("MaskEditor: failed to switch active Liquify target")
 
             mask.start()
             #mask.update()

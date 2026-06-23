@@ -23,6 +23,14 @@ import params
 import config
 import macos as device
 
+_DEBUG_LIQUIFY = os.getenv("PLATYPUS_DEBUG_LIQUIFY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _liquify_debug(message, *args):
+    if _DEBUG_LIQUIFY:
+        logging.warning("[LIQUIFY] " + message, *args)
+
+
 class DistortionEngine:
     def __init__(self, image_size, grid_size=20):
         self.width, self.height = image_size
@@ -495,6 +503,7 @@ class DistortionCanvas(KVFloatLayout):
         self.original_image = None
         self.current_image = None
         self.recorded = [] if recorded is None else recorded
+        self.live_revision = 0
         self.is_recording = False
         self.last_touch_time = 0
         self.points_buffer = []  # 補間用ポイントバッファ
@@ -514,6 +523,14 @@ class DistortionCanvas(KVFloatLayout):
         if parent:
             if self.image_widget is None:
                 self.image_widget = parent
+            self._sync_to_image_widget_bounds()
+            parent.bind(pos=self._sync_to_image_widget_bounds, size=self._sync_to_image_widget_bounds)
+
+    def _sync_to_image_widget_bounds(self, *args):
+        if self.image_widget is None:
+            return
+        self.pos = self.image_widget.pos
+        self.size = self.image_widget.size
 
     def on_size(self, *args):
         self._set_brush_cursor(0)
@@ -522,6 +539,11 @@ class DistortionCanvas(KVFloatLayout):
         if parent is not None:
             KVWindow.bind(mouse_pos=self.on_mouse_pos)
         else:
+            if self.image_widget is not None:
+                try:
+                    self.image_widget.unbind(pos=self._sync_to_image_widget_bounds, size=self._sync_to_image_widget_bounds)
+                except Exception:
+                    pass
             self.brush_color.rgba = (0, 0, 0, 0)
             KVWindow.unbind(mouse_pos=self.on_mouse_pos)
 
@@ -559,6 +581,7 @@ class DistortionCanvas(KVFloatLayout):
     def set_ref_image(self, ref_image, engine_recreate=True):
         self.original_image = ref_image
         self.current_image = ref_image.copy()
+        self.live_revision += 1
         self.is_update_texture = False
         self.is_recording = True
 
@@ -573,6 +596,7 @@ class DistortionCanvas(KVFloatLayout):
     def remap_recorded(self):
         self.engine.reset()
         self.current_image = DistortionCanvas.replay_recorded(self.original_image, self.recorded, self.tcg_info, self.engine)
+        self.live_revision += 1
 
     def on_mouse_pos(self, window, pos):
         #print(f"Mouse position: {pos}")
@@ -614,67 +638,77 @@ class DistortionCanvas(KVFloatLayout):
             self.ids.image_widget.texture = self.full_quality_texture
         
     def on_touch_down(self, touch):
-        if self.image_widget.collide_point(*touch.pos) and self.current_image is not None:
+        inside = self.image_widget.collide_point(*touch.pos)
+        _liquify_debug(
+            "touch_down inside=%s scroll=%s button=%s brush=%s parent=%s image_widget=%s pos=%s",
+            inside,
+            getattr(touch, 'is_mouse_scrolling', None),
+            getattr(touch, 'button', None),
+            self.brush_size,
+            type(self.parent).__name__ if self.parent is not None else None,
+            type(self.image_widget).__name__ if self.image_widget is not None else None,
+            getattr(touch, 'pos', None),
+        )
+        if not inside:
+            return super().on_touch_down(touch)
+
+        if self.callback is not None:
+            self.callback('focus', self)
+
+        if touch.is_mouse_scrolling:
+            if self._adjust_brush_size_from_scroll(touch):
+                return True
+            return super().on_touch_down(touch)
+
+        self._start_stroke(touch)
+        return True
+
+    def _start_stroke(self, touch):
+        self._paint_touch_uid = touch.uid
+
+        # 座標変換 (Widget座標 → 画像座標)
+        tcg_x, tcg_y = self._window_to_tcg(touch.x, touch.y)
+        self.last_touch_pos = [tcg_x, tcg_y]
+        self.last_touch_time = time.time()  # 現在のシステム時間を使用
+
+        strength = -self.strength if self.effect_type == 'swirl' and 'meta' in KVWindow.modifiers else self.strength
+
+        # 記録データ作成
+        record = {
+                "x": tcg_x, "y": tcg_y,
+                "size": self.brush_size,
+                "strength": strength,
+                "effect": self.effect_type,
+                "direction": (0, 0),
+                "time": self.last_touch_time  # タイムスタンプ記録
+        }
+        # 記録開始
+        if self.is_recording:
             if self.callback is not None:
-                self.callback('focus', self)
+                self.callback('start', self)
+            self.recorded.append(record)
 
-            if touch.is_mouse_scrolling:
-                if self._adjust_brush_size_from_scroll(touch):
-                    return True
-                return super().on_touch_down(touch)
-
-            self._paint_touch_uid = touch.uid
-            
-            # 座標変換 (Widget座標 → 画像座標)
-            tcg_x, tcg_y = self._window_to_tcg(touch.x, touch.y)
-            self.last_touch_pos = [tcg_x, tcg_y]
-            self.last_touch_time = time.time()  # 現在のシステム時間を使用
-
-            strength = -self.strength if self.effect_type == 'swirl' and 'meta' in KVWindow.modifiers else self.strength
-
-            # 記録データ作成
-            record = {
-                    "x": tcg_x, "y": tcg_y,
-                    "size": self.brush_size,
-                    "strength": strength,
-                    "effect": self.effect_type,
-                    "direction": (0, 0),
-                    "time": self.last_touch_time  # タイムスタンプ記録
-            }
-            # 記録開始
-            if self.is_recording:
-                if self.callback is not None:
-                    self.callback('start', self)
-                self.recorded.append(record)
-
-            # ポイントをバッファにも追加
-            self.points_buffer = []
-            self.points_buffer.append(record)
-
-            return True
-
-        return super().on_touch_down(touch)
+        # ポイントをバッファにも追加
+        self.points_buffer = []
+        self.points_buffer.append(record)
+        if self.is_recording and self.callback is not None:
+            # 初期open直後のpipeline同期が param 側の古い recorded で
+            # 1点目を巻き戻さないよう、stroke開始点も即座にparamへ反映する。
+            self.callback('apply', self)
 
     def on_touch_move(self, touch):
         if self._paint_touch_uid != touch.uid:
             return super().on_touch_move(touch)
 
-        if self.image_widget.collide_point(*touch.pos) and self.current_image is not None:
-             
+        if self.image_widget.collide_point(*touch.pos):
             # 座標変換 (Widget座標 → 画像座標)
             tcg_x, tcg_y = self._window_to_tcg(touch.x, touch.y)
             
             # 移動方向ベクトルを計算
             direction = (tcg_x - self.last_touch_pos[0], tcg_y - self.last_touch_pos[1])
             
-            # 現在の時間を取得
             current_time = time.time()
                         
-            # 前回の更新から一定時間経過したら処理
-            if current_time - self.last_touch_time > 0.1: # 0.1秒以上経過した場合
-                self.process_buffer()
-                self.last_touch_time = current_time
-
             strength = -self.strength if self.effect_type == 'swirl' and 'meta' in KVWindow.modifiers else self.strength
 
             # 記録データ作成
@@ -690,11 +724,23 @@ class DistortionCanvas(KVFloatLayout):
             # 記録
             if self.is_recording:
                 self.recorded.append(record)
-                if self.callback is not None:
-                    self.callback('apply', self)
                         
             # ポイントをバッファに追加
             self.points_buffer.append(record)
+
+            # 前回の更新から一定時間経過したら処理。
+            # record を buffer に入れてから処理し、外側の pipeline が
+            # get_current_image() で古い current_image を読まないようにする。
+            if self.current_image is not None and current_time - self.last_touch_time > 0.1: # 0.1秒以上経過した場合
+                processed = self.process_buffer()
+                self.last_touch_time = current_time
+                if processed and self.is_recording and self.callback is not None:
+                    _liquify_debug(
+                        "touch_move apply records=%d current_id=%s",
+                        len(self.recorded),
+                        id(self.current_image) if self.current_image is not None else None,
+                    )
+                    self.callback('apply', self)
 
             self.last_touch_pos = [tcg_x, tcg_y]
 
@@ -707,7 +753,13 @@ class DistortionCanvas(KVFloatLayout):
         try:
             # バッファに残っているポイントを処理
             if self.points_buffer:
-                self.process_buffer()
+                processed = self.process_buffer()
+                _liquify_debug(
+                    "touch_up processed=%s records=%d current_id=%s",
+                    processed,
+                    len(self.recorded),
+                    id(self.current_image) if self.current_image is not None else None,
+                )
 
             if self.callback is not None:
                 self.callback('end', self)
@@ -726,15 +778,28 @@ class DistortionCanvas(KVFloatLayout):
         if new_size == self.brush_size:
             return True
 
+        old_size = self.brush_size
         self.set_brush_size(new_size)
         self._update_brush_cursor(touch.x, touch.y)
+        _liquify_debug("brush_scroll old=%s new=%s callback=%s", old_size, new_size, self.callback is not None)
         if self.callback is not None:
             self.callback('brush_size', self)
         return True
 
     def process_buffer(self):
         if not self.points_buffer or len(self.points_buffer) <= 0:
-            return
+            _liquify_debug("process_buffer skip empty")
+            return False
+        if self.current_image is None or self.original_image is None or not hasattr(self, 'engine'):
+            _liquify_debug(
+                "process_buffer skip missing current=%s original=%s engine=%s points=%d",
+                self.current_image is not None,
+                self.original_image is not None,
+                hasattr(self, 'engine'),
+                len(self.points_buffer),
+            )
+            self.points_buffer = []
+            return False
                     
         # バッファ内のポイントを処理
         for record in self.points_buffer:
@@ -761,13 +826,21 @@ class DistortionCanvas(KVFloatLayout):
         if self.update_event is None:
             self.update_event = KVClock.schedule_once(self.delayed_texture_update, 0.01)
         
+        processed_count = len(self.points_buffer)
         # バッファクリア
         self.points_buffer = []
+        self.live_revision += 1
+        _liquify_debug(
+            "process_buffer done points=%d records=%d current_id=%s revision=%s",
+            processed_count,
+            len(self.recorded),
+            id(self.current_image) if self.current_image is not None else None,
+            self.live_revision,
+        )
+        return True
 
     def delayed_texture_update(self, dt):
         self.update_texture()
-        if self.callback is not None:
-            self.callback('apply', self)
         self.update_event = None
 
     def remap_image(self):
@@ -802,18 +875,21 @@ class DistortionCanvas(KVFloatLayout):
 
         return engine.warp_image(original_image)
 
-    def reset_image(self):
+    def reset_image(self, notify=True):
         if self.original_image is not None:
-            if self.callback is not None:
+            if notify and self.callback is not None:
                 self.callback('start', self)
             self.current_image = self.original_image.copy()
             self.recorded = []
             self.engine.reset()
+            self.live_revision += 1
             self.update_texture()
-            if self.callback is not None:
+            if notify and self.callback is not None:
                 self.callback('apply', self)
-            if self.callback is not None:
+            if notify and self.callback is not None:
                 self.callback('end', self)
+            return True
+        return False
 
     def set_effect(self, effect_type):
         self.effect_type = effect_type
@@ -826,6 +902,9 @@ class DistortionCanvas(KVFloatLayout):
 
     def get_current_image(self):
         return self.current_image
+
+    def get_live_revision(self):
+        return self.live_revision
 
     def get_recorded(self):
         return self.recorded

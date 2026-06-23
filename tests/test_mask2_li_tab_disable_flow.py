@@ -29,11 +29,19 @@ class Mask2LiTabDisableFlowTest(unittest.TestCase):
         self.assertIn("id: tab_li", kv_source)
         self.assertIn("text: 'Li'", kv_source)
 
-    def test_mask2_state_disables_li_tab_and_switches_away(self):
+    def test_mask2_state_keeps_li_tab_available_but_editor_requires_composit(self):
         source_text = MAIN_PATH.read_text()
         helper_source = ast.get_source_segment(
             source_text,
             _load_class_function(MAIN_PATH, "MainWidget", "_set_li_tab_disabled_for_mask2"),
+        )
+        block_source = ast.get_source_segment(
+            source_text,
+            _load_class_function(MAIN_PATH, "MainWidget", "_is_li_tab_blocked_for_mask2"),
+        )
+        can_open_source = ast.get_source_segment(
+            source_text,
+            _load_class_function(MAIN_PATH, "MainWidget", "can_open_liquify_editor"),
         )
         update_source = ast.get_source_segment(
             source_text,
@@ -54,18 +62,21 @@ class Mask2LiTabDisableFlowTest(unittest.TestCase):
 
         self.assertIn('self.ids.get("tab_li")', helper_source)
         self.assertIn('self._find_effect_tab("Li")', helper_source)
-        self.assertIn("disabled = self._is_mask2_enabled()", helper_source)
+        self.assertIn("disabled = self._is_li_tab_blocked_for_mask2()", helper_source)
         self.assertIn("li_tab.disabled = disabled", helper_source)
-        self.assertIn('getattr(current_tab, "text", None) != "Li"', helper_source)
-        self.assertIn('self.ids.get("tab_mask2")', helper_source)
-        self.assertIn('self._find_effect_tab("M2")', helper_source)
-        self.assertIn('self.ids.get("tab_basic")', helper_source)
-        self.assertIn("effects_panel.switch_to(fallback)", helper_source)
+        self.assertIn("return False", block_source)
+        self.assertIn("if not self._is_mask2_enabled():", can_open_source)
+        self.assertIn("active = editor.get_active_mask()", can_open_source)
+        self.assertIn("active is None or not active.is_composit()", can_open_source)
+        self.assertIn("self.is_mask_mesh_editor_active()", can_open_source)
+        self.assertIn("self._has_initializing_mask()", can_open_source)
+        self.assertIn("editor.get_created_mask()", can_open_source)
+        self.assertIn("self._close_inactive_distortion_painters(None)", helper_source)
+        self.assertNotIn("switch_to", helper_source)
         self.assertIn("self._set_li_tab_disabled_for_mask2()", update_source)
         self.assertIn("self._set_li_tab_disabled_for_mask2()", enable_source)
         self.assertIn("self._set_li_tab_disabled_for_mask2()", disable_source)
-        self.assertIn('getattr(current, "text", None) == "Li"', tab_source)
-        self.assertIn("self._is_mask2_enabled()", tab_source)
+        self.assertNotIn("switch_to", tab_source)
 
 
 if __name__ == "__main__":

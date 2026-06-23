@@ -1166,11 +1166,11 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
 
         if _iter_t0 is not None:
             _t = time.perf_counter()
-            if pre_diff is not diff:
+            if pre_diff is not diff or pre_hash != getattr(lv1[n], "hash", None):
                 lv2reset = True
             overhead_components["reset_flag_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
-            if pre_diff is not diff:
+            if pre_diff is not diff or pre_hash != getattr(lv1[n], "hash", None):
                 lv2reset = True
         if _iter_t0 is not None:
             _timing_record_effect(

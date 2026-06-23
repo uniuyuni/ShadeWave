@@ -39,6 +39,14 @@ from enums import EffectMode, ExecutionMode, ImageFidelity
 from image_fidelity import heavy_ai_allowed
 
 
+_DEBUG_LIQUIFY = os.getenv("PLATYPUS_DEBUG_LIQUIFY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _liquify_debug(message, *args):
+    if _DEBUG_LIQUIFY:
+        logging.warning("[LIQUIFY] " + message, *args)
+
+
 def _ai_noise_content_key(nr, upstream_hash):
     """NR 入力に効く upstream（loading_wait までのハッシュ）と nr オンオフ。強度は含めない。"""
     return hash(("scunet_v2", hash(nr), upstream_hash))
@@ -1237,7 +1245,7 @@ class DistortionEffect(Effect):
         SliderBinding('distortion_strength', 50, "slider_distortion_strength"),
     )
 
-    def __init__(self, distortion_callback=None, **kwargs):
+    def __init__(self, distortion_callback=None, view_param_provider=None, **kwargs):
         super().__init__(**kwargs)
         
         self.distortion_painter = None
@@ -1245,9 +1253,23 @@ class DistortionEffect(Effect):
         self.effect_type = 'forward_warp'
         self._painter_ref_key = None
         self.set_distortion_callback(distortion_callback)
+        self.set_view_param_provider(view_param_provider)
 
     def set_distortion_callback(self, callback):
         self.distortion_callback = callback
+
+    def set_view_param_provider(self, provider):
+        self.view_param_provider = provider if callable(provider) else None
+
+    def _provider_view_param(self):
+        if self.view_param_provider is None:
+            return None
+        try:
+            view_param = self.view_param_provider()
+        except Exception:
+            logging.exception("view_param_provider failed")
+            return None
+        return view_param if isinstance(view_param, dict) else None
 
     def get_param_dict(self, param):
         param_dict = super().get_param_dict(param)
@@ -1256,21 +1278,74 @@ class DistortionEffect(Effect):
 
     def after_set2widget(self, widget, param):
         if self.distortion_painter is not None:
+            _liquify_debug(
+                "distortion after_set2widget painter=%s brush=%s strength=%s records=%d",
+                id(self.distortion_painter),
+                self._get_param(param, 'distortion_brush_size'),
+                self._get_param(param, 'distortion_strength'),
+                len(self._get_param(param, 'distortion_recorded') or []),
+            )
             self.distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
             self.distortion_painter.remap_recorded()
 
+    def _view_param(self, param, widget=None, efconfig=None):
+        """Return the coordinate context used by Liquify.
+
+        Mask/Composit effect params intentionally do not persist disp_info, but
+        Liquify records/replays TCG coordinates in the currently displayed image
+        space. Use the live primary/efconfig view while keeping strokes stored in
+        the layer param.
+        """
+        base = None
+        if widget is not None:
+            base = getattr(widget, 'primary_param', None)
+        if not (isinstance(base, dict) and base.get('original_img_size') is not None):
+            base = self._provider_view_param()
+        if not (isinstance(base, dict) and base.get('original_img_size') is not None):
+            if param.get('disp_info') is not None:
+                return param
+            base = None
+
+        if isinstance(base, dict) and base.get('original_img_size') is not None:
+            view_param = base.copy()
+        else:
+            view_param = param.copy()
+
+        if view_param.get('original_img_size') is None:
+            view_param['original_img_size'] = param.get('original_img_size')
+
+        disp_info = getattr(efconfig, 'disp_info', None) if efconfig is not None else None
+        if disp_info is not None and view_param.get('original_img_size') is not None:
+            params.set_disp_info(view_param, disp_info)
+        return view_param
+
     def after_set2param(self, param, widget):
         distortion_enable = False if widget.ids["effects"].current_tab.text != "Li" else True
+        can_open = getattr(widget, 'can_open_liquify_editor', None)
+        if distortion_enable and callable(can_open) and not can_open():
+            distortion_enable = False
 
-        # エディタを開く
         if distortion_enable == True:
+            _liquify_debug(
+                "distortion after_set2param open brush=%s strength=%s records=%d painter=%s",
+                param.get('distortion_brush_size'),
+                param.get('distortion_strength'),
+                len(param.get('distortion_recorded') or []),
+                id(self.distortion_painter) if self.distortion_painter is not None else None,
+            )
             self._open_distortion_painter(param, widget)
 
-        # エディタを閉じる
         elif distortion_enable == False:
+            _liquify_debug(
+                "distortion after_set2param close records=%d painter=%s",
+                len(param.get('distortion_recorded') or []),
+                id(self.distortion_painter) if self.distortion_painter is not None else None,
+            )
             self._close_distortion_painter(param, widget)
 
         if self.distortion_painter is not None:
+            if hasattr(self.distortion_painter, 'set_primary_param'):
+                self.distortion_painter.set_primary_param(self._view_param(param, widget=widget))
             self.distortion_painter.set_brush_size(param['distortion_brush_size'])
             self.distortion_painter.set_strength(param['distortion_strength'])
 
@@ -1281,18 +1356,19 @@ class DistortionEffect(Effect):
             self.effect_type = arg
 
     def _make_painter_ref_key(self, img, param, efconfig):
-        matrix = param.get('matrix')
+        view_param = self._view_param(param, efconfig=efconfig)
+        matrix = view_param.get('matrix')
         if matrix is not None:
             matrix = tuple(np.asarray(matrix, dtype=np.float64).round(8).ravel())
         return (
             tuple(img.shape),
             str(img.dtype),
-            params.get_disp_info(param),
-            tuple(param.get('original_img_size', ())),
-            tuple(param.get('img_size', ())),
-            param.get('rotation', 0.0),
-            param.get('rotation2', 0.0),
-            param.get('flip_mode', 0),
+            params.get_disp_info(view_param),
+            tuple(view_param.get('original_img_size', ())),
+            tuple(view_param.get('img_size', ())),
+            view_param.get('rotation', 0.0),
+            view_param.get('rotation2', 0.0),
+            view_param.get('flip_mode', 0),
             matrix,
             getattr(efconfig, 'upstream_hash', None),
         )
@@ -1305,8 +1381,17 @@ class DistortionEffect(Effect):
         if not force and ref_key == self._painter_ref_key:
             return
 
+        _liquify_debug(
+            "sync_painter_ref force=%s painter=%s records=%d old_key=%s new_key=%s layer=%s",
+            force,
+            id(distortion_painter),
+            len(self._get_param(param, 'distortion_recorded') or []),
+            self._painter_ref_key is not None,
+            ref_key is not None,
+            getattr(efconfig, "pipeline_layer_label", None),
+        )
         distortion_painter.set_effect(self.effect_type)
-        distortion_painter.set_primary_param(param)
+        distortion_painter.set_primary_param(self._view_param(param, efconfig=efconfig))
         distortion_painter.set_ref_image(img, True)
         distortion_painter.set_recorded(self._get_param(param, 'distortion_recorded'))
         distortion_painter.remap_recorded()
@@ -1330,7 +1415,20 @@ class DistortionEffect(Effect):
         switch_distortion = self._get_param(param, 'switch_distortion')
         if switch_distortion == True and self.distortion_painter is not None:
             self.diff = self.distortion_painter.get_current_image()
-            self.hash = hash((len(self.distortion_painter.get_recorded()), self._painter_ref_key))
+            self.hash = hash((
+                len(self.distortion_painter.get_recorded()),
+                self._painter_ref_key,
+                getattr(self.distortion_painter, "get_live_revision", lambda: 0)(),
+                id(self.diff),
+            ))
+            _liquify_debug(
+                "make_diff painter records=%d diff_id=%s revision=%s ref_key=%s layer=%s",
+                len(self.distortion_painter.get_recorded()),
+                id(self.diff) if self.diff is not None else None,
+                getattr(self.distortion_painter, "get_live_revision", lambda: 0)(),
+                self._painter_ref_key is not None,
+                getattr(efconfig, "pipeline_layer_label", None),
+            )
 
         else:
             dr = self._get_param(param, 'distortion_recorded')
@@ -1343,7 +1441,7 @@ class DistortionEffect(Effect):
                 if self.hash != param_hash:
                     from widgets.distortion_painter import DistortionCanvas
 
-                    tcg_info = params.param_to_tcg_info(param)
+                    tcg_info = params.param_to_tcg_info(self._view_param(param, efconfig=efconfig))
                     self.diff = DistortionCanvas.replay_recorded(img, dr, tcg_info)
                 self.hash = param_hash
         
@@ -1372,13 +1470,41 @@ class DistortionEffect(Effect):
                     effect_type=self.effect_type,
                     brush_size=widget.ids["slider_distortion_brush_size"].value,
                     strength=widget.ids["slider_distortion_strength"].value)
-            self.distortion_painter.set_primary_param(param)
-            widget.ids["preview_widget"].add_widget(self.distortion_painter)
+            self.distortion_painter.set_primary_param(self._view_param(param, widget=widget))
+            self.distortion_painter.is_recording = True
+            widget.ids["preview_widget"].add_widget(self.distortion_painter, index=0)
+            _liquify_debug(
+                "open_painter painter=%s parent=%s brush=%s strength=%s records=%d",
+                id(self.distortion_painter),
+                type(self.distortion_painter.parent).__name__ if self.distortion_painter.parent is not None else None,
+                self.distortion_painter.brush_size,
+                self.distortion_painter.strength,
+                len(self.distortion_painter.get_recorded() or []),
+            )
 
             self.is_initial_open = 1
+        self._bring_distortion_painter_to_front(widget)
+
+    def _bring_distortion_painter_to_front(self, widget):
+        painter = self.distortion_painter
+        if painter is None:
+            return
+        preview_widget = widget.ids.get("preview_widget")
+        if preview_widget is None or painter.parent is not preview_widget:
+            return
+        if len(preview_widget.children) > 0 and preview_widget.children[0] is painter:
+            return
+        preview_widget.remove_widget(painter)
+        preview_widget.add_widget(painter, index=0)
 
     def _close_distortion_painter(self, param, widget):
         if self.distortion_painter is not None:
+            _liquify_debug(
+                "close_painter painter=%s records=%d parent=%s",
+                id(self.distortion_painter),
+                len(self.distortion_painter.get_recorded() or []),
+                type(self.distortion_painter.parent).__name__ if self.distortion_painter.parent is not None else None,
+            )
             widget.ids["preview_widget"].remove_widget(self.distortion_painter)
             param['distortion_recorded'] = self.distortion_painter.get_recorded()
             self.distortion_painter = None
@@ -4688,7 +4814,7 @@ def bind_ai_job_manager(effect_sets, ai_job_manager):
         logging.exception("failed to bind AI job manager to AI-NR effect")
 
 
-def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None):
+def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None, view_param_provider=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
@@ -4706,7 +4832,10 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['crop'] = CropEffect(crop_callback=crop_callback)
 
     lv1 = effects[1]
-    lv1['distortion'] = DistortionEffect(distortion_callback=distortion_callback)
+    lv1['distortion'] = DistortionEffect(
+        distortion_callback=distortion_callback,
+        view_param_provider=view_param_provider,
+    )
     lv1['lensblur_filter'] = LensblurFilterEffect()
     lv1['scratch'] = ScratchEffect()
     lv1['frosted_glass'] = FrostedGlassEffect()
