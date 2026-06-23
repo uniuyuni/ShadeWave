@@ -929,61 +929,19 @@ class BaseMask(KVWidget):
                 matrix_bytes = np.asarray(matrix, dtype=np.float64).tobytes()
         except Exception:
             matrix_bytes = b''
-        return (effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_settings'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_invert'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_allow_over_one'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_allow_under_zero'),
-                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max'),
-                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_hue'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_distance'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_min'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_hue_max'),
-                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_lum'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_distance'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_min'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_lum_max'),
-                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_sat'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_distance',),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_min'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_sat_max'),
-                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_freedraw_brush_hardness'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_polyline_fill'),
-                effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_quick_select'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_mode'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_radius'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_strength'),
-                effects.Mask2Effect.get_param(self.effects_param, 'mask2_edge_refine_bias'),
-                # mask Mesh warp 関連 (Composit のみ実際に効くが、子マスクでも
-                # placeholder default ({} と [4,4]) で hash が安定するので一律含める)
-                tuple(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_size') or ()),
-                _mesh_cps_hash_key(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_control_points')),
-                bool(effects.Mask2Effect.get_param(self.effects_param, 'mask_mesh_link_to_image')),
-                # linked=True のとき: 画像 mesh CP の変更でキャッシュを invalidate するため hash に含める
-                _linked_primary_mesh_hash_key(self),
-                matrix_bytes)
+        # Mask2 パラメータ部は headless の get_mask_hash_tuple を再利用(二重定義を排除)。
+        # タプル連結なので並び・値は従来と完全に同一 -> hash 値も不変。末尾に GUI 固有の
+        # linked mesh hash と matrix バイト列(mask Geom swap 検知用)を付与する。
+        return extended_params.get_mask_hash_tuple(self.effects_param) + (
+            _linked_primary_mesh_hash_key(self),
+            matrix_bytes,
+        )
 
     def _apply_mask_space(self, image):
-        switch_mask2_options = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options')
-        if switch_mask2_options == True:
-            open_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_open_space')
-            image = expand_mask.adjust_foreground_only(image, open_space * params.get_disp_info(self.editor.tcg_info)[4], False)
-
-            close_space = effects.Mask2Effect.get_param(self.effects_param, 'mask2_close_space')
-            image = expand_mask.adjust_holes_only(image, close_space * params.get_disp_info(self.editor.tcg_info)[4], False)
-        
-        return image
+        return extended_params._apply_mask_space(self.editor, self.effects_param, image)
 
     def _quick_select_switch_enabled(self):
-        return (
-            effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options') == True
-            and effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_quick_select') == True
-        )
+        return extended_params._quick_select_switch_enabled(self.effects_param)
 
     def _apply_edge_refine(self, image, edge_refine_draw_strokes=None):
         if not self._edge_refine_enabled_for_mask():
@@ -1020,28 +978,8 @@ class BaseMask(KVWidget):
         return refined, support
 
     def _respect_soft_drawing(self, refined, drawn):
-        """Respect the user's actual painted alpha for a soft-brush drawing.
-
-        Quick Select fills its grown/snapped region as a hard (binary) support, so a
-        mask painted with a low Brush Hardness came out fully hard. Instead of
-        synthesising softness, modulate the result by the *original drawn mask* so the
-        true brush falloff is preserved (result = quick_select x drawing). A
-        near-binary (hard-brush) drawing is left untouched, so the grow-to-edge
-        behaviour for rough dabs is unchanged; softness is detected from the drawn
-        alpha itself, no extra parameter."""
-        drawn = np.clip(np.asarray(drawn, dtype=np.float32), 0.0, 1.0)
-        refined = np.asarray(refined, dtype=np.float32)
-        if drawn.shape != refined.shape:
-            return refined
-        painted = drawn > 0.02
-        n = int(np.count_nonzero(painted))
-        if n == 0:
-            return refined
-        # fraction of painted pixels that are partial alpha => soft brush
-        partial = np.count_nonzero(painted & (drawn < 0.9)) / float(n)
-        if partial < 0.2:
-            return refined  # essentially hard: keep grow-to-edge
-        return refined * drawn
+        # headless 実装に一本化(_respect_soft_drawing_region と同一ロジック)。
+        return extended_params._respect_soft_drawing_region(refined, drawn)
 
     def _edge_refine_enabled_for_mask(self):
         return True
@@ -1053,18 +991,10 @@ class BaseMask(KVWidget):
         return edge_refine.STRATEGY_REFINE
 
     def _edge_refine_radius_to_texture(self, radius):
-        try:
-            disp_scale = float(params.get_disp_info(self.editor.tcg_info)[4])
-        except Exception:
-            disp_scale = 1.0
-        return float(radius) * disp_scale
+        return extended_params._edge_refine_radius_to_texture(self.editor, radius)
 
     def _edge_refine_edge_bias_to_texture(self, edge_bias):
-        try:
-            disp_scale = float(params.get_disp_info(self.editor.tcg_info)[4])
-        except Exception:
-            disp_scale = 1.0
-        return float(edge_bias) * disp_scale
+        return extended_params._edge_refine_edge_bias_to_texture(self.editor, edge_bias)
 
     def _get_edge_refine_guide_image(self, mask_shape):
         crop = getattr(self.editor, 'crop_image_rgb', None)
@@ -1110,72 +1040,25 @@ class BaseMask(KVWidget):
             logging.exception("[QS_GUIDE_GEOM] logging failed")
 
     def _get_edge_refine_guide_point(self):
-        center = getattr(self, 'center', None)
-        if center is None:
-            return None
-        try:
-            return self.editor.tcg_to_texture(*center)
-        except Exception:
-            return None
+        return extended_params._get_edge_refine_guide_point(self.editor, getattr(self, 'center', None))
 
+    # depth/blur/HLS の純粋な計算は headless 経路(cores.mask2.extended_params)に一本化し、
+    # GUI 側はそこへ委譲する(self.editor が ctx、self.center が center_tcg として互換)。
+    # これにより Mask2 範囲パラメータの計算ロジックが 2 重定義されなくなる。
     def _apply_depth_mask(self, image):
-        switch_mask2_depth = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_depth')
-        if switch_mask2_depth == True:
-            dmin = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_min') / 255
-            dmax = effects.Mask2Effect.get_param(self.effects_param, 'mask2_depth_max') / 255
-            if (dmin != 0) or (1 != dmax):
-                image = np.where((image < dmin) | (dmax < image), 0, image)
+        return extended_params._apply_depth_mask(self.effects_param, image)
 
-        return image
-    
     def _apply_mask_blur(self, image):
-        switch_mask2_options = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_options')
-        blur = effects.Mask2Effect.get_param(self.effects_param, 'mask2_blur')
-        if switch_mask2_options == True and blur != 0:
-            ksize = int(max(0, blur*2-1))
-            image = core.gaussian_blur_cv(image, (ksize, ksize))
-
-        return image
-
-    def _draw_hls_mask(self, mask, hls_str):
-        crop_image_hls = self.editor.get_crop_image_hls()
-        if crop_image_hls is None:
-            return mask
-
-        cx, cy = self.editor.tcg_to_crop_image(*self.center)
-        ndis = effects.Mask2Effect.get_param(
-            self.effects_param,
-            f'mask2_{hls_str}_distance',
-            hls_mask.DISTANCE_FULL[hls_str],
-        )
-        _min = effects.Mask2Effect.get_param(self.effects_param, f'mask2_{hls_str}_min')
-        _max = effects.Mask2Effect.get_param(
-            self.effects_param,
-            f'mask2_{hls_str}_max',
-            hls_mask.RANGE_FULL[hls_str],
-        )
-        return hls_mask.apply_channel_mask(crop_image_hls, mask, hls_str, (cx, cy), ndis, _min, _max)
+        return extended_params._apply_mask_blur(self.effects_param, image)
 
     def _draw_hue_mask(self, mask):
-        switch_mask2_hue = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_hue')
-        if switch_mask2_hue == True:
-            return self._draw_hls_mask(mask, 'hue')
-        
-        return mask
+        return extended_params._draw_hue_mask(self.editor, self.effects_param, mask, self.center)
 
     def _draw_lum_mask(self, mask):
-        switch_mask2_lum = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_lum')
-        if switch_mask2_lum == True:
-            return self._draw_hls_mask(mask, 'lum')
-        
-        return mask
+        return extended_params._draw_lum_mask(self.editor, self.effects_param, mask, self.center)
 
     def _draw_sat_mask(self, mask):
-        switch_mask2_sat = effects.Mask2Effect.get_param(self.effects_param, 'switch_mask2_sat')
-        if switch_mask2_sat == True:
-            return self._draw_hls_mask(mask, 'sat')
-        
-        return mask
+        return extended_params._draw_sat_mask(self.editor, self.effects_param, mask, self.center)
 
 # マスクの合成マスク
 class CompositMask(BaseMask):

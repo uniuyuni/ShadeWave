@@ -64,7 +64,9 @@ class Mask2QuickSelectHeadLabelFlowTest(unittest.TestCase):
         extended_source = EXTENDED_PARAMS_PATH.read_text(encoding="utf-8")
 
         self.assertIn("def _quick_select_switch_enabled", mask_editor_source)
-        self.assertIn("'switch_mask2_quick_select'", mask_editor_source)
+        # GUI 側はゲート判定を headless の共有実装へ委譲する(スイッチのリテラルは
+        # extended_params に集約)。委譲が残っていればゲートは効いている。
+        self.assertIn("extended_params._quick_select_switch_enabled", mask_editor_source)
         self.assertIn("def _quick_select_switch_enabled", extended_source)
         self.assertIn('"switch_mask2_quick_select"', extended_source)
 
