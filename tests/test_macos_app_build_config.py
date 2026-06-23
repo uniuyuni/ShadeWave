@@ -1,6 +1,8 @@
 import pathlib
 import unittest
 
+from scripts.build_macos_app_pyinstaller import _kv_hidden_imports
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -45,6 +47,21 @@ class MacOSAppBuildConfigTests(unittest.TestCase):
         self.assertIn('setdefault("PLATYPUS_SAM3_COREML_BACKBONE", "1")', hook)
         self.assertNotIn('setdefault("CONDA_PREFIX"', hook)
         self.assertNotIn('setdefault("PYTHONPATH"', hook)
+
+    def test_kv_only_local_widget_imports_are_hidden_imports(self):
+        hidden = set(_kv_hidden_imports(ROOT))
+
+        self.assertIn("widgets.stable_tabbed_panel", hidden)
+        self.assertIn("widgets.scaled_button", hidden)
+        self.assertIn("widgets.modern_checkbox", hidden)
+        self.assertIn("utils.kvutils", hidden)
+        self.assertIn("utils.iconutils", hidden)
+
+    def test_build_includes_kivy_sdl2_window_provider(self):
+        source = (ROOT / "scripts" / "build_macos_app_pyinstaller.py").read_text(encoding="utf-8")
+
+        self.assertIn('"kivy.core.window.window_sdl2"', source)
+        self.assertIn('"kivy.core.window._window_sdl2"', source)
 
 
 if __name__ == "__main__":

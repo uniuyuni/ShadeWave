@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -286,6 +287,40 @@ def _add_data_mac(src: Path, dest_in_bundle: str) -> str:
     return f"{src}:{dest_in_bundle}"
 
 
+_KV_IMPORT_RE = re.compile(r"^\s*#:\s*import\s+\S+\s+([A-Za-z_][\w.]*)\s*$")
+
+
+def _resolve_local_module(root: Path, import_target: str) -> str | None:
+    parts = import_target.split(".")
+    for end in range(len(parts), 0, -1):
+        candidate = root.joinpath(*parts[:end])
+        if candidate.with_suffix(".py").is_file() or (candidate / "__init__.py").is_file():
+            return ".".join(parts[:end])
+    return None
+
+
+def _kv_hidden_imports(root: Path) -> list[str]:
+    """KV-only local imports are invisible to PyInstaller's static analysis."""
+    kv_files = [root / "main.kv"]
+    widgets_dir = root / "widgets"
+    if widgets_dir.is_dir():
+        kv_files.extend(sorted(widgets_dir.rglob("*.kv")))
+
+    hidden: set[str] = set()
+    for kv in kv_files:
+        if not kv.is_file():
+            continue
+        for line in kv.read_text(encoding="utf-8").splitlines():
+            match = _KV_IMPORT_RE.match(line)
+            if not match:
+                continue
+            module = _resolve_local_module(root, match.group(1))
+            if module is not None:
+                hidden.add(module)
+
+    return sorted(hidden)
+
+
 def _kivy_pyinstaller_flags() -> list[str]:
     """
     Kivy 公式 pyinstaller_hooks を使う（--collect-all kivy は kivy.garden で失敗するため使わない）。
@@ -406,6 +441,8 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     hidden = [
         "PIL",
         "PIL._imagingtk",
+        "kivy.core.window.window_sdl2",
+        "kivy.core.window._window_sdl2",
         "mediapipe.python.solutions.face_mesh",
         "radiance_denoise.native",
     ]
@@ -462,6 +499,8 @@ def _build_args(root: Path, name: str, bundle_id: str, icon: Path | None) -> lis
     args.extend(_radiance_codec_binary_args(root))
 
     for h in hidden:
+        args.extend(["--hidden-import", h])
+    for h in _kv_hidden_imports(root):
         args.extend(["--hidden-import", h])
 
     # pyvips（C 拡張 _libvips とバイナリ）
