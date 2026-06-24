@@ -1,7 +1,8 @@
 # Shade Wave 現状コード詳細設計書
 
 作成日: 2026-06-19  
-対象バージョン: 現行 `main` 作業ツリーのコード  
+更新日: 2026-06-25 (lens ghost 効果の追加に追従)  
+対象バージョン: 現行 `main` 作業ツリーのコード (`define.VERSION = 2.91.232`)  
 目的: 保守、機能追加、リファクタリング、移植、オンボーディングのために、現状コードの構造・実行フロー・不変条件・落とし穴を残す。
 
 ## 0. ゴール、読者、スコープ
@@ -95,7 +96,10 @@
 | `processing_dialog.py` | ブロッキング処理中のmacOS HUD/スタブ。 |
 | `memory_manager.py` | RSS/available memory監視、Effect/processorキャッシュ破棄。 |
 | `cores/mask2/` | Kivy非依存のMask2ヘッドレス処理、AI推論ランタイム、座標コンテキスト。 |
+| `cores/lens_ghost.py` | Kivy非依存のレンズゴースト合成 `create_ghost()` と `GHOST_PRESETS`。合併ROI内だけで合成する高速実装。 |
 | `widgets/mask_editor2.py` | Mask2 UI。各マスク型、serialize/deserialize、画面上の操作。 |
+| `widgets/ghost_canvas.py` | preview に重ねる `LensGhostCanvas`。光源CP(コントロールポイント)を正規化TCGで配置/移動/削除。 |
+| `widgets/ghosteditor.py` | レンズゴーストの独立検証用テストベッド(`GhostEditor`)。本体アプリへは未配線。 |
 | `effect_backends/` | 参照実装/高速実装アダプタ。色変換、tone、cross filterなど。 |
 | `external/` | `setup.sh` がcloneする外部プロジェクト。リポジトリ管理対象ではない前提。 |
 | `tests/` | 回帰テスト。pipeline、mask、export、UI flow、backend contractを広くカバー。 |
@@ -108,7 +112,7 @@
 | File cache | `FileCacheSystem` | `cache`, `preload_registry`, `active_processes`, `final_display_cache` | 画像ロード結果と表示用画像を保持。 |
 | Image buffer | `ImageSet` | `file_path`, `img`, `fidelity`, `color_space` | `img` は基本float32、作業色空間はProPhoto RGBリニア。 |
 | Effect graph | `effects.create_effects()` | 5段階のdictリスト | 順序はdict挿入順が仕様。 |
-| Pipeline config | `EffectConfig` | `mode`, `disp_info`, `resolution_scale`, `upstream_hash`, `layer_status` | pipeline中に各Effectへ渡される実行コンテキスト。 |
+| Pipeline config | `EffectConfig` | `mode`, `disp_info`, `resolution_scale`, `upstream_hash`, `layer_status`, `current_level` | pipeline中に各Effectへ渡される実行コンテキスト。`current_level` は `pipeline_lv0..pipeline_last` が実行中レベル(0-4)を入れ、複数レベル登録Effect(lens_ghost)の実行判定に使う。 |
 | Mask2 UI | `MaskEditor2` | mask list, active mask, ref image, texture size | UI用。Kivy Widgetを持つ。 |
 | Mask2 export | `Mask2HeadlessPipeline` | `ctx`, `mask_list` | export用。Kivyに依存しない。 |
 | History | `history.History` | `Operation` list | Effect paramとMask2 layer操作のundo/redo。 |
@@ -692,10 +696,30 @@ previewとexportでMask2位置が一致するための条件:
 | Level | 主なEffect | 役割 |
 | --- | --- | --- |
 | lv0 | loading_wait, ai_noise_reduction, remove_chromatic_aberration, lens_modifier, subpixel_shift, exposure_fusion_debevec, inpaint, patchmatch_inpaint, cross_filter, color_match, geometry, crop | ロード待ち、重い復元、RAW/幾何、crop前処理。 |
-| lv1 | distortion, lensblur_filter, scratch, frosted_glass, mosaic, face | crop後の形状/フィルタ系。 |
-| lv2 | color_temperature, auto_exposure, LUT, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, Film Process/look, glow, unsharp | 主なトーン/カラー/質感処理。 |
+| lv1 | face, distortion, **lens_ghost**, lensblur_filter, scratch, frosted_glass, mosaic | crop後の形状/フィルタ系。`face` が先頭、`lens_ghost` は `lensblur_filter` の前。 |
+| lv2 | color_temperature, auto_exposure, LUT, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, Film Process/look, glow, unsharp, **lens_ghost** | 主なトーン/カラー/質感処理。`lens_ghost` を末尾にも登録。 |
 | lv3 | mask2, mask_geometry | マスク表示/マスクジオメトリ関連。 |
 | lv4 | grain, vignette | 最終段。Mask composite後の画像に適用。 |
+
+#### lens_ghost のデュアルレベル登録
+
+`lens_ghost`(`LensGhostEffect`)は **同一インスタンス1つを lv1 と lv2 の両方に登録** する特殊Effectである。`create_effects()` で `_lens_ghost` を作り、`lv1['lens_ghost']`(lensblur_filterの前)と `lv2['lens_ghost']`(末尾)に同じ参照を入れる。
+
+- どちらのレベルで実行するかは `param['lens_ghost_position']`(`'lv1'` / `'lv2'`)でユーザーが選ぶ。UIは `spinner_lens_ghost_position`、`MainWidget.lens_ghost_level()` が 1/2 に解決する。
+- `make_diff()` は `efconfig.current_level` が自身の選択レベルと一致するときだけ実処理し、不一致なら `None` を返す(`hash`/`diff` を触らず他レベルのcacheを保持)。これにより1描画で2回実行されない。
+- 実処理は `cores.lens_ghost.create_ghost()`。`base_radius`/`blur_sigma` は `efconfig.resolution_scale` 倍してプレビューと書き出しのスケールを合わせる。
+- 光源CPは正規化TCGで `param['lens_ghost_coords']` に保存し、`make_diff` 内で `params.tcg_to_ref_image(..., apply_ref_img_divide=True)` で縮小プレビュー解像度のpx座標へ変換する。レンズ光学中心は画像中心TCG `(0,0)` をwork座標へ写したもの。
+
+#### preview上のエディタ(liquify / ghost)はトグル駆動で排他
+
+Liquify(`DistortionCanvas`)とlens ghost(`LensGhostCanvas`)は、どちらも `preview_widget` に重ねるオーバーレイで、`MainWidget._sync_effect_editors()` が生成/破棄を一本化する。
+
+- 開いてよい条件は「`effects` パネルが `Li` タブ」かつ `can_open_liquify_editor()`(`_effect_editor_allowed()`)。
+- `Li` タブ内のトグルボタングループ `'effect'` のうち押下中のものが、`DistortionEffectButton` なら liquify、それ以外(`toggle_lens_ghost_open` 等)なら ghost を開く。両者は排他。
+- 旧来 `DistortionEffect.after_set2param` がタブ判定で開閉していたが、現在は `_sync_effect_editors()` へ委譲する全面トグル駆動へ移行した。
+- 保存先paramは「mask2起動時は Composit の effect_param、それ以外は primary_param」(`_get_active_effects(lv=...)`)。canvasはその param のCP/tcg_infoを反映する。
+- どちらかのエディタがアクティブな間、`_sync_liquify_mask_editor_input_lock()` が `mask_editor2` の preview touch/scroll を奪う(両方を `locked` 判定に含める)。
+- マスク作成/個別マスク選択/`Li` タブ離脱時は `refresh_preview_overlays()` → `_sync_effect_editors()` が active param で開き直す/閉じる。
 
 ### プレビュー処理順
 
@@ -787,6 +811,7 @@ config.py のデフォルト
 - Film Process の UI モードは `Off`, `Negative`, `Slide`, `B&W`。デフォルトは `Off` で、`effects.FilmSimulationEffect.make_diff()` は no-op として `None` を返す。
 - Film Process の主な構造パラメータは `film_latitude`, `film_contrast`, `film_color_bias`, `film_color_drift`, `film_dye_purity`, `film_layer_crosstalk`, `film_halation`, `film_aging`, `film_intensity`。
 - 実処理は `cores/film_process.py` の spectral-lite モデルで、旧 `film_presets.json` / `cores/film_emulator.py` は使わない。
+- レンズゴーストのプリセットは `cores/lens_ghost.py` の `GHOST_PRESETS`(コード定数、JSONではない)。`spinner_lens_ghost_preset` 選択で `MainWidget.apply_ghost_preset()` が全スライダーへ反映(履歴対応)。プリセットは min 辺 500px 基準なのでサイズ系(`base_radius`/`blur_sigma`)のみ画像サイズへスケールし、比率・強度系はそのまま。光源CPは変更しない。
 
 ## 8. 外部依存と環境差
 
@@ -956,6 +981,10 @@ config.py のデフォルト
 - `save_current_sidecar`: `.pmck` 保存。
 - `on_key_down`: `0`, Space, Cmd/Ctrl shortcuts。
 - `MainApp.build/on_stop`: 設定ロード、worker start、終了処理。
+- `_sync_effect_editors`: `'effect'` トグル状態から preview の liquify/ghost エディタを排他生成/破棄。
+- `ghost_callback`: `LensGhostCanvas` のCP操作(`start`/`update`/`apply`/`end`)を受け、active param へCPを書き戻して `lens_ghost_level()` のレベルを再描画(ドラッグ中は `sync=True`)。
+- `lens_ghost_level`: `spinner_lens_ghost_position` から実行レベル(1/2)を解決。
+- `apply_ghost_preset`: `GHOST_PRESETS` をスライダーへ反映(サイズ系のみ画像サイズへスケール)。
 
 エラー処理:
 
@@ -1046,13 +1075,15 @@ config.py のデフォルト
 - `Effect.param_bindings`
 - `set2widget`, `set2param`
 - `try_async_execution`
-- `create_effects`
+- `create_effects`(`ghost_callback` 引数で `LensGhostEffect` へcanvas通知先を渡す)
+- `LensGhostEffect`: lv1/lv2同一インスタンス登録、`current_level` でレベル選択実行、`create_ghost` 呼び出し、`_open/_close_ghost_canvas` でcanvasライフサイクル管理。
 
 落とし穴:
 
 - `make_diff` と `apply_diff` の役割はEffectごとに違う。
 - `diff is not None` が再計算/下流reset判定に使われる。
 - binding共通化は便利だが、特殊UI副作用は `after_set2widget/after_set2param` へ逃がす。
+- 複数レベル登録Effect(lens_ghost)は `efconfig.current_level != target_level` のとき `make_diff` で必ず `None` を返し、`hash`/`diff` を触らない(他レベルcache保持と二重実行防止)。
 
 ### params.py
 
@@ -1173,6 +1204,7 @@ config.py のデフォルト
 - `make_diff/apply_diff` の返り値と `diff is not None` の意味を確認する。
 - preview/export/Mask layerで同じ動作が必要か確認する。
 - 重い処理ならasync化、upstream hash、FULL/preview保存ルールを確認する。
+- 複数レベルに登録する場合(lens_ghost 方式)は `efconfig.current_level` での実行ガードと、`switch_reset_map` のリセット先レベル解決(`reset_switch_defaults_for_label`)を確認する。
 
 ### Maskを追加/変更する
 

@@ -236,6 +236,7 @@ class EffectConfig():
         self.deferred_geometry_transform = None
         self.file_path = None
         self.get_ai_depth_map = None
+        self.current_level = None  # pipeline が現在実行中のレベル(0-4)を入れる。複数レベル登録の効果が判定に使う
 
 
 class ParamBinding:
@@ -1321,28 +1322,11 @@ class DistortionEffect(Effect):
         return view_param
 
     def after_set2param(self, param, widget):
-        distortion_enable = False if widget.ids["effects"].current_tab.text != "Li" else True
-        can_open = getattr(widget, 'can_open_liquify_editor', None)
-        if distortion_enable and callable(can_open) and not can_open():
-            distortion_enable = False
-
-        if distortion_enable == True:
-            _liquify_debug(
-                "distortion after_set2param open brush=%s strength=%s records=%d painter=%s",
-                param.get('distortion_brush_size'),
-                param.get('distortion_strength'),
-                len(param.get('distortion_recorded') or []),
-                id(self.distortion_painter) if self.distortion_painter is not None else None,
-            )
-            self._open_distortion_painter(param, widget)
-
-        elif distortion_enable == False:
-            _liquify_debug(
-                "distortion after_set2param close records=%d painter=%s",
-                len(param.get('distortion_recorded') or []),
-                id(self.distortion_painter) if self.distortion_painter is not None else None,
-            )
-            self._close_distortion_painter(param, widget)
+        # 生成/破棄は 'effect' トグル駆動の _sync_effect_editors() に一本化(toggle-driven へ全面移行)。
+        # 以前はここで (tab=='Li' and can_open) を起点に開閉していた。
+        sync = getattr(widget, '_sync_effect_editors', None)
+        if callable(sync):
+            sync()
 
         if self.distortion_painter is not None:
             if hasattr(self.distortion_painter, 'set_primary_param'):
@@ -1352,9 +1336,10 @@ class DistortionEffect(Effect):
 
 
     def set2param2(self, param, arg):
+        # ペインタ未生成でも effect_type を保持(トグル駆動で同押下時に生成される場合に備える)。
+        self.effect_type = arg
         if self.distortion_painter is not None:
             self.distortion_painter.set_effect(arg)
-            self.effect_type = arg
 
     def _make_painter_ref_key(self, img, param, efconfig):
         view_param = self._view_param(param, efconfig=efconfig)
@@ -4841,7 +4826,168 @@ def bind_ai_job_manager(effect_sets, ai_job_manager):
         logging.exception("failed to bind AI job manager to AI-NR effect")
 
 
-def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None, view_param_provider=None):
+class LensGhostEffect(Effect):
+    """レンズゴースト(配線検証用ダミー)。
+
+    1つのインスタンスを lv1(lensblur_filter の前)と lv2(最後)の両方に登録する。
+    どちらで実行するかは param['lens_ghost_position'] ('lv1' / 'lv2')でユーザーが選択し、
+    efconfig.current_level が自身の選択レベルと一致するときだけ実行する(2回実行しない)。
+    UI は main.kv の Li(Liquify) タブ末尾に配置。make_diff は現状ダミー(赤み加算)で、
+    本実装で create_ghost 呼び出しに差し替える。
+    """
+
+    param_bindings = (
+        SwitchBinding('lens_ghost_enabled', True, 'switch_lens_ghost', widget_attr='enabled'),
+        SpinnerTextBinding('lens_ghost_position', 'lv2', 'spinner_lens_ghost_position'),
+        # CP配置直後の初期値: 単純(単環・トゲ無し・ビンテージ無し)で少し大きめ・はっきり見える設定。
+        SliderBinding('global_intensity', 0.5, 'slider_global_intensity'),
+        SliderBinding('vintage_amount', 0.0, 'slider_vintage_amount'),
+        SliderBinding('vintage_hue', 0.0, 'slider_vintage_hue'),
+        SliderBinding('base_radius', 400, 'slider_base_radius'),
+        SliderBinding('num_components', 1, 'slider_num_components'),
+        SliderBinding('chromatic_aberration_strength', 0.6, 'slider_chromatic_aberration_strength'),
+        SliderBinding('ghost_ring_thickness', 0.35, 'slider_ghost_ring_thickness'),
+        SliderBinding('offset_ratio', 2.0, 'slider_offset_ratio'),
+        SliderBinding('spike_strength', 0.0, 'slider_spike_strength'),
+        SliderBinding('spike_density', 600, 'slider_spike_density'),
+        SliderBinding('spike_randomness', 0.6, 'slider_spike_randomness'),
+        SliderBinding('source_fade', 0.6, 'slider_source_fade'),
+        SliderBinding('blur_sigma', 3.0, 'slider_blur_sigma'),
+        SliderBinding('max_eccentricity', 0.0, 'slider_max_eccentricity'),
+        SliderBinding('perspective_distortion', 0.0, 'slider_perspective_distortion'),
+        SliderBinding('spherical_aberration_strength', 0.0, 'slider_spherical_aberration_strength'),
+        SliderBinding('random_seed', 45, 'slider_random_seed'),
+    )
+
+    LEVEL_BY_POSITION = {'lv1': 1, 'lv2': 2}
+
+    # create_ghost に渡すスライダー系パラメータ名
+    _SLIDER_KEYS = (
+        'global_intensity', 'vintage_amount', 'vintage_hue', 'base_radius', 'num_components',
+        'chromatic_aberration_strength', 'ghost_ring_thickness', 'offset_ratio', 'spike_strength',
+        'spike_density', 'spike_randomness', 'source_fade', 'blur_sigma', 'max_eccentricity',
+        'perspective_distortion', 'spherical_aberration_strength', 'random_seed',
+    )
+    _INT_KEYS = ('base_radius', 'num_components', 'spike_density', 'random_seed')
+
+    def __init__(self, ghost_callback=None, **kwargs):
+        super().__init__(**kwargs)
+        self.ghost_canvas = None
+        self.ghost_callback = ghost_callback
+
+    def set_ghost_callback(self, callback):
+        self.ghost_callback = callback
+
+    def get_param_dict(self, param):
+        d = super().get_param_dict(param)
+        d['lens_ghost_coords'] = []   # 光源CP(正規化TCG)の配列
+        return d
+
+    def target_level(self, param):
+        return self.LEVEL_BY_POSITION.get(self._get_param(param, 'lens_ghost_position'), 2)
+
+    # 編集中の canvas へ param の CP を復元
+    def after_set2widget(self, widget, param):
+        if self.ghost_canvas is not None and hasattr(self.ghost_canvas, 'set_coords'):
+            self.ghost_canvas.set_coords(self._get_param(param, 'lens_ghost_coords'))
+
+    def _view_param(self, param, widget=None, efconfig=None):
+        """TCG 変換用の座標コンテキスト。disp_info はライブビュー(efconfig/primary)から取る(liquify と同方針)。"""
+        base = None
+        if widget is not None:
+            base = getattr(widget, 'primary_param', None)
+        view = base.copy() if isinstance(base, dict) and base.get('original_img_size') is not None else param.copy()
+        if view.get('original_img_size') is None:
+            view['original_img_size'] = param.get('original_img_size')
+        disp_info = getattr(efconfig, 'disp_info', None) if efconfig is not None else None
+        if disp_info is not None and view.get('original_img_size') is not None:
+            params.set_disp_info(view, disp_info)
+        return view
+
+    # --- canvas ライフサイクル(main._sync_effect_editors から呼ぶ。DistortionEffect を範に) ---
+    def _open_ghost_canvas(self, param, widget):
+        # param は「保存先」(mask2時は Composit param)。canvas はこの param の CP/tcg_info を反映する。
+        if self.ghost_canvas is None:
+            from widgets.ghost_canvas import LensGhostCanvas
+            self.ghost_canvas = LensGhostCanvas(
+                coords=self._get_param(param, 'lens_ghost_coords'),
+                callback=self._ghost_callback,
+            )
+            widget.ids["preview_widget"].add_widget(self.ghost_canvas, index=0)
+        self.ghost_canvas.set_primary_param(self._view_param(param, widget=widget))
+        self.ghost_canvas.set_coords(self._get_param(param, 'lens_ghost_coords'))
+
+    def _close_ghost_canvas(self, param, widget):
+        if self.ghost_canvas is not None:
+            pw = widget.ids.get("preview_widget")
+            if pw is not None:
+                pw.remove_widget(self.ghost_canvas)
+            self.ghost_canvas = None
+
+    def _ghost_callback(self, proc, widget):
+        if self.ghost_callback is not None:
+            self.ghost_callback(proc, widget)
+
+    def make_diff(self, rgb, param, efconfig):
+        target = self.target_level(param)
+        current = getattr(efconfig, 'current_level', None)
+        # 選択レベル以外では何もしない(他レベルの cache 保持のため hash/diff は触らない)。
+        if current != target:
+            return None
+
+        # ライブビュー(zoom/pan/Ge)の座標系。毎描画で canvas を同期して CP マーカーを追従させる。
+        view = self._view_param(param, efconfig=efconfig)
+        if self.ghost_canvas is not None and hasattr(self.ghost_canvas, 'set_primary_param'):
+            self.ghost_canvas.set_primary_param(view)
+
+        enabled = self._get_param(param, 'lens_ghost_enabled')
+        coords_tcg = self._get_param(param, 'lens_ghost_coords') or []
+        if not enabled or not coords_tcg:
+            return None
+
+        res = float(getattr(efconfig, 'resolution_scale', 1.0))
+        sliders = {k: self._get_param(param, k) for k in self._SLIDER_KEYS}
+        param_hash = hash((
+            'lens_ghost', target,
+            tuple((round(float(cx), 6), round(float(cy), 6)) for cx, cy in coords_tcg),
+            tuple(round(float(sliders[k]), 6) for k in self._SLIDER_KEYS),
+            round(res, 4),
+            params.get_disp_info(view),   # zoom/pan/Ge でビューが変われば再描画(表示位置追従)
+            getattr(efconfig, 'upstream_hash', 0),
+        ))
+        if self.hash == param_hash:
+            return self.diff
+        self.hash = param_hash
+
+        work = core.type_convert(rgb, np.ndarray)
+        work = np.asarray(work, dtype=np.float32).copy()
+        h, w = work.shape[:2]
+
+        # 正規化TCG の CP を作業画像ピクセルへ
+        tcg_info = params.param_to_tcg_info(view)
+        px_coords = []
+        for cx, cy in coords_tcg:
+            # Liquify(replay_recorded)と同じ変換。work は縮小プレビュー解像度なので
+            # apply_ref_img_divide=True が必須。これが False だと拡大/Ge時に位置がずれる。
+            x, y = params.tcg_to_ref_image(cx, cy, work, tcg_info, True, True)
+            px_coords.append((int(round(x)), int(round(y))))
+
+        # レンズ光学中心(=画像中心 TCG(0,0))を work 座標へ。ゴーストは光源をこの中心で
+        # 反転/オフセットするため、拡大表示時に work の (w/2,h/2) を使うと中心がズレる。
+        lens_cx, lens_cy = params.tcg_to_ref_image(0.0, 0.0, work, tcg_info, True, True)
+
+        # 整数系を int 化、ピクセル系は res_scale 倍(プレビュー/書き出し一致)
+        for k in self._INT_KEYS:
+            sliders[k] = int(round(sliders[k]))
+        sliders['base_radius'] = max(1, int(round(sliders['base_radius'] * res)))
+        sliders['blur_sigma'] = float(sliders['blur_sigma']) * res
+
+        from cores.lens_ghost import create_ghost
+        self.diff = create_ghost(work, px_coords, lens_center=(lens_cx, lens_cy), **sliders)
+        return self.diff
+
+
+def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None, view_param_provider=None, ghost_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
@@ -4859,15 +5005,18 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv0['crop'] = CropEffect(crop_callback=crop_callback)
 
     lv1 = effects[1]
+    lv1['face'] = FaceEffect()
     lv1['distortion'] = DistortionEffect(
         distortion_callback=distortion_callback,
         view_param_provider=view_param_provider,
     )
+    # レンズゴースト: 1インスタンスを lv1(lensblur前)と lv2(最後)に登録。実行レベルは設定で選択。
+    _lens_ghost = LensGhostEffect(ghost_callback=ghost_callback)
+    lv1['lens_ghost'] = _lens_ghost
     lv1['lensblur_filter'] = LensblurFilterEffect()
     lv1['scratch'] = ScratchEffect()
     lv1['frosted_glass'] = FrostedGlassEffect()
     lv1['mosaic'] = MosaicEffect()
-    lv1['face'] = FaceEffect()
     
     lv2 = effects[2]
     lv2['color_temperature'] = ColorTemperatureEffect()
@@ -4907,6 +5056,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv2['orton'] = OrtonEffect()
     lv2['glow'] = GlowEffect()
     lv2['unsharp_mask'] = UnsharpMaskEffect()
+    lv2['lens_ghost'] = _lens_ghost  # 同一インスタンスを lv2 の最後にも登録(実行レベルは設定で選択)
 
     lv3 = effects[3]
     lv3['mask2'] = Mask2Effect()

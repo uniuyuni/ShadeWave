@@ -1,5 +1,20 @@
 
 #:include widgets/param_slider.kv
+#:include widgets/hover_spinner.kv
+#:import ParamSlider widgets.param_slider.ParamSlider
+#:import HoverSpinner widgets.hover_spinner.HoverSpinner
+
+# ラベル(表示名)からは末尾の Strength を省く(2行に折り返さないため)。実際の create_ghost 引数名は
+# id の "slider_" を除いた部分(例: slider_chromatic_aberration_strength → chromatic_aberration_strength)。
+<_GhostDivider@Label>:
+    size_hint_y: None
+    height: dp(22)
+    color: 0.7, 0.85, 1.0, 1
+    font_size: '10pt'
+    bold: True
+    halign: 'left'
+    valign: 'middle'
+    text_size: self.size
 
 <GhostEditor>:
     orientation: 'horizontal'
@@ -12,17 +27,221 @@
 
         ScrollView:
             id: param_scroll
-            scroll_type: ['bars', 'content']
-            bar_width: dp(10)
+            # タップを素通しさせるためバーのみでスクロール(content だとヘッダ/Spinnerのタップが食われる)
+            scroll_type: ['bars']
+            bar_width: dp(12)
+            do_scroll_x: False
 
             BoxLayout:
                 id: param_grid
                 orientation: 'vertical'
-                #cols: 1
                 size_hint_y: None
                 height: self.minimum_height
-                spacing: dp(5)
+                spacing: dp(4)
                 padding: dp(5)
+
+                Label:
+                    size_hint_y: None
+                    height: dp(24)
+                    color: 0.8, 0.8, 0.8, 1
+                    font_size: '9pt'
+                    text: '左クリック:光源追加/選択  ドラッグ:移動  右クリック:削除'
+
+                HoverSpinner:
+                    id: preset_spinner
+                    size_hint_y: None
+                    height: dp(36)
+                    text: 'Preset...'
+                    values: root.preset_names
+                    on_text: root.on_preset_selected(self.text)
+
+                Button:
+                    size_hint_y: None
+                    height: dp(32)
+                    text: '\U0001F3B2 Randomize Seed'
+                    on_release: root.on_randomize_seed()
+
+                _GhostDivider:
+                    text: '— Basic —'
+
+                ParamSlider:
+                    id: slider_global_intensity
+                    text: 'Global Intensity'
+                    min: 0.0
+                    max: 1.0
+                    value: 0.4
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_vintage_amount
+                    text: 'Vintage Amount'
+                    min: 0.0
+                    max: 1.0
+                    value: 0.0
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_base_radius
+                    text: 'Base Radius'
+                    min: 1
+                    max: 500
+                    value: 80
+                    step: 1
+                    for_float: False
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_num_components
+                    text: 'Num Components'
+                    min: 1
+                    max: 20
+                    value: 1
+                    step: 1
+                    for_float: False
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_chromatic_aberration_strength
+                    text: 'Chromatic Aberration'
+                    min: 0.0
+                    max: 3.0
+                    value: 0.6
+                    step: 0.05
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_ghost_ring_thickness
+                    text: 'Ghost Ring Thickness'
+                    min: 0.01
+                    max: 1.0
+                    value: 0.35
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_offset_ratio
+                    text: 'Offset Ratio'
+                    min: -5.0
+                    max: 5.0
+                    value: 2.0
+                    step: 0.1
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_spike_strength
+                    text: 'Spike Strength'
+                    min: 0.0
+                    max: 1.5
+                    value: 0.3
+                    step: 0.05
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                _GhostDivider:
+                    text: '— Advanced —'
+
+                ParamSlider:
+                    id: slider_random_seed
+                    text: 'Random Seed'
+                    min: 0
+                    max: 99999
+                    value: 45
+                    step: 10
+                    for_float: False
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_spike_density
+                    text: 'Spike Density'
+                    min: 0
+                    max: 2000
+                    value: 600
+                    step: 10
+                    for_float: False
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_spike_randomness
+                    text: 'Spike Randomness'
+                    min: 0.0
+                    max: 1.0
+                    value: 0.6
+                    step: 0.05
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_source_fade
+                    text: 'Source Fade'
+                    min: 0.0
+                    max: 1.0
+                    value: 0.6
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_blur_sigma
+                    text: 'Blur Sigma'
+                    min: 0.0
+                    max: 50.0
+                    value: 3.0
+                    step: 0.5
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_max_eccentricity
+                    text: 'Max Eccentricity'
+                    min: 0.0
+                    max: 0.95
+                    value: 0.0
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_perspective_distortion
+                    text: 'Perspective Distortion'
+                    min: 0.0
+                    max: 1.0
+                    value: 0.0
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
+
+                ParamSlider:
+                    id: slider_spherical_aberration_strength
+                    text: 'Spherical Aberration'
+                    min: 0.0
+                    max: 1.0
+                    value: 0.0
+                    step: 0.01
+                    for_float: True
+                    label_width: 300
+                    on_slider: root.on_param_change(self)
 
     Image:
         id: image_widget

@@ -45,6 +45,7 @@
     font_size: '9pt'
     pos_hint: {'center_x': .5, 'center_y': .5}
     ref_height: 20
+    on_state: app.root._sync_effect_editors() if app.root else None
 
 <ParamChip@LongPressScaledButton>:
     pos_hint: {"center_x": .5, "center_y": .5}
@@ -593,6 +594,8 @@
                     on_current_tab: root.on_current_tab(self.current_tab)
                     # マスク編集中も Ge タブを許可するため Ge 条件は外し、画像ロード/Mask2 待機の 2 条件のみで disabled を決定する
                     on_current_tab: mask2.disabled = root.image_loaded == False or root.mask2_wait_full_load == True
+                    # タブ切替で 'effect' トグル駆動のエディタ(liquify/ghost)を再評価(Li 以外なら閉じる)
+                    on_current_tab: root._sync_effect_editors()
 
                     IconTabbedPanelItem:
                         text: 'Ba'
@@ -3863,7 +3866,7 @@
 
                                     DistortionEffectButton:
                                         text: "Warp"
-                                        state: 'down'
+                                        #state: 'down'
                                         on_press: root.set_effect_param(1, 'distortion', 'forward_warp')
                                     
                                     DistortionEffectButton:
@@ -3920,6 +3923,238 @@
                                         on_press: root.reset_distortion_painter_action()
                                         ParamChipText:
                                             text: "Reset"
+
+                                VSeparator:
+
+                                HeadLabel:
+                                    id: switch_lens_ghost
+                                    text: ' Lens Ghost'
+                                    on_press: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_active: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_release: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "GhostEditor"
+                                    HSpacer:
+                                        size_hint_x: 0.9
+                                    ToggleButton:
+                                        id: toggle_lens_ghost_open
+                                        group: 'effect'
+                                        text: 'Open'
+                                        on_state: root._sync_effect_editors()
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Position"
+                                    HSpacer:
+                                        size_hint_x: 0.5
+                                    ParamSpinner:
+                                        id: spinner_lens_ghost_position
+                                        values: ['lv1', 'lv2']
+                                        text: 'lv2'
+                                        # 位置変更は lv1/lv2 をまたぐので固定 lv1 で実行(両レベルを再処理し古い側を消す)
+                                        on_hovered_item: root.apply_effects_lv(1, 'lens_ghost')
+                                        on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(1, 'lens_ghost')
+                                        on_value:
+                                            root.apply_effects_lv(1, 'lens_ghost')
+                                            root.end_history_effect_ctrl(1, 'lens_ghost')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Preset"
+                                    HSpacer:
+                                        size_hint_x: 0.5
+                                    ParamSpinner:
+                                        id: spinner_lens_ghost_preset
+                                        # 特殊プリセットを厳選(大中小+虹/暖色/トゲを網羅)。選択で全スライダーへ反映+履歴。
+                                        # サイズ系は画像サイズに自動スケール(スケール感を保つ)。
+                                        values: ['Big Soft Ring', 'Rainbow Arc', 'Warm Orb', 'Urchin', 'Vintage Amber']
+                                        text: 'Select...'
+                                        on_value: root.apply_ghost_preset(self.text)
+
+                                ParamSlider:
+                                    id: slider_global_intensity
+                                    text: "Global Intensity"
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.5
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_vintage_amount
+                                    text: "Vintage Amount"
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.0
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_vintage_hue
+                                    text: "Vintage Hue"
+                                    min: 0
+                                    max: 360
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_base_radius
+                                    text: "Base Radius"
+                                    min: 1
+                                    max: 5000
+                                    value: 400
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_num_components
+                                    text: "Num Components"
+                                    min: 1
+                                    max: 20
+                                    value: 1
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_chromatic_aberration_strength
+                                    text: "Chromatic Aberra."
+                                    min: 0.0
+                                    max: 3.0
+                                    value: 0.6
+                                    step: 0.05
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_ghost_ring_thickness
+                                    text: "Ring Thickness"
+                                    min: 0.01
+                                    max: 1.0
+                                    value: 0.35
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_offset_ratio
+                                    text: "Offset Ratio"
+                                    min: -5.0
+                                    max: 5.0
+                                    value: 2.0
+                                    step: 0.1
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_spike_strength
+                                    text: "Spike Strength"
+                                    min: 0.0
+                                    max: 1.5
+                                    value: 0.0
+                                    step: 0.05
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_spike_density
+                                    text: "Spike Density"
+                                    min: 0
+                                    max: 2000
+                                    value: 600
+                                    step: 10
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_spike_randomness
+                                    text: "Spike Random."
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.6
+                                    step: 0.05
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_source_fade
+                                    text: "Source Fade"
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.6
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_blur_sigma
+                                    text: "Blur Sigma"
+                                    min: 0.0
+                                    max: 1000.0
+                                    value: 3.0
+                                    step: 0.5
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_max_eccentricity
+                                    text: "Max Eccentricity"
+                                    min: 0.0
+                                    max: 0.95
+                                    value: 0.0
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_perspective_distortion
+                                    text: "Perspective Dist."
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.0
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_spherical_aberration_strength
+                                    text: "Spherical Aberra."
+                                    min: 0.0
+                                    max: 1.0
+                                    value: 0.0
+                                    step: 0.01
+                                    for_float: True
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                ParamSlider:
+                                    id: slider_random_seed
+                                    text: "Random Seed"
+                                    min: 0
+                                    max: 99999
+                                    value: 45
+                                    step: 10
+                                    on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
+                                    on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+                                    on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
 
         ViewerWidget:
             id: viewer

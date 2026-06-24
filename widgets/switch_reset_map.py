@@ -66,6 +66,9 @@ BASE_SWITCH_TARGETS = {
     "switch_mask2_quick_select": (3, "mask2", "mask2_quick_select"),
     "switch_mask2_face": (3, "mask2", "mask2_face"),
     "switch_distortion": (1, "distortion", None),
+    # lens_ghost は lv1/lv2 両方に同一インスタンスを登録。lv は reset_switch_defaults_for_label 側で
+    # lens_ghost_level() に差し替える(ここの 2 はフォールバック)。
+    "switch_lens_ghost": (2, "lens_ghost", None),
 }
 
 

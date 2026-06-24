@@ -1284,6 +1284,7 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
     return img3, lv1reset
 
 def pipeline_lv0(img, effects, param, efconfig, processor=None):
+    efconfig.current_level = 0
     lv0 = effects[0]
     lv1reset = False
     
@@ -1390,6 +1391,7 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
 
 def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_status=PipelineStatus.COMPLETE, processor=None):
     lv1 = effects[1]
+    efconfig.current_level = 1
     lv2reset = prev_reset
 
     # Set status for this layer
@@ -1476,6 +1478,7 @@ def pipeline_lv1(img, effects, param, efconfig, prev_reset=False, upstream_statu
 
 def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_status=PipelineStatus.COMPLETE, processor=None):
     lv2 = effects[2]
+    efconfig.current_level = 2
     lv3reset = prev_reset
 
     efconfig.upstream_status = upstream_status
@@ -1561,6 +1564,7 @@ def pipeline_lv2(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
     return rgb, lv3reset, efconfig.layer_status
 
 def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_status=PipelineStatus.COMPLETE, processor=None):
+    efconfig.current_level = 3
     lv3 = effects[3]
     lv4reset = prev_reset
 
@@ -1647,6 +1651,7 @@ def pipeline_lv3(rgb, effects, param, efconfig, prev_reset=False, upstream_statu
     return rgb, lv4reset, efconfig.layer_status
 
 def pipeline_last(rgb, effects, param, efconfig, prev_reset=False, processor=None):
+    efconfig.current_level = 4
     lv4 = effects[4]
     lv5reset = prev_reset
     
