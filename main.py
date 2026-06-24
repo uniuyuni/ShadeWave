@@ -4176,6 +4176,7 @@ if __name__ == '__main__':
             )
             self._set_disabled_for_ids(
                 (
+                    'slider_mask2_freedraw_brush_size',
                     'slider_mask2_freedraw_brush_hardness',
                 ),
                 not (mask_specific_enabled and has_brush_hardness),
@@ -4300,6 +4301,22 @@ if __name__ == '__main__':
                 logging.exception("failed to restore primary Liquify editor after Mask2 off")
             self.update_mask2_options_enabled()
 
+        # vignette / grain は範囲マスク(Mask2)に未対応のため、Mask2 ON 中は UI を操作不可にする。
+        _MASK_INCOMPATIBLE_EFFECT_IDS = (
+            'switch_vignette',
+            'slider_vignette_intensity',
+            'slider_vignette_radius_percent',
+            'slider_vignette_softness',
+            'switch_grain',
+            'slider_grain_amount',
+            'slider_grain_size',
+            'slider_grain_roughness',
+            'slider_grain_shadow',
+            'slider_grain_highlight',
+            'slider_grain_color',
+            'slider_grain_seed',
+        )
+
         def on_mask2_press(self, value):
             if self.mask2_wait_full_load:
                 self.ids['mask2'].state = 'normal'
@@ -4307,10 +4324,12 @@ if __name__ == '__main__':
                 # Mesh Edit モード中なら強制終了
                 self._force_close_mask_mesh_editor()
                 self._disable_mask2()
+                self._set_disabled_for_ids(self._MASK_INCOMPATIBLE_EFFECT_IDS, False)
                 return
             if value == "down":
                 self.set_preview_focus_mode(False)
                 self._enable_mask2()
+                self._set_disabled_for_ids(self._MASK_INCOMPATIBLE_EFFECT_IDS, True)
                 kvutils.find_widget(self, 'mask2_content_panel').disabled = False
                 # マスク Geometry モードへ遷移: Ge タブ上のクロップ枠/lens エディタを閉じる
                 try:
@@ -4324,6 +4343,7 @@ if __name__ == '__main__':
                 # Mask2 OFF: Mesh Edit モード中なら強制終了 (Mesh Edit は Mask2 ON 前提)
                 self._force_close_mask_mesh_editor()
                 self._disable_mask2()
+                self._set_disabled_for_ids(self._MASK_INCOMPATIBLE_EFFECT_IDS, False)
                 # マスク Geometry モードから画像 Geometry モードへ抜けるとき、
                 # Ge タブ上で拡大表示中ならリセットする (画像 Geometry はズーム禁止のため)。
                 try:

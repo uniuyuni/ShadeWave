@@ -144,7 +144,7 @@ def compute_draw_support(
         edge_bias=edge_bias,
     )
     out_planes.append(("v4_boundary_snap_delta", delta))
-    logging.info("[DRAW_QS_V4] edge-trace moved=%d px", int(np.count_nonzero(delta)))
+    logging.debug("[DRAW_QS_V4] edge-trace moved=%d px", int(np.count_nonzero(delta)))
     return DrawSupportResult(base.seed, base.candidate, snapped, out_planes)
 
 

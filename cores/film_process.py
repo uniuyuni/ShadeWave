@@ -139,11 +139,14 @@ def apply_film_process(image, params=None):
     age_gain = np.array([1.0 + aging * 0.10, 1.0 - aging * 0.08, 1.0 - aging * 0.24], dtype=np.float32)
     layers = rgb * np.maximum(warm_gain * age_gain, 0.05)
 
+    # 各行の合計は 1.0（凸結合＝非負重みの加重平均）なので、出力は必ず入力 RGB の
+    # レンジ内に収まりクリッピング/負値は発生しない。混色を強めるほど彩度が下がるが、
+    # 対角成分（自己寄与）を各行で最大に保つことで完全なグレー潰れ＝破綻を避ける。
     mix_matrix = np.array(
         [
-            [1.0 - 0.55 * crosstalk, 0.35 * crosstalk, 0.20 * crosstalk],
-            [0.20 * crosstalk, 1.0 - 0.40 * crosstalk, 0.20 * crosstalk],
-            [0.15 * crosstalk, 0.35 * crosstalk, 1.0 - 0.50 * crosstalk],
+            [1.0 - 0.60 * crosstalk, 0.36 * crosstalk, 0.24 * crosstalk],
+            [0.30 * crosstalk, 1.0 - 0.54 * crosstalk, 0.24 * crosstalk],
+            [0.24 * crosstalk, 0.36 * crosstalk, 1.0 - 0.60 * crosstalk],
         ],
         dtype=np.float32,
     )

@@ -45,6 +45,9 @@ _PMCK_ICON_REF_SIZE = 12
 _PMCK_ICON_MARGIN_REF = 2
 _THUMBNAIL_CARD_WIDTH_RATIO = 0.7
 _THUMBNAIL_DISPLAY_MAX_SIDE = 240
+# サイズ未確定でジオメトリ焼き付けを保留したときの再試行上限。これを超えたら諦める
+# （カードが再アタッチされれば refresh_view_attrs が改めてスケジュールし直すため安全）。
+_THUMBNAIL_GEOMETRY_MAX_RETRIES = 8
 _HOVER_HINT_DELAY = 0.7
 _EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF", "OtherImage")
 _EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage", "ThumbnailTIFF")
@@ -268,6 +271,7 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
         self._bound_layout_parent = None
         self._thumbnail_geometry_event = None
         self._thumbnail_geometry_late_event = None
+        self._thumbnail_geometry_retries = 0
         self.exif_data = None
         self.orientation = 'vertical'
         self.size_hint = (None, 1)
@@ -383,6 +387,22 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
     def _refresh_thumbnail_geometry(self, *_args):
         self._thumbnail_geometry_event = None
         self._thumbnail_geometry_late_event = None
+        # RecycleView がカードサイズを確定する前／デタッチ中に do_layout() を走らせると、
+        # 過渡的な誤サイズで image_box を焼き付けてしまう（export の refresh 連打で顕在化）。
+        # 横並び RecycleView ではカード高さ＝親レイアウト高さなので、サイズが妥当に確定して
+        # いる時だけ焼き付け、未確定なら焼き付けず後続フレームで再試行する。
+        parent = self.parent
+        if (
+            parent is None
+            or self.width <= 0
+            or self.height <= 0
+            or abs(self.height - parent.height) > 1
+        ):
+            self._thumbnail_geometry_retries += 1
+            if self._thumbnail_geometry_retries <= _THUMBNAIL_GEOMETRY_MAX_RETRIES:
+                self._schedule_thumbnail_geometry_refresh()
+            return
+        self._thumbnail_geometry_retries = 0
         if hasattr(self, "content_box"):
             self._sync_content_box_layout_metrics()
             self.do_layout()
@@ -454,6 +474,8 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
     def refresh_view_attrs(self, rv, index, data):
         """ Catch and handle the view changes """
         self.index = index
+        # 新しいアイテムへ割り当て直されたので保留リトライ予算をリセット。
+        self._thumbnail_geometry_retries = 0
         self._set_width()
         self._configure_thumbnail_image_widget()
         r = super(ThumbnailCard, self).refresh_view_attrs(rv, index, data)

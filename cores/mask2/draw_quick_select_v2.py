@@ -514,7 +514,7 @@ def _compute_add_only_support(
 
     hint_area = int(np.count_nonzero(hint))
     support_area = int(np.count_nonzero(support_all))
-    logging.info(
+    logging.debug(
         "[DRAW_QS_V2] hint=%d band=%d support=%d ratio=%.3f comps=%d max_flow=%d radius=%.1f",
         hint_area,
         total_band,
@@ -1078,7 +1078,7 @@ def _tag_result(result: DrawSupportResult, mode: str, started_at: float) -> Draw
         planes = list(result.debug_planes)
         planes.append(("v2_runtime_ms", np.full(shape, elapsed / 1000.0, dtype=np.float32)))
         planes.append(("v2_mode", np.full(shape, 1.0 if mode.startswith("v2_add") else 0.0, dtype=np.float32)))
-        logging.info("[DRAW_QS_V2] mode=%s runtime_ms=%.1f", mode, elapsed)
+        logging.debug("[DRAW_QS_V2] mode=%s runtime_ms=%.1f", mode, elapsed)
         return DrawSupportResult(result.seed, result.candidate, result.support, planes)
     return result
 

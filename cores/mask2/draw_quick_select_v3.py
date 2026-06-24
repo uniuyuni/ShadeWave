@@ -207,7 +207,7 @@ def compute_draw_support(
             dtype=np.float32,
         )),
     ])
-    logging.info(
+    logging.debug(
         "[DRAW_QS_V3] support=%d gap_fill=%d alpha_soft=%d runtime_ms=%.1f",
         int(np.count_nonzero(support_all)),
         int(np.count_nonzero(gap_fill_all)),

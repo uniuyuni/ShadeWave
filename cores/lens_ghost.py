@@ -1,8 +1,6 @@
 import cv2
-import logging
 import numpy as np
 import math
-import time
 
 
 def create_ghost(
@@ -322,42 +320,3 @@ GHOST_PRESETS = {
         "light_source_coords": [(520, 160)], "lens_center": (350, 250), "random_seed": 111,
     },
 }
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    img_height, img_width = 500, 700
-
-    def create_base_image(light_coords, height, width):
-        img = np.zeros((height, width, 3), dtype=np.float32)
-        for lp_x, lp_y in light_coords:
-            cv2.circle(img, (lp_x, lp_y), 15, (1.0, 1.0, 1.0), -1)
-        return img
-
-    logging.info("Generating ghost presets:")
-
-    for name, preset in GHOST_PRESETS.items():
-        params = dict(preset)
-        coords = params.pop("light_source_coords", [(img_width // 2, img_height // 2)])
-        lens_center = params.pop("lens_center", None)
-        seed = params.pop("random_seed", 42)
-
-        base_image = create_base_image(coords, img_height, img_width)
-
-        logging.info("\n--- %s ---", name)
-        start_time = time.time()
-        ghosted_image = create_ghost(
-            base_image,
-            light_source_coords=coords,
-            lens_center=lens_center,
-            random_seed=seed,
-            **params,
-        )
-        end_time = time.time()
-
-        display = (ghosted_image * 255).astype(np.uint8)
-        cv2.imshow(name, display)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        logging.info("Processing time: %.2f seconds", end_time - start_time)
-        logging.info("-" * 50)

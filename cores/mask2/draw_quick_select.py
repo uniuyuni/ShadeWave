@@ -421,7 +421,7 @@ def compute_draw_support(
     hint_area = int(np.count_nonzero(hint))
     support_area = int(np.count_nonzero(support_all))
     ratio = (support_area / hint_area) if hint_area else 0.0
-    logging.info(
+    logging.debug(
         "[DRAW_QS] hint=%d band=%d edge_px_in_band=%d support=%d ratio=%.3f "
         "comps=%d max_flow=%d radius=%.1f",
         hint_area,
