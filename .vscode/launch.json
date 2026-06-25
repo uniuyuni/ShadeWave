@@ -46,7 +46,6 @@
                 //"QS_DRAW_V4": "1",
                 //"QS_V4_EDGE_SNAP": "1",
                 //"QS_V4_SNAP_ALPHA": "1",
-                "PLATYPUS_SAM3_COREML_BACKBONE": "1",
                 //"PLATYPUS_GE_PREVIEW_RENDER": "full",
                 //"PLATYPUS_GE_PREVIEW_DRAIN_ALL": "1",
                 //"PLATYPUS_GE_PREVIEW_INTERPOLATION": "linear",

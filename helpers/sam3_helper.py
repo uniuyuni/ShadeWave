@@ -9,7 +9,6 @@ import cv2
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.box_ops import box_xywh_to_cxcywh
 from sam3.model.sam3_image_processor import Sam3Processor
-from helpers import sam3_coreml_backbone_helper
 from utils import aiutils
 
 RESIZE_FACTOR = 1.0
@@ -133,7 +132,6 @@ def setup_sam3(device="cpu"):
             __model = __model.to(torch_device)
     # device を省略すると get_default_device() が MPS を選び、モデルが CPU のときに不一致になる
     processor = Sam3Processor(__model, device=torch_device)
-    sam3_coreml_backbone_helper.install(processor, __model)
     param_dev = next(__model.parameters()).device
     if not _device_equal(param_dev, torch_device) or not _device_equal(processor.device, torch_device):
         _logger.error(

@@ -44,7 +44,6 @@ class MacOSAppBuildConfigTests(unittest.TestCase):
         self.assertIn('setdefault("OMP_DISPLAY_ENV", "FALSE")', hook)
         self.assertIn('setdefault("QS_DRAW_V4", "1")', hook)
         self.assertIn('setdefault("QS_V4_EDGE_SNAP", "1")', hook)
-        self.assertIn('setdefault("PLATYPUS_SAM3_COREML_BACKBONE", "1")', hook)
         self.assertNotIn('setdefault("CONDA_PREFIX"', hook)
         self.assertNotIn('setdefault("PYTHONPATH"', hook)
 

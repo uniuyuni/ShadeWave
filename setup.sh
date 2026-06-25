@@ -231,10 +231,10 @@ else
   fi
 fi
 
-mkdir -p checkpoints/SCUNet
-if [ ! -f "checkpoints/SCUNet/scunet_color_real_psnr.pth" ]; then
-  retry pixi run python external/SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
-fi
+#mkdir -p checkpoints/SCUNet
+#if [ ! -f "checkpoints/SCUNet/scunet_color_real_psnr.pth" ]; then
+#  retry pixi run python external/SCUNet/main_download_pretrained_models.py --models "SCUNet" --model_dir "checkpoints/SCUNet"
+#fi
 
 if [ ! -f "checkpoints/sam3.1_multiplex.pt" ]; then
   if [ -z "${HF_TOKEN:-}" ] && [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
@@ -266,25 +266,6 @@ EOF
   fi
   if ! retry pixi run python -c 'from huggingface_hub import hf_hub_download; hf_hub_download(repo_id="facebook/sam3.1", filename="sam3.1_multiplex.pt", local_dir="checkpoints")'; then
     echo '警告: sam3.1_multiplex.pt を取得できませんでした。モデルページでアクセス権を確認し、トークンを再確認してください。' >&2
-  fi
-fi
-
-if [ ! -d "checkpoints/sam3_backbone.mlpackage" ]; then
-  if [ -f "checkpoints/sam3.1_multiplex.pt" ]; then
-    if ! pixi run python -m helpers.sam3_coreml_backbone_helper --checkpoint checkpoints/sam3.1_multiplex.pt --output checkpoints/sam3_backbone.mlpackage --device cpu; then
-      echo '警告: SAM3 Core ML backbone の作成に失敗しました。実行時はPyTorch経路にフォールバックします。' >&2
-    fi
-  else
-    echo '警告: sam3.1_multiplex.pt がないため SAM3 Core ML backbone の作成をスキップします。' >&2
-  fi
-fi
-if [ -d "checkpoints/sam3_backbone.mlpackage" ] && [ ! -d "checkpoints/sam3_backbone.mlmodelc" ]; then
-  if command -v xcrun >/dev/null 2>&1; then
-    if ! xcrun coremlcompiler compile checkpoints/sam3_backbone.mlpackage checkpoints; then
-      echo '警告: SAM3 Core ML backbone の事前コンパイルに失敗しました。実行時はmlpackageまたはPyTorch経路にフォールバックします。' >&2
-    fi
-  else
-    echo '警告: xcrun が見つからないため SAM3 Core ML backbone の事前コンパイルをスキップします。' >&2
   fi
 fi
 
