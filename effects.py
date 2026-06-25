@@ -4081,9 +4081,103 @@ class LensSimulatorEffect(Effect):
         SliderBinding('spherical_ca', 0.0, "slider_spherical_ca"),
         SliderBinding('lens_focus_depth', 0.5, "slider_lens_focus_depth"),
         SliderBinding('lens_aperture', 1.4, "slider_lens_aperture"),
+        # ぐるぐるボケ（Petzval/Helios 風）。渦の向きは半径方向、ボケ選別は depth(あれば)。
+        SliderBinding('swirl_bokeh', 0, "slider_swirl_bokeh"),
     )
 
     _coating_sim = CoatingSimulator()
+
+    def _optical_geometry(self, img_shape, param, efconfig):
+        """渦の光学中心（元画像中心のテクスチャ座標）と、元座標基準の半径マップを返す。
+
+        拡大/クロップしても渦の中心が元画像中心に固定されるよう、disp_info（表示中の
+        crop 窓, パディング正方空間の px）と original_img_size から元中心を逆算する。
+        失敗時は従来どおり img 中心にフォールバックする。戻り値の radial は 0..1（元画像隅=1）。
+        """
+        th, tw = int(img_shape[0]), int(img_shape[1])
+        try:
+            disp = params.get_disp_info(param)
+            ow, oh = param['original_img_size']
+            dx, dy, dw, dh, _scale = disp
+            if dw <= 0 or dh <= 0:
+                raise ValueError("invalid disp_info")
+            new_w, new_h, off_x, off_y = core.crop_size_and_offset_from_texture(tw, th, disp)
+            sx = new_w / float(dw)
+            sy = new_h / float(dh)
+            # crop_rect/disp_info は max(ow,oh) 正方パディング空間の px。写真中心はその中心。
+            maxsize = float(max(ow, oh))
+            ocx = ocy = maxsize * 0.5
+            half_diag = float(np.sqrt((ow * 0.5) ** 2 + (oh * 0.5) ** 2)) or 1.0
+            cx = off_x + (ocx - dx) * sx
+            cy = off_y + (ocy - dy) * sy
+            yy, xx = np.mgrid[0:th, 0:tw]
+            ox = dx + (xx.astype(np.float32) - off_x) / sx
+            oy = dy + (yy.astype(np.float32) - off_y) / sy
+            radial = (np.sqrt((ox - ocx) ** 2 + (oy - ocy) ** 2) / half_diag).astype(np.float32)
+            return float(cx), float(cy), np.clip(radial, 0.0, 1.0)
+        except Exception:
+            cx, cy = (tw - 1) * 0.5, (th - 1) * 0.5
+            yy, xx = np.mgrid[0:th, 0:tw]
+            r = np.sqrt(((xx - cx) ** 2 + (yy - cy) ** 2).astype(np.float32))
+            rmax = float(np.sqrt(cx * cx + cy * cy)) or 1.0
+            return cx, cy, np.clip(r / rmax, 0.0, 1.0).astype(np.float32)
+
+    def _swirl_bokeh(self, img, depth_map, focus_depth, strength, res_scale, center_xy, radial_norm):
+        """非合焦領域へ接線方向の回転ブラーを掛けて渦ボケを作る。
+
+        渦の中心 center_xy は元画像中心（拡大/クロップ非依存）。radial_norm も元座標基準。
+        回転コピーの平均は中心から離れるほど画素変位が大きく、自然に周辺ほど強い渦になる。
+        「どこを渦化するか」は depth があれば非合焦領域に限定し、無ければ半径のみで近似する。
+        """
+        h, w = img.shape[:2]
+        cx, cy = center_xy
+
+        # 半径ウェイト。二乗だと中心が完全に死んで静止ディスクになり不自然なので、
+        # 線形＋下駄(floor)で中心も適度に回す（中心=floor, 隅=1.0）。
+        center_floor = np.float32(0.35)
+        radial = center_floor + (np.float32(1.0) - center_floor) * np.clip(radial_norm, 0.0, 1.0).astype(np.float32)
+
+        if depth_map is not None:
+            defocus = np.clip(np.abs(depth_map - np.float32(focus_depth)) * np.float32(2.5), 0.0, 1.0)
+        else:
+            defocus = np.float32(1.0)
+        wmap = np.clip(radial * defocus, 0.0, 1.0).astype(np.float32)
+
+        # 強度で最大回転角（=渦の長さ）を決める。回転コピーを平均して接線ブラーを得る。
+        max_angle = 12.0 * (strength / 100.0)
+        if max_angle < 1e-3:
+            return img
+
+        # 離散回転コピーの平均はサンプルが粗いとコピーが見える。極座標へ変換して角度軸
+        # （行）方向にブラーすれば、半径に依らず連続な回転ブラーになる（ゴーストなし）。
+        corners = ((0.0, 0.0), (w, 0.0), (0.0, h), (w, h))
+        r_max = float(max(np.hypot(px - cx, py - cy) for px, py in corners))
+        if r_max < 1.0:
+            return img
+        radius_bins = int(min(2048, max(64, round(r_max))))
+        angle_bins = int(min(2880, max(256, round(2.0 * np.pi * r_max))))
+        flags = cv2.INTER_LINEAR + cv2.WARP_POLAR_LINEAR
+        polar = cv2.warpPolar(img, (radius_bins, angle_bins), (cx, cy), r_max, flags)
+
+        # 角度方向(行)のガウスブラー。0/2π の継ぎ目は循環パディングで連続化。
+        k = int(round((2.0 * np.radians(max_angle) / (2.0 * np.pi)) * angle_bins))
+        k = max(1, k | 1)
+        if k > 1:
+            pad = k // 2
+            polar = np.concatenate([polar[-pad:], polar, polar[:pad]], axis=0)
+            polar = cv2.GaussianBlur(polar, (1, k), 0)
+            polar = polar[pad:pad + angle_bins]
+
+        swirl = cv2.warpPolar(polar, (w, h), (cx, cy), r_max, flags + cv2.WARP_INVERSE_MAP)
+
+        # 中心は半径0で角度ブラーが効かずシャープに残るため、軽い等方ボケで bokeh らしく。
+        sigma = (strength / 100.0) * 2.0 * max(1.0, res_scale)
+        if sigma > 0.3:
+            kk = int(sigma * 3) | 1
+            swirl = cv2.GaussianBlur(swirl, (kk, kk), sigma)
+
+        wm = wmap[..., np.newaxis]
+        return img * (1.0 - wm) + swirl * wm
 
     def _coating_label_to_key(self, label):
         if label == 'None':
@@ -4103,17 +4197,19 @@ class LensSimulatorEffect(Effect):
         spherical = float(self._get_param(param, 'spherical_ca'))
         focus_d = float(self._get_param(param, 'lens_focus_depth'))
         aperture = float(self._get_param(param, 'lens_aperture'))
+        swirl = float(self._get_param(param, 'swirl_bokeh'))
 
         coat_key = self._coating_label_to_key(coat_label)
         coat_on = coat_key is not None and coat_strength > 0
         lateral_on = lateral > 1e-5
+        swirl_on = swirl > 1e-5
         depth_aber_requested = (longitudinal > 1e-5 or spherical > 1e-5)
 
-        # 軸上色収差(longitudinal)と球面収差(spherical)は AI depth map を要求する。
-        # ここで生成すると重いので、mask2 側で既に作成済みの depth のみ peek で取得し、
-        # 無ければこれらの収差はスキップする(= depth がある時だけ効果が出る)。
+        # 軸上色収差(longitudinal)・球面収差(spherical)は AI depth map を要求する。
+        # ぐるぐるボケ(swirl)は depth があれば非合焦領域に限定するが、無くても半径のみで動く。
+        # ここで生成すると重いので、mask2 側で既に作成済みの depth のみ peek で取得する。
         depth_map = None
-        if depth_aber_requested:
+        if depth_aber_requested or swirl_on:
             getter = getattr(efconfig, "get_ai_depth_map", None)
             if callable(getter):
                 try:
@@ -4126,17 +4222,23 @@ class LensSimulatorEffect(Effect):
         eff_spherical = spherical if depth_available else 0.0
         aber_on = lateral_on or (depth_available and depth_aber_requested)
 
-        if not switch or (not coat_on and not aber_on):
+        if not switch or (not coat_on and not aber_on and not swirl_on):
             self.diff = None
             self.hash = None
             return self.diff
 
+        # swirl の中心は disp_info（拡大/クロップ窓）に依存するため、変化時に再計算する。
+        try:
+            disp_snapshot = tuple(params.get_disp_info(param)) if swirl_on else None
+        except Exception:
+            disp_snapshot = None
         param_hash = hash((
             coat_label, coat_strength, round(coat_light, 4),
             round(lateral, 4), round(longitudinal, 4), round(spherical, 4),
-            round(focus_d, 4), round(aperture, 4),
+            round(focus_d, 4), round(aperture, 4), round(swirl, 4),
             depth_available, getattr(efconfig, "upstream_hash", 0),
             round(float(getattr(efconfig, "resolution_scale", 1.0)), 4),
+            disp_snapshot,
         ))
         if self.hash == param_hash:
             return self.diff
@@ -4145,19 +4247,20 @@ class LensSimulatorEffect(Effect):
         rgb = core.type_convert(rgb, np.ndarray)
         work = np.asarray(rgb, dtype=np.float32).copy()
         res_scale = float(getattr(efconfig, "resolution_scale", 1.0))
+        h, w = work.shape[:2]
+
+        # depth を near=0 / far=1 規約に揃えて aber/swirl で共有する。
+        dm = None
+        if depth_available:
+            dm = np.asarray(depth_map, dtype=np.float32)
+            if dm.ndim == 3:
+                dm = dm[..., 0]
+            if dm.shape[:2] != (h, w):
+                dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_LINEAR)
+            # Depth Pro は inverse-depth 正規化(近=1.0 / 遠=0.0)。near=0.0 / far=1.0 へ反転。
+            dm = np.clip(1.0 - dm, 0.0, 1.0).astype(np.float32, copy=False)
 
         if aber_on:
-            h, w = work.shape[:2]
-            dm = None
-            if depth_available:
-                dm = np.asarray(depth_map, dtype=np.float32)
-                if dm.ndim == 3:
-                    dm = dm[..., 0]
-                if dm.shape[:2] != (h, w):
-                    dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_LINEAR)
-                # Depth Pro は inverse-depth 正規化(近=1.0 / 遠=0.0)。収差シミュは
-                # near=0.0 / far=1.0 を期待するため反転して規約を合わせる。
-                dm = np.clip(1.0 - dm, 0.0, 1.0).astype(np.float32, copy=False)
             sim = LensAberrationSimulator((h, w), resolution_scale=res_scale)
             processed = sim.apply_all_aberrations(
                 work,
@@ -4175,6 +4278,15 @@ class LensSimulatorEffect(Effect):
             coated = self._coating_sim.apply_preset(processed.copy(), coat_key, light_source_intensity=coat_light, resolution_scale=res_scale)
             t = coat_strength / 100.0
             processed = processed * (1.0 - t) + coated * t
+
+        # ぐるぐるボケ（depth があれば非合焦領域に限定、無ければ半径のみ）。
+        # 渦中心は拡大/クロップに依らず元画像中心へ固定する。
+        if swirl_on:
+            cx, cy, radial_norm = self._optical_geometry(processed.shape, param, efconfig)
+            processed = self._swirl_bokeh(
+                np.ascontiguousarray(processed, dtype=np.float32),
+                dm, focus_d, swirl, res_scale, (cx, cy), radial_norm,
+            )
 
         self.diff = processed.astype(np.float32, copy=False)
         return self.diff

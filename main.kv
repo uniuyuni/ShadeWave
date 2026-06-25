@@ -2493,6 +2493,17 @@
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
 
+                                ParamSlider:
+                                    id: slider_swirl_bokeh
+                                    text: "Swirl bokeh"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
                                 VSeparator:
 
                                 HeadLabel:
