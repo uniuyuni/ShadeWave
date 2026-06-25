@@ -4083,11 +4083,15 @@ class LUTEffect(Effect):
                     self.hash = param_hash
 
                     rgb = core.type_convert(rgb, np.ndarray)
+                    # intensity は「元画像 ↔ (log+)LUT 適用後」のドライ/ウェット。
+                    # log 変換は LUT の入力にだけ使い、ブレンドのドライ項には元画像を使う。
+                    # （log 画像をドライ項にすると intensity を下げたとき乳白色に明るくなる）
+                    lut_input = rgb
                     if lut_to_log != 'None':
-                        rgb = linear_to_log.process_image(rgb, lut_to_log)
+                        lut_input = linear_to_log.process_image(rgb, lut_to_log)
 
                     overrange = "preserve" if lut_to_log == 'None' else "clip"
-                    apply_rgb = cubelut.apply_lut(rgb, self.lut, overrange=overrange)
+                    apply_rgb = cubelut.apply_lut(lut_input, self.lut, overrange=overrange)
                     self.diff = rgb * (1-lut_intensity/100) + apply_rgb * lut_intensity/100
                 else:
                     self.diff = None
