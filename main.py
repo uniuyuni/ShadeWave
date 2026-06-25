@@ -95,6 +95,7 @@ if __name__ == '__main__':
         pass
 
     # PyInstaller + Kivy 既定フックでは tkinter が除外される。バンドル実行時はスキップ。
+    """
     if not getattr(_sys_early, "frozen", False):
         import tkinter as tk
 
@@ -102,7 +103,7 @@ if __name__ == '__main__':
         tk = tk.Tk()
         tk.withdraw()
         tk.destroy()
-
+    """
     from utils.envutils import env_flag
 
     _splash_close_screen = _display_startup_splash()
