@@ -29,7 +29,7 @@ _DEBUG_PIPELINE_STATS_EFFECTS = {
     name.strip()
     for name in os.getenv(
         "PLATYPUS_DEBUG_PIPELINE_STATS_EFFECTS",
-        "color_temperature,auto_exposure,input_lut,look_lut,color_separation,hls2rgb2,vignette",
+        "color_temperature,input_lut,look_lut,color_separation,hls2rgb2,vignette",
     ).split(",")
     if name.strip()
 }
@@ -89,8 +89,7 @@ def _debug_pipeline_param_summary(effect_name, param, effect=None):
             "color_tint",
             "color_Y",
         ),
-        "auto_exposure": ("switch_lut", "rgb_or_raw", "auto_exposure", "lut_to_log", "lut_name"),
-        "input_lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log"),
+        "input_lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log", "rgb_or_raw", "auto_exposure"),
         "look_lut": ("switch_lut", "lut_name", "lut_intensity", "lut_to_log"),
         "exposure": ("exposure",),
         "contrast": ("contrast",),

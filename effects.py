@@ -3989,52 +3989,6 @@ class SaturationEffect(Effect):
         
         return self.diff
 
-class AutoExposureEffect(Effect):
-    # rgb_or_rawがrawの場合
-    #   lut_to_logが設定されていたら、auto_exposureを適用する
-    # rgb_or_rawがrgbの場合
-    #   lut_to_logが設定されていたら、auto_exposureを適用する
-
-    def get_param_dict(self, param):
-        return {
-            'switch_lut': True,
-            'rgb_or_raw': 'raw',
-            'auto_exposure': 0,
-            'lut_name': 'None',
-            'lut_to_log': 'None'
-        }
-
-    def make_diff(self, rgb, param, efconfig):
-        switch_lut = self._get_param(param, 'switch_lut')
-        rgb_or_raw = self._get_param(param, 'rgb_or_raw')
-        ae = self._get_param(param, 'auto_exposure')
-        lut_to_log = self._get_param(param, 'lut_to_log')
-        lut_name = self._get_param(param, 'lut_name')
-        if switch_lut == False or (rgb_or_raw == 'raw' and lut_to_log == 'None') or (rgb_or_raw == 'rgb' and lut_to_log == 'None'):
-            self.diff = None
-            self.hash = None
-        
-        else:
-            param_hash = hash((rgb_or_raw, ae, lut_to_log, lut_name))
-            if self.hash != param_hash:
-                self.hash = param_hash
-                
-                # 自動コントラスト補正
-                #rgb = core.auto_contrast_tonemap(rgb)
-
-                # 明るさ補正適用
-                rgb = core.adjust_exposure(rgb, ae)
-                
-                # 超ハイライト領域のコントラストを上げてディティールをはっきりさせるなどする
-                #rgb = highlight_recovery.reconstruct_highlight_details(rgb, False)
-
-                #hls = cv2.cvtColor(rgb, cv2.COLOR_RGB2HLS_FULL)
-                #hls[..., 2] = core.calc_saturation(hls[..., 2], 0, 60)
-                #rgb = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB_FULL)
-                self.diff = rgb
-
-        return self.diff
-
 class LUTEffect(Effect):
     param_bindings = (
         SwitchBinding('switch_lut', True, "switch_lut"),
@@ -4049,6 +4003,14 @@ class LUTEffect(Effect):
         self.lut = None
         self.lut_key = None
         self.stage = stage
+
+    def get_param_dict(self, param):
+        # auto_exposure / rgb_or_raw は UI binding を持たず imageset が EXIF Ev から
+        # 設定する（旧 AutoExposureEffect を input stage に統合）。_get_param のフォールバック用。
+        param_dict = super().get_param_dict(param)
+        param_dict['auto_exposure'] = 0
+        param_dict['rgb_or_raw'] = 'raw'
+        return param_dict
 
     def set2param(self, param, widget):
         previous_lut_name = self._get_param(param, 'lut_name')
@@ -4071,7 +4033,12 @@ class LUTEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((self.stage, lut_name, lut_path, lut_to_log, lut_intensity))
+            # 旧 AutoExposureEffect 統合: input stage の raw 画像のみ露出補正を適用する。
+            # 露出補正条件は input LUT の描画条件と一致するため、param_hash にも含める。
+            rgb_or_raw = self._get_param(param, 'rgb_or_raw')
+            auto_exposure = self._get_param(param, 'auto_exposure')
+            extra = (rgb_or_raw, auto_exposure) if self.stage == "input" else ()
+            param_hash = hash((self.stage, lut_name, lut_path, lut_to_log, lut_intensity, extra))
             if self.hash != param_hash:
                 path = os.path.join(lut_path, lut_name)
                 lut_key = (path, lut_name)
@@ -4083,6 +4050,10 @@ class LUTEffect(Effect):
                     self.hash = param_hash
 
                     rgb = core.type_convert(rgb, np.ndarray)
+                    # 旧 AutoExposureEffect: raw 画像の input stage のみ、log 変換前に露出補正。
+                    if self.stage == "input" and rgb_or_raw == 'raw':
+                        rgb = core.adjust_exposure(rgb, auto_exposure)
+
                     # intensity は「元画像 ↔ (log+)LUT 適用後」のドライ/ウェット。
                     # log 変換は LUT の入力にだけ使い、ブレンドのドライ項には元画像を使う。
                     # （log 画像をドライ項にすると intensity を下げたとき乳白色に明るくなる）
@@ -5045,8 +5016,8 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     
     lv2 = effects[2]
     lv2['color_temperature'] = ColorTemperatureEffect()
-    
-    lv2['auto_exposure'] = AutoExposureEffect()
+
+    # 旧 lv2['auto_exposure'] = AutoExposureEffect() は input_lut(stage="input") に統合済み。
     lv2['input_lut'] = LUTEffect(stage="input")
 
     lv2['exposure'] = ExposureEffect()

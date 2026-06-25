@@ -251,7 +251,7 @@ SPECIAL_PARAM = [
     'patchmatch_inpaint_predict',
     # for effects.LUTEffect
     'lut_path',
-    # for effects.AutoExposureEffect
+    # for effects.LUTEffect (input stage auto exposure)
     'rgb_or_raw',
     'auto_exposure',
 ]
