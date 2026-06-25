@@ -65,84 +65,13 @@ class LUT3D:
         Returns:
             RGB_out: array shape (..., 3) - transformed RGB values
         """
+        # 互換shim: 計算本体は effect_backends.lut_adapter（Metal優先、未対応時は
+        # lut_reference の NumPy 実装）へ委譲する。BGRインデックス規約・ドメインclip・
+        # 正規化は backend 側が担う。docs/effect-backends-design.md 参照。
+        from effect_backends import lut_adapter
+
         RGB = np.asarray(RGB, dtype=np.float32)
-        original_shape = RGB.shape
-        
-        # Flatten to 2D
-        RGB_flat = RGB.reshape(-1, 3)
-        
-        # Normalize to [0, size-1] grid coordinates
-        # RGB in domain → [0, 1] → [0, size-1]
-        domain_min = self.domain[0]
-        domain_max = self.domain[1]
-        
-        # IMPORTANT: Clip to domain range (colour library behavior)
-        # This prevents extrapolation beyond the LUT's defined range
-        RGB_clipped = np.clip(RGB_flat, domain_min, domain_max)
-        
-        # Normalize to [0, 1]
-        RGB_norm = (RGB_clipped - domain_min) / (domain_max - domain_min)
-        
-        # Scale to grid coordinates
-        grid_coords = RGB_norm * (self.size - 1)
-        
-        # Trilinear interpolation
-        RGB_out = self._trilinear_interpolation(grid_coords)
-        
-        return RGB_out.reshape(original_shape)
-    
-    def _trilinear_interpolation(self, coords: np.ndarray) -> np.ndarray:
-        """
-        Trilinear interpolation in 3D LUT.
-        
-        Parameters:
-            coords: shape (N, 3) - coordinates in [0, size-1]
-        
-        Returns:
-            values: shape (N, 3) - interpolated RGB values
-        """
-        # Clamp to valid range (should already be in range due to domain clipping)
-        coords = np.clip(coords, 0, self.size - 1)
-        
-        coords_floor = np.floor(coords).astype(np.int32)
-        coords_floor = np.clip(coords_floor, 0, self.size - 2)
-        coords_ceil = coords_floor + 1
-        
-        # Fractional part
-        coords_frac = coords - coords_floor
-        
-        # Extract coordinates
-        # NOTE: colour library stores .cube data with BGR indexing
-        # Input RGB [R, G, B] should map to table indices [B, G, R]
-        r0, g0, b0 = coords_floor[:, 2], coords_floor[:, 1], coords_floor[:, 0]  # Reverse!
-        r1, g1, b1 = coords_ceil[:, 2], coords_ceil[:, 1], coords_ceil[:, 0]  # Reverse!
-        
-        rd, gd, bd = coords_frac[:, 2:3], coords_frac[:, 1:2], coords_frac[:, 0:1]  # Reverse!
-        
-        # Get 8 corner values (now correctly addressing table[b,g,r] for input [r,g,b])
-        c000 = self.table[r0, g0, b0]  # shape (N, 3)
-        c001 = self.table[r0, g0, b1]
-        c010 = self.table[r0, g1, b0]
-        c011 = self.table[r0, g1, b1]
-        c100 = self.table[r1, g0, b0]
-        c101 = self.table[r1, g0, b1]
-        c110 = self.table[r1, g1, b0]
-        c111 = self.table[r1, g1, b1]
-        
-        # Trilinear interpolation
-        c00 = c000 * (1 - rd) + c100 * rd
-        c01 = c001 * (1 - rd) + c101 * rd
-        c10 = c010 * (1 - rd) + c110 * rd
-        c11 = c011 * (1 - rd) + c111 * rd
-        
-        # Interpolate along G
-        c0 = c00 * (1 - gd) + c10 * gd
-        c1 = c01 * (1 - gd) + c11 * gd
-        
-        # Interpolate along B
-        result = c0 * (1 - bd) + c1 * bd
-        
-        return result
+        return lut_adapter.apply_lut3d(RGB, self.table, self.domain, self.size)
 
 
 class LUT3x1D:

@@ -16,4 +16,5 @@ __all__ = [
     "tone_adapter",
     "subpixel_shift_adapter",
     "low_frequency_transfer_adapter",
+    "lut_adapter",
 ]
