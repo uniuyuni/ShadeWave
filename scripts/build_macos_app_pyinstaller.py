@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -37,6 +38,42 @@ from pathlib import Path
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _app_version(root: Path) -> str | None:
+    """define.py の VERSION を読み取る（重い依存を避けるため正規表現で抽出）。"""
+    define_py = root / "define.py"
+    try:
+        text = define_py.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"警告: define.py を読めませんでした: {e}", file=sys.stderr)
+        return None
+    m = re.search(r"""^VERSION\s*=\s*["']([^"']+)["']""", text, re.MULTILINE)
+    if not m:
+        print("警告: define.py に VERSION が見つかりませんでした", file=sys.stderr)
+        return None
+    return m.group(1)
+
+
+def _set_bundle_version(app_path: Path, version: str) -> None:
+    """Info.plist の CFBundleShortVersionString / CFBundleVersion を define.VERSION に同期する。
+
+    macOS 標準の About <App> ダイアログはこの値を表示する。署名前に実行すること。
+    """
+    plist_path = app_path / "Contents" / "Info.plist"
+    if not plist_path.is_file():
+        print("警告: Info.plist が見つかりません:", plist_path, file=sys.stderr)
+        return
+    try:
+        with open(plist_path, "rb") as f:
+            pl = plistlib.load(f)
+        pl["CFBundleShortVersionString"] = version
+        pl["CFBundleVersion"] = version
+        with open(plist_path, "wb") as f:
+            plistlib.dump(pl, f)
+        print(f"Info.plist のバージョンを {version} に設定しました")
+    except Exception as e:
+        print(f"警告: Info.plist のバージョン設定に失敗しました: {e}", file=sys.stderr)
 
 
 def _build_icns_with_pillow(png: Path, icns: Path) -> Path | None:
@@ -614,6 +651,9 @@ def main() -> None:
         _replace_pil_harfbuzz(app)
         _patch_cv2_iconv_to_system(app)
         _create_framework_lib_symlinks(app)
+        version = _app_version(root)
+        if version:
+            _set_bundle_version(app, version)  # 署名前に Info.plist を更新する
         _ad_hoc_codesign_app(app)
         print()
         print("ビルド完了:", app)

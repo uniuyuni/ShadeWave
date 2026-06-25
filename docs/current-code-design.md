@@ -697,7 +697,7 @@ previewとexportでMask2位置が一致するための条件:
 | --- | --- | --- |
 | lv0 | loading_wait, ai_noise_reduction, remove_chromatic_aberration, lens_modifier, subpixel_shift, exposure_fusion_debevec, inpaint, patchmatch_inpaint, cross_filter, color_match, geometry, crop | ロード待ち、重い復元、RAW/幾何、crop前処理。 |
 | lv1 | face, distortion, **lens_ghost**, lensblur_filter, scratch, frosted_glass, mosaic | crop後の形状/フィルタ系。`face` が先頭、`lens_ghost` は `lensblur_filter` の前。 |
-| lv2 | color_temperature, auto_exposure, LUT, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, Film Process/look, glow, unsharp, **lens_ghost** | 主なトーン/カラー/質感処理。`lens_ghost` を末尾にも登録。 |
+| lv2 | color_temperature, input_lut, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, look_lut(Film Process/look), glow, unsharp, **lens_ghost** | 主なトーン/カラー/質感処理。LUTは `input_lut`(stage="input", log→LUT。raw自動露出補正を内包) と `look_lut`(stage="look") の2段。`lens_ghost` を末尾にも登録。 |
 | lv3 | mask2, mask_geometry | マスク表示/マスクジオメトリ関連。 |
 | lv4 | grain, vignette | 最終段。Mask composite後の画像に適用。 |
 

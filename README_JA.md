@@ -124,7 +124,7 @@ pixi run python -m unittest discover -s tests -p "test_*.py"
 | 種類 | 拡張子 |
 | --- | --- |
 | RGB / 一般画像 | `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, `.gif`, `.heic`, `.jxl` |
-| RAW | `.cr2`, `.cr3`, `.nef`, `.arw`, `.dng`, `.orf`, `.raf`, `.rw2`, `.sr2`, `.pef`, `.raw`, `.3fr`, `.fff` |
+| RAW | `.cr2`, `.cr3`, `.crw`, `.nef`, `.nrw`, `.arw`, `.dng`, `.orf`, `.raf`, `.rw2`, `.sr2`, `.pef`, `.raw`, `.3fr`, `.fff`, `.erf`, `.kdc`, `.dcr`, `.mrw`, `.mdc`, `.rwl`, `.srw`, `.mef` |
 | HDR / シーンリニア | `.exr` |
 
 RAW 読み込みには外部バックエンド `libraw_enhanced` を使います。OpenEXR は OpenEXR Python bindings を使い、通常のRGB読み込みとは別経路で扱います。
@@ -248,7 +248,7 @@ pixi run build-macos-app
 現在のアプリケーションバージョンは `define.py` で定義されています。
 
 ```text
-Shade Wave 2.22.42
+Shade Wave 2.96.1
 ```
 
 現在の pixi 環境は `osx-arm64` と Python `>=3.11.13,<3.12` を対象にしています。

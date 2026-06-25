@@ -22,9 +22,10 @@ if getattr(sys, "frozen", False) and sys.platform == "darwin":
     # aten::_addmm_activation.out.  CPU fallback avoids terminating the app.
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
-    os.environ.setdefault("PYTORCH_MPS_FAST_MATH", "0")
+    os.environ.setdefault("PYTORCH_MPS_FAST_MATH", "1")
 
     # Match the app's intended Quick Select v4 defaults from launch.json.
     os.environ.setdefault("QS_DRAW_V4", "1")
     os.environ.setdefault("QS_V4_EDGE_SNAP", "1")
     os.environ.setdefault("QS_V4_SNAP_ALPHA", "1")
+    os.environ.setdefault("PLATYPUS_SPLASH_SCREEN", "1")

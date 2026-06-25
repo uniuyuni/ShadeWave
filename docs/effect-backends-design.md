@@ -284,6 +284,37 @@ main.draw_image_core()
 
 CPU native 化するなら、matrix、negative gamut compression、transfer encoding を1パスへ融合する。`colour_functions_adapter.py` は従来の `colour_functions` APIを再エクスポートし、表示変換系だけをnative優先で上書きする。より大きな方向性としては、preview 表示だけ GPU shader または 3D LUT shader へ移すのが本命。
 
+## 3D LUT Backend
+
+外部 `.cube` の 3D LUT trilinear 補間を backend 化した。`image_transform` と同型で、**Metal + reference のみ**
+（CPU C backend は持たない）。
+
+```text
+effect_backends/
+  lut_adapter.py     # Python adapter（backend選択・fallback・backend_status）
+  lut_reference.py   # NumPy 参照実装＝数値基準＆fallback（apply_lut3d）
+  lut_capi.h         # 将来ABI用 C ABI 構造体
+  lut_metal.mm       # Metal compute kernel + pybind（_lut_metal）
+tests/
+  test_lut_backend.py
+scripts/
+  bench_lut_backends.py
+```
+
+- `cores/lut_functions.py` の `LUT3D.apply` は `lut_adapter.apply_lut3d(image, table, domain, size)` への
+  互換 shim。`overrange`/`lut_intensity` ブレンド/linear→log/1D LUT は Python 側（`cubelut`/`LUTEffect`）に残し、
+  Metal 化したのは 3D trilinear のコアのみ。
+- 選択: `PLATYPUS_LUT_BACKEND`(`auto`/`metal`/`reference`)、`PLATYPUS_LUT_METAL_STRICT`。Metal 不可環境では
+  自動で `lut_reference` にフォールバック。
+- **BGR インデックス規約**: 入力 RGB grid 座標 `g=(gR,gG,gB)=norm*(size-1)` に対し `table[a,b,c]`
+  （flat=`((a*size+b)*size+c)*3`）を `a=floor(gB), b=floor(gG), c=floor(gR)`、補間重み
+  axis0=frac(gB)/axis1=frac(gG)/axis2=frac(gR) で参照する。reference と kernel はこの規約を一致させる
+  （tolerance < 1e-4、フル解像度で約45x）。
+
+> 補足: 現行 backend は vignette / cross_filter / image_transform / colour_functions / tone /
+> color_separation / film_grain / subpixel_shift / low_frequency_transfer / lut。上の「現在のサンプル」節は
+> 初期 2 例（vignette / cross_filter）の記述で、実体はこの一覧まで拡張済み。
+
 ## 移植順の考え方
 
 1. Vignette で adapter/backend/test/build の型を固める。

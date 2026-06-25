@@ -2296,16 +2296,8 @@ def apply_zero_wrap(img, param, crop_editing=False):
             mask = content_quad_mask(out_h, out_w, quad)
             content = int(np.count_nonzero(mask))
             zero_count = out_w * out_h - content
-            if os.getenv("PLATYPUS_DEBUG_ZERO_WRAP", "0").strip().lower() in {"1", "true", "yes", "on"}:
-                logging.warning(
-                    "[ZERO_WRAP] crop_editing img=%sx%s quad=%s content=%d zero_count=%d (%.1f%% padding)",
-                    out_w, out_h, np.round(np.asarray(quad), 4).tolist(),
-                    content, zero_count, 100.0 * zero_count / max(1, out_w * out_h),
-                )
             img = img * mask[..., np.newaxis]
             return (img, zero_count)
-        elif os.getenv("PLATYPUS_DEBUG_ZERO_WRAP", "0").strip().lower() in {"1", "true", "yes", "on"}:
-            logging.warning("[ZERO_WRAP] crop_editing but quad is None -> fallback (no mask)")
 
     disp_info = params.get_disp_info(param)
     width = int((disp_info[2]) * disp_info[4])
