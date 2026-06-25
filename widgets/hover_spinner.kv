@@ -1,14 +1,33 @@
 
-<HoverSpinnerOption@SpinnerOption>:
+<HoverSpinnerOption>:
     size_hint_y: None
-    height: dp(22)
+    # 高さは Spinner の sync_height でスピナー本体（ref_height×device.dpi_scale()）に同期する。
+    # dp() は Kivy density 依存で device.dpi_scale() と不一致になり、低解像度ディスプレイで
+    # ドロップダウンが倍の高さになるため使わない。
     font_size: '9pt'
     text_size: self.width - dp(20), None
     shorten: True  # 長い場合省略（...表示）
     shorten_from: 'right'
+    # 既定 Button テーマ画像は半透明の縁を持ち項目間に背景が透けるため不可視化し、
+    # canvas.before で全面を黒く塗りつぶす。
+    background_color: 0, 0, 0, 0
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    # ホバー中の項目だけ白枠で囲む。
+    canvas.after:
+        Color:
+            rgba: (1, 1, 1, 1) if self.hovered else (0, 0, 0, 0)
+        Line:
+            width: 1
+            rectangle: self.x + 1, self.y + 1, self.width - 2, self.height - 2
 
 <HoverSpinner>:
     text_size: self.width - dp(20), None
     shorten: True
     shorten_from: 'right'
     option_cls: "HoverSpinnerOption"
+    sync_height: True
