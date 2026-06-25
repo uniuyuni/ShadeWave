@@ -76,7 +76,7 @@ def _param_to_aspect_ratio(self, param):
 - **対応**: `BackendAdapter` 共通基底（バックエンド選択・strict 判定・status 一元化）へ。大幅縮小可。
 
 ### E. `helpers/*_helper.py` ×5–6 — モデルヘルパ I/F 重複
-- `setup` / `predict` / `predict_helper` / `_soft_edit_mask` / `_ensure_result_size` が scunet/nafnet/nano_banana/qwen/runware で重複。
+- `setup` / `predict` / `predict_helper` / `_soft_edit_mask` / `_ensure_result_size` が scunet/nano_banana/qwen/runware で重複。
 - **対応**: `ModelHelper` 基底 or Protocol に集約。
 
 ### F. `read_pmck_dict` 同名・異挙動 — `preset_utils.py:166` / `rating_io.py:68`

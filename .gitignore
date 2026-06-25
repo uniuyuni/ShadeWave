@@ -14,7 +14,6 @@ SAM3/
 SCUNet/
 demosaicnet_torch/
 Real-ESRGAN/
-NAFNet_AppleSilicon/
 SCUNet_CoreML/
 external/libraw_enhanced/
 external/radiance_codec/
