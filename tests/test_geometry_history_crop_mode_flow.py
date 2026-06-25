@@ -128,8 +128,10 @@ class GeometryHistoryCropModeFlowTest(unittest.TestCase):
 
         self.assertIn("crop_editing=False", source)
         self.assertIn("if not crop_editing:", source)
-        self.assertNotIn("count_nonzero", source)
         self.assertNotIn("crop_enable", source)
+        # クロップ編集中は param に格納されたコンテンツ四辺形からマスクを作る。
+        self.assertIn("_zero_wrap_content_quad", source)
+        self.assertIn("content_quad_mask", source)
         draw_image_core = _load_function(MAIN_PATH, "draw_image_core")
         draw_source = ast.get_source_segment(MAIN_PATH.read_text(), draw_image_core)
         self.assertIn('crop_editing = current_tab == "Ge"', draw_source)
@@ -159,6 +161,66 @@ class GeometryHistoryCropModeFlowTest(unittest.TestCase):
 
         self.assertIn("default_param['crop_rect']", source)
         self.assertIn("default_param['disp_info']", source)
+
+    def test_zero_wrap_content_quad_runtime_special_and_clear(self):
+        # ランタイム専用キーとして保存対象外であること。
+        self.assertIn("'_zero_wrap_content_quad'", PARAMS_PATH.read_text())
+        # GeometryEffect は crop_editing でないとき quad を None でクリアする。
+        store = _load_class_function(EFFECTS_PATH, "GeometryEffect", "_store_zero_wrap_quad")
+        store_source = ast.get_source_segment(EFFECTS_PATH.read_text(), store)
+        self.assertIn("_zero_wrap_content_quad", store_source)
+        self.assertIn("content_quad_norm", store_source)
+
+
+class ZeroWrapQuadMathTest(unittest.TestCase):
+    """フル依存環境でのみ実行する apply_zero_wrap / クォッド算出の動作テスト。"""
+
+    def setUp(self):
+        try:
+            import numpy as np  # noqa: F401
+            import cores.core as core  # noqa: F401
+        except Exception as exc:  # numba 等が無い最小環境ではスキップ
+            self.skipTest(f"cores.core unavailable: {exc}")
+
+    def test_content_quad_and_zero_wrap_padding(self):
+        import numpy as np
+        import cores.core as core
+
+        # 横長 300x150、回転 0 度。canvas=300、有効コンテンツ=300*150。
+        h, w = 150, 300
+        matrix, size = core.rotation_canvas_matrix((h, w), 0)
+        quad = core.content_quad_norm((h, w), matrix, size, "affine")
+        param = {"_zero_wrap_content_quad": quad.tolist()}
+        img = np.ones((size, size, 3), dtype=np.float32)
+
+        out, zero_count = core.apply_zero_wrap(img, param, crop_editing=True)
+        expected_zero = size * size - w * h
+        # fillConvexPoly の境界包含で数画素ずれるため許容誤差付き。
+        self.assertLess(abs(zero_count - expected_zero), size * 3)
+        # パディング画素は強制 0 化される。
+        self.assertTrue(np.all(out[0, 0] == 0.0))
+
+    def test_zero_rotation_square_has_no_padding(self):
+        import numpy as np
+        import cores.core as core
+
+        matrix, size = core.rotation_canvas_matrix((200, 200), 0)
+        quad = core.content_quad_norm((200, 200), matrix, size, "affine")
+        param = {"_zero_wrap_content_quad": quad.tolist()}
+        img = np.ones((size, size, 3), dtype=np.float32)
+        out, zero_count = core.apply_zero_wrap(img, param, crop_editing=True)
+        self.assertLess(zero_count, size * 3)
+
+    def test_missing_quad_falls_back_without_masking(self):
+        import numpy as np
+        import cores.core as core
+
+        # quad 未設定 + crop_editing=True → 旧挙動（乗算なし）。
+        param = {"_zero_wrap_content_quad": None,
+                 "disp_info": (0, 0, 100, 100, 1.0)}
+        img = np.ones((100, 100, 3), dtype=np.float32)
+        out, _ = core.apply_zero_wrap(img, param, crop_editing=True)
+        self.assertTrue(np.all(out == 1.0))
 
 
 if __name__ == "__main__":

@@ -27,3 +27,4 @@ if getattr(sys, "frozen", False) and sys.platform == "darwin":
     # Match the app's intended Quick Select v4 defaults from launch.json.
     os.environ.setdefault("QS_DRAW_V4", "1")
     os.environ.setdefault("QS_V4_EDGE_SNAP", "1")
+    os.environ.setdefault("QS_V4_SNAP_ALPHA", "1")

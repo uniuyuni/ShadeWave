@@ -4324,6 +4324,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
     def set_primary_param(self, primary_param, disp_info, redraw_mask=True):
 
+        # クロップ編集/full-preview 中の回転コンテンツ四辺形（apply_zero_wrap と共用）。
+        # マスクオーバーレイを回転後の有効画像領域にクリップするために保持する。
+        self._zero_wrap_content_quad = primary_param.get('_zero_wrap_content_quad')
+
         # TCG情報を設定
         with self._matrix_lock:
             old_view_key = self._mask_overlay_view_key_locked()
@@ -4404,6 +4408,14 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         return (px + marginx, py + marginy), (texture_size[0] * scale, texture_size[1] * scale)
 
     def _clip_mask_overlay_to_image_area(self, glayimg, disp_info):
+        # クロップ編集/full-preview 中は disp_info が正方形全体になり矩形クリップが効かない。
+        # 回転コンテンツ四辺形があれば、その内側だけにオーバーレイを残す（四隅のはみ出し除去）。
+        quad = getattr(self, '_zero_wrap_content_quad', None)
+        if quad is not None:
+            h, w = glayimg.shape[:2]
+            mask = core.content_quad_mask(h, w, quad)
+            return glayimg * mask if glayimg.ndim == 2 else glayimg * mask[..., np.newaxis]
+
         if disp_info is None:
             return glayimg
         h, w = glayimg.shape[:2]

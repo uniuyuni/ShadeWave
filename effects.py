@@ -1785,6 +1785,23 @@ class GeometryEffect(Effect):
         return transform_matrix, size, transform_type, mesh_map_x, mesh_map_y
 
 
+    def _store_zero_wrap_quad(self, param, full_preview, image_shape, transform_matrix, size, transform_type):
+        """apply_zero_wrap 用の正規化コンテンツ四辺形を param に格納する。
+
+        full_preview（Ge タブ＝回転正方形パディング表示。Mask2 ON/OFF 問わず）の
+        ときだけ格納し、それ以外は None でクリアして stale を防ぐ。
+        main.py 側の crop_editing は current_tab=="Ge" で判定され full_preview と一致する。
+        """
+        if not full_preview:
+            param['_zero_wrap_content_quad'] = None
+            return
+        try:
+            quad = core.content_quad_norm(image_shape, transform_matrix, size, transform_type)
+            param['_zero_wrap_content_quad'] = quad.tolist()
+        except Exception:
+            logging.exception("failed to compute zero-wrap content quad")
+            param['_zero_wrap_content_quad'] = None
+
     def make_diff(self, img, param, efconfig):
         ang = self._get_param(param, 'rotation')
         ang2 = self._get_param(param, 'rotation2')
@@ -1849,6 +1866,7 @@ class GeometryEffect(Effect):
                     "mesh_map_y": mesh_map_y,
                     "hash": param_hash,
                 }
+                self._store_zero_wrap_quad(param, full_preview, img.shape, transform_matrix, size, transform_type)
                 self.hash = param_hash
                 self.diff = None
                 return self.diff
@@ -1860,7 +1878,10 @@ class GeometryEffect(Effect):
         if self.hash != param_hash:
             self.hash = param_hash
             efconfig.deferred_geometry_transform = None
-            
+            # 二パス経路では正確なクォッドを単一行列で得にくいため、安全に旧挙動へ
+            # フォールバックさせる（apply_zero_wrap はクォッド無しで矩形ロジックに戻る）。
+            param['_zero_wrap_content_quad'] = None
+
             params.set_matrix(param, None)
 
             # レンズ歪み補正

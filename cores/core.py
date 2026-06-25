@@ -170,6 +170,48 @@ def combined_rotation_canvas_matrix(image_shape, angle, flip_mode=0, matrix=None
     return T @ combined @ T_inv, size, "perspective"
 
 
+def transform_points(matrix, points, transform_type="affine"):
+    """変換行列で2D点群を変換する。
+
+    points: shape (N, 2) の配列。
+    transform_type: "affine"(2x3) または "perspective"(3x3)。
+    戻り値: shape (N, 2) の変換後座標。
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    if transform_type == "perspective":
+        homog = np.concatenate([pts, np.ones((pts.shape[0], 1), dtype=np.float64)], axis=1)
+        out = homog @ np.asarray(matrix, dtype=np.float64).T
+        w = out[:, 2:3]
+        w = np.where(np.abs(w) < 1e-12, 1e-12, w)
+        return out[:, :2] / w
+    m = np.asarray(matrix, dtype=np.float64)
+    return pts @ m[:, :2].T + m[:, 2]
+
+
+def content_quad_norm(image_shape, transform_matrix, size, transform_type="affine"):
+    """ジオメトリ変換後の有効画像コンテンツ四辺形を、size正方形キャンバスで
+    正規化([0,1])した4頂点として返す。
+
+    image_shape: 変換入力画像の shape (H, W, ...)。
+    戻り値: shape (4, 2) の正規化頂点 (x, y)。
+    """
+    h, w = image_shape[:2]
+    corners = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float64)
+    quad = transform_points(transform_matrix, corners, transform_type)
+    return quad / float(size)
+
+
+def content_quad_mask(height, width, quad):
+    """正規化([0,1])コンテンツ四辺形から (height, width) の float32 マスクを生成する。
+
+    四辺形内部=1.0、外部=0.0。クロップ編集中の黒塗り/オーバーレイクリップで共用する。
+    """
+    pts = np.asarray(quad, dtype=np.float32) * np.array([width, height], dtype=np.float32)
+    mask = np.zeros((int(height), int(width)), dtype=np.float32)
+    cv2.fillConvexPoly(mask, np.round(pts).astype(np.int32), 1.0)
+    return mask
+
+
 def rotation(img, angle, flip_mode=0, matrix=None, inter_mode='bilinear', border_mode="reflect"):
     transform_matrix, size, transform_type = combined_rotation_canvas_matrix(img.shape, angle, flip_mode, matrix)
 
@@ -2244,7 +2286,27 @@ def get_icc_profile_name(pil_image):
 def apply_zero_wrap(img, param, crop_editing=False):
     """
     Zero-wrapフィルタを適用する関数
-    """        
+    """
+    # クロップ編集中は回転した正方形パディングのため、黒塗り範囲が矩形にならない。
+    # GeometryEffect が param に格納した正規化コンテンツ四辺形からマスクを生成する。
+    if crop_editing:
+        quad = param.get('_zero_wrap_content_quad')
+        if quad is not None:
+            out_h, out_w = int(img.shape[0]), int(img.shape[1])
+            mask = content_quad_mask(out_h, out_w, quad)
+            content = int(np.count_nonzero(mask))
+            zero_count = out_w * out_h - content
+            if os.getenv("PLATYPUS_DEBUG_ZERO_WRAP", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                logging.warning(
+                    "[ZERO_WRAP] crop_editing img=%sx%s quad=%s content=%d zero_count=%d (%.1f%% padding)",
+                    out_w, out_h, np.round(np.asarray(quad), 4).tolist(),
+                    content, zero_count, 100.0 * zero_count / max(1, out_w * out_h),
+                )
+            img = img * mask[..., np.newaxis]
+            return (img, zero_count)
+        elif os.getenv("PLATYPUS_DEBUG_ZERO_WRAP", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            logging.warning("[ZERO_WRAP] crop_editing but quad is None -> fallback (no mask)")
+
     disp_info = params.get_disp_info(param)
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
