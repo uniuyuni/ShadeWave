@@ -2833,7 +2833,10 @@ class GlowEffect(Effect):
 
                 rgb = core.type_convert(rgb, np.ndarray)
                 hls = hlsrgb.rgb_to_hlc_gain(rgb)
-                hls[:,:,1] = core.apply_level_adjustment(hls[:,:,1], gb, 127+gg/2, 255)
+                # グロー源は実際の明るさ=gain(ch3)を基準に作る。L(ch1=正規化輝度)を弄ると暗部/明部を
+                # 正しく選べず彩度も漏れるため、L は保持し gain に level 補正する。
+                # apply_level_adjustment は HDR(>1)を線形保持するので gain に適用して問題ない。
+                hls[:,:,3] = core.apply_level_adjustment(hls[:,:,3], gb, 127+gg/2, 255)
                 rgb2 = hlsrgb.hlc_gain_to_rgb(hls)
                 if gg > 0:
                     radius = gg * 10 * efconfig.resolution_scale
