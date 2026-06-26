@@ -112,6 +112,12 @@ if __name__ == '__main__':
     Config.set('input', 'mouse', 'mouse,disable_multitouch')  # 右クリック赤丸消去
     Config.set('kivy', 'exit_on_escape', '0')  # kivy ESC無効
     Config.set('kivy', 'kivy_clock', 'interrupt')
+    # Kivy/SDL2 はウィンドウ生成時に SDL_SetWindowIcon を呼び、macOS では
+    # [NSApp setApplicationIconImage:] として Dock アイコンを上書きする。未指定だと
+    # 既定の Kivy ロゴになるため、ShadeWave アイコンを明示してロゴ化けを防ぐ。
+    _APP_ICON = "assets/Shade Wave icon.png"
+    if _os_early.path.exists(_APP_ICON):
+        Config.set('kivy', 'window_icon', _APP_ICON)
 
     from kivy.app import App as KVApp
     from kivy.core.window import Window as KVWindow

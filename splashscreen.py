@@ -12,6 +12,123 @@ import os
 _win = None
 
 
+def _install_default_menu_bar(app):
+    """自前でメニューバー（NSApp.mainMenu）を構築する。
+
+    SDL2(Kivy) の macOS バックエンドは初期化時に ``NSApp == nil`` のときだけ
+    メニューバー（Cocoa_CreateApplicationMenus）・activation policy・finishLaunching
+    を設定する。スプラッシュが SDL より先に NSApplication を生成するとこの一度きりの
+    セットアップが丸ごとスキップされ、.app でメニューバーが出なくなる。これを補うため
+    最低限のメニューバー（アプリ／Edit／Window）をここで作る。
+    """
+    import AppKit
+    from AppKit import NSMenu, NSMenuItem
+    from Foundation import NSBundle
+
+    if app.mainMenu() is not None:
+        return
+
+    # アプリ名（.app は CFBundleName、ソース実行はフォールバック）。
+    app_name = None
+    try:
+        bundle = NSBundle.mainBundle()
+        info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+        if info is not None:
+            app_name = info.get("CFBundleName")
+    except Exception:
+        app_name = None
+    if not app_name:
+        app_name = "Shade Wave"
+
+    opt = getattr(AppKit, "NSEventModifierFlagOption", 1 << 19)
+    cmd = getattr(AppKit, "NSEventModifierFlagCommand", 1 << 20)
+    shift = getattr(AppKit, "NSEventModifierFlagShift", 1 << 17)
+
+    main_menu = NSMenu.alloc().init()
+
+    # --- アプリケーションメニュー（先頭項目の submenu が自動的にアプリメニューになる）。
+    app_item = NSMenuItem.alloc().init()
+    main_menu.addItem_(app_item)
+    app_menu = NSMenu.alloc().init()
+    app_item.setSubmenu_(app_menu)
+    app_menu.addItemWithTitle_action_keyEquivalent_(f"About {app_name}", "orderFrontStandardAboutPanel:", "")
+    app_menu.addItem_(NSMenuItem.separatorItem())
+    app_menu.addItemWithTitle_action_keyEquivalent_(f"Hide {app_name}", "hide:", "h")
+    hide_others = app_menu.addItemWithTitle_action_keyEquivalent_("Hide Others", "hideOtherApplications:", "h")
+    hide_others.setKeyEquivalentModifierMask_(opt | cmd)
+    app_menu.addItemWithTitle_action_keyEquivalent_("Show All", "unhideAllApplications:", "")
+    app_menu.addItem_(NSMenuItem.separatorItem())
+    app_menu.addItemWithTitle_action_keyEquivalent_(f"Quit {app_name}", "terminate:", "q")
+
+    # --- Edit メニュー（コピー&ペースト等）。
+    edit_item = NSMenuItem.alloc().init()
+    main_menu.addItem_(edit_item)
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    edit_item.setSubmenu_(edit_menu)
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
+    redo = edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "z")
+    redo.setKeyEquivalentModifierMask_(shift | cmd)
+    edit_menu.addItem_(NSMenuItem.separatorItem())
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
+
+    # --- Window メニュー。
+    window_item = NSMenuItem.alloc().init()
+    main_menu.addItem_(window_item)
+    window_menu = NSMenu.alloc().initWithTitle_("Window")
+    window_item.setSubmenu_(window_menu)
+    window_menu.addItemWithTitle_action_keyEquivalent_("Minimize", "performMiniaturize:", "m")
+    window_menu.addItemWithTitle_action_keyEquivalent_("Zoom", "performZoom:", "")
+
+    app.setMainMenu_(main_menu)
+    try:
+        app.setWindowsMenu_(window_menu)
+    except Exception:
+        pass
+
+
+def _install_dock_icon(app):
+    """Dock アイコンを .app のアイコン（ShadeWave）に明示設定する。
+
+    早期に NSApplication を生成すると applicationIconImage が PyObjC/python の
+    デフォルト（ロケット）になり、finishLaunching 時に Dock がそれに化ける。
+    バンドルの icns（無ければバンドル自体のアイコン）を読み込んで上書きする。
+    """
+    from AppKit import NSImage, NSWorkspace
+    from Foundation import NSBundle
+
+    bundle = NSBundle.mainBundle()
+    icon = None
+
+    # 1) Resources 内の icns を直接読む（.app 実行）。
+    try:
+        info = bundle.infoDictionary() or {}
+        icon_name = info.get("CFBundleIconFile") or "Shade Wave"
+        base = os.path.splitext(str(icon_name))[0]
+        icns_path = bundle.pathForResource_ofType_(base, "icns")
+        if icns_path:
+            icon = NSImage.alloc().initWithContentsOfFile_(icns_path)
+    except Exception:
+        icon = None
+
+    # 2) フォールバック: バンドル（または実行ファイル）自体のアイコン。
+    if icon is None:
+        try:
+            path = bundle.bundlePath()
+            if path:
+                icon = NSWorkspace.sharedWorkspace().iconForFile_(path)
+        except Exception:
+            icon = None
+
+    if icon is not None:
+        try:
+            app.setApplicationIconImage_(icon)
+        except Exception:
+            pass
+
+
 def display_splash_screen(image_path):
     """borderless な最前面ウィンドウに画像を中央表示する。"""
     global _win
@@ -30,11 +147,20 @@ def display_splash_screen(image_path):
     w = max(1.0, float(size.width) / 2.0)
     h = max(1.0, float(size.height) / 2.0)
 
-    # NSApplication を用意（policy が Prohibited だとウィンドウが出ないため Accessory に）。
+    # NSApplication を用意。
+    # policy が Prohibited(2) だとウィンドウが出ない。一方 Accessory(1) にすると
+    # メニューバーと Dock アイコンが消える（.app でメニューバーが出ない不具合の原因）。
+    # 通常の前面アプリ＝Regular(0) に設定し、メニューバー／Dock を維持する。
     app = NSApplication.sharedApplication()
     try:
-        if app.activationPolicy() == 2:  # NSApplicationActivationPolicyProhibited
-            app.setActivationPolicy_(getattr(AppKit, "NSApplicationActivationPolicyAccessory", 1))
+        if app.activationPolicy() != 0:  # NSApplicationActivationPolicyRegular 以外
+            app.setActivationPolicy_(getattr(AppKit, "NSApplicationActivationPolicyRegular", 0))
+    except Exception:
+        pass
+
+    # finishLaunching より前に Dock アイコンを ShadeWave に固定（python ロケット化け対策）。
+    try:
+        _install_dock_icon(app)
     except Exception:
         pass
 
@@ -65,8 +191,28 @@ def display_splash_screen(image_path):
     _win.orderFrontRegardless()
 
     # Kivy のイベントループ開始前なので、一度ランループを回して確実に描画させる。
+    # ここまででスプラッシュを先に画面へ出してから、SDL2 が NSApp 既存を理由に
+    # スキップするメニューバー生成・finishLaunching を肩代わりする。順序を後ろに
+    # することで、finishLaunching のアプリ活性化がスプラッシュ表示を妨げない。
     try:
         NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
+    except Exception:
+        pass
+
+    try:
+        _install_default_menu_bar(app)
+    except Exception:
+        pass
+    try:
+        app.finishLaunching()
+    except Exception:
+        pass
+
+    # スプラッシュを最前面に保ち、メニューバーを即時表示させるためアプリを活性化。
+    try:
+        _win.orderFrontRegardless()
+        app.activateIgnoringOtherApps_(True)
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.02))
     except Exception:
         pass
 
