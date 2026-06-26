@@ -22,13 +22,15 @@ class FringeRemoverFast:
     Ultra-fast chromatic aberration removal with wide fringe support.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  purple_amount: float = 1.8,
                  purple_hue_lo: float = 230,
                  purple_hue_hi: float = 310,
                  green_amount: float = 1.5,
                  green_hue_lo: float = 40,
-                 green_hue_hi: float = 90,
+                 # 緑の葉(hue~80-140°)を誤って緑フリンジ扱いして「オレンジ化」させないよう上限を下げる。
+                 # 本来の黄緑フリンジ(~40-75°)は範囲内に残る。
+                 green_hue_hi: float = 75,
                  lateral_correction: bool = False,
                  edge_threshold: float = 0.10,
                  min_saturation: float = 0.30,
@@ -169,7 +171,17 @@ class FringeRemoverFast:
 
     def _finalize_mask_strict(self, raw_mask: np.ndarray, edge_band: np.ndarray) -> np.ndarray:
         # Conservative automatic mode: binary mask, strictly edge-limited.
-        return ((raw_mask > 0.10) & (edge_band > 0)).astype(np.float32)
+        mask = ((raw_mask > 0.10) & (edge_band > 0)).astype(np.uint8)
+        if not mask.any():
+            return mask.astype(np.float32)
+        # テクスチャ上の孤立スペック(色ノイズ起因の誤検出)を除去する。本物のフリンジは
+        # 輪郭沿いに連続して帯状になるため、微小な連結成分(面積 < min_area)だけ落とす。
+        # これで「テクスチャに変な色が散発する」誤補正を防ぎつつ、連続したフリンジは残す。
+        num, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        min_area = 4
+        keep = stats[:, cv2.CC_STAT_AREA] >= min_area
+        keep[0] = False  # 背景ラベルは除外
+        return keep[labels].astype(np.float32)
 
     def _compute_hue(self, r: np.ndarray, g: np.ndarray, b: np.ndarray, deltac: np.ndarray, maxc: np.ndarray) -> np.ndarray:
         h = np.zeros_like(maxc, dtype=np.float32)
@@ -332,6 +344,11 @@ class FringeRemoverFast:
         image[:, :, 0] = r - delta_common - (residual_r * eff_strength * 0.20)
         image[:, :, 2] = b - delta_common - (residual_b * eff_strength * 0.20)
 
+        # 色相反転防止: 補正で R/B を G 未満へ押し下げない（=フリンジを「緑優位」に反転させない）。
+        # 元々 R/B が G 以上だった画素のみ G を下限にする（非マゼンタ画素は min(orig,g)=orig で据え置き）。
+        image[:, :, 0] = np.maximum(image[:, :, 0], np.minimum(r, g))
+        image[:, :, 2] = np.maximum(image[:, :, 2], np.minimum(old_b, g))
+
         # Prevent over-reduction of blue around highlights (yellow cast guard).
         blue_floor = old_b * (1.0 - 0.40 * eff_strength)
         image[:, :, 2] = np.maximum(image[:, :, 2], blue_floor)
@@ -356,7 +373,12 @@ class FringeRemoverFast:
 
         g_ref = np.maximum(r, b)
         g_excess = np.maximum(0.0, g - g_ref)
-        image[:, :, 1] = g - (g_excess * strength)
+        new_g = g - (g_excess * strength)
+        # 色相反転防止(マゼンタ化防止): G を (R+B)/2 未満へ押し下げない。
+        new_g = np.maximum(new_g, 0.5 * (r + b))
+        # ★重要: マスク外(strength==0)の画素は一切変更しない。これを忘れて floor を全画素へ
+        # 適用していたため、青(G<(R+B)/2)の G が持ち上がり、青空/青ボケが全部シアン化していた。
+        image[:, :, 1] = np.where(strength > 1e-6, new_g, g)
         return np.clip(image, 0, None)
 
 
