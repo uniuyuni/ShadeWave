@@ -1850,12 +1850,12 @@ def _apply_hls_adjust_map(hls_img, total_adjust):
             
             # --- 色相調整 ---
             new_h = (hls_img[i, j, 0] + adj_h) % 360.0
-            
+
             # --- 明度調整 (指数関数) ---
-            # L_new = L * (2.0 ** (2.0 * TotalAdjL))
+            # 実際の明るさは gain にあるため、輝度調整は gain を乗算する。L(正規化輝度)を乗算すると
+            # RGB に一定値が足されて彩度が漏れ、かつ階調にも対応しないため。L は色の性質として保持。
             l_factor = 2.0 ** (adj_l * 2.0)
-            new_l = hls_img[i, j, 1] * l_factor
-            
+
             # --- 彩度調整 ---
             if adj_s > 0.0:
                  # Vibrance Boost
@@ -1863,18 +1863,22 @@ def _apply_hls_adjust_map(hls_img, total_adjust):
             else:
                  # Linear Desaturation
                  new_s = hls_img[i, j, 2] * (1.0 + adj_s)
-            
+
             # 負の値のクリッピング (過剰な重複によるマイナス防止)
             if new_s < 0.0: new_s = 0.0
-            
+
             output[i, j, 0] = new_h
-            output[i, j, 1] = new_l
             output[i, j, 2] = new_s
-            
-            # Extra Channels
+
             if c > 3:
-                for k in range(3, c):
+                # gain(=実輝度)に明度調整を適用、L は保持
+                output[i, j, 1] = hls_img[i, j, 1]
+                output[i, j, 3] = hls_img[i, j, 3] * l_factor
+                for k in range(4, c):
                      output[i, j, k] = hls_img[i, j, k]
+            else:
+                # gain が無い(3ch)場合のフォールバック: 従来通り L を操作
+                output[i, j, 1] = hls_img[i, j, 1] * l_factor
                      
     return output
 
@@ -1891,7 +1895,11 @@ def _calculate_elliptical_weight(hls_img, center_h, width_h, fade_h, l_range, s_
     for i in prange(h):
         for j in prange(w):
             hue = hls_img[i, j, 0]
-            l = hls_img[i, j, 1]
+            # 階調選択は実輝度(L×gain)で行う。L単体は正規化輝度で明暗を持たないため。
+            if hls_img.shape[2] > 3:
+                l = hls_img[i, j, 1] * hls_img[i, j, 3]
+            else:
+                l = hls_img[i, j, 1]
             s = hls_img[i, j, 2]
             
             # 1. Hue Excess Distance (Asymmetric)

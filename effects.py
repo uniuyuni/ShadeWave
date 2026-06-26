@@ -3136,6 +3136,14 @@ class RGB2HLSEffect(Effect):
         if param.get("switch_saturation", True) and (
                 param.get("saturation", 0) != 0 or param.get("vibrance", 0) != 0):
             return True
+        # vs カーブ（HuevsHue/SatvsSat 等）も HLC 変換が必要。これを判定に含めないと、
+        # vs カーブ単独使用時に RGB→HLC 変換がスキップされ、vs が生の R/G/B チャンネルを
+        # 処理してしまう（色相が変わる/効かない等の不具合になる）。
+        if param.get("switch_color_curves", True):
+            for curve_name in ("HuevsHue", "HuevsLum", "HuevsSat",
+                               "LumvsLum", "LumvsSat", "SatvsLum", "SatvsSat"):
+                if param.get(curve_name) is not None:
+                    return True
         return False
 
     def make_diff(self, rgb, param, efconfig):

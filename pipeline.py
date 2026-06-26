@@ -1762,9 +1762,22 @@ def pipeline_curve(rgb, effects, param, efconfig):
 def pipeline_vs_and_saturation(hls, effects, param, efconfig):
 
     hls_h = hls2_h = hls[..., 0]
-    hls_l = hls2_l = hls[..., 1]
+    hls_l = hls[..., 1]
     hls_s = hls2_s = hls[..., 2]
     changed = False
+
+    # 「Lum」は実際の明るさ＝gain で扱う。L(正規化輝度)は色の性質（gainで正規化済み）で
+    # 明暗情報を持たないため、輝度カーブの入力には実輝度 Y=L*gain を使い、出力は gain を
+    # 乗算する。これにより暗部/明部を正しく選択でき、輝度操作で彩度が漏れない。
+    # gain が無い(3ch)場合は従来通り L を操作する（vs カーブ有効時は変換で必ず4chになる）。
+    has_gain = hls.shape[-1] > 3
+    if has_gain:
+        hls_g = hls[..., 3]
+        lum_acc = hls_g                   # 輝度操作の対象 = gain
+        luma_index = hls_l * hls_g        # カーブ入力 = 実輝度（オリジナル）
+    else:
+        lum_acc = hls_l                   # フォールバック: 従来通り L を操作
+        luma_index = hls_l
 
     # Hのみ
     diff = effects['HuevsHue'].make_diff([hls_h, hls2_h], param, efconfig)
@@ -1772,25 +1785,25 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
         hls2_h = effects['HuevsHue'].apply_diff(hls2_h)
         changed = True
 
-    #　Lのみ
-    lum_list = [('HuevsLum', hls_h), ('LumvsLum', hls_l), ('SatvsLum', hls_s)]
+    #　Lのみ（実体は gain を操作。Lum vs の入力は実輝度 luma_index）
+    lum_list = [('HuevsLum', hls_h), ('LumvsLum', luma_index), ('SatvsLum', hls_s)]
     lum_reset = False
     for n, src in lum_list:
         if lum_reset == True:
             effects[n].reeffect()
 
         pre_diff = effects[n].diff
-        # 最新の hls2_l を使用して引数を構築
-        diff = effects[n].make_diff([src, hls2_l], param, efconfig)
+        # 最新の lum_acc(gain) を使用して引数を構築
+        diff = effects[n].make_diff([src, lum_acc], param, efconfig)
         if diff is not None:
-            hls2_l = effects[n].apply_diff(hls2_l)
+            lum_acc = effects[n].apply_diff(lum_acc)
             changed = True
 
         if pre_diff is not diff:
             lum_reset = True
 
-    # Sのみ
-    sat_list = [('HuevsSat', hls_h), ('LumvsSat', hls_l), ('SatvsSat', hls_s), ('saturation', None)]
+    # Sのみ（Lum vs Sat の入力も実輝度 luma_index を使う）
+    sat_list = [('HuevsSat', hls_h), ('LumvsSat', luma_index), ('SatvsSat', hls_s), ('saturation', None)]
     sat_reset = False
     for n, src in sat_list:
         if sat_reset == True:
@@ -1804,14 +1817,17 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
 
         if pre_diff is not diff:
             sat_reset = True
-    
+
     if not changed:
         return None
 
-    # チャンネル数が4以上の場合（Gainマップ等）、残りのチャンネルを結合
-    channels = [hls2_h, hls2_l, hls2_s]
-    if hls.shape[-1] > 3:
-        for i in range(3, hls.shape[-1]):
+    # 出力チャンネルの組み立て。L(正規化輝度)は保持し、輝度変更は gain に反映する。
+    if has_gain:
+        channels = [hls2_h, hls_l, hls2_s, lum_acc]
+        # 4ch を超える追加チャンネル（あれば）はそのまま結合
+        for i in range(4, hls.shape[-1]):
             channels.append(hls[..., i])
+    else:
+        channels = [hls2_h, lum_acc, hls2_s]
 
     return np.stack(channels, axis=-1)
