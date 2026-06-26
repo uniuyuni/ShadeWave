@@ -219,16 +219,21 @@ class CurveWidget(KVBoxLayout):
             Rectangle(texture=texture, pos=(0, 0), size=(width, height))
 
     def __update_curve(self):
+        # 背景・グリッドは canvas.before（リセットボタンより奥）、カーブと制御点は
+        # canvas.after（リセットボタンより手前）に描画する。子ウィジェットである
+        # リセットボタンは canvas.before と canvas.after の間に描かれるため、
+        # 結果としてグリッドとカーブの間にボタンが表示される。
         self.canvas.before.clear()  # Clear the canvas before redrawing
+        self.canvas.after.clear()
+
+        width, height = self.size   # 0になる場合があるのをなんとかしたい
+        if width <= 0 or height <= 0:
+            return
+
         with self.canvas.before:
             # ローカル座標系で描画するために変換行列をプッシュ
             PushMatrix()
             Translate(self.x, self.y)
-            
-            width, height = self.size   # 0になる場合があるのをなんとかしたい
-            if width <= 0 or height <= 0:
-                PopMatrix()
-                return
 
             self.__draw_background(width, height)
 
@@ -237,6 +242,14 @@ class CurveWidget(KVBoxLayout):
             for i in range(0, 5):
                 Line(points=[width / 4 * i, 0, width / 4 * i, height], width=1)
                 Line(points=[0, height / 4 * i, width, height / 4 * i], width=1)
+
+            # 変換行列をポップして元に戻す
+            PopMatrix()
+
+        with self.canvas.after:
+            # ローカル座標系で描画するために変換行列をプッシュ
+            PushMatrix()
+            Translate(self.x, self.y)
 
             pts = sorted([(p.x, p.y) for p in self.points])
 
@@ -266,7 +279,7 @@ class CurveWidget(KVBoxLayout):
 
             for point in self.points:
                 Ellipse(pos=(point.x*width - point.get_width()/2, point.y*height - point.get_height()/2), size=(point.get_width(), point.get_height()))
-            
+
             # 変換行列をポップして元に戻す
             PopMatrix()
     
