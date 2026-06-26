@@ -14,6 +14,7 @@ __all__ = [
     "image_transform_adapter",
     "colour_functions_adapter",
     "tone_adapter",
+    "film_process_adapter",
     "subpixel_shift_adapter",
     "low_frequency_transfer_adapter",
     "lut_adapter",

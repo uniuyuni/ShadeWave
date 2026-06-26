@@ -9,7 +9,7 @@ import logging
 import cores.core as core
 import cores.cubelut as cubelut
 import cores.exposure_fusion_debevec as exposure_fusion_debevec
-import cores.film_process as film_process
+from effect_backends import film_process_adapter as film_process
 from cores.coating_simulator import CoatingSimulator
 from cores.lens_aberration_simulator import LensAberrationSimulator
 import cores.linear_to_log_lut as linear_to_log
@@ -4568,17 +4568,18 @@ class FilmSimulationEffect(Effect):
                 self.hash = param_hash
                 
                 rgb = core.type_convert(rgb, np.ndarray)
-                film = film_process.apply_film_process(rgb, {
-                    "film_mode": mode,
-                    "film_latitude": latitude,
-                    "film_contrast": contrast,
-                    "film_color_bias": color_bias,
-                    "film_color_drift": color_drift,
-                    "film_dye_purity": dye_purity,
-                    "film_layer_crosstalk": layer_crosstalk,
-                    "film_halation": halation,
-                    "film_aging": aging,
-                })
+                film = film_process.apply_film_process(
+                    rgb,
+                    mode=mode,
+                    latitude=latitude,
+                    contrast=contrast,
+                    color_bias=color_bias,
+                    color_drift=color_drift,
+                    dye_purity=dye_purity,
+                    layer_crosstalk=layer_crosstalk,
+                    halation=halation,
+                    aging=aging,
+                )
                 per = intensity / 100.0
                 self.diff = cv2.addWeighted(film, per, rgb, 1 - per, 0)
 
