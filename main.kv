@@ -2504,6 +2504,51 @@
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
 
+                                ParamSlider:
+                                    id: slider_bokeh_fringe
+                                    text: "Bokeh fringe"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Bokeh shape"
+                                    VSpacer:
+                                        size_hint_x: 0.1
+                                    ParamSpinner:
+                                        id: spinner_bokeh_shape
+                                        values: ['Hexagon', 'Pentagon', 'Circle', 'Star', 'Heart']
+                                        on_hovered_item: root.apply_effects_lv(2, 'lens_simulator')
+                                        on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                        on_value: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_shaped_bokeh
+                                    text: "Shaped bokeh"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_bokeh_rim
+                                    text: "Bokeh rim color"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
                                 VSeparator:
 
                                 HeadLabel:

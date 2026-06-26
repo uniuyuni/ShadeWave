@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from enum import Enum
 import os
+import math
 import logging
 
 import cores.core as core
@@ -4083,9 +4084,204 @@ class LensSimulatorEffect(Effect):
         SliderBinding('lens_aperture', 1.4, "slider_lens_aperture"),
         # ぐるぐるボケ（Petzval/Helios 風）。渦の向きは半径方向、ボケ選別は depth(あれば)。
         SliderBinding('swirl_bokeh', 0, "slider_swirl_bokeh"),
+        # ボケの色縁（前ボケ=マゼンタ / 後ボケ=グリーン）。depth がある時のみ。
+        SliderBinding('bokeh_fringe', 0, "slider_bokeh_fringe"),
+        # 形状ボケ（絞り形状カーネルで畳み込む被写界ボケ。星/ハート等）。
+        SliderBinding('shaped_bokeh', 0, "slider_shaped_bokeh"),
+        SpinnerTextBinding('bokeh_shape', 'Hexagon', "spinner_bokeh_shape"),
+        # 形状ボケの縁の色ボケ（虹色の輪郭）。R/G/B でボケ径を僅かに変えて出す。
+        SliderBinding('bokeh_rim', 0, "slider_bokeh_rim"),
     )
 
     _coating_sim = CoatingSimulator()
+
+    def _bokeh_color_fringe(self, img, depth_map, focus_depth, strength, res_scale):
+        """ボケの色縁（spherochromatism / LoCA）。前ボケ=マゼンタ / 後ボケ=グリーン。
+
+        平面的に色を足すのではなく、波長(チャンネル)ごとのピント差を「チャンネルの差分ボケ」
+        として再現する。前ボケ領域では R/B を、後ボケ領域では G を相対的にぼかすことで、
+        高コントラスト境界やハイライトの縁に色がにじみ出す（ハロー）。ピント面では無変化。
+        前後判定に depth が要るため depth がある時のみ動作する。
+        """
+        if depth_map is None or strength <= 0.0:
+            return img
+        rs = max(1.0, float(res_scale))
+        signed = (np.asarray(depth_map, dtype=np.float32) - np.float32(focus_depth))  # +:奥 / -:手前
+        defocus = cv2.GaussianBlur(np.abs(signed), (0, 0), max(0.5, 2.0 * rs))
+        s = float(strength) / 100.0
+
+        # にじみの合成重み（デフォーカスが大きいほど強い）。convex blend なので発散しない。
+        amount = np.clip(defocus * np.float32(0.6 + 1.4 * s), 0.0, 1.0).astype(np.float32)
+        front_w = np.where(signed < 0.0, amount, np.float32(0.0)).astype(np.float32)  # 手前=マゼンタ
+        back_w = np.where(signed > 0.0, amount, np.float32(0.0)).astype(np.float32)   # 奥=グリーン
+
+        # にじみ半径（強度と縮尺でスケール）。チャンネルを実際にぼかして色を漏れ出させる。
+        sigma = (1.0 + 4.0 * s) * rs
+        r, g, b = img[..., 0], img[..., 1], img[..., 2]
+        blur_r = cv2.GaussianBlur(r, (0, 0), sigma)
+        blur_g = cv2.GaussianBlur(g, (0, 0), sigma)
+        blur_b = cv2.GaussianBlur(b, (0, 0), sigma)
+
+        out = img.copy()
+        # 前ボケ: R/B がにじむ → マゼンタのハロー。後ボケ: G がにじむ → グリーンのハロー。
+        out[..., 0] = r * (np.float32(1.0) - front_w) + blur_r * front_w
+        out[..., 2] = b * (np.float32(1.0) - front_w) + blur_b * front_w
+        out[..., 1] = g * (np.float32(1.0) - back_w) + blur_g * back_w
+        return out
+
+    @staticmethod
+    def _aperture_mask(shape, radius):
+        """絞り形状（多角形/星/ハート/円）の塗りつぶしマスク（softened, 未正規化, 未反転）。"""
+        radius = max(2, int(radius))
+        size = 2 * radius + 1
+        canvas = np.zeros((size, size), dtype=np.float32)
+        c = float(radius)
+        name = str(shape or 'hexagon').strip().lower()
+
+        if name == 'circle':
+            yy, xx = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+            canvas = (np.sqrt((xx * xx + yy * yy).astype(np.float32)) <= radius).astype(np.float32)
+        else:
+            pts = []
+            if name == 'star':
+                n = 5
+                for i in range(2 * n):
+                    rr = radius if (i % 2 == 0) else radius * 0.45
+                    a = -math.pi / 2 + i * math.pi / n
+                    pts.append((c + rr * math.cos(a), c + rr * math.sin(a)))
+            elif name == 'heart':
+                for i in range(72):
+                    t = 2.0 * math.pi * i / 72.0
+                    hx = 16.0 * (math.sin(t) ** 3)
+                    hy = 13.0 * math.cos(t) - 5.0 * math.cos(2 * t) - 2.0 * math.cos(3 * t) - math.cos(4 * t)
+                    pts.append((c + hx / 17.0 * radius, c - hy / 17.0 * radius))
+            else:
+                n = 5 if name == 'pentagon' else 6  # 既定: 六角形
+                for i in range(n):
+                    a = -math.pi / 2 + 2.0 * math.pi * i / n
+                    pts.append((c + radius * math.cos(a), c + radius * math.sin(a)))
+            poly = np.array([pts], dtype=np.int32)
+            cv2.fillPoly(canvas, poly, 1.0)
+
+        return cv2.GaussianBlur(canvas, (0, 0), max(0.3, radius * 0.022))
+
+    @staticmethod
+    def _rainbow_rgb(phase, sat=1.8):
+        """位相(rad)の配列を、滑らかなコサイン虹(各ch位相120°ずれ)の RGB(...,3)へ。
+        sat>1 で彩度を上げて濃くする。HSV円環よりシアン/赤の主張は穏やか。"""
+        phase = np.asarray(phase, dtype=np.float32)
+        r = 0.5 + 0.5 * np.cos(phase)
+        g = 0.5 + 0.5 * np.cos(phase - np.float32(2.0 * math.pi / 3.0))
+        b = 0.5 + 0.5 * np.cos(phase - np.float32(4.0 * math.pi / 3.0))
+        rgb = np.stack([r, g, b], axis=-1).astype(np.float32)
+        m = rgb.mean(axis=-1, keepdims=True)
+        return np.clip(m + (rgb - m) * np.float32(sat), 0.0, 1.0).astype(np.float32)
+
+    @staticmethod
+    def _angle_warp(theta):
+        """角度θに決定論的な乱数ワープ（正弦和）を加え、虹の並びを不規則にする。
+        固定シードなので毎回同じ＝スライダー操作でちらつかない。振幅大＝より不規則。"""
+        rng = np.random.default_rng(20240517)
+        warp = np.zeros_like(theta, dtype=np.float32)
+        for _ in range(7):
+            n = int(rng.integers(2, 9))           # ハーモニクス次数
+            amp = float(rng.uniform(0.3, 1.1))    # 振幅(rad) 大きめ＝不規則
+            ph = float(rng.uniform(0.0, 2.0 * math.pi))
+            warp += np.float32(amp) * np.sin(n * theta + ph).astype(np.float32)
+        return warp
+
+    @staticmethod
+    def _aperture_kernel(shape, radius):
+        """絞り形状の正規化カーネル（sum=1, 単色）。filter2D は相関なので 180° 反転して返す。"""
+        canvas = LensSimulatorEffect._aperture_mask(shape, radius)
+        # リム（外周）をわずかに強調して輪郭をはっきり（edge bokeh 風）。
+        grad = cv2.morphologyEx(canvas, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+        canvas = canvas + np.float32(0.35) * grad
+        total = float(canvas.sum())
+        if total < 1e-6:
+            r = canvas.shape[0] // 2
+            canvas[r, r] = 1.0
+            total = 1.0
+        canvas /= total
+        return cv2.flip(canvas, -1).astype(np.float32)
+
+    @staticmethod
+    def _aperture_kernel_colored(shape, radius, amount):
+        """シャボン玉の玉虫色の縁を持つ3chカーネル（H,W,3, 各ch sum=1）。
+
+        amount(0..1) で彩度・明度・リム幅・被覆を一気に上げる。amount=1 で極端に派手。
+        色はボケの外周(リム)に閉じ込め、色相は縁を一周する角度θ方向に変える。
+        amount を上げるとリムの帯が内側へ太り、中心側まで色が乗る（同心の半径方向虹にはしない）。
+        """
+        radius = max(2, int(radius))
+        a = float(np.clip(amount, 0.0, 1.0))
+        mask = LensSimulatorEffect._aperture_mask(shape, radius)
+        yy, xx = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+        dist = np.sqrt((xx * xx + yy * yy).astype(np.float32))
+        theta = np.arctan2(yy.astype(np.float32), xx.astype(np.float32))
+        rn = np.clip(dist / float(radius), 0.0, 1.0)
+
+        # 色相は「角度θで一周」させる。半径(dist)は位相に使わない＝同心の内→外グラデにしない。
+        # 角度の乱数ワープで虹の並びを不規則にして膜らしくする（半径方向には一定）。
+        phase = theta * np.float32(3.0) + LensSimulatorEffect._angle_warp(theta)
+        sat = 1.0 + 4.0 * a                                  # 最大5：超ビビッド
+        rim_rgb = LensSimulatorEffect._rainbow_rgb(phase, sat)
+
+        # リム（外周）の細い帯にだけ色を乗せる。amount で帯が内側へ太る（0.18→0.60）。
+        rim_w = np.float32(0.18 + 0.42 * a)
+        rim = np.clip((rn - (np.float32(1.0) - rim_w)) / rim_w, 0.0, 1.0).astype(np.float32)
+        cover = np.clip(rim * np.float32(0.6 + 0.4 * a), 0.0, 1.0)[..., np.newaxis]
+        gain = np.float32(1.0 + 3.0 * a)                     # 明度ゲイン 最大4
+        white = np.repeat(mask[..., np.newaxis], 3, axis=2).astype(np.float32)
+        colored = rim_rgb * mask[..., np.newaxis] * gain
+        k = white * (np.float32(1.0) - cover) + colored * cover
+        k = np.clip(k, 0.0, None)
+        for c in range(3):
+            s = float(k[..., c].sum())
+            if s < 1e-6:
+                k[radius, radius, c] = 1.0
+                s = 1.0
+            k[..., c] /= s
+        return cv2.flip(k, -1).astype(np.float32)
+
+    def _shaped_bokeh(self, img, depth_map, focus_depth, strength, radius, shape, rim=0.0):
+        """形状ボケ（被写界ボケ）。画像を絞り形状カーネルで畳み込み(gather)、非合焦領域に
+        ブレンドする。点を貼るのではなく実レンズと同じ積分なので、ハイライトが自然に
+        星/ハート等の形になり、平坦部は滑らかにボケる。depth があれば背景に限定、無ければ
+        ハイライト領域にのみブレンドして被写体のシャープさを保つ。
+
+        radius は呼び出し側で表示倍率（disp_info[4]）に追従して算出済みのテクスチャ px。
+        rim>0 のときは R/G/B でカーネル半径を僅かに変え、ボケの縁に色（虹色の輪郭=色ボケ）を出す。
+        """
+        if strength <= 0.0 or radius < 2:
+            return img
+        s = float(strength) / 100.0
+
+        # ハイライトの寄与を少し強め、形状を見えやすく（畳み込み内なのでスタンプ化しない）。
+        lum = np.mean(img, axis=2, dtype=np.float32)
+        hl_excess = np.clip(lum - np.float32(0.8), 0.0, None)
+        src = img * (np.float32(1.0) + (hl_excess * np.float32(2.0 + 6.0 * s))[..., np.newaxis])
+
+        # 虹色の輪郭: ボケの縁を一周する角度(θ)で色相が変わる虹リング。
+        # カーネルの縁自体を角度で虹色に塗り、各チャンネルを対応カーネルで畳み込む。
+        rim_n = float(np.clip(rim / 100.0, 0.0, 1.0))
+        if rim_n <= 1e-4:
+            kernel = self._aperture_kernel(shape, radius)
+            blurred = cv2.filter2D(src, -1, kernel, borderType=cv2.BORDER_REFLECT)
+        else:
+            kc = self._aperture_kernel_colored(shape, radius, rim_n)
+            blurred = np.empty_like(src)
+            blurred[..., 0] = cv2.filter2D(src[..., 0], -1, kc[..., 0], borderType=cv2.BORDER_REFLECT)
+            blurred[..., 1] = cv2.filter2D(src[..., 1], -1, kc[..., 1], borderType=cv2.BORDER_REFLECT)
+            blurred[..., 2] = cv2.filter2D(src[..., 2], -1, kc[..., 2], borderType=cv2.BORDER_REFLECT)
+
+        # 適用範囲: depth があれば非合焦量、無ければハイライト領域（被写体を守る）。
+        if depth_map is not None:
+            w = np.clip(np.abs(depth_map - np.float32(focus_depth)) * np.float32(2.5), 0.0, 1.0)
+        else:
+            w = np.clip((lum - np.float32(0.8)) / np.float32(0.5), 0.0, 1.0)
+        w = (w * np.float32(np.clip(0.4 + 0.6 * s, 0.0, 1.0))).astype(np.float32)[..., np.newaxis]
+        return img * (np.float32(1.0) - w) + blurred * w
 
     def _optical_geometry(self, img_shape, param, efconfig):
         """渦の光学中心（元画像中心のテクスチャ座標）と、元座標基準の半径マップを返す。
@@ -4198,18 +4394,24 @@ class LensSimulatorEffect(Effect):
         focus_d = float(self._get_param(param, 'lens_focus_depth'))
         aperture = float(self._get_param(param, 'lens_aperture'))
         swirl = float(self._get_param(param, 'swirl_bokeh'))
+        fringe = float(self._get_param(param, 'bokeh_fringe'))
+        shaped = float(self._get_param(param, 'shaped_bokeh'))
+        bokeh_shape = self._get_param(param, 'bokeh_shape')
+        bokeh_rim = float(self._get_param(param, 'bokeh_rim'))
 
         coat_key = self._coating_label_to_key(coat_label)
         coat_on = coat_key is not None and coat_strength > 0
         lateral_on = lateral > 1e-5
         swirl_on = swirl > 1e-5
+        fringe_requested = fringe > 1e-5
+        shaped_on = shaped > 1e-5
         depth_aber_requested = (longitudinal > 1e-5 or spherical > 1e-5)
 
-        # 軸上色収差(longitudinal)・球面収差(spherical)は AI depth map を要求する。
+        # 軸上色収差(longitudinal)・球面収差(spherical)・ボケ色縁(fringe)は AI depth map を要求する。
         # ぐるぐるボケ(swirl)は depth があれば非合焦領域に限定するが、無くても半径のみで動く。
         # ここで生成すると重いので、mask2 側で既に作成済みの depth のみ peek で取得する。
         depth_map = None
-        if depth_aber_requested or swirl_on:
+        if depth_aber_requested or swirl_on or fringe_requested or shaped_on:
             getter = getattr(efconfig, "get_ai_depth_map", None)
             if callable(getter):
                 try:
@@ -4221,21 +4423,23 @@ class LensSimulatorEffect(Effect):
         eff_longitudinal = longitudinal if depth_available else 0.0
         eff_spherical = spherical if depth_available else 0.0
         aber_on = lateral_on or (depth_available and depth_aber_requested)
+        fringe_on = fringe_requested and depth_available
 
-        if not switch or (not coat_on and not aber_on and not swirl_on):
+        if not switch or (not coat_on and not aber_on and not swirl_on and not fringe_on and not shaped_on):
             self.diff = None
             self.hash = None
             return self.diff
 
         # swirl の中心は disp_info（拡大/クロップ窓）に依存するため、変化時に再計算する。
         try:
-            disp_snapshot = tuple(params.get_disp_info(param)) if swirl_on else None
+            disp_snapshot = tuple(params.get_disp_info(param)) if (swirl_on or shaped_on) else None
         except Exception:
             disp_snapshot = None
         param_hash = hash((
             coat_label, coat_strength, round(coat_light, 4),
             round(lateral, 4), round(longitudinal, 4), round(spherical, 4),
-            round(focus_d, 4), round(aperture, 4), round(swirl, 4),
+            round(focus_d, 4), round(aperture, 4), round(swirl, 4), round(fringe, 4),
+            round(shaped, 4), str(bokeh_shape), round(bokeh_rim, 4),
             depth_available, getattr(efconfig, "upstream_hash", 0),
             round(float(getattr(efconfig, "resolution_scale", 1.0)), 4),
             disp_snapshot,
@@ -4273,6 +4477,32 @@ class LensSimulatorEffect(Effect):
             )
         else:
             processed = work
+
+        # ボケの色縁（前ボケ=マゼンタ / 後ボケ=グリーン）。depth がある時のみ。
+        # 後段の swirl で色ごと smear されると自然なので coat/swirl より前に適用する。
+        if fringe_on:
+            processed = self._bokeh_color_fringe(
+                np.ascontiguousarray(processed, dtype=np.float32),
+                dm, focus_d, fringe, res_scale,
+            )
+
+        # 形状ボケ（絞り形状で畳み込む被写界ボケ）。
+        # ボケ径は「シーン(元画像px)で一定」になるよう表示倍率 mag=disp_info[4] を掛ける。
+        # これで拡大すると玉ボケも比例して大きくなり、輪郭のボケ具合が一定に保たれる。
+        if shaped_on:
+            try:
+                mag = float(params.get_disp_info(param)[4])
+            except Exception:
+                mag = 1.0
+            ow, oh = param.get('original_img_size', (processed.shape[1], processed.shape[0]))
+            base = float(min(ow, oh))
+            ap = float(np.clip(2.0 / max(0.8, aperture), 0.6, 2.0))
+            r_scene = (0.004 + 0.016 * (shaped / 100.0)) * base * ap  # 元画像px のボケ半径
+            radius = int(np.clip(r_scene * max(mag, 1e-3), 3, 80))
+            processed = self._shaped_bokeh(
+                np.ascontiguousarray(processed, dtype=np.float32),
+                dm, focus_d, shaped, radius, bokeh_shape, bokeh_rim,
+            )
 
         if coat_on:
             coated = self._coating_sim.apply_preset(processed.copy(), coat_key, light_source_intensity=coat_light, resolution_scale=res_scale)
