@@ -152,12 +152,13 @@ def make_orientation(rotation, flip):
     return orientation
 
 def print_nan_inf(img, label=""):
-    result = np.isnan(img)
-    nan_count = result.sum()
-    result = np.isinf(img)
-    inf_count = result.sum()
-    if nan_count > 0 or inf_count > 0:
-        logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
+    # 最頻ケース(全て有限)は isfinite の1パスのみで即終了する。
+    # 非有限(NaN/Inf)が見つかった稀なときだけ、内訳を集計する。
+    if np.isfinite(img).all():
+        return
+    nan_count = int(np.isnan(img).sum())
+    inf_count = int(np.isinf(img).sum())
+    logging.warning(f"NaN or Inf detected in {label} image. NaN={nan_count}, Inf={inf_count}")
 
 def _byte_shuffle_array(arr: np.ndarray) -> tuple[bytes, str]:
     itemsize = arr.dtype.itemsize

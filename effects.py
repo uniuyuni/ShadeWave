@@ -3090,7 +3090,11 @@ class ColorTemperatureEffect(Effect):
             self.diff = None
             self.hash = None
         else:
-            param_hash = hash((temp, tint))
+            # Y(色温度変換の輝度基準)と基準白色点(reset)も出力に効くのでハッシュに含める。
+            # 含めないと temp/tint を変えずに Y・基準白色点だけ変えたとき結果が更新されない。
+            param_hash = hash((temp, tint, Y,
+                               param.get('color_temperature_reset'),
+                               param.get('color_tint_reset')))
             if self.hash != param_hash:
                 trgb = core.convert_TempTint2RGB(param['color_temperature_reset'], param['color_tint_reset'], self._get_param(param, 'color_Y'))
                 self.diff = rgb * (trgb / core.convert_TempTint2RGB(temp, tint, Y))
