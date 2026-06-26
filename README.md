@@ -124,7 +124,7 @@ Some tests and runtime paths depend on native libraries, external repositories, 
 | Type | Extensions |
 | --- | --- |
 | RGB / standard images | `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, `.gif`, `.heic`, `.jxl` |
-| RAW | `.cr2`, `.cr3`, `.crw`, `.nef`, `.nrw`, `.arw`, `.dng`, `.orf`, `.raf`, `.rw2`, `.sr2`, `.pef`, `.raw`, `.3fr`, `.fff`, `.erf`, `.kdc`, `.dcr`, `.mrw`, `.mdc`, `.rwl`, `.srw`, `.mef` |
+| RAW | `.cr2`, `.cr3`, `.crw`, `.nef`, `.nrw`, `.arw`, `.dng`, `.orf`, `.raf`, `.rw2`, `.sr2`, `.pef`, `.raw`, `.3fr`, `.fff`, `.erf`, `.kdc`, `.dcr`, `.mrw`, `.rwl`, `.srw`, `.mef` |
 | HDR / scene-linear | `.exr` |
 
 RAW loading uses the `libraw_enhanced` external backend. OpenEXR uses the OpenEXR Python bindings and is kept on a separate path from regular RGB loading.
