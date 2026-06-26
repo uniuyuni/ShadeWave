@@ -3553,19 +3553,29 @@ class CLAHEEffect(Effect):
                 self.hash = param_hash
 
                 img = core.type_convert(img, np.ndarray)
-                img_min, img_max = img.min(), img.max()
-                img = (img - img_min) / (img_max - img_min)
-                r, g, b = cv2.split(img)
-                target = np.empty_like(img)
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-                for i, n in enumerate([r, g, b]):
-                    n = (n * 65535).astype(np.uint16)
-                    n = clahe.apply(n)
-                    n = n.astype(np.float32) / 65535
-                    target[..., i] = n
-                target = target * (img_max - img_min) + img_min
-                ci = ci / 100
-                self.diff = cv2.addWeighted(target, ci, img, 1.0 - ci, 0)
+                img_min = float(img.min())
+                img_max = float(img.max())
+                img_range = img_max - img_min
+                if img_range < 1e-8:
+                    # 完全に平坦な画像は CLAHE で変化しない（0除算も防ぐ）。無変化扱い。
+                    self.diff = None
+                else:
+                    # cv2.CLAHE は uint8/uint16 のみ受け付けるため 16bit へ量子化する。
+                    # min/max で [0,1] へ正規化してから 16bit 化することで、レンジ全域に
+                    # 65536 階調を割り当てる（HDR でもオーバーフローしない）。
+                    normalized = (img - img_min) / img_range
+                    r, g, b = cv2.split(normalized)
+                    target = np.empty_like(normalized)
+                    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+                    for i, n in enumerate([r, g, b]):
+                        n = (n * 65535.0).astype(np.uint16)
+                        n = clahe.apply(n)
+                        target[..., i] = n.astype(np.float32) / 65535.0
+                    # 元のレンジへ復元してから、ドライ項は「元画像」とブレンドする
+                    # （正規化済み画像をドライにすると ci<100% で輝度がずれる）。
+                    target = target * img_range + img_min
+                    ci = ci / 100
+                    self.diff = cv2.addWeighted(target, ci, img, 1.0 - ci, 0)
 
         return self.diff
     
