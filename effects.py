@@ -2700,7 +2700,9 @@ class ScratchEffect(Effect):
             if self.hash != param_hash:
                 self.hash = param_hash
 
-                self.diff = filters.scratch_effect(img, 1.0, fr / 100 * efconfig.resolution_scale)
+                # shift_parcent(最終ブラー)は従来通り resolution_scale 込み。
+                # 傷サイズ/本数の解像度整合は scratch_effect 側に resolution_scale を渡して行う。
+                self.diff = filters.scratch_effect(img, 1.0, fr / 100 * efconfig.resolution_scale, resolution_scale=efconfig.resolution_scale)
 
         return self.diff
 
@@ -2722,7 +2724,9 @@ class FrostedGlassEffect(Effect):
             if self.hash != param_hash:
                 self.hash = param_hash
 
-                self.diff = filters.frosted_glass_effect(img, fr / 100 * efconfig.resolution_scale, fr / 1000 * efconfig.resolution_scale)
+                # noise_scale は内部で *w するため画像比は固定。resolution_scale を掛けると
+                # 二重スケールになり preview/export でにじみ量がズレるため blur 側だけに掛ける。
+                self.diff = filters.frosted_glass_effect(img, fr / 100 * efconfig.resolution_scale, fr / 1000)
 
         return self.diff
 
@@ -2802,6 +2806,88 @@ class GlowEffect(Effect):
                     rgb2 = filters.lensblur_filter(rgb2, 1 if radius <= 0 else radius) 
                 go = go/100.0
                 self.diff = cv2.addWeighted(rgb, 1.0-go, core.blend_screen(rgb, rgb2), go, 0)
+
+        return self.diff
+
+class CleanHighlightEffect(Effect):
+    """ハイライトの色被りを抜いて白を白へ寄せる（爽やか・クリア方向）。
+
+    輝度が閾値を超えた領域ほど彩度を中立（=その画素の輝度）へ寄せる。
+    中間調・暗部の色は保持し、ハイライトだけをクリーンな白にする。
+    Glow/Film と違い情報を足さず「白の純度」を上げるための補正。
+    """
+    param_bindings = (
+        SwitchBinding('switch_clean_highlight', True, "switch_clean_highlight"),
+        SliderBinding('clean_highlight', 0, "slider_clean_highlight"),
+        SliderBinding('clean_highlight_threshold', 60, "slider_clean_highlight_threshold"),
+    )
+
+    def make_diff(self, rgb, param, efconfig):
+        switch_clean_highlight = self._get_param(param, 'switch_clean_highlight')
+        amount = self._get_param(param, 'clean_highlight')
+        threshold = self._get_param(param, 'clean_highlight_threshold')
+        if switch_clean_highlight == False or amount == 0:
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((amount, threshold))
+            if self.hash != param_hash:
+                self.hash = param_hash
+
+                rgb = core.type_convert(rgb, np.ndarray)
+                y = core.cvtColorRGB2Gray(rgb)
+                # 閾値→白へ滑らかに立ち上がる重み(smoothstep)。
+                t = np.float32(threshold / 100.0)
+                denom = np.float32(max(1.0e-4, 1.0 - t))
+                x = np.clip((y - t) / denom, 0.0, 1.0).astype(np.float32)
+                w = x * x * (np.float32(3.0) - np.float32(2.0) * x)
+                w = (w * np.float32(amount / 100.0))[..., np.newaxis]
+                # 画素ごとの輝度へ寄せる＝輝度を保ったままハイライトの彩度だけ抜く。
+                gray = y[..., np.newaxis]
+                self.diff = rgb * (np.float32(1.0) - w) + gray * w
+
+        return self.diff
+
+class AiryGlowEffect(Effect):
+    """ハイライトだけを抽出してぼかし、スクリーンで戻す澄んだブルーム。
+
+    Glow と違い暗部を持ち上げないため、コントラストと解像感を保ったまま
+    光に空気感(エア感)を足す。爽やか方向のハイライト・ブルーム。
+    """
+    param_bindings = (
+        SwitchBinding('switch_airy_glow', True, "switch_airy_glow"),
+        SliderBinding('airy_glow', 0, "slider_airy_glow"),
+        SliderBinding('airy_glow_radius', 40, "slider_airy_glow_radius"),
+        SliderBinding('airy_glow_threshold', 65, "slider_airy_glow_threshold"),
+    )
+
+    def make_diff(self, rgb, param, efconfig):
+        switch_airy_glow = self._get_param(param, 'switch_airy_glow')
+        amount = self._get_param(param, 'airy_glow')
+        radius = self._get_param(param, 'airy_glow_radius')
+        threshold = self._get_param(param, 'airy_glow_threshold')
+        if switch_airy_glow == False or amount == 0:
+            self.diff = None
+            self.hash = None
+        else:
+            param_hash = hash((amount, radius, threshold))
+            if self.hash != param_hash:
+                self.hash = param_hash
+
+                rgb = core.type_convert(rgb, np.ndarray)
+                y = core.cvtColorRGB2Gray(rgb)
+                # ハイライトだけを smoothstep で抽出（暗部は巻き込まない）。
+                t = np.float32(threshold / 100.0)
+                denom = np.float32(max(1.0e-4, 1.0 - t))
+                x = np.clip((y - t) / denom, 0.0, 1.0).astype(np.float32)
+                mask = (x * x * (np.float32(3.0) - np.float32(2.0) * x))[..., np.newaxis]
+                highlights = (rgb * mask).astype(np.float32)
+                # プレビュー/フルで見えを揃えるため resolution_scale で半径をスケール。
+                sigma = max(0.5, float(radius) * 0.5 * float(efconfig.resolution_scale))
+                bloom = cv2.GaussianBlur(highlights, (0, 0), sigma)
+                op = np.float32(amount / 100.0)
+                # HDR でも破綻しない screen 合成で光だけを足す。
+                self.diff = core.blend_screen(rgb, bloom * op)
 
         return self.diff
 
@@ -3228,7 +3314,8 @@ class ClarityEffect(Effect):
                 self.hash = param_hash
 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = local_contrast.apply_clarity(rgb, (con * efconfig.resolution_scale) / 100 if con > 0 else (con * efconfig.resolution_scale) / 200)
+                # 半径は入力解像度で相対化されるため、強度はズーム非依存の一定値にする。
+                self.diff = local_contrast.apply_clarity(rgb, con / 100 if con > 0 else con / 200)
 
         return self.diff
 
@@ -3250,7 +3337,8 @@ class TextureEffect(Effect):
                 self.hash = param_hash
 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = local_contrast.apply_texture(rgb, (con * efconfig.resolution_scale) / 200)
+                # 半径は入力解像度で相対化されるため、強度はズーム非依存の一定値にする。
+                self.diff = local_contrast.apply_texture(rgb, con / 200)
 
         return self.diff
     
@@ -3272,7 +3360,8 @@ class MicroContrastEffect(Effect):
                 self.hash = param_hash
                 
                 rgb = core.type_convert(rgb, np.ndarray)
-                self.diff = local_contrast.apply_microcontrast(rgb, (con * 0.5 * efconfig.resolution_scale) / 100)
+                # 半径は入力解像度で相対化されるため、強度はズーム非依存の一定値にする。
+                self.diff = local_contrast.apply_microcontrast(rgb, (con * 0.5) / 100)
 
         return self.diff
     
@@ -5388,12 +5477,16 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
     lv2['vs_and_saturation'] = VSandSaturationEffect()
     lv2['hls2rgb2'] = HLS2RGBEffect()
 
+    # 彩度処理の後でハイライトの色被りを抜き、白をクリーンにする（爽やか方向の補正）
+    lv2['clean_highlight'] = CleanHighlightEffect()
+
     lv2['look_lut'] = LUTEffect(stage="look")
     lv2['lens_simulator'] = LensSimulatorEffect()
     lv2['film_emulation'] = FilmSimulationEffect()
     lv2['solid_color'] = SolidColorEffect()
     lv2['orton'] = OrtonEffect()
     lv2['glow'] = GlowEffect()
+    lv2['airy_glow'] = AiryGlowEffect()
     lv2['unsharp_mask'] = UnsharpMaskEffect()
     lv2['lens_ghost'] = _lens_ghost  # 同一インスタンスを lv2 の最後にも登録(実行レベルは設定で選択)
 

@@ -5,6 +5,18 @@ import cv2
 import cores.core as core
 import cores.hlsrgb as hlsrgb
 
+# 局所コントラストの空間スケール基準（base_resolution_scale と同じ長辺）。
+# 半径/シグマをこの基準で正規化し、入力画像（プレビュー縮小/フル/拡大）の
+# 実ピクセル長辺に比例させることで、どのズームでも同じ「相対的な構造」を処理する。
+# これにより全体表示でも効果が見え、ズーム間で見た目が一貫する。
+_REFERENCE_LONG_SIDE = 4096.0
+
+
+def _radius_scale(image):
+    h, w = image.shape[:2]
+    return max(h, w) / _REFERENCE_LONG_SIDE
+
+
 def apply_clarity(rgb_image, clarity_amount):
     """
     RGB float32画像に明瞭度（マイクロコントラスト）を適用する関数
@@ -125,8 +137,13 @@ def apply_texture(rgb_image, texture_amount):
     # blur_large = cv2.GaussianBlur(luminance, (0, 0), 4.0) # 構造抽出用
     # 上記パラメータは解像度依存の可能性あるが、一旦固定で
     
-    blur_small = cv2.GaussianBlur(luminance, (0, 0), 1.0) 
-    blur_large = cv2.GaussianBlur(luminance, (0, 0), 4.0) 
+    # シグマを入力解像度に比例させる（基準4096px時に 1.0 / 4.0）。
+    # 固定ピクセルだと縮小プレビューで別の周波数帯を触ってしまい効果が見えないため。
+    rscale = _radius_scale(luminance)
+    sigma_small = max(np.float32(0.3), np.float32(1.0 * rscale))
+    sigma_large = max(np.float32(0.6), np.float32(4.0 * rscale))
+    blur_small = cv2.GaussianBlur(luminance, (0, 0), float(sigma_small))
+    blur_large = cv2.GaussianBlur(luminance, (0, 0), float(sigma_large))
     
     # テクスチャ成分 = (小ブラー) - (大ブラー)
     extracted_texture = blur_small - blur_large
@@ -191,8 +208,8 @@ def apply_microcontrast(image, strength):
     ycbcr = hlsrgb.linear_rgb_to_ycbcr(image_f32)
     y_channel = ycbcr[..., 0]
 
-    # 多段階ガイドフィルタによる局所適応処理
-    enhanced_y = _multi_scale_local_contrast(y_channel, normalized_strength)
+    # 多段階ガイドフィルタによる局所適応処理（半径は入力解像度に比例）
+    enhanced_y = _multi_scale_local_contrast(y_channel, normalized_strength, _radius_scale(image_f32))
 
     # 色差は維持しつつ輝度のみ更新してRGBへ戻す
     result_ycbcr = ycbcr.copy()
@@ -201,13 +218,13 @@ def apply_microcontrast(image, strength):
 
     return result.astype(np.float32, copy=False)
 
-def _multi_scale_local_contrast(luminance, strength):
+def _multi_scale_local_contrast(luminance, strength, radius_scale=1.0):
     """
     多段階局所コントラスト処理
     """
     if abs(strength) < 1e-6:
         return luminance
-    
+
     if isinstance(luminance, np.ndarray):
         luminance_umat = cv2.UMat(luminance)
         h, w = luminance.shape[:2]
@@ -216,11 +233,13 @@ def _multi_scale_local_contrast(luminance, strength):
         luminance_umat = luminance
         h, w = luminance_umat.get().shape[:2]
         input_umat = True
-    
-    # 適度な効果のためのスケール設定
+
+    # 半径を入力解像度に比例させる（基準4096px時に 8 / 20）。
+    r1 = max(2, int(round(8 * radius_scale)))
+    r2 = max(3, int(round(20 * radius_scale)))
     scales = [
-        {'radius': 8, 'eps': 0.01},
-        {'radius': 20, 'eps': 0.02}
+        {'radius': r1, 'eps': 0.01},
+        {'radius': r2, 'eps': 0.02}
     ]
     
     total_detail = cv2.UMat(h, w, cv2.CV_32F)

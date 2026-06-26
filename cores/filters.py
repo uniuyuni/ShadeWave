@@ -20,21 +20,31 @@ def lensblur_filter(image, radius):
     return blurred_image
 
 
-def scratch_effect(image, scratch_intensity=1.0, shift_parcent=1.0):
+def scratch_effect(image, scratch_intensity=1.0, shift_parcent=1.0, resolution_scale=1.0):
     """
     モザイク効果に特化した引っ掻きフィルター（高速化版）
     画像をより判別困難にする
+
+    resolution_scale: 入力がプレビュー縮小/フルのどの解像度かを表す係数
+        （= core.calc_resolution_scale）。傷サイズを画像比で一定に保ち、
+        preview と export で見た目（傷の粗さ・カバレッジ）を揃えるために使う。
     """
     h, w = image.shape[:2]
     result = image.copy()
-    
+
     # 引っ掻き効果を段階的に適用
     num_passes = 3
-    
+    rscale = max(float(resolution_scale), 1e-3)
+
     for pass_num in range(num_passes):
-        scratch_size = int(5 * (pass_num + 1) * scratch_intensity)
-        num_scratches = int(h * w * scratch_intensity / (100 * (pass_num + 1)))
-        
+        # 傷サイズは画像長辺比を一定にするため解像度へ追従させる（固定pxだと縮小で粗く見える）。
+        scratch_size = max(1, int(5 * (pass_num + 1) * scratch_intensity * rscale))
+        # 本数はシーン基準で一定（面積で増える分を rscale^2 で割り戻す）＝preview/exportでカバレッジ一致。
+        ideal = h * w * scratch_intensity / (100 * (pass_num + 1) * rscale * rscale)
+        # ただし縮小プレビューが重くならないよう、実ピクセル面積基準の本数を上限にする（B案: 本数は近似）。
+        cap = h * w * scratch_intensity / (100 * (pass_num + 1))
+        num_scratches = int(min(ideal, cap))
+
         if num_scratches == 0:
             continue
             
