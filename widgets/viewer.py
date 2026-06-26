@@ -974,7 +974,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self._cancel_hover_hint()
         self.hide_file_hint()
         for idx, item in updates.items():
-            self.data[idx] = item
+            # idx はワーカースレッドで検証済みだが、kvmainthread で遅延実行される
+            # 間に self.data が縮む/差し替わる(フォルダ変更・reset)ことがあるため再チェック
+            if 0 <= idx < len(self.data):
+                self.data[idx] = item
         self.refresh_from_data()
         self._schedule_hover_recheck()
 
