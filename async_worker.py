@@ -422,9 +422,11 @@ class AsyncWorker:
         
         # Let's track input SHMs associated with tasks.
         
+        # pickle 不可な属性(get_ai_depth_map 等のクロージャ / processor)の除去は
+        # EffectConfig.__getstate__ が自動で行う（callable と processor を None 化）。
         safe_efconfig = copy.copy(efconfig)
         safe_efconfig.processor = None
-        
+
         task_params = _task_params_for_worker(effect_name, params)
         task = (task_id, effect_name, shm.name, image.shape, str(image.dtype), task_params, safe_efconfig)
         try:

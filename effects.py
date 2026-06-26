@@ -239,6 +239,22 @@ class EffectConfig():
         self.get_ai_depth_map = None
         self.current_level = None  # pipeline が現在実行中のレベル(0-4)を入れる。複数レベル登録の効果が判定に使う
 
+    def __getstate__(self):
+        """ASYNC ワーカー(別プロセス)へ pickle する際の自動仕分け。
+
+        efconfig には毎フレーム get_ai_depth_map 等のクロージャや processor(worker を
+        抱える実行時オブジェクト)が付与される。これらは pickle 不可で、放置すると
+        submit が全滅し ASYNC 効果が裏で動かなくなる。ここで callable 属性と processor を
+        自動で None 化することで、将来また非ピクル属性が増えても submit が壊れないようにする。
+        属性名は残す(値だけ None 化)ので、ワーカー側で AttributeError にならない。
+        """
+        state = self.__dict__.copy()
+        state['processor'] = None
+        for key, value in state.items():
+            if callable(value):
+                state[key] = None
+        return state
+
 
 class ParamBinding:
     def __init__(self, key, default, widget_id, widget_attr="active", widget_setter=None):
@@ -327,6 +343,13 @@ def SpinnerTextBinding(key, default, widget_id):
 # 補正基底クラス
 class Effect():
     param_bindings = ()
+    # get_param_dict のデフォルト辞書を1回だけキャッシュしてよいか。
+    # デフォルト値が実行時の param に依存する効果（Geometry/Crop/ColorTemperature）だけ
+    # True にしてキャッシュを無効化する（古いデフォルトを返さないため）。
+    _defaults_depend_on_param = False
+    # _get_param のデフォルト経路用キャッシュ。クラス属性 None を既定にしておくことで、
+    # super().__init__ を呼ばない subclass でも AttributeError にならない（各 instance が個別に set）。
+    _default_param_cache = None
 
     def __init__(self, **kwargs):
         self.diff = None
@@ -430,7 +453,14 @@ class Effect():
     def _get_param(self, param, key):
         if key in param:
             return param[key]
-        return self.get_param_dict(param)[key]
+        # デフォルト値のたびに get_param_dict を丸ごと再構築する（HLS等は1呼びで45キーの
+        # f-string辞書）のを避け、定数デフォルトの効果は1回だけ構築してキャッシュする。
+        cache = self._default_param_cache
+        if cache is None:
+            cache = self.get_param_dict(param)
+            if not self._defaults_depend_on_param:
+                self._default_param_cache = cache
+        return cache[key]
 
     def set2widget(self, widget, param):
         for binding in self.param_bindings:
@@ -1505,6 +1535,8 @@ class DistortionEffect(Effect):
 
 # 画像回転、反転、変形
 class GeometryEffect(Effect):
+    # get_param_dict のデフォルトが param 依存のためキャッシュ無効化
+    _defaults_depend_on_param = True
     param_bindings = (
         SliderBinding('rotation', 0, "slider_rotation"),
         SwitchBinding('switch_distortion_correction', True, "switch_distortion_correction"),
@@ -2080,6 +2112,8 @@ class GeometryEffect(Effect):
 
 # クロップ
 class CropEffect(Effect):
+    # get_param_dict のデフォルトが param 依存のためキャッシュ無効化
+    _defaults_depend_on_param = True
 
     def __init__(self, crop_callback=None, **kwargs):
         super().__init__(**kwargs)
@@ -2929,6 +2963,8 @@ class FaceEffect(Effect):
         return self.diff
 
 class ColorTemperatureEffect(Effect):
+    # get_param_dict のデフォルトが param 依存（color_temperature_reset 等）のためキャッシュ無効化
+    _defaults_depend_on_param = True
     PRESET_AS_SHOT = "As Shot"
     PRESET_CUSTOM = "Custom"
     PRESET_VALUES = {
