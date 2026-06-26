@@ -3571,11 +3571,13 @@ class CLAHEEffect(Effect):
                         n = (n * 65535.0).astype(np.uint16)
                         n = clahe.apply(n)
                         target[..., i] = n.astype(np.float32) / 65535.0
-                    # 元のレンジへ復元してから、ドライ項は「元画像」とブレンドする
-                    # （正規化済み画像をドライにすると ci<100% で輝度がずれる）。
+                    # 元のレンジへ復元。
                     target = target * img_range + img_min
                     ci = ci / 100
-                    self.diff = cv2.addWeighted(target, ci, img, 1.0 - ci, 0)
+                    # ドライ項は「正規化(=[0,1]へストレッチした)画像」を使う。これが
+                    # グローバルなコントラストストレッチとして効き、CLAHE のパンチを生む
+                    # （元画像をドライにすると ci<100% で平坦になり「露出を上げただけ」に見える）。
+                    self.diff = cv2.addWeighted(target, ci, normalized, 1.0 - ci, 0)
 
         return self.diff
     
