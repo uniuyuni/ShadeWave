@@ -39,6 +39,8 @@ from widgets.plain_card import PlainCard
 from widgets.rating_row import RatingRow
 from utils.paths import rel
 from utils import preset_utils
+from utils.rename_detect import detect_rename_pair
+from cores import pmck_store
 
 
 _PMCK_ICON_REF_SIZE = 12
@@ -704,12 +706,6 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self.refresh_from_layout()
 
     def _watchfiles_thread(self):
-        action_type_map = {
-            1: self._added_file,
-            2: self._modified_file,
-            3: self._deleted_file,
-        }
-
         while True:
             with self._watch_directory_lock:
                 watch_directory = self.watch_directory
@@ -721,12 +717,73 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 for changes in watch(watch_directory, stop_event=stop_event):
                     if stop_event.is_set():
                         break
-                    for action, path in changes:
-                        if action in action_type_map:
-                            action_type_map[action](path)
+                    self._dispatch_changes(changes)
             except Exception:
                 pass
             time.sleep(1)
+
+    def _dispatch_changes(self, changes):
+        action_type_map = {
+            1: self._added_file,
+            2: self._modified_file,
+            3: self._deleted_file,
+        }
+        # リネーム相関(best-effort): watchfiles は rename を delete(old)+add(new) で通知する。
+        # 同一バッチ・同一ディレクトリで対応画像が 1対1 のときだけ rename とみなし、
+        # 通常ディスパッチ(一覧更新)の前に追従処理(.pmck移動 / AI-NRキャンセル / imgset remap)を行う。
+        added = [p for a, p in changes if a == 1 and self.is_visible_image(p)]
+        deleted = [p for a, p in changes if a == 3 and self.is_visible_image(p)]
+        pair = detect_rename_pair(added, deleted)
+        if pair is not None:
+            self._follow_rename(pair[0], pair[1])
+
+        for action, path in changes:
+            fn = action_type_map.get(action)
+            if fn:
+                fn(path)
+
+    def _follow_rename(self, old_path, new_path):
+        """リネーム追従。ワーカースレッドから呼ばれる（imgset remap のみ UI スレッドへ）。"""
+        try:
+            # 1) .pmck サイドカーを新名へ追従（new 側に既存が無いときだけ。move は gateway 直列化済み）。
+            old_pmck = old_path + pmck_store.PMCK_SUFFIX
+            new_pmck = new_path + pmck_store.PMCK_SUFFIX
+            if os.path.exists(old_pmck) and not os.path.exists(new_pmck):
+                pmck_store.move_path_to_path(old_pmck, new_pmck)
+        except Exception:
+            logging.exception("rename follow: .pmck move failed: %s -> %s", old_path, new_path)
+
+        app = KVApp.get_running_app()
+        main_widget = getattr(app, "main_widget", None) if app else None
+
+        # 2) AI-NR の in-flight を安全停止（旧 .pmck への誤書込・例外を防ぐ）。
+        mgr = getattr(main_widget, "ai_job_manager", None) if main_widget else None
+        if mgr is not None:
+            try:
+                if mgr.get_status_for_path(old_path) is not None:
+                    mgr.cancel_path(old_path)
+            except Exception:
+                logging.exception("rename follow: AI-NR cancel failed for %s", old_path)
+
+        # 3) 編集中ファイルなら imgset.file_path を新名へ（保存先ずれ防止）。
+        if main_widget is not None:
+            self._remap_imgset_if_current(main_widget, old_path, new_path)
+
+    @kvmainthread
+    def _remap_imgset_if_current(self, main_widget, old_path, new_path):
+        imgset = getattr(main_widget, "imgset", None)
+        if imgset is None:
+            return
+        if self._norm_path_key(getattr(imgset, "file_path", "") or "") != self._norm_path_key(old_path):
+            return
+        hook = getattr(main_widget, "remap_imgset_file_path", None)
+        if callable(hook):
+            hook(old_path, new_path)
+        else:
+            try:
+                imgset.file_path = new_path
+            except Exception:
+                logging.exception("rename follow: imgset remap failed: %s -> %s", old_path, new_path)
 
     def _set_watch_directory(self, directory):
         directory = os.path.abspath(directory) if directory else None
@@ -954,6 +1011,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
             for k, file_path in enumerate(chunk):
                 if file_path not in file_path_dict:
                     continue
+                # 既に一覧から消えた(削除/リネーム)ファイルは処理しない（best-effort）。
+                if self._data_index_for_path(file_path) is None:
+                    continue
                 exif_data = exif_data_list[k]
                 # 1) EXIF/rating/pmck を先に反映（サムネイル生成を待たない）。
                 #    rating/pmck のディスクI/O はワーカースレッドで済ませてUIスレッドを塞がない。
@@ -978,6 +1038,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
         # 3) 後回しにした RAW デモザイクを順次処理（軽いファイルが出揃った後）
         for file_path, exif_data in deferred_raw:
             if file_path not in file_path_dict:
+                continue
+            # 待機中にファイルが消えた/リネームされたら、無駄なデモザイクと例外ログを避ける。
+            if self._data_index_for_path(file_path) is None:
                 continue
             try:
                 thumb, _ = self._build_thumbnail(file_path, exif_data, allow_demosaic=True)

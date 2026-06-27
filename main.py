@@ -3897,10 +3897,21 @@ if __name__ == '__main__':
 
                 def _export_job():
                     exported_ok = []
+                    failed_paths = []
                     try:
                         for i, x in enumerate(cards):
                             if self._export_cancel_event.is_set():
                                 break
+                            # C: 待機中にソースが消えた/リネームされたファイルは、その1枚だけ
+                            # スキップして継続（バッチ全体を止めない）。
+                            if not os.path.isfile(x.file_path):
+                                logging.warning("export skipped (source missing): %s", x.file_path)
+                                failed_paths.append(x.file_path)
+                                done = i + 1
+                                KVClock.schedule_once(
+                                    lambda dt, d=done: setattr(self, "export_done", d), 0
+                                )
+                                continue
                             ok = False
                             try:
                                 ex_path = self._make_export_path(x.file_path, preset)
@@ -3939,14 +3950,20 @@ if __name__ == '__main__':
                                 ok = False
                             if ok:
                                 exported_ok.append(ex_path)
+                            else:
+                                failed_paths.append(x.file_path)
                             done = i + 1
                             KVClock.schedule_once(
                                 lambda dt, d=done: setattr(self, "export_done", d),
                                 0,
                             )
-                            if not ok:
-                                break
+                            # A: 1件の失敗でバッチ全体を止めない。中断はキャンセル時(上の break)のみ。
                     finally:
+                        if failed_paths:
+                            logging.warning(
+                                "export finished with %d failure(s) (skipped/continued): %s",
+                                len(failed_paths), failed_paths,
+                            )
                         done_paths = list(exported_ok)
                         KVClock.schedule_once(
                             lambda dt, ep=done_paths: self._export_finish_ui(dt, ep), 0
