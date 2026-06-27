@@ -558,6 +558,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self._hover_index = None
         self._file_hint = None
         self._file_hint_path = None
+        self._coalesced_refresh_event = None
 
         threading.Thread(target=self._watchfiles_thread, daemon=True).start()
         KVWindow.bind(on_key_down=self.on_key_down)
@@ -932,6 +933,10 @@ class ViewerWidget(RecycleView, DraggableWidget):
     def load_images_thread(self, file_path_dict, chunk_size):
         file_path_list = list(file_path_dict.keys())
 
+        # 埋め込みプレビューが無く、フルデモザイクが必要な RAW は後回しにする。
+        # これらが軽いファイル(埋め込みプレビュー有り / 非RAW)の表示をブロックしないようにする。
+        deferred_raw = []  # [(file_path, exif_data), ...]
+
         for i in range(0, len(file_path_list), chunk_size):
             chunk = file_path_list[i:i + chunk_size]
             try:
@@ -941,43 +946,82 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     chunk,
                     common_args=["-b", "-s", "-a", "-G1", "-x", "IFD1:PreviewTIFF", "-x", "SubIFD1:PreviewTIFF"],
                 )
-
-                thumb_data_list = self.process_exif_data(chunk, exif_data_list)
-
-                updates = {}
-                for k in range(len(chunk)):
-                    file_path = chunk[k]
-                    if file_path not in file_path_dict: continue
-                    idx = self._mapped_or_current_index(file_path_dict, file_path)
-
-                    if idx is not None and idx < len(self.data):
-                        item = self.data[idx]
-                        item['thumb_source'] = thumb_data_list[k]
-                        item['exif_data'] = exif_data_list[k]
-                        item['load_pending'] = False
-                        ex0 = exif_data_list[k] or {}
-                        if rating_utils.is_raw_path(file_path):
-                            item['rating'] = rating_io.read_raw_pmck_rating_value(file_path)
-                        else:
-                            item['rating'] = rating_utils.parse_exif_rating_value(ex0)
-                        item['pmck_exists'] = os.path.exists(file_path + ".pmck")
-                        updates[idx] = item
-
-                self._apply_updates(updates)
             except Exception:
-                logging.exception("load_images_thread: chunk 処理失敗。スキップして続行 (chunk size=%d)", len(chunk))
+                logging.exception("load_images_thread: EXIF取得失敗。スキップして続行 (chunk size=%d)", len(chunk))
                 self._finish_failed_chunk(chunk, file_path_dict)
+                continue
+
+            for k, file_path in enumerate(chunk):
+                if file_path not in file_path_dict:
+                    continue
+                exif_data = exif_data_list[k]
+                # 1) EXIF/rating/pmck を先に反映（サムネイル生成を待たない）。
+                #    rating/pmck のディスクI/O はワーカースレッドで済ませてUIスレッドを塞がない。
+                ex0 = exif_data or {}
+                if rating_utils.is_raw_path(file_path):
+                    rating = rating_io.read_raw_pmck_rating_value(file_path)
+                else:
+                    rating = rating_utils.parse_exif_rating_value(ex0)
+                pmck_exists = os.path.exists(file_path + ".pmck")
+                self._apply_metadata(file_path_dict, file_path, exif_data, rating, pmck_exists)
+                # 2) 軽い経路で作れるサムネイルは即時生成・反映。RAWデモザイクは後回し。
+                try:
+                    thumb, deferred = self._build_thumbnail(file_path, exif_data, allow_demosaic=False)
+                except Exception:
+                    logging.exception("load_images_thread: thumbnail load failed for %s", file_path)
+                    thumb, deferred = None, False
+                if deferred:
+                    deferred_raw.append((file_path, exif_data))
+                else:
+                    self._apply_thumbnail(file_path_dict, file_path, thumb)
+
+        # 3) 後回しにした RAW デモザイクを順次処理（軽いファイルが出揃った後）
+        for file_path, exif_data in deferred_raw:
+            if file_path not in file_path_dict:
+                continue
+            try:
+                thumb, _ = self._build_thumbnail(file_path, exif_data, allow_demosaic=True)
+            except Exception:
+                logging.exception("load_images_thread: RAW demosaic thumbnail failed for %s", file_path)
+                thumb = None
+            self._apply_thumbnail(file_path_dict, file_path, thumb)
 
     @kvmainthread
-    def _apply_updates(self, updates):
+    def _apply_metadata(self, file_path_dict, file_path, exif_data, rating, pmck_exists):
+        """EXIF/rating/pmck を反映（load_pending は維持＝サムネイル待ち）。
+
+        rating/pmck はワーカースレッドで算出済みの値を受け取り、UIスレッドでは代入のみ。
+        """
+        idx = self._mapped_or_current_index(file_path_dict, file_path)
+        if idx is None or not (0 <= idx < len(self.data)):
+            return
+        item = self.data[idx]
+        item['exif_data'] = exif_data
+        item['rating'] = rating
+        item['pmck_exists'] = pmck_exists
+        self._schedule_coalesced_refresh()
+
+    @kvmainthread
+    def _apply_thumbnail(self, file_path_dict, file_path, thumb):
+        """サムネイルを反映し、load_pending を解除する。"""
+        idx = self._mapped_or_current_index(file_path_dict, file_path)
+        if idx is None or not (0 <= idx < len(self.data)):
+            return
+        item = self.data[idx]
+        item['thumb_source'] = thumb
+        item['load_pending'] = False
+        self._schedule_coalesced_refresh()
+
+    def _schedule_coalesced_refresh(self):
+        """refresh_from_data をコアレスして過剰再描画を防ぐ（UIスレッドから呼ぶ前提）。"""
+        if self._coalesced_refresh_event is None:
+            self._coalesced_refresh_event = KVClock.schedule_once(self._do_coalesced_refresh, 0.05)
+
+    def _do_coalesced_refresh(self, *_args):
+        self._coalesced_refresh_event = None
         self._hover_index = None
         self._cancel_hover_hint()
         self.hide_file_hint()
-        for idx, item in updates.items():
-            # idx はワーカースレッドで検証済みだが、kvmainthread で遅延実行される
-            # 間に self.data が縮む/差し替わる(フォルダ変更・reset)ことがあるため再チェック
-            if 0 <= idx < len(self.data):
-                self.data[idx] = item
         self.refresh_from_data()
         self._schedule_hover_recheck()
 
@@ -1057,61 +1101,68 @@ class ViewerWidget(RecycleView, DraggableWidget):
             self.refresh_from_data()
         return found
 
-    def process_exif_data(self, file_path_list, exif_data_list):
-        thumb_data_list = []
-        for i in range(len(file_path_list)):
-            file_path = file_path_list[i]
-            try:
-                exif_data = exif_data_list[i]
+    def _build_thumbnail(self, file_path, exif_data, allow_demosaic=True):
+        """1ファイルのサムネイルを生成して返す。
 
-                thumb, thumb_source_key = self._decode_embedded_thumbnail(exif_data)
-                if thumb is not None:
-                    pass
-                else:
-                    if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
-                        with lre.imread(file_path) as raw:
-                            thumb = raw.postprocess(demosaic_algorithm=lre.DemosaicAlgorithm.Linear, output_bps=8)
-                    elif file_path.lower().endswith(define.SUPPORTED_FORMATS_EXR):
-                        # EXR は pyvips 非対応。OpenEXR で読み、表示用にトーンマップ済み float32[0,1] を得る。
-                        import cores.exr_io as exr_io
-                        thumb = exr_io.read_exr_thumbnail(file_path)
-                    else:
-                        with pyvips.Image.new_from_file(file_path) as vips_image:
-                            thumb = np.array(vips_image)
-                            if thumb.ndim == 3 and thumb.shape[2] > 3:
-                                thumb = thumb[:, :, :3]
-                thumb = core.convert_to_float32(thumb)
+        戻り値: (thumb_or_None, deferred)
+        - deferred=True は「埋め込みプレビューが無く、フルデモザイクが必要な RAW を、
+          allow_demosaic=False のため生成せず後回しにした」ことを示す（thumb は None）。
+        """
+        exif_data = exif_data or {}
 
-                thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)
-                thumb = cv2.resize(thumb, thumb_size)
+        thumb, thumb_source_key = self._decode_embedded_thumbnail(exif_data)
+        if thumb is None:
+            if file_path.lower().endswith(define.SUPPORTED_FORMATS_RAW):
+                if not allow_demosaic:
+                    # 重いデモザイクは後回し（軽いファイルの表示をブロックしないため）。
+                    return None, True
+                with lre.imread(file_path) as raw:
+                    # サムネイル用途なので half_size で高速デモザイク（約4倍）。
+                    # half_size 非対応のビルドにはフォールバック。
+                    try:
+                        thumb = raw.postprocess(
+                            demosaic_algorithm=lre.DemosaicAlgorithm.Linear,
+                            output_bps=8, half_size=True,
+                        )
+                    except TypeError:
+                        thumb = raw.postprocess(
+                            demosaic_algorithm=lre.DemosaicAlgorithm.Linear, output_bps=8,
+                        )
+            elif file_path.lower().endswith(define.SUPPORTED_FORMATS_EXR):
+                # EXR は pyvips 非対応。OpenEXR で読み、表示用にトーンマップ済み float32[0,1] を得る。
+                import cores.exr_io as exr_io
+                thumb = exr_io.read_exr_thumbnail(file_path)
+            else:
+                with pyvips.Image.new_from_file(file_path) as vips_image:
+                    thumb = np.array(vips_image)
+                    if thumb.ndim == 3 and thumb.shape[2] > 3:
+                        thumb = thumb[:, :, :3]
+        thumb = core.convert_to_float32(thumb)
 
-                # Orientation
-                orientation = exif_data.get('Orientation')
-                if orientation is not None and self._should_apply_parent_orientation(thumb_source_key):
-                    if orientation == 'Rotate 180':
-                        thumb = cv2.rotate(thumb, cv2.ROTATE_180)
-                    elif orientation == 'Rotate 270 CW':
-                        thumb = cv2.rotate(thumb, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                    elif orientation == 'Rotate 90 CW':
-                        thumb = cv2.rotate(thumb, cv2.ROTATE_90_CLOCKWISE)
-                    elif orientation == 'Mirror horizontal':
-                        thumb = cv2.flip(thumb, 1)
-                    elif orientation == 'Mirror vertical':
-                        thumb = cv2.flip(thumb, 0)
-                    elif orientation == 'Mirror horizontal and rotate 270 CW':
-                        thumb = cv2.flip(thumb, 1)
-                        thumb = cv2.rotate(thumb, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                    elif orientation == 'Mirror horizontal and rotate 90 CW':
-                        thumb = cv2.flip(thumb, 1)
-                        thumb = cv2.rotate(thumb, cv2.ROTATE_90_CLOCKWISE)
-                
-                thumb_data_list.append(thumb)
+        thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)
+        thumb = cv2.resize(thumb, thumb_size)
 
-            except Exception:
-                logging.exception("process_exif_data: thumbnail load failed for %s", file_path)
-                thumb_data_list.append(None)
+        # Orientation
+        orientation = exif_data.get('Orientation')
+        if orientation is not None and self._should_apply_parent_orientation(thumb_source_key):
+            if orientation == 'Rotate 180':
+                thumb = cv2.rotate(thumb, cv2.ROTATE_180)
+            elif orientation == 'Rotate 270 CW':
+                thumb = cv2.rotate(thumb, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            elif orientation == 'Rotate 90 CW':
+                thumb = cv2.rotate(thumb, cv2.ROTATE_90_CLOCKWISE)
+            elif orientation == 'Mirror horizontal':
+                thumb = cv2.flip(thumb, 1)
+            elif orientation == 'Mirror vertical':
+                thumb = cv2.flip(thumb, 0)
+            elif orientation == 'Mirror horizontal and rotate 270 CW':
+                thumb = cv2.flip(thumb, 1)
+                thumb = cv2.rotate(thumb, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            elif orientation == 'Mirror horizontal and rotate 90 CW':
+                thumb = cv2.flip(thumb, 1)
+                thumb = cv2.rotate(thumb, cv2.ROTATE_90_CLOCKWISE)
 
-        return thumb_data_list
+        return thumb, False
 
     def _should_apply_parent_orientation(self, embedded_key):
         return embedded_key not in _EMBEDDED_PREVIEW_KEYS
