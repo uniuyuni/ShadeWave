@@ -2614,7 +2614,7 @@ def _guide_fingerprint(guide):
     return (a.shape, n, float(sample.sum()), float(flat[0]), float(flat[n // 2]), float(flat[-1]))
 
 
-def _to_perceptual_guide(guide):
+def _to_perceptual_guide(guide, shadow_ratio=0.1):
     """Re-encode a *linear* guide into a perceptual (display-like) space.
 
     The mask editor feeds edge-refine the working-space crop, which in this app
@@ -2648,27 +2648,50 @@ def _to_perceptual_guide(guide):
     #    capture sits far below display white (ref ~ 0.01 on an underexposed
     #    frame); an already display-encoded / toned guide reaches ref ~ 0.8-1.0.
     #
-    # 2) median << highlight (p50 < 0.1 * ref): only when the subject is buried
-    #    in deep shadow. That is exactly when a *linear* gradient is dominated by
-    #    the few bright highlights and the salient boundary collapses to ~0 after
-    #    percentile normalization -- the "snaps to some edges, ignores others"
-    #    symptom. When the linear tones are already balanced (median close to the
-    #    highlight) the gradient is fine as-is, and re-encoding only over-amplifies
-    #    flat-region noise into spurious edges -- so leave those guides untouched.
+    # 2) median << highlight (p50 < shadow_ratio * ref): only when the subject is
+    #    shadow-weighted enough that a *linear* gradient is dominated by the few
+    #    bright highlights and the salient boundary collapses to ~0 after percentile
+    #    normalization -- the "snaps to some edges, ignores others" / "cut overflows
+    #    past the edge" symptom. When the linear tones are already balanced (median
+    #    close to the highlight) the boundary is often a *relatively strong* linear
+    #    edge that the perceptual OETF only compresses, while flat-region noise gets
+    #    amplified into spurious edges -- so those guides are left untouched.
+    #
+    # ``shadow_ratio`` is the gate-2 threshold. The V4 boundary trace keeps the
+    # original strict 0.1 (deep shadow only). The region min-cut passes a *relaxed*
+    # value (~0.35) because its cut "wall" must read the perceptual boundary even on
+    # a moderately shadow-weighted linear capture: measured on the user's `leaf`
+    # dump (p50/ref=0.194) re-encoding triples the boundary-band edge (0.025->0.087)
+    # and lifts edge_b 0.219->0.377, while balanced `easy` (p50/ref=0.663) stays
+    # excluded so its strong boundary is not compressed (regression-safe). Gate 1
+    # (ref >= 0.5) always excludes toned / display-encoded guides.
     p50 = float(np.percentile(lum, 50))
-    if ref >= 0.5 or ref <= 1e-6 or p50 >= 0.1 * ref:
+    if ref >= 0.5 or ref <= 1e-6 or p50 >= float(shadow_ratio) * ref:
         return g
     gn = np.clip(g / ref, 0.0, 1.0)
     low = gn <= 0.0031308
     return np.where(low, 12.92 * gn, 1.055 * np.power(np.clip(gn, 0.0, None), 1.0 / 2.4) - 0.055).astype(np.float32, copy=False)
 
 
-def _draw_snap_edge_strength(guide, perceptual=False):
+def _local_contrast_edge_enabled():
+    """Add a local-contrast (micro-contrast) term to the edge map (default on).
+
+    Surfaces faint boundaries that global percentile normalization buries; gated by a
+    noise floor so it does not amplify flat-region noise. ``QS_LOCAL_CONTRAST_EDGE=0``
+    restores the pure global-normalized edge.
+    """
+    value = os.environ.get("QS_LOCAL_CONTRAST_EDGE")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _draw_snap_edge_strength(guide, perceptual=False, shadow_ratio=0.1, local_contrast=None):
     guide = _prepare_guide_image(guide, np.asarray(guide).shape[:2])
     if guide is None:
         return None
     if perceptual:
-        guide = _to_perceptual_guide(guide)
+        guide = _to_perceptual_guide(guide, shadow_ratio=shadow_ratio)
     guide = cv2.GaussianBlur(guide, (0, 0), 1.0)
     if guide.ndim == 2:
         gray = guide.astype(np.float32, copy=False)
@@ -2686,6 +2709,29 @@ def _draw_snap_edge_strength(guide, perceptual=False):
     gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
     luma_grad = _normalize_by_percentile(cv2.magnitude(gx, gy), 98.8)
     strength = np.maximum(luma_grad, color_grad)
+    # Local-contrast (micro-contrast) term: surface faint boundaries that the global
+    # 98.8-percentile normalization buries under the few strong edges. ``mag/locmax``
+    # is high wherever a gradient is locally the most prominent, even if globally weak
+    # (measured: the leaf/foliage boundary 0.076 -> 0.24, lifting edge_b on 006/leaf/
+    # simple2/lowcontrast/flower). It does NOT cause texture over-cutting because the
+    # region min-cut only cuts where FG/BG colour/prior *also* separate -- a leaf vein
+    # has FG on both sides so its high local contrast never becomes a cut.
+    #
+    # It DOES amplify flat-region noise into a faint pseudo-edge (a faint real edge and
+    # flat noise are both low-amplitude -- inseparable by magnitude). That only matters
+    # for the brush-rim trim, whose whole job is "is this rim on a real edge or floating
+    # over featureless sky"; that caller passes local_contrast=False to keep the pure
+    # global edge. The region solve / trace want the faint edges, so they keep it on.
+    use_lc = _local_contrast_edge_enabled() if local_contrast is None else bool(local_contrast)
+    if use_lc:
+        mag = cv2.magnitude(gx, gy)
+        locmax = cv2.dilate(mag, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31)))
+        local = np.clip(mag / (locmax + 1e-3), 0.0, 1.0)
+        try:
+            alpha = float(os.environ.get("QS_LOCAL_CONTRAST_W", "0.6"))
+        except (TypeError, ValueError):
+            alpha = 0.6
+        strength = np.maximum(strength, (alpha * local).astype(np.float32))
     return cv2.GaussianBlur(strength, (0, 0), 0.6).astype(np.float32, copy=False)
 
 

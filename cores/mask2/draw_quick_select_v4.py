@@ -79,6 +79,16 @@ def compute_draw_support(
         return base
 
     planes = {name: value for name, value in base.debug_planes}
+    seed = np.asarray(base.seed, dtype=bool)
+    appearance_delta = np.zeros_like(support, dtype=bool)
+    support, appearance_delta = _maybe_appearance_grabcut_support(
+        guide,
+        mask,
+        support,
+        seed,
+        planes,
+        draw_strokes,
+    )
     # Derive the trace edge straight from the guide image, NOT from the V3
     # "context_edge" debug plane. That plane is accumulated per add stroke and
     # weighted by each stroke's candidate region, so an *unrelated* stroke (e.g. an
@@ -108,7 +118,6 @@ def compute_draw_support(
     coh = _get_guide_coh(guide, support.shape)
     trace_edge = edge * coh if (coh is not None and coh.shape == edge.shape) else edge
 
-    seed = np.asarray(base.seed, dtype=bool)
     # Snap strength rides on existing controls: Edge Lock -> how hard to snap
     # (dist_prior), Quick Radius -> how far to look (band). No new slider. The
     # Edge Lock is read *locally per contour point* from the edge_lock_effective
@@ -132,7 +141,7 @@ def compute_draw_support(
     snapped = _v3._trim_offedge_brush_rim(
         snapped, mask, guide, _edge=edge_linear if edge_linear is not None else edge)
     delta = snapped ^ support
-    if not np.any(delta):
+    if not np.any(delta) and not np.any(appearance_delta):
         return base
 
     out_planes = list(base.debug_planes)
@@ -144,8 +153,252 @@ def compute_draw_support(
         edge_bias=edge_bias,
     )
     out_planes.append(("v4_boundary_snap_delta", delta))
+    if np.any(appearance_delta):
+        out_planes.append(("v4_appearance_grabcut_delta", appearance_delta))
     logging.debug("[DRAW_QS_V4] edge-trace moved=%d px", int(np.count_nonzero(delta)))
     return DrawSupportResult(base.seed, base.candidate, snapped, out_planes)
+
+
+def _appearance_grabcut_enabled():
+    value = os.environ.get("QS_V4_APPEARANCE_GRABCUT")
+    if value is None:
+        return True
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _appearance_grabcut_min_lock():
+    try:
+        return float(os.environ.get("QS_V4_APPEARANCE_LOCK_MIN", "98.0"))
+    except (TypeError, ValueError):
+        return 98.0
+
+
+def _appearance_auto_min_support_ratio():
+    try:
+        return float(os.environ.get("QS_V4_APPEARANCE_AUTO_MIN_SUPPORT_RATIO", "0.72"))
+    except (TypeError, ValueError):
+        return 0.72
+
+
+def _appearance_edge_gain_min():
+    try:
+        return float(os.environ.get("QS_V4_APPEARANCE_EDGE_GAIN_MIN", "0.02"))
+    except (TypeError, ValueError):
+        return 0.02
+
+
+def _appearance_grabcut_max_roi_px():
+    try:
+        return int(float(os.environ.get("QS_V4_APPEARANCE_MAX_ROI_PX", "360000")))
+    except (TypeError, ValueError):
+        return 360000
+
+
+def _maybe_appearance_grabcut_support(
+        guide,
+        mask,
+        support,
+        seed,
+        planes,
+        draw_strokes):
+    """Use brush-centre appearance as a support proposal.
+
+    This is intentionally narrow: it only runs for add-only strokes. High
+    EdgeLock still opts in directly, but normal auto mode can also use it when
+    the V3 support mostly follows the painted hint and the proposal demonstrably
+    moves the boundary onto image edges. That keeps the useful "brush centre is
+    foreground appearance" cue without making the Edge Lock slider default to an
+    extreme value.
+    """
+    support = np.asarray(support, dtype=bool)
+    empty_delta = np.zeros_like(support, dtype=bool)
+    if not _appearance_grabcut_enabled() or not np.any(support):
+        return support, empty_delta
+    if any(bool(getattr(s, "is_erasing", False)) for s in (draw_strokes or [])):
+        return support, empty_delta
+    lock_plane = planes.get("edge_lock_effective")
+    if lock_plane is None:
+        return support, empty_delta
+    try:
+        max_lock = float(np.nanmax(np.asarray(lock_plane, dtype=np.float32))) * 100.0
+    except (TypeError, ValueError):
+        return support, empty_delta
+    high_lock = max_lock >= _appearance_grabcut_min_lock()
+
+    hint = _er._as_mask(mask) > 0.02
+    if not np.any(hint):
+        return support, empty_delta
+    seed = np.asarray(seed, dtype=bool) & hint
+    if not np.any(seed):
+        return support, empty_delta
+    ys, xs = np.where(hint | support | seed)
+    if xs.size == 0:
+        return support, empty_delta
+    h, w = hint.shape
+    pad = 24
+    x0 = max(0, int(xs.min()) - pad)
+    y0 = max(0, int(ys.min()) - pad)
+    x1 = min(w, int(xs.max()) + pad + 1)
+    y1 = min(h, int(ys.max()) + pad + 1)
+    if (x1 - x0) * (y1 - y0) > _appearance_grabcut_max_roi_px():
+        return support, empty_delta
+
+    guide_prepared = _er._prepare_guide_image(guide, hint.shape)
+    if guide_prepared is None:
+        return support, empty_delta
+    edge_for_sanity = _er._draw_snap_edge_strength(guide_prepared)
+    if not _appearance_should_attempt(support, hint, edge_for_sanity, high_lock):
+        return support, empty_delta
+    guide_perceptual = _er._to_perceptual_guide(guide_prepared, shadow_ratio=0.35)
+    img_roi = _appearance_grabcut_u8(guide_perceptual[y0:y1, x0:x1])
+    hint_roi = hint[y0:y1, x0:x1]
+    seed_roi = seed[y0:y1, x0:x1]
+    sure_fg = _stroke_center_mask(hint.shape, draw_strokes, radius=6.0)[y0:y1, x0:x1]
+    sure_fg = (sure_fg & hint_roi) if np.count_nonzero(sure_fg & hint_roi) >= 16 else seed_roi
+    if np.count_nonzero(sure_fg) < 8:
+        return support, empty_delta
+
+    try:
+        proposal_roi = _appearance_grabcut_roi(img_roi, hint_roi, seed_roi, sure_fg)
+    except cv2.error:
+        logging.debug("[DRAW_QS_V4] appearance GrabCut failed", exc_info=True)
+        return support, empty_delta
+    proposal = np.zeros_like(support, dtype=bool)
+    proposal[y0:y1, x0:x1] = proposal_roi
+    proposal &= hint
+    proposal |= seed
+    proposal = _er._connected_to_seed(proposal | seed, seed) | seed
+
+    if not _appearance_proposal_is_sane(support, proposal, seed, edge_for_sanity):
+        return support, empty_delta
+    delta = proposal ^ support
+    if not np.any(delta):
+        return support, empty_delta
+    logging.debug("[DRAW_QS_V4] appearance GrabCut moved=%d px", int(np.count_nonzero(delta)))
+    return proposal, delta
+
+
+def _appearance_should_attempt(support, hint, edge, high_lock):
+    if high_lock:
+        return True
+    hint_px = int(np.count_nonzero(hint))
+    if hint_px <= 0:
+        return False
+    support_ratio = int(np.count_nonzero(support)) / max(1, hint_px)
+    if support_ratio < _appearance_auto_min_support_ratio():
+        return False
+    # Auto mode needs visible edge opportunity near the current boundary. Without
+    # that, GrabCut would only be guessing from colour and can reinterpret smooth
+    # gradients as object shape.
+    return _appearance_boundary_edge_frac(support, edge) > 0.0
+
+
+def _appearance_grabcut_u8(guide):
+    arr = np.asarray(guide, dtype=np.float32)
+    if arr.ndim == 2:
+        arr = np.repeat(arr[..., None], 3, axis=2)
+    arr = arr[..., :3]
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    lo = float(np.percentile(finite, 0.5))
+    hi = float(np.percentile(finite, 99.7))
+    if hi <= lo:
+        hi = lo + 1e-6
+    return (np.clip((arr - lo) / (hi - lo), 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+
+def _stroke_center_mask(shape, draw_strokes, radius=6.0):
+    h, w = shape
+    out = np.zeros((h, w), dtype=np.uint8)
+    r = int(max(1, round(float(radius))))
+    for stroke in draw_strokes or []:
+        if bool(getattr(stroke, "is_erasing", False)):
+            continue
+        pts = np.asarray(getattr(stroke, "points", []), dtype=np.float32)
+        if pts.size == 0:
+            continue
+        pts_i = np.round(pts[:, :2]).astype(np.int32)
+        if len(pts_i) == 1:
+            cv2.circle(out, tuple(pts_i[0]), r, 1, -1)
+        else:
+            cv2.polylines(out, [pts_i.reshape(-1, 1, 2)], False, 1, r * 2)
+    return out > 0
+
+
+def _appearance_grabcut_roi(img_rgb_u8, hint, seed, sure_fg):
+    gc = np.full(hint.shape, cv2.GC_BGD, dtype=np.uint8)
+    gc[hint] = cv2.GC_PR_FGD
+    eroded = cv2.erode(hint.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2) > 0
+    gc[hint & ~eroded & ~sure_fg] = cv2.GC_PR_BGD
+    gc[sure_fg] = cv2.GC_FGD
+    bgd = np.zeros((1, 65), dtype=np.float64)
+    fgd = np.zeros((1, 65), dtype=np.float64)
+    cv2.grabCut(
+        cv2.cvtColor(img_rgb_u8, cv2.COLOR_RGB2BGR),
+        gc,
+        None,
+        bgd,
+        fgd,
+        2,
+        cv2.GC_INIT_WITH_MASK,
+    )
+    proposal = ((gc == cv2.GC_FGD) | (gc == cv2.GC_PR_FGD)) & hint
+    proposal |= sure_fg | seed
+    proposal = _er._connected_to_seed(proposal | sure_fg, sure_fg) | sure_fg
+    opened = cv2.morphologyEx(
+        proposal.astype(np.uint8),
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1,
+    ) > 0
+    return _er._connected_to_seed(opened | sure_fg, sure_fg) | sure_fg
+
+
+def _appearance_proposal_is_sane(old_support, proposal, seed, edge):
+    old_px = int(np.count_nonzero(old_support))
+    new_px = int(np.count_nonzero(proposal))
+    if old_px <= 0 or new_px <= 0:
+        return False
+    seed_px = int(np.count_nonzero(seed))
+    if seed_px and np.count_nonzero(proposal & seed) < int(seed_px * 0.98):
+        return False
+    ratio = new_px / max(1, old_px)
+    min_ratio = float(_v1._envf("QS_V4_APPEARANCE_MIN_RATIO", 0.60))
+    max_ratio = float(_v1._envf("QS_V4_APPEARANCE_MAX_RATIO", 1.03))
+    if ratio < min_ratio or ratio > max_ratio:
+        return False
+    changed = int(np.count_nonzero(old_support ^ proposal))
+    max_changed = float(_v1._envf("QS_V4_APPEARANCE_MAX_CHANGED_FRAC", 0.28))
+    if changed > int(max_changed * max(1, old_px)):
+        return False
+    old_edge = _appearance_boundary_edge_frac(old_support, edge)
+    new_edge = _appearance_boundary_edge_frac(proposal, edge)
+    return new_edge >= old_edge + _appearance_edge_gain_min()
+
+
+def _appearance_boundary_edge_frac(support, edge):
+    if edge is None:
+        return 0.0
+    edge = np.asarray(edge, dtype=np.float32)
+    if edge.shape != support.shape:
+        return 0.0
+    boundary = cv2.morphologyEx(
+        np.asarray(support, dtype=np.uint8),
+        cv2.MORPH_GRADIENT,
+        np.ones((3, 3), dtype=np.uint8),
+    ) > 0
+    boundary_px = int(np.count_nonzero(boundary))
+    if boundary_px <= 0:
+        return 0.0
+    near_edge = edge >= 0.4
+    if np.any(near_edge):
+        near_edge = cv2.dilate(
+            near_edge.astype(np.uint8),
+            np.ones((3, 3), dtype=np.uint8),
+            iterations=2,
+        ) > 0
+    return float(np.count_nonzero(boundary & near_edge) / boundary_px)
 
 
 def _maybe_recompute_snap_alpha(guide, snapped, planes, out_planes, edge_bias=0.0):

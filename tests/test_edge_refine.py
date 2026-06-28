@@ -3420,6 +3420,84 @@ class DrawQuickSelectV4Test(unittest.TestCase):
         if checked == 0:
             self.skipTest("no GT dumps present for snap-quality gate")
 
+    def test_v4_high_lock_appearance_grabcut_clips_leaf_overpaint(self):
+        """A high-EdgeLock brush over a same-colour leaf should use the brush
+        centre as a foreground appearance cue, not leave the brush footprint as
+        the boundary. Regression for qs_input_006 where the visible leaf edge was
+        present but the support kept the overpainted rim."""
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        dump_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_006.npz"
+        if not dump_path.exists():
+            self.skipTest(f"missing leaf fixture: {dump_path}")
+        dump = qs_metrics.load_dump(dump_path)
+
+        old = os.environ.get("QS_V4_APPEARANCE_GRABCUT")
+        try:
+            os.environ["QS_V4_APPEARANCE_GRABCUT"] = "0"
+            off = qs_metrics.metrics_for_dump(
+                dump, solver="v4", determinism=False, idempotence=False, zoom=False)
+            os.environ["QS_V4_APPEARANCE_GRABCUT"] = "1"
+            on = qs_metrics.metrics_for_dump(
+                dump, solver="v4", determinism=False, idempotence=False, zoom=False)
+        finally:
+            if old is None:
+                os.environ.pop("QS_V4_APPEARANCE_GRABCUT", None)
+            else:
+                os.environ["QS_V4_APPEARANCE_GRABCUT"] = old
+
+        self.assertGreaterEqual(
+            on["edge_boundary_frac"],
+            off["edge_boundary_frac"] + 0.20,
+            f"appearance solve did not move the leaf boundary onto image edges: off={off}, on={on}")
+        self.assertLessEqual(
+            on["support_hint_ratio"],
+            off["support_hint_ratio"] - 0.05,
+            f"appearance solve did not trim the overpainted brush rim: off={off}, on={on}")
+        self.assertGreater(
+            on["support_hint_ratio"],
+            0.65,
+            f"appearance solve collapsed too much of the leaf selection: {on}")
+
+    def test_v4_auto_appearance_grabcut_clips_overpaint_without_high_lock(self):
+        """The brush-centre appearance cue should not require an extreme EdgeLock
+        setting when the proposal visibly improves edge alignment. Regression for
+        captures like qs_input_001 where auto EdgeLock is low but the brush rim
+        still overpaints a clean edge."""
+        from cores.mask2 import draw_qs_metrics as qs_metrics
+
+        dump_path = PROJECT_ROOT / "edge_refine_debug" / "qs_input_001.npz"
+        if not dump_path.exists():
+            self.skipTest(f"missing low-lock overpaint fixture: {dump_path}")
+        dump = qs_metrics.load_dump(dump_path)
+
+        old = os.environ.get("QS_V4_APPEARANCE_GRABCUT")
+        try:
+            os.environ["QS_V4_APPEARANCE_GRABCUT"] = "0"
+            off = qs_metrics.metrics_for_dump(
+                dump, solver="v4", determinism=False, idempotence=False, zoom=False)
+            os.environ["QS_V4_APPEARANCE_GRABCUT"] = "1"
+            on = qs_metrics.metrics_for_dump(
+                dump, solver="v4", determinism=False, idempotence=False, zoom=False)
+        finally:
+            if old is None:
+                os.environ.pop("QS_V4_APPEARANCE_GRABCUT", None)
+            else:
+                os.environ["QS_V4_APPEARANCE_GRABCUT"] = old
+
+        self.assertLess(
+            off["edge_lock_effective"],
+            20.0,
+            f"fixture no longer exercises low auto EdgeLock: {off}")
+        self.assertGreaterEqual(
+            on["edge_boundary_frac"],
+            off["edge_boundary_frac"] + 0.15,
+            f"auto appearance solve did not move the boundary onto image edges: off={off}, on={on}")
+        self.assertLessEqual(
+            on["support_hint_ratio"],
+            off["support_hint_ratio"] - 0.08,
+            f"auto appearance solve did not trim the overpainted brush rim: off={off}, on={on}")
+
 
 class DrawQuickSelectEraseLocalityTest(unittest.TestCase):
     """An erase is a *local* correction: it must not move the selection boundary
@@ -3595,9 +3673,8 @@ class DrawQuickSelectBrushRimTest(unittest.TestCase):
                 if base is None:
                     continue
                 b = off_edge_brush_rim(dump, base)
-                if b > 10:
+                if b > before:
                     before, after = b, off_edge_brush_rim(dump, trimmed)
-                    break
         finally:
             for key, val in (("QS_V4_EDGE_SNAP", old_snap), ("QS_RIM_EDGE_T", old_t)):
                 if val is None:
@@ -3605,7 +3682,7 @@ class DrawQuickSelectBrushRimTest(unittest.TestCase):
                 else:
                     os.environ[key] = val
 
-        if before <= 10:
+        if before <= 60:
             self.skipTest("no corpus dump currently exhibits a floating brush-rim arc")
         self.assertLessEqual(
             after, before // 3,

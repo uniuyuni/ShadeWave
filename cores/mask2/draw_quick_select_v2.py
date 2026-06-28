@@ -224,14 +224,27 @@ def _compute_add_only_support(
     scales = _v1._resolve_scales(radius, draw_strokes, hint)
     raw_strength = strength
 
-    _edge_cache_key = (_raw_guide_ptr, (h, w)) if _raw_guide_ptr is not None else None
+    # The region min-cut reads the *perceptual* edge so its cut "wall" lands on the
+    # boundary the user sees. On a linear scene-referred guide the raw-linear
+    # gradient is dominated by highlights and the salient boundary collapses to ~0,
+    # leaving no wall -> the cut overflows past the edge. Toned guides (ref >= 0.5)
+    # are untouched by _to_perceptual_guide, so this is a no-op there. The
+    # perceptual flag is part of the cache key so a linear and a toned guide never
+    # share an entry. Set QS_REGION_PERCEPTUAL_EDGE=0 for the old raw-linear solve.
+    region_perceptual = _region_perceptual_edge_enabled()
+    region_ratio = _region_perceptual_shadow_ratio() if region_perceptual else 0.1
+    _edge_cache_key = (
+        (_raw_guide_ptr, (h, w), bool(region_perceptual), round(float(region_ratio), 3))
+        if _raw_guide_ptr is not None else None)
     if _edge_cache_key is not None and _edge_cache_key in _V2_EDGE_CACHE:
         edge_strength, stable_edge_strength = _V2_EDGE_CACHE[_edge_cache_key]
     else:
-        edge_strength = _er._draw_snap_edge_strength(guide)
+        edge_strength = _er._draw_snap_edge_strength(
+            guide, perceptual=region_perceptual, shadow_ratio=region_ratio)
         if edge_strength is None:
             edge_strength = np.zeros((h, w), dtype=np.float32)
-        stable_edge_strength = _stable_edge_strength(guide, edge_strength)
+        stable_edge_strength = _stable_edge_strength(
+            guide, edge_strength, perceptual=region_perceptual, shadow_ratio=region_ratio)
         _cache_put(_V2_EDGE_CACHE, _edge_cache_key, (edge_strength, stable_edge_strength))
     use_stable_edge = os.environ.get("QS_V2_STABLE_EDGE", "").strip().lower() in {"1", "true", "yes", "on"}
     solve_edge_strength = stable_edge_strength if use_stable_edge else edge_strength
@@ -300,10 +313,17 @@ def _compute_add_only_support(
 
     # Strength/bias-independent prep (solve units + per-unit colour): cached so a
     # strength/bias slider change reuses it and only the policy + min-cut re-run.
+    # The colour data term separates FG/BG by colour where no edge ridge exists. On
+    # a dark linear guide that separation collapses (values ~0.001), so feed it the
+    # perceptual guide too (no-op on toned guides, same gate as the edge path).
+    region_color_perceptual = region_perceptual and _region_perceptual_color_enabled()
+    color_guide = (_er._to_perceptual_guide(guide, shadow_ratio=region_ratio)
+                   if region_color_perceptual else guide)
     _prep_key = (
         _raw_guide_ptr, (h, w),
         round(float(radius), 3), round(float(pixel_scale), 4),
         bool(has_strokes),
+        bool(region_color_perceptual),
         _strokes_fingerprint(draw_strokes),
         _er._guide_fingerprint(mask_f),
     ) if _raw_guide_ptr is not None else None
@@ -323,7 +343,7 @@ def _compute_add_only_support(
             comp = component[sl]
             core_roi = unit.core[sl]
             _unit_colors.append(_v1._color_score_and_luma_delta(
-                guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
+                color_guide[sl], comp, core_roi & comp, hint[sl], component_scales.band_half_width,
                 directional_bg=has_strokes))
         _prep = (solve_units, _unit_colors)
         _cache_put(_V2_PREP_CACHE, _prep_key, _prep)
@@ -605,7 +625,54 @@ def _apply_edge_lock_offset(auto_strength, offset_strength):
     return float(np.clip(auto - offset * scale, 0.0, 100.0))
 
 
-def _stable_edge_strength(guide, edge_strength):
+def _region_perceptual_edge_enabled():
+    """Feed the region min-cut a perceptual (display-like) edge map.
+
+    Default on. The toned-guide skip in ``_to_perceptual_guide`` makes it a no-op
+    on already display-encoded guides, so only genuinely linear scene-referred
+    captures change. Set ``QS_REGION_PERCEPTUAL_EDGE=0`` to restore the old
+    raw-linear region solve.
+    """
+    value = os.environ.get("QS_REGION_PERCEPTUAL_EDGE")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _region_perceptual_shadow_ratio():
+    """Gate-2 threshold for re-encoding the region edge to perceptual space.
+
+    The V4 boundary trace keeps the strict 0.1 (deep shadow only). The region
+    min-cut relaxes it to ~0.35 so a *moderately* shadow-weighted linear capture
+    (the user's `leaf`, p50/ref=0.194) gets a real cut wall instead of overflowing
+    past the edge, while balanced linear guides (`easy`, p50/ref=0.663) stay
+    excluded so their strong boundary is not compressed. Tunable via
+    ``QS_REGION_PERCEPTUAL_RATIO``.
+    """
+    try:
+        return float(os.environ.get("QS_REGION_PERCEPTUAL_RATIO", "0.35"))
+    except (TypeError, ValueError):
+        return 0.35
+
+
+def _region_perceptual_color_enabled():
+    """Run the min-cut *colour* data term on the perceptual guide too (default on).
+
+    On a dark linear capture the colour difference that the eye sees (e.g. a green
+    leaf vs a violet background, hue 107 deg vs 261 deg) collapses to the 4th decimal
+    in linear RGB (~0.001 values), so the solver's colour_score reads ~0 and the cut
+    cannot separate them where no edge ridge exists. Re-encoding to perceptual space
+    restores the separation (measured z~2.6-3.3 on the user's `leaf`). Same gate as the
+    edge path (toned guides unchanged). Set ``QS_REGION_PERCEPTUAL_COLOR=0`` to keep the
+    colour term on raw linear.
+    """
+    value = os.environ.get("QS_REGION_PERCEPTUAL_COLOR")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _stable_edge_strength(guide, edge_strength, perceptual=False, shadow_ratio=0.1):
     """Prefer edges that survive a 2x scale change.
 
     Fine snowy/tree texture often produces high single-scale gradients. Real
@@ -619,7 +686,7 @@ def _stable_edge_strength(guide, edge_strength):
         return edge
     guide_arr = np.asarray(guide, dtype=np.float32)
     small = cv2.resize(guide_arr, (max(1, w // 2), max(1, h // 2)), interpolation=cv2.INTER_AREA)
-    small_edge = _er._draw_snap_edge_strength(small)
+    small_edge = _er._draw_snap_edge_strength(small, perceptual=perceptual, shadow_ratio=shadow_ratio)
     if small_edge is None:
         return edge
     half = cv2.resize(np.asarray(small_edge, dtype=np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
