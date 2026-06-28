@@ -127,7 +127,7 @@ def get_window_state():
     )
 
 
-def install_ref_scaling(root, poll_interval=0.25):
+def install_ref_scaling(root, poll_interval=1):
     event = getattr(root, "_ref_scaling_event", None)
     if event is not None:
         return root

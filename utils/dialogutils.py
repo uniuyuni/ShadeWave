@@ -17,7 +17,7 @@ def apply_ref_scaling(dialog, center=True):
         dialog.center = KVWindow.center
 
 
-def install_ref_scaling(dialog, center=True, poll_interval=0.25, on_rescale=None):
+def install_ref_scaling(dialog, center=True, poll_interval=1, on_rescale=None):
     state = {
         "last": None,
         "event": None,
