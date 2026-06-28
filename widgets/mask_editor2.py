@@ -425,9 +425,11 @@ class BaseMask(KVWidget):
     def _create_effects(self):
         root = getattr(self.editor, 'root', None)
         distortion_callback = getattr(root, 'distortion_callback', None)
+        light_rays_callback = getattr(root, 'light_rays_callback', None)
         view_param_provider = getattr(self.editor, 'get_effect_view_param', None)
         return effects.create_effects(
             distortion_callback=distortion_callback if callable(distortion_callback) else None,
+            light_rays_callback=light_rays_callback if callable(light_rays_callback) else None,
             view_param_provider=view_param_provider if callable(view_param_provider) else None,
         )
 

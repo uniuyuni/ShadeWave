@@ -2549,6 +2549,51 @@
                                     on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
                                     on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
 
+                                ParamSlider:
+                                    id: slider_sunstar_strength
+                                    text: "Sunstar"
+                                    min: 0
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_sunstar_length
+                                    text: "Sunstar length"
+                                    min: 0
+                                    max: 100
+                                    value: 35
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamSlider:
+                                    id: slider_sunstar_threshold
+                                    text: "Sunstar threshold"
+                                    min: 0
+                                    max: 100
+                                    value: 60
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'lens_simulator')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'lens_simulator')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Aperture blades"
+                                    VSpacer:
+                                        size_hint_x: 0.1
+                                    ParamSpinner:
+                                        id: spinner_aperture_blades
+                                        values: ['5', '6', '7', '8', '9', '11', '14']
+                                        on_hovered_item: root.apply_effects_lv(2, 'lens_simulator')
+                                        on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lens_simulator')
+                                        on_value: root.end_history_effect_ctrl(2, 'lens_simulator')
+
                                 VSeparator:
 
                                 HeadLabel:
@@ -4284,6 +4329,198 @@
                                     on_slider: root.apply_effects_lv(root.lens_ghost_level(), 'lens_ghost')
                                     on_before_edit: root.begin_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
                                     on_after_edit: root.end_history_effect_ctrl(root.lens_ghost_level(), 'lens_ghost')
+
+                                VSeparator:
+
+                                HeadLabel:
+                                    id: switch_light_rays
+                                    text: ' Light Rays'
+                                    on_press: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_active: root.apply_effects_lv(2, 'light_rays')
+                                    on_release: root.end_history_effect_ctrl(2, 'light_rays')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "RayEditor"
+                                    HSpacer:
+                                        size_hint_x: 0.9
+                                    ToggleButton:
+                                        id: toggle_light_rays_open
+                                        group: 'effect'
+                                        text: 'Open'
+                                        on_state: root._sync_effect_editors()
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Guide"
+                                    HSpacer:
+                                        size_hint_x: 0.5
+                                    ParamSpinner:
+                                        id: spinner_light_ray_editor_type
+                                        values: ['Line', 'Point']
+                                        text: 'Line'
+                                        on_hovered_item: root.apply_effects_lv(2, 'light_rays')
+                                        on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'light_rays')
+                                        on_value:
+                                            root.apply_effects_lv(2, 'light_rays')
+                                            root.end_history_effect_ctrl(2, 'light_rays')
+                                            root._sync_effect_editors()
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Emission"
+                                    HSpacer:
+                                        size_hint_x: 0.5
+                                    ParamSpinner:
+                                        id: spinner_light_ray_editor_mode
+                                        values: ['Parallel', 'Directional']
+                                        text: 'Parallel'
+                                        on_hovered_item: root.apply_effects_lv(2, 'light_rays')
+                                        on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'light_rays')
+                                        on_value:
+                                            root.apply_effects_lv(2, 'light_rays')
+                                            root.end_history_effect_ctrl(2, 'light_rays')
+                                            root._sync_effect_editors()
+
+                                ParamSlider:
+                                    id: slider_light_ray_intensity
+                                    text: "Intensity"
+                                    min: 0
+                                    max: 100
+                                    value: 60
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_length
+                                    text: "Point Reach"
+                                    min: 0
+                                    max: 200
+                                    value: 65
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_decay
+                                    text: "Fade"
+                                    min: 0
+                                    max: 100
+                                    value: 90
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_width
+                                    text: "Shaft Width"
+                                    min: 0
+                                    max: 200
+                                    value: 35
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_softness
+                                    text: "Edge Softness"
+                                    min: 0
+                                    max: 100
+                                    value: 45
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_edge_bias
+                                    text: "Edge Bias"
+                                    min: -100
+                                    max: 100
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_spread
+                                    text: "Cone Spread"
+                                    min: 0
+                                    max: 100
+                                    value: 35
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_count
+                                    text: "Shaft Count"
+                                    min: 1
+                                    max: 32
+                                    value: 8
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_density
+                                    text: "Texture Density"
+                                    min: 0
+                                    max: 100
+                                    value: 10
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_variation
+                                    text: "Irregularity"
+                                    min: 0
+                                    max: 100
+                                    value: 10
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_fog
+                                    text: "Air Glow"
+                                    min: 0
+                                    max: 100
+                                    value: 25
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_occlusion
+                                    text: "Tree Shadow"
+                                    min: 0
+                                    max: 100
+                                    value: 30
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+                                ParamSlider:
+                                    id: slider_light_ray_seed
+                                    text: "Seed"
+                                    min: 0
+                                    max: 99999
+                                    value: 0
+                                    step: 1
+                                    on_slider: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
+
+                                VSpacer:
+                                    ref_height: 4
+
+                                CWColorPicker:
+                                    id: cp_light_ray_color
+                                    on_current_color: root.apply_effects_lv(2, 'light_rays')
+                                    on_before_edit: root.begin_history_effect_ctrl(2, 'light_rays')
+                                    on_after_edit: root.end_history_effect_ctrl(2, 'light_rays')
 
         ViewerWidget:
             id: viewer

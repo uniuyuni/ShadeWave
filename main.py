@@ -417,7 +417,8 @@ if __name__ == '__main__':
                 distortion_callback=self.distortion_callback,
                 geometry_callback=self.geometry_callback,
                 crop_callback=self.crop_callback,
-                ghost_callback=self.ghost_callback)
+                ghost_callback=self.ghost_callback,
+                light_rays_callback=self.light_rays_callback)
             #self.primary_effects[0]['crop'].set_editing_callback(self.crop_editing)
             self.inpaint_edit = None
             self.patchmatch_inpaint_edit = None
@@ -1306,7 +1307,8 @@ if __name__ == '__main__':
                     distortion_callback=self.distortion_callback,
                     geometry_callback=self.geometry_callback,
                     crop_callback=self.crop_callback,
-                    ghost_callback=self.ghost_callback)
+                    ghost_callback=self.ghost_callback,
+                    light_rays_callback=self.light_rays_callback)
                 effects.bind_ai_job_manager(self.primary_effects, self.ai_job_manager)
                 self.ai_image_cache.clear()
                 self.reset_param(self.primary_param)
@@ -1848,14 +1850,15 @@ if __name__ == '__main__':
                     self._sync_distortion_brush_from_painter(widget, current_param)
 
         def ghost_callback(self, proc, widget):
-            """LensGhostCanvas からの通知。CP(正規化TCG)を primary_param に書き戻し再描画。
-            distortion_callback と同方針。実行レベルは lens_ghost_level()。"""
+            """LensGhostCanvas からの通知。光源は per-light 独立パラメータ(lens_ghost_lights)。
+            選択(select)で flat スライダーへ反映、追加/移動/削除で lights を更新。実行レベルは lens_ghost_level()。"""
             eff = self._lens_ghost_effect()
             if eff is None or widget is not getattr(eff, 'ghost_canvas', None):
                 return
             lv = self.lens_ghost_level()
             # 保存先: mask2 起動時は Composit の effect_param(マスクの影響を受ける)、それ以外は primary_param。
             _ce, cp, _mid = self._get_active_effects(lv=lv)
+            sel = getattr(widget, 'selected', -1)
             match proc:
                 case 'focus':
                     self._clear_text_input_focus()
@@ -1865,16 +1868,91 @@ if __name__ == '__main__':
                     sw = self.ids.get('switch_lens_ghost')
                     if sw is not None:
                         sw.enabled = True
-                case 'update' | 'apply':
-                    # ドラッグ中は同期描画(sync=True)。非同期 start_draw_image は連続入力で
-                    # 捨て描画され「止める/離す」まで反映されないため、リアルタイム追従しない。
-                    cp['lens_ghost_coords'] = widget.get_coords()
+                case 'select':
+                    # 選択 CP のパラメータをスライダーへ(履歴なし・描画なし)。
+                    cp['lens_ghost_selected'] = sel
+                    self._load_ghost_light_to_sliders(cp, sel)
+                case 'add':
+                    lights = eff._lights(cp)
+                    base = {k: cp.get(k) for k in eff._SLIDER_KEYS}   # 現在のスライダー値を引き継ぐ
+                    pos = tuple(widget.coords[-1]) if widget.coords else (0.0, 0.0)
+                    lights.append({'pos': pos, 'params': base})
+                    cp['lens_ghost_selected'] = len(lights) - 1
                     self.apply_effects_lv(lv, 'lens_ghost', sync=True)
+                case 'move':
+                    lights = eff._lights(cp)
+                    if 0 <= sel < len(lights) and sel < len(widget.coords):
+                        lights[sel]['pos'] = tuple(widget.coords[sel])
+                    self.apply_effects_lv(lv, 'lens_ghost', sync=True)
+                case 'delete':
+                    lights = eff._lights(cp)
+                    i = getattr(widget, '_del_index', -1)
+                    if 0 <= i < len(lights):
+                        del lights[i]
+                    cp['lens_ghost_selected'] = -1
+                    self.apply_effects_lv(lv, 'lens_ghost')
                 case 'end':
-                    # 確定時は通常(非同期・フル品質)で最終描画。
-                    cp['lens_ghost_coords'] = widget.get_coords()
+                    # スロットルで取りこぼした最終位置を確定 + フル品質描画。
+                    lights = eff._lights(cp)
+                    if 0 <= sel < len(lights) and sel < len(widget.coords):
+                        lights[sel]['pos'] = tuple(widget.coords[sel])
                     self.apply_effects_lv(lv, 'lens_ghost')
                     self.end_history_effect_ctrl(lv, 'lens_ghost')
+
+        def _load_ghost_light_to_sliders(self, cp, sel):
+            """選択中の光源 params を flat スライダーキー + スライダー widget へ反映(エコー抑止)。"""
+            eff = self._lens_ghost_effect()
+            if eff is None:
+                return
+            lp = eff.light_params(cp, sel)
+            if lp is None:
+                return
+            self.run_set2widget_all = True
+            try:
+                for k in eff._SLIDER_KEYS:
+                    if k in lp:
+                        cp[k] = lp[k]
+                        slider = self.ids.get('slider_' + k)
+                        if slider is not None:
+                            slider.set_slider_value(lp[k])
+            finally:
+                self.run_set2widget_all = False
+
+        def light_rays_callback(self, proc, widget):
+            """LightRaysCanvas からの通知。ガイドを active param に書き戻して再描画。"""
+            eff = self._light_rays_effect()
+            if eff is None or widget is not getattr(eff, 'light_rays_canvas', None):
+                return
+            lv = 2
+            _ce, cp, _mid = self._get_active_effects(lv=lv)
+            match proc:
+                case 'focus':
+                    self._clear_text_input_focus()
+                case 'select':
+                    cp['light_ray_guides'] = widget.get_guides()
+                    cp['light_ray_selected'] = widget.selected_index()
+                    if eff.sync_selected_guide_to_widget(self, cp):
+                        cp['light_ray_editor_type'] = self.ids['spinner_light_ray_editor_type'].text
+                        cp['light_ray_editor_mode'] = self.ids['spinner_light_ray_editor_mode'].text
+                case 'start':
+                    self.begin_history_effect_ctrl(lv, 'light_rays')
+                    cp['switch_light_rays'] = True
+                    sw = self.ids.get('switch_light_rays')
+                    if sw is not None:
+                        sw.enabled = True
+                case 'update' | 'apply':
+                    cp['light_ray_guides'] = widget.get_guides()
+                    cp['light_ray_selected'] = widget.selected_index()
+                    cp['light_ray_editor_type'] = self.ids['spinner_light_ray_editor_type'].text
+                    cp['light_ray_editor_mode'] = self.ids['spinner_light_ray_editor_mode'].text
+                    self.apply_effects_lv(lv, 'light_rays', sync=True)
+                case 'end':
+                    cp['light_ray_guides'] = widget.get_guides()
+                    cp['light_ray_selected'] = widget.selected_index()
+                    cp['light_ray_editor_type'] = self.ids['spinner_light_ray_editor_type'].text
+                    cp['light_ray_editor_mode'] = self.ids['spinner_light_ray_editor_mode'].text
+                    self.apply_effects_lv(lv, 'light_rays')
+                    self.end_history_effect_ctrl(lv, 'light_rays')
 
         def apply_ghost_preset(self, name):
             """プリセット選択 → lens_ghost の全スライダーへ反映(履歴対応)。
@@ -2099,18 +2177,28 @@ if __name__ == '__main__':
             except Exception:
                 return None
 
+        def _light_rays_effect(self):
+            try:
+                return self.primary_effects[2].get('light_rays')
+            except Exception:
+                return None
+
         def _get_active_ghost_canvas(self):
             eff = self._lens_ghost_effect()
             return getattr(eff, 'ghost_canvas', None) if eff is not None else None
 
+        def _get_active_light_rays_canvas(self):
+            eff = self._light_rays_effect()
+            return getattr(eff, 'light_rays_canvas', None) if eff is not None else None
+
         def _effect_editor_allowed(self):
-            """preview エディタ(liquify / ghost)を開いてよい状態か。Li タブかつ mask2 適合(can_open)。"""
+            """preview エディタ(liquify / ghost / light rays)を開いてよい状態か。"""
             eff_panel = self.ids.get('effects')
             in_li = eff_panel is not None and getattr(eff_panel.current_tab, 'text', '') == 'Li'
             return bool(in_li and self.can_open_liquify_editor())
 
         def _sync_effect_editors(self):
-            """'effect' トグルグループの押下状態で preview 上のエディタ(liquify / ghost)を生成/破棄する。
+            """'effect' トグルグループの押下状態で preview 上のエディタを生成/破棄する。
             tab=='Li' かつ can_open_liquify_editor() の下でのみ。どちらか一方のみ(排他)。"""
             if getattr(self, 'run_set2widget_all', False):
                 return
@@ -2133,19 +2221,21 @@ if __name__ == '__main__':
                 for w in effect_toggles:
                     if getattr(w, 'state', 'normal') == 'down':
                         w.state = 'normal'
-            active = None
-            for w in effect_toggles:
-                if getattr(w, 'state', 'normal') == 'down':
-                    active = w
-                    break
             allowed = self._effect_editor_allowed()
-            # liquify かどうかは「DistortionEffectButton クラスか」で判定する。
-            # self.ids 依存(active is ghost_btn)は id 取得失敗時に Open→liquify と誤判定するため使わない。
             ghost_btn = self.ids.get('toggle_lens_ghost_open')
-            is_distortion_toggle = active is not None and type(active).__name__ == 'DistortionEffectButton'
-            is_ghost_toggle = active is not None and (active is ghost_btn or not is_distortion_toggle)
+            light_rays_btn = self.ids.get('toggle_light_rays_open')
+            active_distortion = None
+            for w in effect_toggles:
+                if getattr(w, 'state', 'normal') != 'down':
+                    continue
+                if type(w).__name__ == 'DistortionEffectButton':
+                    active_distortion = w
+                    break
+            is_ghost_toggle = ghost_btn is not None and getattr(ghost_btn, 'state', 'normal') == 'down'
+            is_light_rays_toggle = light_rays_btn is not None and getattr(light_rays_btn, 'state', 'normal') == 'down'
             want_ghost = bool(allowed and is_ghost_toggle)
-            want_liquify = bool(allowed and is_distortion_toggle)
+            want_light_rays = bool(allowed and is_light_rays_toggle)
+            want_liquify = bool(allowed and active_distortion is not None)
 
             # ghost canvas
             ghost_effect = self._lens_ghost_effect()
@@ -2156,6 +2246,15 @@ if __name__ == '__main__':
                     ghost_effect._open_ghost_canvas(cp, self)
                 else:
                     ghost_effect._close_ghost_canvas(self.primary_param, self)
+
+            # light rays canvas
+            light_rays_effect = self._light_rays_effect()
+            if light_rays_effect is not None:
+                if want_light_rays:
+                    _ce, cp, _mid = self._get_active_effects(lv=2)
+                    light_rays_effect._open_light_rays_canvas(cp, self)
+                else:
+                    light_rays_effect._close_light_rays_canvas(self.primary_param, self)
 
             # liquify painter
             if want_liquify:
@@ -2185,16 +2284,22 @@ if __name__ == '__main__':
             return getattr(effect, 'distortion_painter', None) if effect is not None else None
 
         def _sync_liquify_mask_editor_input_lock(self):
-            # Ghost も liquify と同条件で閉じる。本関数は liquify を閉じる全箇所の直後に必ず呼ばれるため、
-            # ここで「許可状態でなければ ghost を閉じる」とすれば、マスク作成/個別マスク選択/Li 離脱に追従する。
+            # Overlay editors follow the same availability as liquify.
             if not self._effect_editor_allowed():
                 ge = self._lens_ghost_effect()
                 if ge is not None:
                     ge._close_ghost_canvas(self.primary_param, self)
+                le = self._light_rays_effect()
+                if le is not None:
+                    le._close_light_rays_canvas(self.primary_param, self)
             editor = self.ids.get('mask_editor2')
             if editor is None:
                 return
-            locked = (self._get_active_distortion_painter() is not None) or (self._get_active_ghost_canvas() is not None)
+            locked = (
+                (self._get_active_distortion_painter() is not None)
+                or (self._get_active_ghost_canvas() is not None)
+                or (self._get_active_light_rays_canvas() is not None)
+            )
             self._liquify_debug("mask_editor_input_lock=%s", locked)
             if locked:
                 # Liquify owns preview touch/scroll while its painter is active.
@@ -4269,9 +4374,9 @@ if __name__ == '__main__':
                 return False
 
         def update_lens_simulator_depth_enabled(self):
-            # LensSimulator の depth 連動コントロール(軸上CA/球面収差/フォーカス/絞り)は、
-            # AI depth map が実際にキャッシュされている時だけ有効化する。coating / lateral CA は
-            # depth 非依存なので常時有効。
+            # LensSimulator の depth 連動コントロール(軸上CA/球面収差/フォーカス)は、
+            # AI depth map が実際にキャッシュされている時だけ有効化する。coating / lateral CA /
+            # 絞り(サンスター・形状ボケで depth 非依存に使う) は常時有効。
             disabled = (
                 bool(self.mask2_wait_full_load)
                 or not bool(self.image_loaded)
@@ -4282,7 +4387,6 @@ if __name__ == '__main__':
                     "slider_longitudinal_ca",
                     "slider_spherical_ca",
                     "slider_lens_focus_depth",
-                    "slider_lens_aperture",
                 ),
                 disabled,
             )

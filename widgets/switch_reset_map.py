@@ -48,6 +48,7 @@ BASE_SWITCH_TARGETS = {
     "switch_fringe_removal": (0, "remove_chromatic_aberration", None),
     "switch_film_simulation": (2, "film_emulation", None),
     "switch_lens_simulator": (2, "lens_simulator", None),
+    "switch_light_rays": (2, "light_rays", None),
     "switch_filters": (1, ["lensblur_filter", "scratch", "frosted_glass", "mosaic"], None),
     "switch_orton_effect": (2, "orton", None),
     "switch_glow_effect": (2, "glow", None),

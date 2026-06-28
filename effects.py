@@ -16,6 +16,7 @@ import cores.linear_to_log_lut as linear_to_log
 import cores.filters as filters
 import cores.local_contrast as local_contrast
 import cores.highlight_recovery as highlight_recovery
+import cores.light_rays as light_rays
 import cores.hlsrgb as hlsrgb
 from cores.fringe_removal import remove_chromatic_aberration
 from cores.distortion_correction import (
@@ -4243,9 +4244,17 @@ class LensSimulatorEffect(Effect):
         SpinnerTextBinding('bokeh_shape', 'Hexagon', "spinner_bokeh_shape"),
         # 形状ボケの縁の色ボケ（虹色の輪郭）。R/G/B でボケ径を僅かに変えて出す。
         SliderBinding('bokeh_rim', 0, "slider_bokeh_rim"),
+        # サンスター（光条）。クリップ気味のハイライト塊だけに回折スパイクを描く。
+        SliderBinding('sunstar_strength', 0, "slider_sunstar_strength"),
+        SliderBinding('sunstar_length', 35, "slider_sunstar_length"),
+        SliderBinding('sunstar_threshold', 60, "slider_sunstar_threshold"),
+        # 絞り羽根枚数。偶数=N本 / 奇数=2N本（物理整合）でスパイク数を決める。
+        SpinnerTextBinding('aperture_blades', '9', "spinner_aperture_blades"),
     )
 
     _coating_sim = CoatingSimulator()
+    # サンスター描画キャンバスの最大辺。これ以上の画像は縮小して検出・描画し拡大合成する（性能上限）。
+    _SUNSTAR_RENDER_MAXDIM = 512
 
     def _bokeh_color_fringe(self, img, depth_map, focus_depth, strength, res_scale):
         """ボケの色縁（spherochromatism / LoCA）。前ボケ=マゼンタ / 後ボケ=グリーン。
@@ -4535,6 +4544,164 @@ class LensSimulatorEffect(Effect):
                 return key
         return None
 
+    @staticmethod
+    def _spike_count_from_blades(blades):
+        """絞り羽根枚数 → サンスターの本数。偶数=N本 / 奇数=2N本（回折の物理整合）。"""
+        try:
+            b = int(str(blades).strip())
+        except (TypeError, ValueError):
+            b = 9
+        b = max(3, b)
+        return b if (b % 2 == 0) else 2 * b
+
+    def _sunstar(self, img, strength, length, threshold, blades, aperture, mag, orig_size):
+        """点光源に回折スパイク（光条/サンスター）を描く。
+
+        リアルさの肝は「直線を伸ばす」ことではなく:
+          (1) クリップ気味のハイライト塊だけを検出して gating（点光源が無ければ無変化）、
+          (2) 絞り羽根枚数から本数を物理整合で決める（偶数=N / 奇数=2N）、
+          (3) 各スパイクは「中心〜先端まで太さ一定」の細い光条（=実際の光芒）。長さ・太さ・
+              濃さは羽根の個体差としてスパイクごとにバラつかせる（対称すぎる CG 感を排除）、
+          (4) 絞り込むほど長く鋭くする（aperture 連動。開放でも十分伸ばす）、
+          (5) 光条の色は光源の色に合わせる（先端へ僅かに分散）。太さは光源が大きいほど太い。
+        太さは「光条方向への投影 along」ではなく「直交距離 perp」のガウスで作るので、中心から
+        広がらず一定幅になる。長さ・太さは表示倍率 mag(=disp_info[4]) と元画像サイズ基準で
+        決めるので、拡大/縮小しても光源に対する見え方(位置・大きさ・太さ)が一定に保たれる。
+        linear/HDR 空間で加算合成し、clip は下流へ委ねる。検出は全解像度（縮小すると縮小表示時
+        に光源が平均化され閾値割れ→ズーム不安定になるため）。描画のみ縮小キャンバス
+        (最大辺 _SUNSTAR_RENDER_MAXDIM)で行い、各画素は「最も近いスパイク1本」だけ評価して
+        M回ループを1パスに畳む（描画コストは画像解像度・光条長に依らず一定）。
+        """
+        s = float(strength) / 100.0
+        if s <= 0.0:
+            return img
+        h, w = img.shape[:2]
+        mag = max(1e-3, float(mag))
+        try:
+            ow, oh = float(orig_size[0]), float(orig_size[1])
+        except Exception:
+            ow, oh = float(w), float(h)
+        scene_min = max(1.0, min(ow, oh))
+
+        # --- 絞り連動：開放(F≈1.4)でも十分伸ばし、絞り込む(F大)ほど更に長く・細く ---
+        F_OPEN, F_MAX = 1.4, 16.0
+        ap_raw = float(np.clip((float(aperture) - F_OPEN) / (F_MAX - F_OPEN), 0.0, 1.0))
+
+        # --- ハイライト塊の検出（gating＝本物感の核）---
+        # 検出は「全解像度」で行う。縮小してから検出すると、縮小表示時に光源が平均化されて
+        # 閾値を割り消える/小さくなり、拡大表示との差が大きくなる（＝ズーム不安定）。max を使い
+        # 鏡面の飽和を確実に拾う。描画だけを後段で縮小キャンバスにして高速化する。
+        lum = np.max(img, axis=2)
+        thr = 0.55 + 0.44 * (float(threshold) / 100.0)  # 0.55..0.99
+        mask = (lum > thr).astype(np.uint8)
+        if int(mask.sum()) == 0:
+            return img  # 点光源が無い → 何も足さない（正直な挙動）
+
+        num, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if num <= 1:
+            return img
+
+        sources = []
+        for i in range(1, num):
+            area = int(stats[i, cv2.CC_STAT_AREA])
+            cx, cy = float(centroids[i][0]), float(centroids[i][1])
+            ys = slice(int(stats[i, cv2.CC_STAT_TOP]), int(stats[i, cv2.CC_STAT_TOP] + stats[i, cv2.CC_STAT_HEIGHT]))
+            xs = slice(int(stats[i, cv2.CC_STAT_LEFT]), int(stats[i, cv2.CC_STAT_LEFT] + stats[i, cv2.CC_STAT_WIDTH]))
+            peak = float(lum[ys, xs].max())
+            # 光源の色（塊内平均）を色相保持の tint に正規化 → 光条のベース色にする。
+            blob = labels[ys, xs] == i
+            col = img[ys, xs][blob].reshape(-1, 3).mean(axis=0)
+            cmax = max(float(col.max()), 1e-4)
+            src_tint = np.clip(col / cmax, 0.25, 1.0).astype(np.float32)
+            sources.append((peak, area, cx, cy, src_tint))
+        sources.sort(key=lambda t: t[0], reverse=True)   # 明るい順
+        sources = sources[:16]       # 性能のため上位のみ
+
+        # 描画は縮小キャンバスで行い最後に拡大合成する（光条は滑らかなので劣化は無視できる）。
+        # 検出座標(全px)を scl 倍してキャンバスへ。最後の拡大で全テクスチャ px に戻る。
+        scl = min(1.0, float(self._SUNSTAR_RENDER_MAXDIM) / float(max(h, w)))
+        W = max(1, int(round(w * scl)))
+        H = max(1, int(round(h * scl)))
+
+        M = self._spike_count_from_blades(blades)
+        spacing = 2.0 * math.pi / M
+        # 基準長：元画像短辺のシーン基準 × 表示倍率 mag（全テクスチャpx）× scl → キャンバスpx。
+        # 拡大すると光条も光源と同じだけ大きくなり見え方が一定。旧実装比 約4倍まで伸ばせる。
+        ap_len = 0.4 + 0.6 * ap_raw  # 開放でも 0.4、絞ると 1.0
+        base_len = (0.12 + 1.6 * (float(length) / 100.0)) * scene_min * ap_len * mag * scl
+        width_ap = 1.2 - 0.6 * ap_raw  # 絞ると細く
+
+        overlay = np.zeros((H, W, 3), dtype=np.float32)
+        cool_bias = np.array([0.92, 0.97, 1.10], dtype=np.float32)  # 先端を僅かに青へ（色分散）
+        base_rot = float(np.random.default_rng(0x5A17).uniform(0.0, math.pi))  # 全体の向き（固定）
+
+        for idx, (peak, area, cx, cy, src_tint) in enumerate(sources):
+            inten = float(np.clip((peak - thr) / max(1e-3, 4.0 - thr), 0.05, 1.0)) ** 0.5
+            # radius_src はキャンバス px（=全px×scl, 拡大・光源径に追従）→ コア・太さがそれに連動。
+            radius_src = max(0.6, math.sqrt(area / math.pi) * scl)
+            L = float(np.clip(base_len * (0.6 + 0.6 * inten), 3.0, 1.4 * max(H, W)))
+            # 太さは「長さ L に比例」させる（→ 拡大/縮小でアスペクトが変わらない）。光源径による
+            # 太りは弱め(0.3)に留める（強すぎると不自然＆ズーム差が出る）。絞ると細い(width_ap)。
+            spike_w0 = max(0.6, (0.003 * L + 0.3 * radius_src) * width_ap)
+            core_sigma = max(1.0, radius_src * 1.2)
+            Lpx = int(math.ceil(L * 1.3))  # 最長スパイク(len_jit max)も収まる ROI
+
+            cxs = cx * scl
+            cys = cy * scl
+            x0 = max(0, int(math.floor(cxs - Lpx)))
+            x1 = min(W, int(math.ceil(cxs + Lpx + 1)))
+            y0 = max(0, int(math.floor(cys - Lpx)))
+            y1 = min(H, int(math.ceil(cys + Lpx + 1)))
+            if x1 <= x0 or y1 <= y0:
+                continue
+
+            yy, xx = np.mgrid[y0:y1, x0:x1]
+            dx = xx.astype(np.float32) - cxs
+            dy = yy.astype(np.float32) - cys
+            r = np.sqrt(dx * dx + dy * dy) + np.float32(1e-3)
+            theta = np.arctan2(dy, dx)
+
+            # 羽根の個体差（決定論シード）：長さ・太さ・濃さ・微小角度をスパイクごとに大きく振る。
+            rng = np.random.default_rng(0x9E37 + idx)
+            ang_jit = rng.uniform(-0.04, 0.04, size=M).astype(np.float32)
+            len_jit = rng.uniform(0.45, 1.25, size=M).astype(np.float32)
+            wid_jit = rng.uniform(0.6, 1.6, size=M).astype(np.float32)
+            amp_jit = rng.uniform(0.4, 1.0, size=M).astype(np.float32)
+
+            # 各画素を「最も近いスパイク」に割り当て、その1本だけ評価する。M回ループを1パスに畳む
+            # （高速化）。スパイクは細く離れているので非最近傍の寄与は無視できる。
+            k = np.mod(np.round((theta - base_rot) / spacing).astype(np.int32), M)
+            a_k = base_rot + k.astype(np.float32) * spacing + ang_jit[k]
+            d_ang = theta - a_k
+            d_ang = np.arctan2(np.sin(d_ang), np.cos(d_ang))  # [-pi,pi]
+            perp = r * np.sin(d_ang)     # 直交距離 → 太さ（along に依存しない＝一定幅）
+            along = r * np.cos(d_ang)    # 光条方向（最近傍なので along>0）
+            Lm = np.maximum(1.5, L * len_jit[k])
+            wm = np.maximum(0.5, spike_w0 * wid_jit[k])
+            cross = np.exp(-(perp * perp) / (2.0 * wm * wm))
+            t = np.clip(along / Lm, 0.0, 1.0)
+            # 先端へ単調減衰（中心が明るい）。
+            prof = (1.0 - t) * (0.30 + 0.70 * np.exp(-along / (0.45 * Lm)))
+            ray = np.where((along > 0.0) & (along < Lm), cross * prof, np.float32(0.0)) * amp_jit[k]
+
+            # コアグロー（四角い光源ブロックを丸く隠し「線だけ浮く」のも防ぐ）。
+            core = np.exp(-(r * r) / (2.0 * core_sigma * core_sigma))
+
+            scalar = (ray + 0.9 * core) * inten
+
+            # 光条の色＝光源色。先端へ向け僅かに青く分散させる。
+            tip_tint = np.clip(src_tint * cool_bias, 0.0, 1.2).astype(np.float32)
+            rn = np.clip(r / max(L, 1.0), 0.0, 1.0)[..., np.newaxis]
+            tint = src_tint * (1.0 - rn) + tip_tint * rn
+            overlay[y0:y1, x0:x1] += scalar[..., np.newaxis] * tint
+
+        if scl < 1.0:
+            overlay = cv2.resize(overlay, (w, h), interpolation=cv2.INTER_LINEAR)
+
+        gain = np.float32(s * (0.7 + 0.3 * ap_raw))
+        out = img + overlay * gain
+        return out.astype(np.float32, copy=False)
+
     def make_diff(self, rgb, param, efconfig):
         switch = self._get_param(param, 'switch_lens_simulator')
         coat_label = self._get_param(param, 'coating_preset')
@@ -4550,6 +4717,10 @@ class LensSimulatorEffect(Effect):
         shaped = float(self._get_param(param, 'shaped_bokeh'))
         bokeh_shape = self._get_param(param, 'bokeh_shape')
         bokeh_rim = float(self._get_param(param, 'bokeh_rim'))
+        sunstar = float(self._get_param(param, 'sunstar_strength'))
+        sunstar_length = float(self._get_param(param, 'sunstar_length'))
+        sunstar_threshold = float(self._get_param(param, 'sunstar_threshold'))
+        aperture_blades = self._get_param(param, 'aperture_blades')
 
         coat_key = self._coating_label_to_key(coat_label)
         coat_on = coat_key is not None and coat_strength > 0
@@ -4557,6 +4728,7 @@ class LensSimulatorEffect(Effect):
         swirl_on = swirl > 1e-5
         fringe_requested = fringe > 1e-5
         shaped_on = shaped > 1e-5
+        sunstar_on = sunstar > 1e-5  # 輝度のみで動作（depth 不要）
         depth_aber_requested = (longitudinal > 1e-5 or spherical > 1e-5)
 
         # 軸上色収差(longitudinal)・球面収差(spherical)・ボケ色縁(fringe)は AI depth map を要求する。
@@ -4577,14 +4749,14 @@ class LensSimulatorEffect(Effect):
         aber_on = lateral_on or (depth_available and depth_aber_requested)
         fringe_on = fringe_requested and depth_available
 
-        if not switch or (not coat_on and not aber_on and not swirl_on and not fringe_on and not shaped_on):
+        if not switch or (not coat_on and not aber_on and not swirl_on and not fringe_on and not shaped_on and not sunstar_on):
             self.diff = None
             self.hash = None
             return self.diff
 
         # swirl の中心は disp_info（拡大/クロップ窓）に依存するため、変化時に再計算する。
         try:
-            disp_snapshot = tuple(params.get_disp_info(param)) if (swirl_on or shaped_on) else None
+            disp_snapshot = tuple(params.get_disp_info(param)) if (swirl_on or shaped_on or sunstar_on) else None
         except Exception:
             disp_snapshot = None
         param_hash = hash((
@@ -4592,6 +4764,7 @@ class LensSimulatorEffect(Effect):
             round(lateral, 4), round(longitudinal, 4), round(spherical, 4),
             round(focus_d, 4), round(aperture, 4), round(swirl, 4), round(fringe, 4),
             round(shaped, 4), str(bokeh_shape), round(bokeh_rim, 4),
+            round(sunstar, 4), round(sunstar_length, 4), round(sunstar_threshold, 4), str(aperture_blades),
             depth_available, getattr(efconfig, "upstream_hash", 0),
             round(float(getattr(efconfig, "resolution_scale", 1.0)), 4),
             disp_snapshot,
@@ -4668,6 +4841,20 @@ class LensSimulatorEffect(Effect):
             processed = self._swirl_bokeh(
                 np.ascontiguousarray(processed, dtype=np.float32),
                 dm, focus_d, swirl, res_scale, (cx, cy), radial_norm,
+            )
+
+        # サンスター（光条）はパイプライン最後。最終ハイライトの上に加算オーバーレイする。
+        # 長さ・太さは表示倍率 mag(=disp_info[4]) と元画像サイズ基準でシーン一定にする。
+        if sunstar_on:
+            try:
+                sun_mag = float(params.get_disp_info(param)[4])
+            except Exception:
+                sun_mag = 1.0
+            sun_orig = param.get('original_img_size', (processed.shape[1], processed.shape[0]))
+            processed = self._sunstar(
+                np.ascontiguousarray(processed, dtype=np.float32),
+                sunstar, sunstar_length, sunstar_threshold,
+                aperture_blades, aperture, sun_mag, sun_orig,
             )
 
         self.diff = processed.astype(np.float32, copy=False)
@@ -4786,6 +4973,521 @@ class SolidColorEffect(Effect):
                 self.diff = core.apply_solid_color(rgb, solid_color=(r, g, b), opacity=coao/100)
 
         return self.diff
+
+
+class LightRaysEffect(Effect):
+    """Fog/forest volumetric rays driven by point and line guides.
+
+    The heavy image math lives in ``cores.light_rays``.  This class only bridges
+    params, TCG guide conversion, and the optional preview editor.
+    """
+
+    _SLIDER_KEYS = (
+        'light_ray_intensity',
+        'light_ray_length',
+        'light_ray_decay',
+        'light_ray_width',
+        'light_ray_softness',
+        'light_ray_edge_bias',
+        'light_ray_spread',
+        'light_ray_count',
+        'light_ray_density',
+        'light_ray_variation',
+        'light_ray_fog',
+        'light_ray_occlusion',
+        'light_ray_seed',
+    )
+    _GUIDE_COLOR_KEYS = (
+        'light_ray_color_hue',
+        'light_ray_color_lum',
+        'light_ray_color_sat',
+    )
+    _GUIDE_PARAM_KEYS = _SLIDER_KEYS + _GUIDE_COLOR_KEYS
+    _PROJECTION_LENGTH_KEY = 'light_ray_projection_length'
+
+    def __init__(self, light_rays_callback=None, **kwargs):
+        super().__init__(**kwargs)
+        self.light_rays_canvas = None
+        self.light_rays_callback = light_rays_callback
+
+    @staticmethod
+    def _normalize_editor_type(editor_type):
+        return 'Point' if str(editor_type or '').strip().lower() == 'point' else 'Line'
+
+    @classmethod
+    def _editor_mode_values(cls, editor_type):
+        return ('Radial', 'Directional') if cls._normalize_editor_type(editor_type) == 'Point' else ('Parallel', 'Directional')
+
+    @classmethod
+    def _normalize_editor_mode(cls, editor_type, editor_mode):
+        values = cls._editor_mode_values(editor_type)
+        lowered = str(editor_mode or '').strip().lower()
+        for value in values:
+            if lowered == value.lower():
+                return value
+        return values[0]
+
+    @classmethod
+    def _sync_editor_mode_spinner(cls, widget, editor_type, editor_mode):
+        spinner = widget.ids.get("spinner_light_ray_editor_mode") if hasattr(widget, 'ids') else None
+        mode = cls._normalize_editor_mode(editor_type, editor_mode)
+        if spinner is not None:
+            spinner.values = list(cls._editor_mode_values(editor_type))
+            if hasattr(spinner, 'set_text'):
+                spinner.set_text(mode)
+            else:
+                spinner.text = mode
+        return mode
+
+    def _guide_params_from_param(self, param):
+        out = {}
+        for key in self._GUIDE_PARAM_KEYS:
+            try:
+                out[key] = float(self._get_param(param, key))
+            except Exception:
+                pass
+        return out
+
+    def _is_projected_radial_guide(self, guide):
+        if not isinstance(guide, dict):
+            return False
+        if str(guide.get('type', '')).lower() != 'point':
+            return False
+        if str(guide.get('mode', 'radial')).lower() != 'radial':
+            return False
+        p2 = guide.get('p2')
+        try:
+            float(p2[0])
+            float(p2[1])
+            return True
+        except Exception:
+            return False
+
+    def _projection_length_value(self, guide, param):
+        guide_params = guide.get('params') if isinstance(guide.get('params'), dict) else {}
+        for key in (self._PROJECTION_LENGTH_KEY, 'light_ray_length'):
+            if key in guide_params:
+                try:
+                    return float(guide_params[key])
+                except Exception:
+                    pass
+        return float(self._get_param(param, 'light_ray_length'))
+
+    def _ensure_projection_lengths(self, guides, param):
+        changed = False
+        for guide in guides or []:
+            if not self._is_projected_radial_guide(guide):
+                continue
+            guide_params = guide.get('params') if isinstance(guide.get('params'), dict) else {}
+            if self._PROJECTION_LENGTH_KEY not in guide_params:
+                guide_params = guide_params.copy()
+                guide_params[self._PROJECTION_LENGTH_KEY] = self._projection_length_value(guide, param)
+                guide['params'] = guide_params
+                changed = True
+        return changed
+
+    def _with_preserved_projection_length(self, guide, param, guide_params):
+        if self._is_projected_radial_guide(guide):
+            old_params = guide.get('params') if isinstance(guide.get('params'), dict) else {}
+            if self._PROJECTION_LENGTH_KEY in old_params:
+                guide_params[self._PROJECTION_LENGTH_KEY] = old_params[self._PROJECTION_LENGTH_KEY]
+            else:
+                guide_params[self._PROJECTION_LENGTH_KEY] = self._projection_length_value(guide, param)
+        return guide_params
+
+    @staticmethod
+    def _copy_light_ray_guides(guides):
+        out = []
+        for guide in guides or []:
+            if isinstance(guide, dict):
+                item = guide.copy()
+                if isinstance(guide.get('params'), dict):
+                    item['params'] = guide['params'].copy()
+                out.append(item)
+        return out
+
+    @staticmethod
+    def _selected_guide_index(param, guides):
+        if not guides:
+            return -1
+        try:
+            index = int(param.get('light_ray_selected', -1))
+        except Exception:
+            index = -1
+        if 0 <= index < len(guides):
+            return index
+        return 0
+
+    def _apply_active_params_to_guide_list(self, param, guides, *, update_mode=False):
+        target = self._selected_guide_index(param, guides)
+        if target < 0:
+            return False
+        guide = guides[target]
+        guide_params = self._with_preserved_projection_length(guide, param, self._guide_params_from_param(param))
+        changed = guide.get('params') != guide_params
+        guide['params'] = guide_params
+        if update_mode:
+            gtype = str(guide.get('type', '')).lower()
+            editor_type = self._normalize_editor_type(param.get('light_ray_editor_type', gtype))
+            editor_mode = self._normalize_editor_mode(editor_type, param.get('light_ray_editor_mode', guide.get('mode', '')))
+            if gtype == editor_type.lower():
+                new_mode = editor_mode.lower()
+                if guide.get('mode') != new_mode:
+                    guide['mode'] = new_mode
+                    changed = True
+                if gtype == 'point' and new_mode == 'directional' and not isinstance(guide.get('p2'), (tuple, list)):
+                    p = guide.get('p')
+                    try:
+                        guide['p2'] = (float(p[0]) + 0.18, float(p[1]))
+                        changed = True
+                    except Exception:
+                        pass
+        param['light_ray_selected'] = target
+        return changed
+
+    def _guide_value(self, guide, param, key):
+        guide_params = guide.get('params') if isinstance(guide, dict) else None
+        if isinstance(guide_params, dict) and key in guide_params:
+            return guide_params[key]
+        return self._get_param(param, key)
+
+    def _guide_color_rgb(self, guide, param):
+        import colorsys
+        h = float(self._guide_value(guide, param, 'light_ray_color_hue')) / 360.0
+        l = float(self._guide_value(guide, param, 'light_ray_color_lum')) / 100.0
+        s = float(self._guide_value(guide, param, 'light_ray_color_sat')) / 100.0
+        return colorsys.hls_to_rgb(h, l, s)
+
+    def _apply_guide_params_to_widget(self, widget, guide, param):
+        if not isinstance(guide, dict):
+            return
+        editor_type = self._normalize_editor_type(guide.get('type', self._get_param(param, 'light_ray_editor_type')))
+        editor_mode = self._normalize_editor_mode(editor_type, guide.get('mode', self._get_param(param, 'light_ray_editor_mode')))
+        type_spinner = widget.ids.get("spinner_light_ray_editor_type")
+        if type_spinner is not None:
+            if hasattr(type_spinner, 'set_text'):
+                type_spinner.set_text(editor_type)
+            else:
+                type_spinner.text = editor_type
+        self._sync_editor_mode_spinner(widget, editor_type, editor_mode)
+        guide_params = guide.get('params') if isinstance(guide.get('params'), dict) else {}
+        for key in self._SLIDER_KEYS:
+            slider = widget.ids.get("slider_" + key)
+            if slider is not None:
+                slider.set_slider_value(guide_params.get(key, self._get_param(param, key)))
+        cp = widget.ids.get("cp_light_ray_color")
+        if cp is not None:
+            h = guide_params.get('light_ray_color_hue', self._get_param(param, 'light_ray_color_hue'))
+            l = guide_params.get('light_ray_color_lum', self._get_param(param, 'light_ray_color_lum'))
+            s = guide_params.get('light_ray_color_sat', self._get_param(param, 'light_ray_color_sat'))
+            cp.ids['slider_hue'].set_slider_value(h)
+            cp.ids['slider_lum'].set_slider_value(l)
+            cp.ids['slider_sat'].set_slider_value(s)
+            cp.set_slider_value((h, l, s))
+
+    def sync_selected_guide_to_widget(self, widget, param):
+        canvas = self.light_rays_canvas
+        if canvas is None or not hasattr(canvas, 'selected_index'):
+            return False
+        index = canvas.selected_index()
+        guides = self._get_param(param, 'light_ray_guides') or []
+        if index < 0 or index >= len(guides):
+            return False
+        self._apply_guide_params_to_widget(widget, guides[index], param)
+        return True
+
+    def get_param_dict(self, param):
+        return {
+            'switch_light_rays': True,
+            'light_ray_guides': [],
+            'light_ray_selected': -1,
+            'light_ray_editor_type': 'Line',
+            'light_ray_editor_mode': 'Parallel',
+            'light_ray_intensity': 60,
+            'light_ray_length': 30,
+            'light_ray_decay': 50,
+            'light_ray_width': 65,
+            'light_ray_softness': 45,
+            'light_ray_edge_bias': 0,
+            'light_ray_spread': 35,
+            'light_ray_count': 8,
+            'light_ray_density': 10,
+            'light_ray_variation': 45,
+            'light_ray_fog': 25,
+            'light_ray_occlusion': 30,
+            'light_ray_color_hue': 42,
+            'light_ray_color_lum': 58,
+            'light_ray_color_sat': 45,
+            'light_ray_seed': 0,
+        }
+
+    def set2widget(self, widget, param):
+        if "switch_light_rays" not in widget.ids:
+            return
+        widget.ids["switch_light_rays"].active = self._get_param(param, 'switch_light_rays')
+        editor_type = self._normalize_editor_type(self._get_param(param, 'light_ray_editor_type'))
+        widget.ids["spinner_light_ray_editor_type"].set_text(editor_type)
+        self._sync_editor_mode_spinner(widget, editor_type, self._get_param(param, 'light_ray_editor_mode'))
+        for key in self._SLIDER_KEYS:
+            slider = widget.ids.get("slider_" + key)
+            if slider is not None:
+                slider.set_slider_value(self._get_param(param, key))
+        h = self._get_param(param, 'light_ray_color_hue')
+        l = self._get_param(param, 'light_ray_color_lum')
+        s = self._get_param(param, 'light_ray_color_sat')
+        cp = widget.ids.get("cp_light_ray_color")
+        if cp is not None:
+            cp.ids['slider_hue'].set_slider_value(h)
+            cp.ids['slider_lum'].set_slider_value(l)
+            cp.ids['slider_sat'].set_slider_value(s)
+            cp.set_slider_value((h, l, s))
+        self.after_set2widget(widget, param)
+
+    def set2param(self, param, widget):
+        if "switch_light_rays" not in widget.ids:
+            return
+        param['switch_light_rays'] = widget.ids["switch_light_rays"].active
+        editor_type = self._normalize_editor_type(widget.ids["spinner_light_ray_editor_type"].text)
+        editor_mode = self._sync_editor_mode_spinner(widget, editor_type, widget.ids["spinner_light_ray_editor_mode"].text)
+        param['light_ray_editor_type'] = editor_type
+        param['light_ray_editor_mode'] = editor_mode
+        for key in self._SLIDER_KEYS:
+            slider = widget.ids.get("slider_" + key)
+            if slider is not None:
+                param[key] = slider.value
+        cp = widget.ids.get("cp_light_ray_color")
+        if cp is not None:
+            param['light_ray_color_hue'] = cp.ids['slider_hue'].value
+            param['light_ray_color_lum'] = cp.ids['slider_lum'].value
+            param['light_ray_color_sat'] = cp.ids['slider_sat'].value
+        self.after_set2param(param, widget)
+
+    def after_set2widget(self, widget, param):
+        if self.light_rays_canvas is not None:
+            self.light_rays_canvas.set_creation_params(self._guide_params_from_param(param))
+            self.light_rays_canvas.set_guides(self._get_param(param, 'light_ray_guides'))
+            self.light_rays_canvas.select_index(self._selected_guide_index(param, self.light_rays_canvas.guides))
+            editor_type = self._normalize_editor_type(self._get_param(param, 'light_ray_editor_type'))
+            self.light_rays_canvas.set_creation(
+                editor_type,
+                self._normalize_editor_mode(editor_type, self._get_param(param, 'light_ray_editor_mode')),
+            )
+
+    def after_set2param(self, param, widget):
+        if self.light_rays_canvas is not None:
+            editor_type = self._normalize_editor_type(param.get('light_ray_editor_type', 'Line'))
+            changed = self.light_rays_canvas.set_creation(
+                editor_type,
+                self._normalize_editor_mode(editor_type, param.get('light_ray_editor_mode', 'Parallel')),
+                apply_to_selected=True,
+            )
+            if self.light_rays_canvas.set_active_params(self._guide_params_from_param(param)):
+                changed = True
+            guides = self.light_rays_canvas.get_guides()
+            if self._ensure_projection_lengths(guides, param):
+                changed = True
+            if changed:
+                param['light_ray_guides'] = guides
+            selected = self.light_rays_canvas.selected_index()
+            param['light_ray_selected'] = selected
+        else:
+            guides = self._copy_light_ray_guides(self._get_param(param, 'light_ray_guides') or [])
+            if self._apply_active_params_to_guide_list(param, guides, update_mode=True):
+                param['light_ray_guides'] = guides
+
+    def _view_param(self, param, widget=None, efconfig=None):
+        base = None
+        if widget is not None:
+            base = getattr(widget, 'primary_param', None)
+        view = base.copy() if isinstance(base, dict) and base.get('original_img_size') is not None else param.copy()
+        if view.get('original_img_size') is None:
+            view['original_img_size'] = param.get('original_img_size')
+        disp_info = getattr(efconfig, 'disp_info', None) if efconfig is not None else None
+        if disp_info is not None and view.get('original_img_size') is not None:
+            params.set_disp_info(view, disp_info)
+        return view
+
+    def _open_light_rays_canvas(self, param, widget):
+        if self.light_rays_canvas is None:
+            from widgets.light_rays_canvas import LightRaysCanvas
+            self.light_rays_canvas = LightRaysCanvas(
+                guides=self._get_param(param, 'light_ray_guides'),
+                callback=self._light_rays_callback,
+            )
+            widget.ids["preview_widget"].add_widget(self.light_rays_canvas, index=0)
+        self.light_rays_canvas.set_primary_param(self._view_param(param, widget=widget))
+        self.light_rays_canvas.set_guides(self._get_param(param, 'light_ray_guides'))
+        self.light_rays_canvas.select_index(self._selected_guide_index(param, self.light_rays_canvas.guides))
+        self.light_rays_canvas.set_creation_params(self._guide_params_from_param(param))
+        self.light_rays_canvas.set_creation(
+            self._get_param(param, 'light_ray_editor_type'),
+            self._get_param(param, 'light_ray_editor_mode'),
+        )
+
+    def _close_light_rays_canvas(self, param, widget):
+        if self.light_rays_canvas is not None:
+            pw = widget.ids.get("preview_widget")
+            if pw is not None:
+                pw.remove_widget(self.light_rays_canvas)
+            self.light_rays_canvas = None
+
+    def _light_rays_callback(self, proc, widget):
+        if self.light_rays_callback is not None:
+            self.light_rays_callback(proc, widget)
+
+    @staticmethod
+    def _guide_hash(guides):
+        items = []
+        for guide in guides or []:
+            if not isinstance(guide, dict):
+                continue
+            item = [str(guide.get('type', '')), str(guide.get('mode', ''))]
+            for key in ('p', 'p1', 'p2'):
+                p = guide.get(key)
+                try:
+                    item.append((round(float(p[0]), 6), round(float(p[1]), 6)))
+                except Exception:
+                    item.append(None)
+            if 'angle' in guide:
+                item.append(round(float(guide.get('angle')), 4))
+            guide_params = guide.get('params')
+            if isinstance(guide_params, dict):
+                item.append(tuple(sorted((str(k), round(float(v), 4)) for k, v in guide_params.items())))
+            items.append(tuple(item))
+        return tuple(items)
+
+    def _guides_to_pixels(self, guides, work, view):
+        tcg_info = params.param_to_tcg_info(view)
+        converted = []
+        for guide in guides or []:
+            if not isinstance(guide, dict):
+                continue
+            gtype = str(guide.get('type', '')).lower()
+            mode = str(guide.get('mode', '')).lower()
+            out = {'type': gtype, 'mode': mode}
+            try:
+                if gtype == 'line':
+                    out['p1'] = params.tcg_to_ref_image(*guide['p1'], work, tcg_info, True, True)
+                    out['p2'] = params.tcg_to_ref_image(*guide['p2'], work, tcg_info, True, True)
+                elif gtype == 'point':
+                    out['p'] = params.tcg_to_ref_image(*guide['p'], work, tcg_info, True, True)
+                    if guide.get('p2') is not None:
+                        out['p2'] = params.tcg_to_ref_image(*guide['p2'], work, tcg_info, True, True)
+                    if 'angle' in guide:
+                        out['angle'] = guide['angle']
+                else:
+                    continue
+                if isinstance(guide.get('params'), dict):
+                    out['params'] = guide['params'].copy()
+                    if self._PROJECTION_LENGTH_KEY in guide['params']:
+                        out['projection_length'] = guide['params'][self._PROJECTION_LENGTH_KEY]
+            except Exception:
+                continue
+            converted.append(out)
+        return converted
+
+    def _scene_size_px(self, work, view):
+        try:
+            disp = params.get_disp_info(view)
+            mag = float(disp[4])
+            original = view.get('original_img_size')
+            if original is not None:
+                width = float(original[0]) * mag
+                height = float(original[1]) * mag
+            else:
+                width = float(disp[2]) * mag
+                height = float(disp[3]) * mag
+            if width > 0.0 and height > 0.0:
+                return (width, height)
+        except Exception:
+            pass
+        return (float(work.shape[1]), float(work.shape[0]))
+
+    def _color_rgb(self, param):
+        import colorsys
+        h = self._get_param(param, 'light_ray_color_hue') / 360.0
+        l = self._get_param(param, 'light_ray_color_lum') / 100.0
+        s = self._get_param(param, 'light_ray_color_sat') / 100.0
+        return colorsys.hls_to_rgb(h, l, s)
+
+    def make_diff(self, rgb, param, efconfig):
+        if not self._get_param(param, 'switch_light_rays'):
+            self.diff = None
+            self.hash = None
+            return self.diff
+        guides = self._get_param(param, 'light_ray_guides') or []
+        if not guides:
+            self.diff = None
+            self.hash = None
+            return self.diff
+        self._ensure_projection_lengths(guides, param)
+
+        view = self._view_param(param, efconfig=efconfig)
+        if self.light_rays_canvas is not None and hasattr(self.light_rays_canvas, 'set_primary_param'):
+            self.light_rays_canvas.set_primary_param(view)
+
+        try:
+            disp_snapshot = tuple(params.get_disp_info(view))
+        except Exception:
+            disp_snapshot = None
+        values = tuple(round(float(self._get_param(param, key)), 4) for key in self._SLIDER_KEYS)
+        color_values = (
+            round(float(self._get_param(param, 'light_ray_color_hue')), 4),
+            round(float(self._get_param(param, 'light_ray_color_lum')), 4),
+            round(float(self._get_param(param, 'light_ray_color_sat')), 4),
+        )
+        param_hash = hash((
+            self._guide_hash(guides),
+            values,
+            color_values,
+            disp_snapshot,
+            getattr(efconfig, 'upstream_hash', 0),
+            round(float(getattr(efconfig, 'resolution_scale', 1.0)), 4),
+        ))
+        if self.hash == param_hash:
+            return self.diff
+        self.hash = param_hash
+
+        work = core.type_convert(rgb, np.ndarray)
+        work = np.asarray(work, dtype=np.float32)
+        pixel_guides = self._guides_to_pixels(guides, work, view)
+        if not pixel_guides:
+            self.diff = None
+            self.hash = None
+            return self.diff
+
+        result = work.copy()
+        rendered = False
+        scene_size_px = self._scene_size_px(work, view)
+        for guide in pixel_guides:
+            intensity = float(self._guide_value(guide, param, 'light_ray_intensity'))
+            if intensity <= 0.0:
+                continue
+            rendered_guide = light_rays.apply_light_rays(
+                work,
+                [guide],
+                intensity=intensity,
+                length=self._guide_value(guide, param, 'light_ray_length'),
+                decay=self._guide_value(guide, param, 'light_ray_decay'),
+                width=self._guide_value(guide, param, 'light_ray_width'),
+                softness=self._guide_value(guide, param, 'light_ray_softness'),
+                edge_bias=self._guide_value(guide, param, 'light_ray_edge_bias'),
+                spread=self._guide_value(guide, param, 'light_ray_spread'),
+                count=self._guide_value(guide, param, 'light_ray_count'),
+                density=self._guide_value(guide, param, 'light_ray_density'),
+                variation=self._guide_value(guide, param, 'light_ray_variation'),
+                fog=self._guide_value(guide, param, 'light_ray_fog'),
+                occlusion=self._guide_value(guide, param, 'light_ray_occlusion'),
+                color_rgb=self._guide_color_rgb(guide, param),
+                seed=int(round(float(self._guide_value(guide, param, 'light_ray_seed')))),
+                resolution_scale=float(getattr(efconfig, 'resolution_scale', 1.0)),
+                scene_size_px=scene_size_px,
+            )
+            result += rendered_guide - work
+            rendered = True
+        self.diff = result if rendered else None
+        return self.diff
+
 
 class UnsharpMaskEffect(Effect):
     param_bindings = (
@@ -5371,8 +6073,42 @@ class LensGhostEffect(Effect):
 
     def get_param_dict(self, param):
         d = super().get_param_dict(param)
-        d['lens_ghost_coords'] = []   # 光源CP(正規化TCG)の配列
+        # 光源ごとに独立パラメータ: {'pos': (cx,cy 正規化TCG), 'params': {16スライダーキー}}
+        d['lens_ghost_lights'] = []
+        d['lens_ghost_selected'] = -1   # 選択中の光源 index(スライダーに反映)
+        d['lens_ghost_coords'] = []     # 旧形式(移行用に残置)
         return d
+
+    def _lights(self, param):
+        """光源リストを取得(旧 lens_ghost_coords からの移行込み)。各要素 {'pos','params'}。"""
+        lights = param.get('lens_ghost_lights')
+        if not isinstance(lights, list):
+            lights = []
+            param['lens_ghost_lights'] = lights
+        if not lights:
+            coords = param.get('lens_ghost_coords')
+            if coords:
+                base = {k: self._get_param(param, k) for k in self._SLIDER_KEYS}
+                for c in coords:
+                    lights.append({'pos': tuple(c), 'params': dict(base)})
+                param['lens_ghost_selected'] = len(lights) - 1
+                param['lens_ghost_coords'] = []
+        return lights
+
+    def light_params(self, param, idx):
+        """指定 index の光源 params(無ければ None)。"""
+        lights = self._lights(param)
+        if 0 <= idx < len(lights):
+            return lights[idx].get('params')
+        return None
+
+    def set2param(self, param, widget):
+        super().set2param(param, widget)
+        # flat スライダーキー = 選択中光源のバッファ。編集を選択光源へ反映。
+        sel = param.get('lens_ghost_selected', -1)
+        lights = self._lights(param)
+        if 0 <= sel < len(lights):
+            lights[sel]['params'] = {k: param.get(k) for k in self._SLIDER_KEYS}
 
     def target_level(self, param):
         return self.LEVEL_BY_POSITION.get(self._get_param(param, 'lens_ghost_position'), 2)
@@ -5380,7 +6116,8 @@ class LensGhostEffect(Effect):
     # 編集中の canvas へ param の CP を復元
     def after_set2widget(self, widget, param):
         if self.ghost_canvas is not None and hasattr(self.ghost_canvas, 'set_coords'):
-            self.ghost_canvas.set_coords(self._get_param(param, 'lens_ghost_coords'))
+            self.ghost_canvas.set_coords([L['pos'] for L in self._lights(param)])
+            self.ghost_canvas.selected = param.get('lens_ghost_selected', -1)
 
     def _view_param(self, param, widget=None, efconfig=None):
         """TCG 変換用の座標コンテキスト。disp_info はライブビュー(efconfig/primary)から取る(liquify と同方針)。"""
@@ -5398,15 +6135,17 @@ class LensGhostEffect(Effect):
     # --- canvas ライフサイクル(main._sync_effect_editors から呼ぶ。DistortionEffect を範に) ---
     def _open_ghost_canvas(self, param, widget):
         # param は「保存先」(mask2時は Composit param)。canvas はこの param の CP/tcg_info を反映する。
+        positions = [L['pos'] for L in self._lights(param)]
         if self.ghost_canvas is None:
             from widgets.ghost_canvas import LensGhostCanvas
             self.ghost_canvas = LensGhostCanvas(
-                coords=self._get_param(param, 'lens_ghost_coords'),
+                coords=positions,
                 callback=self._ghost_callback,
             )
             widget.ids["preview_widget"].add_widget(self.ghost_canvas, index=0)
         self.ghost_canvas.set_primary_param(self._view_param(param, widget=widget))
-        self.ghost_canvas.set_coords(self._get_param(param, 'lens_ghost_coords'))
+        self.ghost_canvas.set_coords(positions)
+        self.ghost_canvas.selected = param.get('lens_ghost_selected', -1)
 
     def _close_ghost_canvas(self, param, widget):
         if self.ghost_canvas is not None:
@@ -5432,16 +6171,17 @@ class LensGhostEffect(Effect):
             self.ghost_canvas.set_primary_param(view)
 
         enabled = self._get_param(param, 'lens_ghost_enabled')
-        coords_tcg = self._get_param(param, 'lens_ghost_coords') or []
-        if not enabled or not coords_tcg:
+        lights = self._lights(param)
+        if not enabled or not lights:
             return None
 
         res = float(getattr(efconfig, 'resolution_scale', 1.0))
-        sliders = {k: self._get_param(param, k) for k in self._SLIDER_KEYS}
         param_hash = hash((
             'lens_ghost', target,
-            tuple((round(float(cx), 6), round(float(cy), 6)) for cx, cy in coords_tcg),
-            tuple(round(float(sliders[k]), 6) for k in self._SLIDER_KEYS),
+            tuple((
+                round(float(L['pos'][0]), 6), round(float(L['pos'][1]), 6),
+                tuple(round(float((L.get('params') or {}).get(k, 0.0)), 6) for k in self._SLIDER_KEYS),
+            ) for L in lights),
             round(res, 4),
             params.get_disp_info(view),   # zoom/pan/Ge でビューが変われば再描画(表示位置追従)
             getattr(efconfig, 'upstream_hash', 0),
@@ -5452,33 +6192,33 @@ class LensGhostEffect(Effect):
 
         work = core.type_convert(rgb, np.ndarray)
         work = np.asarray(work, dtype=np.float32).copy()
-        h, w = work.shape[:2]
 
-        # 正規化TCG の CP を作業画像ピクセルへ
         tcg_info = params.param_to_tcg_info(view)
-        px_coords = []
-        for cx, cy in coords_tcg:
-            # Liquify(replay_recorded)と同じ変換。work は縮小プレビュー解像度なので
-            # apply_ref_img_divide=True が必須。これが False だと拡大/Ge時に位置がずれる。
-            x, y = params.tcg_to_ref_image(cx, cy, work, tcg_info, True, True)
-            px_coords.append((int(round(x)), int(round(y))))
-
-        # レンズ光学中心(=画像中心 TCG(0,0))を work 座標へ。ゴーストは光源をこの中心で
-        # 反転/オフセットするため、拡大表示時に work の (w/2,h/2) を使うと中心がズレる。
+        # レンズ光学中心(=画像中心 TCG(0,0))を work 座標へ。拡大時に work の (w/2,h/2) ではズレる。
         lens_cx, lens_cy = params.tcg_to_ref_image(0.0, 0.0, work, tcg_info, True, True)
 
-        # 整数系を int 化、ピクセル系は res_scale 倍(プレビュー/書き出し一致)
-        for k in self._INT_KEYS:
-            sliders[k] = int(round(sliders[k]))
-        sliders['base_radius'] = max(1, int(round(sliders['base_radius'] * res)))
-        sliders['blur_sigma'] = float(sliders['blur_sigma']) * res
-
         from cores.lens_ghost import create_ghost
-        self.diff = create_ghost(work, px_coords, lens_center=(lens_cx, lens_cy), **sliders)
+        result = work
+        for L in lights:
+            cx, cy = L['pos']
+            # Liquify(replay_recorded)と同じ変換(apply_ref_img_divide=True)。拡大/Ge追従。
+            x, y = params.tcg_to_ref_image(cx, cy, work, tcg_info, True, True)
+            sl = dict(L.get('params') or {})
+            for k in self._SLIDER_KEYS:
+                if k not in sl:
+                    sl[k] = self._get_param(param, k)   # 欠損キーはデフォルト
+            for k in self._INT_KEYS:
+                sl[k] = int(round(sl[k]))
+            sl['base_radius'] = max(1, int(round(sl['base_radius'] * res)))
+            sl['blur_sigma'] = float(sl['blur_sigma']) * res
+            # 光源ごとに独立パラメータでレンダーし、走行結果へ合成。
+            result = create_ghost(result, [(int(round(x)), int(round(y)))],
+                                  lens_center=(lens_cx, lens_cy), **sl)
+        self.diff = result
         return self.diff
 
 
-def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None, view_param_provider=None, ghost_callback=None):
+def create_effects(lens_modifier_callback=None, geometry_callback=None, distortion_callback=None, crop_callback=None, ai_job_manager=None, view_param_provider=None, ghost_callback=None, light_rays_callback=None):
     effects = [{}, {}, {}, {}, {}]
 
     lv0 = effects[0]
@@ -5545,6 +6285,7 @@ def create_effects(lens_modifier_callback=None, geometry_callback=None, distorti
 
     lv2['look_lut'] = LUTEffect(stage="look")
     lv2['lens_simulator'] = LensSimulatorEffect()
+    lv2['light_rays'] = LightRaysEffect(light_rays_callback=light_rays_callback)
     lv2['film_emulation'] = FilmSimulationEffect()
     lv2['solid_color'] = SolidColorEffect()
     lv2['orton'] = OrtonEffect()

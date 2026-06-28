@@ -31,6 +31,8 @@ class LensGhostCanvas(KVFloatLayout):
         self.callback = callback
         self.selected = -1
         self._dragging = False
+        self._moved = False      # ドラッグで実際に動いたか(履歴は変化時のみ)
+        self._del_index = -1     # 直近の削除 index(ハンドラへ通知)
         self._last_apply = 0.0   # ドラッグ中の再描画スロットル用(秒)
         self.tcg_info = params.param_to_tcg_info({})
         # マーカー再描画はメインスレッドで(set_primary_param は描画スレッドから呼ばれ得る)。
@@ -85,44 +87,55 @@ class LensGhostCanvas(KVFloatLayout):
         right = getattr(touch, 'button', 'left') == 'right'
         idx = self._nearest(touch.x, touch.y)
         if right:
+            # 右クリックで CP 削除(履歴あり)。
             if idx is not None:
                 self._emit('start')
+                self._del_index = idx
                 del self.coords[idx]
                 self.selected = -1
                 self._refresh_markers()
-                self._emit('apply')
+                self._emit('delete')
                 self._emit('end')
         elif idx is not None:
+            # 既存CP選択(+ドラッグ開始)。選択はそのCPのパラメータをスライダーへ反映するだけ(履歴なし)。
             self.selected = idx
             self._dragging = True
+            self._moved = False
             self._refresh_markers()
-            self._emit('start')
+            self._emit('select')
         else:
+            # 新規CP追加(現在のスライダー値を引き継ぐ。履歴あり)。
             self._emit('start')
             self.coords.append(self._window_to_tcg(touch.x, touch.y))
             self.selected = len(self.coords) - 1
             self._dragging = True
+            self._moved = True   # 追加は変更
             self._refresh_markers()
-            self._emit('apply')
+            self._emit('add')
         return True
 
     def on_touch_move(self, touch):
         if self._dragging and 0 <= self.selected < len(self.coords):
+            if not self._moved:
+                # 選択CPのドラッグ開始時点で履歴を開始(単なる選択クリックでは記録しない)。
+                self._moved = True
+                self._emit('start')
             self.coords[self.selected] = self._window_to_tcg(touch.x, touch.y)
-            # マーカー(CP位置)は毎フレーム即追従。重いゴースト再描画(apply)は
+            # マーカー(CP位置)は毎フレーム即追従。重いゴースト再描画(move)は
             # スロットルして溜め込まない。最終位置は on_touch_up の 'end' で必ず反映。
             self._refresh_markers()
             now = time.monotonic()
             if now - self._last_apply >= 0.05:
                 self._last_apply = now
-                self._emit('apply')
+                self._emit('move')
             return True
         return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
         if self._dragging:
             self._dragging = False
-            self._emit('end')
+            if self._moved:   # 実際に追加/移動した時だけ確定(履歴 end)。
+                self._emit('end')
             return True
         return super().on_touch_up(touch)
 

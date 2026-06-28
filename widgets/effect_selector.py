@@ -59,6 +59,7 @@ _SWITCH_LABELS = {
     "switch_fringe_removal": "Fringe Removal",
     "switch_film_simulation": "Film Process",
     "switch_lens_simulator": "Lens Simulator",
+    "switch_light_rays": "Light Rays",
     "switch_filters": "Filters",
     "switch_orton_effect": "Orton",
     "switch_glow_effect": "Glow",
@@ -143,6 +144,7 @@ _SWITCH_SELECTION_SECTIONS = (
         (
             "switch_film_simulation",
             "switch_lens_simulator",
+            "switch_light_rays",
             "switch_filters",
             "switch_orton_effect",
             "switch_glow_effect",
