@@ -916,7 +916,7 @@
 
                                 StableTabbedPanel:
                                     size_hint_y: None
-                                    ref_height: 22*3+20+22+20+12
+                                    ref_height: 22*4+20+22+20+12
                                     ref_tab_width: 25
                                     ref_tab_height: 25
                                     do_default_tab: False
@@ -957,6 +957,20 @@
                                                     on_press: root.begin_history_effect_ctrl(2, 'hls')
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
+                                                id: slider_hls_red_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
                                                 id: slider_hls_red_lum
                                                 text: "Luminance"
@@ -1015,6 +1029,20 @@
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
+                                                id: slider_hls_orange_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
                                                 id: slider_hls_orange_lum
                                                 text: "Luminance"
                                                 min: -100
@@ -1071,6 +1099,20 @@
                                                     on_press: root.begin_history_effect_ctrl(2, 'hls')
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
+                                                id: slider_hls_yellow_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
                                                 id: slider_hls_yellow_lum
                                                 text: "Luminance"
@@ -1129,6 +1171,20 @@
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
+                                                id: slider_hls_green_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
                                                 id: slider_hls_green_lum
                                                 text: "Luminance"
                                                 min: -100
@@ -1185,6 +1241,20 @@
                                                     on_press: root.begin_history_effect_ctrl(2, 'hls')
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
+                                                id: slider_hls_cyan_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
                                                 id: slider_hls_cyan_lum
                                                 text: "Luminance"
@@ -1243,6 +1313,20 @@
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
+                                                id: slider_hls_blue_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
                                                 id: slider_hls_blue_lum
                                                 text: "Luminance"
                                                 min: -100
@@ -1299,6 +1383,20 @@
                                                     on_press: root.begin_history_effect_ctrl(2, 'hls')
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
+                                                id: slider_hls_purple_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
                                                 id: slider_hls_purple_lum
                                                 text: "Luminance"
@@ -1357,6 +1455,20 @@
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
+                                                id: slider_hls_magenta_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
                                                 id: slider_hls_magenta_lum
                                                 text: "Luminance"
                                                 min: -100
@@ -1413,6 +1525,20 @@
                                                     on_press: root.begin_history_effect_ctrl(2, 'hls')
                                                     on_active: root.apply_effects_lv(2, 'hls')
                                                     on_release: root.end_history_effect_ctrl(2, 'hls')
+                                            ParamSlider:
+                                                id: slider_hls_skin_hue_range
+                                                text: "Hue Range"
+                                                min: 0
+                                                max: 200
+                                                value: 100
+                                                step: 1
+                                                slider_values: [100, 100]
+                                                allow_overlap: True
+                                                multi_value_edit_mode: "active"
+                                                bar_show_active_overlay: False
+                                                on_slider: root.apply_effects_lv(2, 'hls')
+                                                on_before_edit: root.begin_history_effect_ctrl(2, 'hls')
+                                                on_after_edit: root.end_history_effect_ctrl(2, 'hls')
                                             ParamSlider:
                                                 id: slider_hls_skin_lum
                                                 text: "Luminance"

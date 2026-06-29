@@ -11,6 +11,7 @@ __all__ = [
     "color_separation_adapter",
     "film_grain_adapter",
     "cross_filter_adapter",
+    "dehaze_adapter",
     "image_transform_adapter",
     "local_contrast_adapter",
     "colour_functions_adapter",

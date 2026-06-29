@@ -25,6 +25,7 @@ from cores.distortion_correction import (
 )
 from effect_backends import cross_filter_adapter as cross_filter
 from effect_backends import color_separation_adapter as color_separation
+from effect_backends import dehaze_adapter
 from effect_backends import film_grain_adapter as film_grain
 from effect_backends import image_transform_adapter
 from effect_backends import local_contrast_adapter as local_contrast
@@ -3124,7 +3125,7 @@ class DehazeEffect(Effect):
                     de = de / 400 # 効果を1/4に
                 else:
                     de = de / 100
-                self.diff = core.dehaze_image(rgb, de)
+                self.diff = dehaze_adapter.dehaze_image(rgb, de)
 
         return self.diff
 
@@ -3181,6 +3182,9 @@ class HLSEffect(Effect):
     HLS_COLORS = ("red", "skin", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta")
     FULL_RANGE_HUE_STEP = 0.1
     LOCAL_RANGE_HUE_STEP = 0.01
+    HUE_RANGE_DEFAULT = (100.0, 100.0)
+    HUE_RANGE_MIN = 0.0
+    HUE_RANGE_MAX = 200.0
 
     @staticmethod
     def _circular_delta(target_hue, source_hue):
@@ -3214,6 +3218,43 @@ class HLSEffect(Effect):
         })
         slider.set_slider_range(min_hue, max_hue, step)
 
+    @classmethod
+    def _normalize_hue_range(cls, value):
+        try:
+            left, right = value[0], value[1]
+        except (TypeError, IndexError):
+            left, right = cls.HUE_RANGE_DEFAULT
+        left = min(cls.HUE_RANGE_MAX, max(cls.HUE_RANGE_MIN, float(left)))
+        right = min(cls.HUE_RANGE_MAX, max(cls.HUE_RANGE_MIN, float(right)))
+        return left, right
+
+    @staticmethod
+    def _scale_hue_range_pair(value, left_scale, right_scale):
+        if np.isscalar(value):
+            left_value = right_value = float(value)
+        else:
+            left_value, right_value = float(value[0]), float(value[1])
+        return [left_value * left_scale, right_value * right_scale]
+
+    @classmethod
+    def _setting_with_hue_range(cls, setting, hue_range):
+        left, right = cls._normalize_hue_range(hue_range)
+        left_scale = left / 100.0
+        right_scale = right / 100.0
+        scaled = setting.copy()
+        scaled["width"] = cls._scale_hue_range_pair(setting["width"], left_scale, right_scale)
+        scaled["fade_width"] = cls._scale_hue_range_pair(setting["fade_width"], left_scale, right_scale)
+        return scaled
+
+    @staticmethod
+    def _slider_values(slider_widget):
+        slider = slider_widget.ids.get("slider") if hasattr(slider_widget, "ids") else None
+        values = list(getattr(slider, "values", []) or [])
+        if len(values) >= 2:
+            return values[0], values[1]
+        value = getattr(slider_widget, "value", 100)
+        return value, value
+
     def get_param_dict(self, param, subname=None):
         param_dict = {
             "switch_color_mixer": True,
@@ -3224,6 +3265,7 @@ class HLSEffect(Effect):
             param_dict[f"hls_{color_name}_lum"] = 0
             param_dict[f"hls_{color_name}_sat"] = 0
             param_dict[f"hls_{color_name}_hue_full_range"] = False
+            param_dict[f"hls_{color_name}_hue_range"] = list(self.HUE_RANGE_DEFAULT)
         if subname in self.HLS_COLORS:
             return {
                 key: param_dict[key]
@@ -3233,6 +3275,7 @@ class HLSEffect(Effect):
                     f"hls_{subname}_lum",
                     f"hls_{subname}_sat",
                     f"hls_{subname}_hue_full_range",
+                    f"hls_{subname}_hue_range",
                 )
             }
         return param_dict
@@ -3245,6 +3288,9 @@ class HLSEffect(Effect):
             widget.ids[f"checkbox_hls_{color_name}_hue_full_range"].active = full_range
             widget.ids[f"slider_hls_{color_name}_hue"].set_slider_value(self._get_param(param, f"hls_{color_name}_hue"))
             self._set_hue_slider_range(widget, color_name, full_range)
+            widget.ids[f"slider_hls_{color_name}_hue_range"].set_slider_value(
+                list(self._normalize_hue_range(self._get_param(param, f"hls_{color_name}_hue_range")))
+            )
             widget.ids[f"slider_hls_{color_name}_lum"].set_slider_value(self._get_param(param, f"hls_{color_name}_lum"))
             widget.ids[f"slider_hls_{color_name}_sat"].set_slider_value(self._get_param(param, f"hls_{color_name}_sat"))
 
@@ -3256,6 +3302,9 @@ class HLSEffect(Effect):
             param[f"switch_hls_{color_name}"] = widget.ids[f"switch_hls_{color_name}"].active
             param[f"hls_{color_name}_hue_full_range"] = full_range
             param[f"hls_{color_name}_hue"] = widget.ids[f"slider_hls_{color_name}_hue"].value
+            param[f"hls_{color_name}_hue_range"] = list(self._normalize_hue_range(
+                self._slider_values(widget.ids[f"slider_hls_{color_name}_hue_range"])
+            ))
             param[f"hls_{color_name}_lum"] = widget.ids[f"slider_hls_{color_name}_lum"].value
             param[f"hls_{color_name}_sat"] = widget.ids[f"slider_hls_{color_name}_sat"].value
 
@@ -3268,10 +3317,11 @@ class HLSEffect(Effect):
                 self._get_param(param, f"hls_{color_name}_hue"),
                 self._get_param(param, f"hls_{color_name}_lum"),
                 self._get_param(param, f"hls_{color_name}_sat"),
+                self._normalize_hue_range(self._get_param(param, f"hls_{color_name}_hue_range")),
             )
 
         if (   switch_color_mixer == False
-            or all((not switch) or (h == 0 and l == 0 and s == 0) for switch, h, l, s in params_map.values())):
+            or all((not switch) or (h == 0 and l == 0 and s == 0) for switch, h, l, s, _hue_range in params_map.values())):
             self.diff = None
             self.hash = None        
         else:
@@ -3281,7 +3331,7 @@ class HLSEffect(Effect):
 
                 color_settings = []
                 for color_name in self.HLS_COLORS:
-                    switch, h, l, s = params_map[color_name]
+                    switch, h, l, s, hue_range = params_map[color_name]
                     
                     if not switch:
                         continue
@@ -3290,7 +3340,7 @@ class HLSEffect(Effect):
                         continue
                         
                     if color_name in core.HLS_COLOR_SETTING:
-                        setting = core.HLS_COLOR_SETTING[color_name].copy()
+                        setting = self._setting_with_hue_range(core.HLS_COLOR_SETTING[color_name], hue_range)
                         setting['adjust'] = [h, l/100.0, s/100.0]
                         color_settings.append(setting)
 
