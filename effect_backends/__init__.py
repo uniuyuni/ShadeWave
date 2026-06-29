@@ -12,6 +12,7 @@ __all__ = [
     "film_grain_adapter",
     "cross_filter_adapter",
     "image_transform_adapter",
+    "local_contrast_adapter",
     "colour_functions_adapter",
     "tone_adapter",
     "film_process_adapter",

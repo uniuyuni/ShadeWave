@@ -14,7 +14,6 @@ from cores.coating_simulator import CoatingSimulator
 from cores.lens_aberration_simulator import LensAberrationSimulator
 import cores.linear_to_log_lut as linear_to_log
 import cores.filters as filters
-import cores.local_contrast as local_contrast
 import cores.highlight_recovery as highlight_recovery
 import cores.light_rays as light_rays
 import cores.hlsrgb as hlsrgb
@@ -28,6 +27,7 @@ from effect_backends import cross_filter_adapter as cross_filter
 from effect_backends import color_separation_adapter as color_separation
 from effect_backends import film_grain_adapter as film_grain
 from effect_backends import image_transform_adapter
+from effect_backends import local_contrast_adapter as local_contrast
 from effect_backends import subpixel_shift_adapter as subpixel_shift
 from effect_backends import tone_adapter
 from effect_backends import vignette_adapter as backend_vignette
