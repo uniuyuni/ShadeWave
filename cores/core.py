@@ -1682,6 +1682,19 @@ def _kernel_fog_apply_2d(img, transmission_map):
                 res[i, j, k] = img[i, j, k] * t + inv_t
     return res
 
+
+def _protect_dehaze_shadows(img, dehazed, strength):
+    img_f32 = np.asarray(img, dtype=np.float32)
+    dehazed_f32 = np.asarray(dehazed, dtype=np.float32)
+    if strength <= 0:
+        return dehazed_f32
+
+    y = cvtColorRGB2Gray(np.maximum(img_f32, 0.0))
+    shadow_end = np.float32(0.10 + 0.20 * np.clip(float(strength), 0.0, 1.0))
+    amount = smoothstep(np.float32(0.005), shadow_end, y).astype(np.float32, copy=False)
+    return (img_f32 + (dehazed_f32 - img_f32) * amount[..., np.newaxis]).astype(np.float32, copy=False)
+
+
 def dehaze_image(img, strength=0.5):
     """
     色線形変換先行法を使用した霞除去・霧追加 (Numba Optimized)
@@ -1703,6 +1716,7 @@ def dehaze_image(img, strength=0.5):
 
         # 霞補正された画像の計算（大気散乱モデル）
         result = _kernel_dehaze_apply(img, A, transmission)
+        result = _protect_dehaze_shadows(img, result, strength)
     
     else:
         # ===== ヘイズ追加処理（霞を増やす）=====
