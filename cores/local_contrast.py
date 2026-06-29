@@ -266,19 +266,25 @@ def _multi_scale_local_contrast(luminance, strength, radius_scale=1.0):
 def _guided_filter(I, p, r, eps):
     """
     ガイドフィルタ実装
+
+    boxFilter のカーネルは必ず奇数サイズにする。偶数サイズだとアンカーが中心から
+    半ピクセルずれるが、最終段の mean_a * I では I が未シフトのため位置がずれ、
+    エッジに方向性のバイアス/ハローが生じる。`r | 1` で奇数化して中心アンカーに揃える。
     """
-    mean_I = cv2.boxFilter(I, cv2.CV_32F, (r, r))
-    mean_p = cv2.boxFilter(p, cv2.CV_32F, (r, r))
-    mean_Ip = cv2.boxFilter(cv2.multiply(I, p), cv2.CV_32F, (r, r))
+    k = int(r) | 1
+    ksize = (k, k)
+    mean_I = cv2.boxFilter(I, cv2.CV_32F, ksize)
+    mean_p = cv2.boxFilter(p, cv2.CV_32F, ksize)
+    mean_Ip = cv2.boxFilter(cv2.multiply(I, p), cv2.CV_32F, ksize)
     cov_Ip = cv2.subtract(mean_Ip, cv2.multiply(mean_I, mean_p))
-    
-    mean_II = cv2.boxFilter(cv2.multiply(I, I), cv2.CV_32F, (r, r))
+
+    mean_II = cv2.boxFilter(cv2.multiply(I, I), cv2.CV_32F, ksize)
     var_I = cv2.subtract(mean_II, cv2.multiply(mean_I, mean_I))
-    
+
     a = cv2.divide(cov_Ip, cv2.add(var_I, eps))
     b = cv2.subtract(mean_p, cv2.multiply(a, mean_I))
-    
-    mean_a = cv2.boxFilter(a, cv2.CV_32F, (r, r))
-    mean_b = cv2.boxFilter(b, cv2.CV_32F, (r, r))
-    
+
+    mean_a = cv2.boxFilter(a, cv2.CV_32F, ksize)
+    mean_b = cv2.boxFilter(b, cv2.CV_32F, ksize)
+
     return cv2.add(cv2.multiply(mean_a, I), mean_b)

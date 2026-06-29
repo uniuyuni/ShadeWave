@@ -1599,15 +1599,21 @@ def _estimate_depth_map(img, params=(0.121779, 0.959710, -0.780245), sigma=0.5):
 
     beta0, beta1, beta2 = params
     depth = beta0 + beta1 * l_chan + beta2 * s_chan
-    
+
     # フィルタリングで深度マップを滑らかにする
     depth = cv2.GaussianBlur(depth, (0, 0), sigma)
-    
-    # 正規化（0-1の範囲に変換）
-    mmin = np.min(depth)
-    mmax = np.max(depth)
-    depth = (depth - mmin) / (mmax - mmin + 1e-8)
-    
+
+    # 正規化（0-1の範囲に変換）。
+    # 以前は画像ごとの min/max（コンテンツ依存）で正規化していたため、可視領域
+    # （クロップ/ズーム）が変わると深度スケールも変わり、同一ピクセルでも全体表示と
+    # 拡大表示で霞除去の効き方が変わってしまっていた（ズーム非整合）。
+    # L, S は共に [0,1] なので、β 係数が理論的に取り得る範囲で正規化し、
+    # コンテンツ非依存・ズーム非依存にする。
+    depth_lo = beta0 + min(beta1, 0.0) + min(beta2, 0.0)
+    depth_hi = beta0 + max(beta1, 0.0) + max(beta2, 0.0)
+    depth = (depth - depth_lo) / (depth_hi - depth_lo + 1e-8)
+    depth = np.clip(depth, 0.0, 1.0)
+
     return depth
 
 def _estimate_atmospheric_light(img, depth_map, top_percent=0.001):
@@ -1717,6 +1723,9 @@ def dehaze_image(img, strength=0.5):
         # 霞補正された画像の計算（大気散乱モデル）
         result = _kernel_dehaze_apply(img, A, transmission)
         result = _protect_dehaze_shadows(img, result, strength)
+        # (img - A)/t + A は A より暗い画素で負値を生む。線形 RGB の負値は後段の
+        # ガンマ/色空間変換を壊すためクランプする（ハイライト保持のため上限は設けない）。
+        result = np.maximum(result, np.float32(0.0))
     
     else:
         # ===== ヘイズ追加処理（霞を増やす）=====

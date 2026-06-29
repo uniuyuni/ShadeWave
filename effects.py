@@ -3121,7 +3121,7 @@ class DehazeEffect(Effect):
                 self.hash = param_hash
 
                 if de > 0:
-                    de = de / 200 # 効果を半分に
+                    de = de / 400 # 効果を1/4に
                 else:
                     de = de / 100
                 self.diff = core.dehaze_image(rgb, de)
