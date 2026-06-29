@@ -24,7 +24,7 @@ def init_config(widget):
         'scale_threshold': 0.5,
         'inpaint_resize_limit': 1024,
         'inpaint_use_realesrgan': True,
-        'display_color_gamut': "sRGB",
+        'display_color_gamut': "auto", #"sRGB",
         'gpu_device': "mps",
         'cat': "cat16",
         'base_resolution_scale': [4096, 4096],

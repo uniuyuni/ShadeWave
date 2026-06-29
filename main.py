@@ -451,6 +451,8 @@ if __name__ == '__main__':
             self.apply_draw_fast_display = False
             self.apply_draw_skip_histogram = False
             self._fast_display_transform_cache = {}
+            self._auto_display_color_gamut = "sRGB"
+            self._auto_display_color_gamut_last_reason = None
             KVClock.schedule_once(lambda dt: self._sync_zoom_ratio_slider(), 0)
             self.draw_event = threading.Event()
             self.apply_thread = threading.Thread(target=self.draw_image, daemon=False)
@@ -1525,6 +1527,68 @@ if __name__ == '__main__':
             basis = self._get_fast_display_basis(src_space, dst_space, cat)
             return colour_functions.apply_display_color_transform(img, basis, dst_space)
 
+        def _configured_display_color_gamut(self):
+            try:
+                return str(config.get_config('display_color_gamut')).strip()
+            except Exception:
+                return "sRGB"
+
+        def _is_display_color_gamut_auto(self):
+            return self._configured_display_color_gamut().lower() == "auto"
+
+        def _supported_display_color_gamut(self, name):
+            if not name:
+                return None
+            supported = {
+                "sRGB",
+                "Display P3",
+                "Adobe RGB (1998)",
+                "ProPhoto RGB",
+                "Rec.2020",
+                "Rec.709",
+            }
+            return name if name in supported else None
+
+        def refresh_auto_display_color_gamut(self, reason="display_change", redraw=True):
+            if not self._is_display_color_gamut_auto():
+                return False
+
+            previous = self._auto_display_color_gamut or "sRGB"
+            try:
+                detected = device.get_app_window_screen_color_space_name(
+                    default=previous,
+                    normalize=True,
+                )
+            except Exception:
+                logging.exception("auto display color gamut detection failed")
+                detected = previous
+
+            resolved = self._supported_display_color_gamut(detected) or previous or "sRGB"
+            if resolved == previous:
+                self._auto_display_color_gamut_last_reason = reason
+                return False
+
+            self._auto_display_color_gamut = resolved
+            self._auto_display_color_gamut_last_reason = reason
+            self._fast_display_transform_cache.clear()
+            logging.info(
+                "auto display color gamut updated reason=%s detected=%s resolved=%s",
+                reason,
+                detected,
+                resolved,
+            )
+            if redraw and self.imgset is not None and self.imgset.img is not None:
+                self.start_draw_image(fast_display=False)
+            return True
+
+        def _effective_display_color_gamut(self):
+            configured = self._configured_display_color_gamut()
+            if configured.lower() != "auto":
+                return configured
+            if not self._auto_display_color_gamut:
+                self.refresh_auto_display_color_gamut(reason="lazy", redraw=False)
+            return self._auto_display_color_gamut or "sRGB"
+
         def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False, frame_version_override=None):
             self._draw_image_core_active = True
             try:
@@ -1615,7 +1679,7 @@ if __name__ == '__main__':
                         _debug_display_stats("input", img)
 
                         src_space = getattr(self.imgset, 'color_space', 'ProPhoto RGB')
-                        dst_space = config.get_config('display_color_gamut')
+                        dst_space = self._effective_display_color_gamut()
                         cat = config.get_config('cat')
                         color_t0 = time.perf_counter() if debug_mask_geom else None
                         if effective_fast_display:
@@ -5257,6 +5321,7 @@ if __name__ == '__main__':
 
             config.init_config(self.main_widget)
             config.load_config()
+            self.main_widget.refresh_auto_display_color_gamut(reason="startup", redraw=False)
             
             # Start worker after config is loaded
             self.main_widget.async_worker.start()
@@ -5275,6 +5340,7 @@ if __name__ == '__main__':
             self.main_widget.on_start()
 
             KVWindow.bind(on_resize=self.on_window_resize)
+            self._bind_window_move_events()
             """
             display = device.get_current_display()
             KVWindow.size = (display["width"] * 0.9, display["height"] * 0.9)
@@ -5283,6 +5349,17 @@ if __name__ == '__main__':
             """
             _close_startup_splash()
             return super().on_start()
+
+        def _bind_window_move_events(self):
+            for kwargs in (
+                {"on_move": self.on_window_move},
+                {"left": self.on_window_move},
+                {"top": self.on_window_move},
+            ):
+                try:
+                    KVWindow.bind(**kwargs)
+                except Exception:
+                    pass
 
         def on_stop(self):
             self.main_widget.request_export_cancel()
@@ -5294,8 +5371,14 @@ if __name__ == '__main__':
             self.main_widget.shutdown()
 
         def on_window_resize(self, window, width, height):
+            color_changed = self.main_widget.refresh_auto_display_color_gamut(reason="resize", redraw=False)
             kvutils.traverse_widget(self.root)
             self.main_widget.resize()
+            if color_changed and self.main_widget.imgset is not None and self.main_widget.imgset.img is not None:
+                self.main_widget.start_draw_image(fast_display=False)
+
+        def on_window_move(self, *args):
+            self.main_widget.refresh_auto_display_color_gamut(reason="move", redraw=True)
 
         def _widget_pos(self, root, pos):
             kvutils.traverse_widget(root)

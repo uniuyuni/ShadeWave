@@ -368,6 +368,265 @@ def get_app_window_screen_backing_pixel_size():
         return None
 
 
+def _objc_text(value):
+    """NSString/bytes/str を Python の str に寄せる。"""
+    if value is None:
+        return None
+    try:
+        if hasattr(value, "UTF8String"):
+            value = value.UTF8String()
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+    except Exception:
+        return None
+
+
+def _normalize_color_space_name(name):
+    """
+    macOS の表示名をアプリ内の表示色域名に寄せる。
+    未知のカスタム ICC 名は、勝手に sRGB 扱いせず元の名前を返す。
+    """
+    text = _objc_text(name)
+    if not text:
+        return None
+
+    text = text.strip()
+    key = (
+        text.lower()
+        .replace("_", " ")
+        .replace("-", " ")
+        .replace(".", "")
+    )
+    compact = "".join(ch for ch in key if ch.isalnum())
+
+    if compact in {"srgb", "srgbiec6196621", "srgbcolorprofile"}:
+        return "sRGB"
+    if compact in {"adobergb", "adobergb1998", "adobergbcolorprofile"}:
+        return "Adobe RGB (1998)"
+    if "displayp3" in compact or "p3d65" in compact:
+        return "Display P3"
+    if compact in {"prophotorgb", "rommrgb"}:
+        return "ProPhoto RGB"
+    if "bt2020" in compact or "rec2020" in compact or "iturbt2020" in compact:
+        return "Rec.2020"
+    if "bt709" in compact or "rec709" in compact:
+        return "Rec.709"
+
+    return text
+
+
+def _nsdata_bytes(data):
+    if data is None:
+        return None
+    try:
+        if isinstance(data, bytes):
+            return data
+        return memoryview(data).tobytes()
+    except Exception:
+        pass
+    try:
+        return bytes(data)
+    except Exception:
+        pass
+    try:
+        length = int(data.length())
+        out = bytearray(length)
+        data.getBytes_length_(out, length)
+        return bytes(out)
+    except Exception:
+        return None
+
+
+def _icc_tag_data(icc_data, signature):
+    if not icc_data or len(icc_data) < 132:
+        return None
+    try:
+        tag_count = int.from_bytes(icc_data[128:132], "big")
+        table_start = 132
+        for i in range(tag_count):
+            entry = table_start + i * 12
+            if entry + 12 > len(icc_data):
+                return None
+            sig = icc_data[entry:entry + 4]
+            offset = int.from_bytes(icc_data[entry + 4:entry + 8], "big")
+            size = int.from_bytes(icc_data[entry + 8:entry + 12], "big")
+            if sig == signature and offset >= 0 and size >= 0 and offset + size <= len(icc_data):
+                return icc_data[offset:offset + size]
+    except Exception:
+        return None
+    return None
+
+
+def _s15_fixed16_to_float(raw):
+    value = int.from_bytes(raw, "big", signed=True)
+    return value / 65536.0
+
+
+def _icc_xyz_tag_xy(icc_data, signature):
+    tag = _icc_tag_data(icc_data, signature)
+    if not tag or len(tag) < 20 or tag[:4] != b"XYZ ":
+        return None
+    try:
+        x_val = _s15_fixed16_to_float(tag[8:12])
+        y_val = _s15_fixed16_to_float(tag[12:16])
+        z_val = _s15_fixed16_to_float(tag[16:20])
+        total = x_val + y_val + z_val
+        if total <= 0:
+            return None
+        return (x_val / total, y_val / total)
+    except Exception:
+        return None
+
+
+def _icc_rgb_primary_xy(icc_data):
+    red = _icc_xyz_tag_xy(icc_data, b"rXYZ")
+    green = _icc_xyz_tag_xy(icc_data, b"gXYZ")
+    blue = _icc_xyz_tag_xy(icc_data, b"bXYZ")
+    if red is None or green is None or blue is None:
+        return None
+    return (red, green, blue)
+
+
+def _primary_distance(primary, target):
+    return sum(
+        (primary[i][0] - target[i][0]) ** 2 + (primary[i][1] - target[i][1]) ** 2
+        for i in range(3)
+    )
+
+
+def _classify_rgb_primary_gamut(primary):
+    if primary is None:
+        return None
+
+    # ICC RGB colorant tags are PCS D50 adapted, so compare against D50-adapted
+    # xy positions rather than the familiar D65 spec primaries.
+    targets = {
+        "sRGB": ((0.6484, 0.3309), (0.3212, 0.5979), (0.1559, 0.0660)),
+        "Display P3": ((0.6820, 0.3196), (0.2845, 0.6746), (0.1559, 0.0660)),
+        "Adobe RGB (1998)": ((0.6484, 0.3309), (0.2310, 0.7040), (0.1559, 0.0660)),
+        "Rec.2020": ((0.7080, 0.2920), (0.1700, 0.7970), (0.1310, 0.0460)),
+    }
+    best_name = None
+    best_distance = None
+    for name, target in targets.items():
+        distance = _primary_distance(primary, target)
+        if best_distance is None or distance < best_distance:
+            best_name = name
+            best_distance = distance
+
+    return best_name if best_distance is not None and best_distance <= 0.015 else None
+
+
+def _screen_icc_profile_data(screen):
+    try:
+        color_space = screen.colorSpace()
+        if color_space is None:
+            return None
+        if hasattr(color_space, "ICCProfileData"):
+            return _nsdata_bytes(color_space.ICCProfileData())
+        if hasattr(color_space, "iccProfileData"):
+            return _nsdata_bytes(color_space.iccProfileData())
+    except Exception:
+        return None
+    return None
+
+
+def _screen_display_gamut_from_capability(screen):
+    try:
+        can_represent = getattr(screen, "canRepresentDisplayGamut_", None)
+        if can_represent is None:
+            return None
+        p3 = getattr(AppKit, "NSDisplayGamutP3", 2)
+        srgb = getattr(AppKit, "NSDisplayGamutSRGB", 1)
+        if bool(can_represent(p3)):
+            return "Display P3"
+        if bool(can_represent(srgb)):
+            return "sRGB"
+    except Exception:
+        return None
+    return None
+
+
+def _screen_display_color_gamut_name(screen):
+    icc_data = _screen_icc_profile_data(screen)
+    gamut = _classify_rgb_primary_gamut(_icc_rgb_primary_xy(icc_data))
+    if gamut:
+        return gamut
+    return _screen_display_gamut_from_capability(screen)
+
+
+def _known_display_color_gamut_name(name):
+    gamut = _normalize_color_space_name(name)
+    if gamut in {
+        "sRGB",
+        "Display P3",
+        "Adobe RGB (1998)",
+        "ProPhoto RGB",
+        "Rec.2020",
+        "Rec.709",
+    }:
+        return gamut
+    return None
+
+
+def get_screen_color_space_name(screen=None, default="sRGB", normalize=True):
+    """
+    NSScreen の表示色域名を返す。
+    normalize=True では ICC primaries / 表示能力から sRGB や Display P3 等へ寄せる。
+    """
+    try:
+        if screen is None:
+            screen = NSScreen.mainScreen()
+        if screen is None:
+            return default
+
+        color_space = screen.colorSpace()
+        name = None
+        if color_space is not None:
+            name = color_space.localizedName()
+        if not name:
+            name = screen.deviceDescription().get("NSDeviceColorSpaceName")
+
+        if normalize:
+            icc_data = _screen_icc_profile_data(screen)
+            icc_gamut = _classify_rgb_primary_gamut(_icc_rgb_primary_xy(icc_data))
+            name_gamut = _known_display_color_gamut_name(name)
+            capability_gamut = _screen_display_gamut_from_capability(screen)
+            return icc_gamut or name_gamut or capability_gamut or _normalize_color_space_name(name) or default
+        return _objc_text(name) or default
+    except Exception:
+        return default
+
+
+def _get_app_window_screen(app_name=None):
+    try:
+        window = get_window(app_name or define.APPNAME)
+        if window is not None:
+            screen = window.screen()
+            if screen is not None:
+                return screen
+    except Exception:
+        pass
+
+    try:
+        return NSScreen.mainScreen()
+    except Exception:
+        return None
+
+
+def get_app_window_screen_color_space_name(app_name=None, default="sRGB", normalize=True):
+    """
+    自分のアプリウィンドウが現在乗っている画面の色空間名を返す。
+    例: "sRGB", "Display P3", "Adobe RGB (1998)"。
+    """
+    return get_screen_color_space_name(
+        _get_app_window_screen(app_name),
+        default=default,
+        normalize=normalize,
+    )
+
+
 def set_window_autosave(app_name, window_name):
 
     target_window = get_window(app_name)
