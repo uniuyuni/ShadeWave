@@ -21,6 +21,13 @@ _EPS = 1e-6
 # at native resolution, so their output is unaffected by this cap.
 _PREVIEW_MAX_RENDER_PX = 960
 
+# Occlusion / cast-shadow maps are heavily blurred, low-frequency fields.  Above
+# this longest-side size they are computed at reduced resolution and upsampled;
+# the visual result is near-identical but the warp/blur/percentile cost scales
+# with the smaller grid.  Images at or below this size are computed at full
+# resolution (so small renders stay bit-for-bit identical).
+_MAP_MAX_PX = 1024
+
 
 def apply_light_rays(
     img_rgb: np.ndarray,
@@ -155,11 +162,17 @@ def _compute_additive(
     decay_px = length_px * (0.20 + 1.80 * (float(decay) / 100.0))
     spread_deg = 8.0 + 84.0 * (float(spread) / 100.0)
 
-    yy, xx = np.mgrid[0:h, 0:w]
-    xx = xx.astype(np.float32)
-    yy = yy.astype(np.float32)
+    # Broadcastable coordinate vectors instead of full (h, w) mgrid arrays.
+    # Every ray solver only ever uses ``xx - sx`` / ``yy - sy`` and broadcasts
+    # back up to (h, w), so the per-element results are identical while we avoid
+    # materialising (and int->float casting) two full-resolution grids.
+    xx = np.arange(w, dtype=np.float32).reshape(1, w)
+    yy = np.arange(h, dtype=np.float32).reshape(h, 1)
 
     overlay = np.zeros((h, w), dtype=np.float32)
+    # Both the occlusion veil and every per-guide cast-shadow map start from the
+    # same scene luminance; compute it once and share it.
+    occl_lum = _luminance(image) if float(occlusion) > 0.0 else None
     for index, guide in enumerate(norm_guides[:16]):
         guide_seed = int(seed) + index * 1009
         if guide["type"] == "line":
@@ -214,7 +227,7 @@ def _compute_additive(
                     edge_bias,
                     guide_seed,
                 )
-            layer *= _cast_shadow_map(image, direction, line_reach_px, occlusion)
+            layer *= _cast_shadow_map(image, direction, line_reach_px, occlusion, lum=occl_lum)
         else:
             origin = np.array(guide["p"], dtype=np.float32)
             mode = guide.get("mode", "radial")
@@ -243,7 +256,7 @@ def _compute_additive(
                     edge_bias,
                     guide_seed,
                 )
-                layer *= _cast_shadow_map(image, direction, length_px, occlusion)
+                layer *= _cast_shadow_map(image, direction, length_px, occlusion, lum=occl_lum)
             else:
                 p2 = _point(guide.get("p2"))
                 proj_len_px = _length_px_from_slider(guide.get("projection_length", length), diagonal)
@@ -292,7 +305,7 @@ def _compute_additive(
     if np.max(overlay, initial=0.0) <= 0.0:
         return None
 
-    overlay *= _occlusion_map(image, occlusion)
+    overlay *= _occlusion_map(image, occlusion, lum=occl_lum)
     fog_gain = 0.55 + 0.90 * (float(fog) / 100.0)
     color = np.asarray(color_rgb, dtype=np.float32)
     if color.size < 3:
@@ -865,6 +878,12 @@ def _parallel_shaft_field(perp, along, width_px, beam_width, frame_span, count, 
             offsets[count_i // 2] = 0.0
     center_index = min(range(len(offsets)), key=lambda idx: abs(offsets[idx]))
     spacing = (2.0 * offset_span / max(1, count_i - 1)) if count_i > 1 else offset_span
+    # Hardening is monotonic, so ``max_i(amp_i * g_i**power)`` equals
+    # ``(max_i(amp_i**(1/power) * g_i))**power``: fold the per-shaft amplitude in,
+    # accumulate the raw gaussians, and apply the (full-resolution) power once
+    # instead of once per shaft.
+    power = _harden_power(softness)
+    inv_power = 1.0 / float(power)
     for idx, offset in enumerate(offsets):
         if idx == center_index:
             shaft_w = min(float(width_px) * 1.45 * (0.85 + 0.55 * soft), spacing * (0.42 + 0.56 * soft))
@@ -874,8 +893,9 @@ def _parallel_shaft_field(perp, along, width_px, beam_width, frame_span, count, 
             shaft_w = min(shaft_w, spacing * (0.30 + 0.48 * soft))
             amp = float(rng.uniform(0.34, 0.82))
         shaft_w = max(1.5, shaft_w)
-        shaft = np.float32(amp) * _edge_harden(_asymmetric_gaussian(perp - np.float32(offset), shaft_w, edge_bias), softness)
-        field = np.maximum(field, shaft.astype(np.float32, copy=False))
+        gaussian = _asymmetric_gaussian(perp - np.float32(offset), shaft_w, edge_bias)
+        field = np.maximum(field, np.float32(float(amp) ** inv_power) * gaussian)
+    field = np.power(field, power).astype(np.float32, copy=False)
     veil_w = max(float(beam_width) * 1.35, float(width_px) * 5.0)
     veil = np.exp(-(perp * perp) / np.float32(2.0 * veil_w * veil_w))
     field += np.float32(0.05 + 0.10 * soft + 0.05 * count_n) * veil
@@ -900,19 +920,31 @@ def _directional_shaft_field(perp, along, cone, count, density, variation, softn
         fractions = [float(np.clip(f + j, -0.96, 0.96)) for f, j in zip(fractions, jitter)]
         if count_i % 2 == 1:
             fractions[count_i // 2] = 0.0
+    # Without a per-shaft start gate, hardening can be applied once after the max
+    # (see ``_parallel_shaft_field``).  When the start stagger is active each
+    # shaft is multiplied by its own gate after hardening, so that factoring no
+    # longer holds and we fall back to per-shaft hardening.
+    staggered = start_stagger_px > _EPS
+    power = _harden_power(softness)
+    inv_power = 1.0 / float(power)
     for frac in fractions:
         center = cone * np.float32(frac)
         frac_width = min(float(rng.uniform(0.12, 0.34)) * (0.65 + soft + 0.18 * density_n), 1.90 / max(count_i, 1))
         shaft_w = np.maximum(cone * np.float32(frac_width), np.float32(2.0))
         amp = float(rng.uniform(0.45, 1.0))
-        shaft = np.float32(amp) * _edge_harden(_asymmetric_gaussian(perp - center, shaft_w, edge_bias), softness)
-        if start_stagger_px > _EPS:
+        gaussian = _asymmetric_gaussian(perp - center, shaft_w, edge_bias)
+        if staggered:
+            shaft = np.float32(amp) * _edge_harden(gaussian, softness)
             start_offset = float(rng.uniform(0.0, start_stagger_px))
             start_feather = max(float(start_stagger_px) * 0.35, 3.0)
             start_gate = np.clip((along - np.float32(start_offset)) / np.float32(start_feather), 0.0, 1.0)
             start_gate = start_gate * start_gate * (np.float32(3.0) - np.float32(2.0) * start_gate)
             shaft *= start_gate.astype(np.float32, copy=False)
-        field = np.maximum(field, shaft.astype(np.float32, copy=False))
+            field = np.maximum(field, shaft.astype(np.float32, copy=False))
+        else:
+            field = np.maximum(field, np.float32(float(amp) ** inv_power) * gaussian)
+    if not staggered:
+        field = np.power(field, power).astype(np.float32, copy=False)
     veil = np.exp(-(perp * perp) / np.maximum(np.float32(2.0) * (cone * np.float32(1.65)) ** 2, np.float32(1.0)))
     field += np.float32(0.05 + 0.12 * soft + 0.05 * count_n) * veil
     phase = np.float32((int(seed) % 8191) / 8191.0 * 2.0 * math.pi)
@@ -937,10 +969,16 @@ def _asymmetric_gaussian(delta, width, edge_bias):
     return np.exp(-(delta * delta) / np.maximum(np.float32(2.0) * sigma * sigma, np.float32(1.0))).astype(np.float32)
 
 
-def _edge_harden(values, softness):
+def _harden_power(softness):
     soft = float(np.clip(float(softness) / 100.0, 0.0, 1.0))
-    power = np.float32(1.0 + 6.0 * ((1.0 - soft) ** 2.2))
-    return np.power(np.clip(values, 0.0, None), power).astype(np.float32, copy=False)
+    return np.float32(1.0 + 6.0 * ((1.0 - soft) ** 2.2))
+
+
+def _edge_harden(values, softness):
+    # All call sites feed non-negative values (gaussians / clipped powers), so
+    # the historical ``np.clip(..., 0, None)`` was a no-op; skipping it avoids a
+    # full-resolution copy+scan on every call without changing the result.
+    return np.power(values, _harden_power(softness)).astype(np.float32, copy=False)
 
 
 def _harden_low_softness(layer, softness):
@@ -971,32 +1009,55 @@ def _harden_low_softness(layer, softness):
     ).astype(np.float32, copy=False)
 
 
-def _occlusion_map(img, occlusion):
+def _luminance(img):
+    rgb = img[..., :3]
+    return (0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]).astype(np.float32)
+
+
+def _map_scale(h, w):
+    longest = max(int(h), int(w))
+    if longest <= _MAP_MAX_PX:
+        return 1.0
+    return _MAP_MAX_PX / float(longest)
+
+
+def _occlusion_map(img, occlusion, lum=None):
     strength = float(occlusion) / 100.0
     if strength <= 0.0:
         return np.float32(1.0)
-    rgb = img[..., :3]
-    lum = (0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]).astype(np.float32)
-    lum = cv2.GaussianBlur(lum, (0, 0), 1.6)
-    lo, hi = np.percentile(lum, [5, 95])
-    norm = np.clip((lum - np.float32(lo)) / np.float32(max(float(hi - lo), 1e-4)), 0.0, 1.0)
+    lum = _luminance(img) if lum is None else lum
+    h0, w0 = lum.shape[:2]
+    f = _map_scale(h0, w0)
+    work = lum if f >= 1.0 else cv2.resize(
+        lum, (max(1, int(round(w0 * f))), max(1, int(round(h0 * f)))), interpolation=cv2.INTER_AREA)
+    work = cv2.GaussianBlur(work, (0, 0), 1.6 * f)
+    lo, hi = np.percentile(work, [5, 95])
+    norm = np.clip((work - np.float32(lo)) / np.float32(max(float(hi - lo), 1e-4)), 0.0, 1.0)
     transmit = 0.08 + 0.92 * np.power(norm, np.float32(0.82))
-    return (1.0 - strength) + strength * transmit
+    m = (1.0 - strength) + strength * transmit
+    if f < 1.0:
+        m = cv2.resize(m.astype(np.float32), (w0, h0), interpolation=cv2.INTER_LINEAR)
+    return m
 
 
-def _cast_shadow_map(img, direction, length_px, occlusion):
+def _cast_shadow_map(img, direction, length_px, occlusion, lum=None):
     strength = float(occlusion) / 100.0
     if strength <= 0.0:
         return np.float32(1.0)
-    rgb = img[..., :3]
-    lum = (0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]).astype(np.float32)
+    lum = _luminance(img) if lum is None else lum
+    full_h, full_w = lum.shape[:2]
+    f = _map_scale(full_h, full_w)
+    if f < 1.0:
+        lum = cv2.resize(
+            lum, (max(1, int(round(full_w * f))), max(1, int(round(full_h * f)))), interpolation=cv2.INTER_AREA)
+        length_px = float(length_px) * f
     lo, hi = np.percentile(lum, [4, 94])
     norm = np.clip((lum - np.float32(lo)) / np.float32(max(float(hi - lo), 1e-4)), 0.0, 1.0)
     blocker = np.power(np.clip(1.0 - norm, 0.0, 1.0), np.float32(0.78)).astype(np.float32)
-    local = lum - cv2.GaussianBlur(lum, (0, 0), 5.0)
+    local = lum - cv2.GaussianBlur(lum, (0, 0), 5.0 * f)
     detail = np.clip(-local / np.float32(max(float(np.percentile(np.abs(local), 92)), 1e-4)), 0.0, 1.0)
     blocker = np.maximum(blocker, detail * np.float32(0.72))
-    blocker = cv2.GaussianBlur(blocker, (0, 0), 0.9)
+    blocker = cv2.GaussianBlur(blocker, (0, 0), 0.9 * f)
     h, w = blocker.shape[:2]
     max_len = min(float(length_px), float(max(h, w)) * 1.35)
     samples = int(np.clip(max_len / max(8.0, min(h, w) / 28.0), 8, 28))
@@ -1024,4 +1085,6 @@ def _cast_shadow_map(img, direction, length_px, occlusion):
         shadow /= np.float32(weight_sum)
     shadow = cv2.GaussianBlur(shadow, (0, 0), max(0.8, min(h, w) * 0.010))
     shadow = np.power(np.clip(shadow, 0.0, 1.0), np.float32(0.86))
+    if f < 1.0:
+        shadow = cv2.resize(shadow.astype(np.float32), (full_w, full_h), interpolation=cv2.INTER_LINEAR)
     return np.clip(1.0 - np.float32(0.98 * strength) * shadow, 0.03, 1.0).astype(np.float32)

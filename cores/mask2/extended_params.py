@@ -111,7 +111,8 @@ def apply_extended_params(
 
 def apply_post_edge_params(ctx, effects_param, image, center_tcg, edge_support=None):
     dimg = _apply_depth_mask(effects_param, image)
-    himg = _draw_hue_mask(ctx, effects_param, dimg, center_tcg)
+    oimg = _draw_hdr_highlight_mask(ctx, effects_param, dimg)
+    himg = _draw_hue_mask(ctx, effects_param, oimg, center_tcg)
     limg = _draw_lum_mask(ctx, effects_param, himg, center_tcg)
     simg = _draw_sat_mask(ctx, effects_param, limg, center_tcg)
     bimg = _apply_mask_blur(effects_param, simg)
@@ -1111,6 +1112,17 @@ def _draw_hue_mask(ctx, effects_param, mask, center_tcg):
     if effects.Mask2Effect.get_param(effects_param, "switch_mask2_hue") is True:
         return _draw_hls_mask(ctx, effects_param, mask, "hue", center_tcg)
     return mask
+
+
+def _draw_hdr_highlight_mask(ctx, effects_param, mask):
+    if effects.Mask2Effect.get_param(effects_param, "switch_mask2_settings") is not True:
+        return mask
+    if effects.Mask2Effect.get_param(effects_param, "mask2_allow_over_one") is not True:
+        return mask
+    crop_image_hls = ctx.get_crop_image_hls()
+    if crop_image_hls is None:
+        return mask
+    return hls_mask.apply_hdr_highlight_mask(crop_image_hls, mask)
 
 
 def _draw_lum_mask(ctx, effects_param, mask, center_tcg):

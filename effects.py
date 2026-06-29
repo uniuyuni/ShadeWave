@@ -5710,7 +5710,7 @@ class Mask2Effect(Effect):
     def set2widget(self, widget, param):
         widget.ids["switch_mask2_settings"].active = self._get_param(param, 'switch_mask2_settings')
         widget.ids["checkbox_mask2_invert"].active = self._get_param(param, 'mask2_invert')
-        widget.ids["checkbox_mask2_allow_over_one"].active = False
+        widget.ids["checkbox_mask2_allow_over_one"].active = self._get_param(param, 'mask2_allow_over_one')
         widget.ids["checkbox_mask2_allow_under_zero"].active = False
         widget.ids["switch_mask2_depth"].active = self._get_param(param, 'switch_mask2_depth')
         widget.ids["slider_mask2_depth_min"].set_slider_value(self._get_param(param, 'mask2_depth_min'))
@@ -5768,7 +5768,7 @@ class Mask2Effect(Effect):
     def set2param(self, param, widget):
         param['switch_mask2_settings'] = widget.ids["switch_mask2_settings"].active
         param['mask2_invert'] = widget.ids["checkbox_mask2_invert"].active
-        param['mask2_allow_over_one'] = False
+        param['mask2_allow_over_one'] = widget.ids["checkbox_mask2_allow_over_one"].active
         param['mask2_allow_under_zero'] = False
         param['switch_mask2_depth'] = widget.ids["switch_mask2_depth"].active
         param['mask2_depth_min'] = widget.ids["slider_mask2_depth_min"].value

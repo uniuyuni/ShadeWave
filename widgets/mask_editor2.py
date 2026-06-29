@@ -898,15 +898,13 @@ class BaseMask(KVWidget):
             simg, edge_support = self._apply_edge_refine(simg, edge_refine_draw_strokes=edge_refine_draw_strokes)
         else:
             edge_support = None
-        dimg = self._apply_depth_mask(simg)
-        himg = self._draw_hue_mask(dimg)
-        limg = self._draw_lum_mask(himg)
-        simg = self._draw_sat_mask(limg)
-        bimg = self._apply_mask_blur(simg)
-        if edge_support is not None:
-            bimg = np.where(edge_support > 0.001, bimg, 0.0)
-
-        return bimg
+        return extended_params.apply_post_edge_params(
+            self.editor,
+            self.effects_param,
+            simg,
+            self.center,
+            edge_support=edge_support,
+        )
 
     def _edge_refine_fill_grown_region(self):
         return True

@@ -4331,7 +4331,6 @@ if __name__ == '__main__':
             )
             self._set_disabled_for_ids(
                 (
-                    'checkbox_mask2_allow_over_one',
                     'checkbox_mask2_allow_under_zero',
                 ),
                 True,

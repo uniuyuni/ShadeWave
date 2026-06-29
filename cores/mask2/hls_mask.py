@@ -44,9 +44,18 @@ def rgb_to_selection_hls(rgb):
     encoded = color.prophoto_rgb_gamma_encode(rgb_linear).astype(np.float32, copy=False)
 
     hls = hlsrgb.rgb_to_hlc_gain(encoded)
+    linear_hlc = hlsrgb.rgb_to_hlc_gain(rgb_linear)
     lum = np.tensordot(encoded[..., :3], _LUMA_WEIGHTS, axes=([-1], [0]))
     hls[..., 1] = np.clip(lum, 0.0, 1.0).astype(np.float32, copy=False)
+    hls[..., 3] = (linear_hlc[..., 1] * linear_hlc[..., 3]).astype(np.float32, copy=False)
     return hls
+
+
+def apply_hdr_highlight_mask(hls, mask):
+    if hls is None or hls.shape[-1] < 4:
+        return mask
+    hdr_luminance = hls[..., 3]
+    return np.where(hdr_luminance > 1.0, mask, 0)
 
 
 def apply_channel_mask(hls, mask, channel, center_xy, distance, range_min, range_max):
