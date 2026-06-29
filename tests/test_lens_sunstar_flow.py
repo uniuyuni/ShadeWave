@@ -128,6 +128,15 @@ class SunstarTest(unittest.TestCase):
         reach_stop = _reach_radius((out_stop - img).mean(axis=2), c)
         self.assertGreater(reach_stop, reach_open * 1.3)
 
+    def test_length_zero_is_minimal(self):
+        # length=0 では光条が最小（ほぼコアのみ）。length を上げると明確に伸びる。
+        img = _point_source_image(size=257)
+        c = img.shape[0] // 2
+        r0 = _reach_radius((self.eff._sunstar(img, 100, 0, 50, '9', 11.0, mag=1.0, orig_size=None) - img).mean(axis=2), c)
+        r50 = _reach_radius((self.eff._sunstar(img, 100, 50, 50, '9', 11.0, mag=1.0, orig_size=None) - img).mean(axis=2), c)
+        self.assertLess(r0, r50 * 0.3)        # length=0 は十分短い
+        self.assertLess(r0, img.shape[0] * 0.08)  # 最小（コア近傍）
+
     def test_spike_width_constant_along_length(self):
         # 各光条は中心から先端まで太さ一定（角度ガウスではなく直交距離ガウスで描くため）。
         img = _point_source_image(size=401)

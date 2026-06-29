@@ -246,41 +246,45 @@ def _compute_additive(
                 layer *= _cast_shadow_map(image, direction, length_px, occlusion)
             else:
                 p2 = _point(guide.get("p2"))
-                if p2 is not None and float(np.hypot(p2[0] - origin[0], p2[1] - origin[1])) > max(2.0, float(width_px) * 0.04):
-                    layer = _projected_radial_ray(
-                        xx,
-                        yy,
-                        origin,
-                        np.array(p2, dtype=np.float32),
-                        width_n,
-                        width_px,
-                        decay_px,
-                        length_px,
-                        _length_px_from_slider(guide.get("projection_length", length), diagonal),
-                        _length_px_from_slider(guide.get("projection_length", length), diagonal) * (0.20 + 1.80 * (float(decay) / 100.0)),
-                        count,
-                        density,
-                        variation,
-                        softness,
-                        edge_bias,
-                        spread_deg,
-                        guide_seed,
-                    )
+                proj_len_px = _length_px_from_slider(guide.get("projection_length", length), diagonal)
+                # Crossfade classic <-> projected radial by how far the direction
+                # handle has been pulled out.  A hard switch made the short
+                # projection (where the projected solver degenerates into a muddy,
+                # dim, omni-directional burst that lacks the classic centre fill)
+                # snap to a much brighter classic radial.  Blending over a
+                # scale-relative window keeps the start brightness continuous and
+                # lets the clean classic centre dominate while the handle is short.
+                lo = max(2.0, float(width_px) * 0.04)
+                hi = max(lo * 2.0, proj_len_px * 0.16)
+                if p2 is None:
+                    w_proj = 0.0
                 else:
-                    layer = _radial_ray(
-                        xx,
-                        yy,
-                        origin,
-                        width_n,
-                        width_px,
-                        decay_px,
-                        length_px,
-                        count,
-                        density,
-                        variation,
-                        softness,
-                        edge_bias,
-                        guide_seed,
+                    axis_len_raw = float(np.hypot(p2[0] - origin[0], p2[1] - origin[1]))
+                    t = float(np.clip((axis_len_raw - lo) / max(hi - lo, 1e-3), 0.0, 1.0))
+                    w_proj = t * t * (3.0 - 2.0 * t)
+
+                def _classic():
+                    return _radial_ray(
+                        xx, yy, origin, width_n, width_px, decay_px, length_px,
+                        count, density, variation, softness, edge_bias, guide_seed,
+                    )
+
+                def _projected():
+                    return _projected_radial_ray(
+                        xx, yy, origin, np.array(p2, dtype=np.float32),
+                        width_n, width_px, decay_px, length_px,
+                        proj_len_px, proj_len_px * (0.20 + 1.80 * (float(decay) / 100.0)),
+                        count, density, variation, softness, edge_bias, spread_deg, guide_seed,
+                    )
+
+                if w_proj <= 0.0:
+                    layer = _classic()
+                elif w_proj >= 1.0:
+                    layer = _projected()
+                else:
+                    layer = (
+                        _classic() * np.float32(1.0 - w_proj)
+                        + _projected() * np.float32(w_proj)
                     )
         overlay += layer.astype(np.float32, copy=False)
 
@@ -712,9 +716,19 @@ def _projected_radial_ray(
         along = dx * ux + dy * uy
         cross = -dx * uy + dy * ux
         t = np.clip(along / np.float32(seg_len), 0.0, 1.0)
-        width_t = np.clip((t - np.float32(0.08)) / np.float32(0.92), 0.0, 1.0)
-        width_t = np.power(width_t, np.float32(0.62))
+        # Widen the shaft as a straight cone from apex (source) to the projection
+        # front.  The old ``((t-0.08)/0.92)**0.62`` held the beam pinched in a
+        # flat dead-zone and then lifted off steeply, so with a large
+        # ``shaft_tip_width`` the beam stayed a thin line and then ballooned at a
+        # visible elbow (worse the wider the slider).  A linear ramp grows the
+        # width evenly with no kink while still letting width thicken the front.
+        width_t = t
         width_along = shaft_root_width + width_t * shaft_tip_width * np.float32(max(width_jitter, 0.35))
+        # Width must not touch the start: the brightness normalisation that keeps
+        # wide shafts from overpowering is applied where the shaft actually
+        # widens (downstream, via ``width_t``), so the near-source root stays at
+        # full strength regardless of the width slider.
+        width_norm = np.float32(1.0) / (np.float32(1.0) + np.float32(0.42 * width_ratio) * width_t)
         ray = _asymmetric_gaussian(cross, width_along, edge_bias)
         start_gate = _rounded_ray_start_gate(
             along,
@@ -741,7 +755,7 @@ def _projected_radial_ray(
             soft_side = np.power(np.clip(ray, 0.0, 1.0), np.float32(max(0.45, 1.0 - 0.38 * abs(bias))))
             ray = np.where(hard_side, hard, soft_side).astype(np.float32, copy=False)
         ray *= _single_ray_texture(along, cross, width_px, projection_span_px, density_n, variation_n, ray_phase)
-        rays = np.maximum(rays, np.float32(max(0.25, amp)) * ray * start_gate * projection_end * visible_end * fade)
+        rays = np.maximum(rays, np.float32(max(0.25, amp)) * ray * start_gate * projection_end * visible_end * fade * width_norm)
     detail_freq = n * (1.6 + 1.2 * variation_n + 4.2 * density_n)
     detail = (
         0.74
@@ -752,7 +766,6 @@ def _projected_radial_ray(
     rays *= detail.astype(np.float32, copy=False)
     sharp = 0.72 + 2.80 * (1.0 - soft)
     rays = _edge_harden(np.power(np.clip(rays, 0.0, 1.0), np.float32(sharp)), softness)
-    rays *= np.float32(1.0 / (1.0 + 0.42 * width_ratio))
     source_radius = max(root_radius * (1.35 + 0.65 * soft), 2.0)
     source_core = np.float32(0.24 + 0.08 * soft) / (
         np.float32(1.0) + (r0 / np.float32(max(source_radius, 1.0))) ** np.float32(4.0))

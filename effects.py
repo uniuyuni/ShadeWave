@@ -4626,9 +4626,10 @@ class LensSimulatorEffect(Effect):
         M = self._spike_count_from_blades(blades)
         spacing = 2.0 * math.pi / M
         # 基準長：元画像短辺のシーン基準 × 表示倍率 mag（全テクスチャpx）× scl → キャンバスpx。
-        # 拡大すると光条も光源と同じだけ大きくなり見え方が一定。旧実装比 約4倍まで伸ばせる。
+        # 拡大すると光条も光源と同じだけ大きくなり見え方が一定。length=0 で最小長(ほぼコアのみ)、
+        # length=100 で長い（旧実装比 約4倍）。定数項は length=0 を最小にするため小さくする。
         ap_len = 0.4 + 0.6 * ap_raw  # 開放でも 0.4、絞ると 1.0
-        base_len = (0.12 + 1.6 * (float(length) / 100.0)) * scene_min * ap_len * mag * scl
+        base_len = (0.02 + 1.6 * (float(length) / 100.0)) * scene_min * ap_len * mag * scl
         width_ap = 1.2 - 0.6 * ap_raw  # 絞ると細く
 
         overlay = np.zeros((H, W, 3), dtype=np.float32)
