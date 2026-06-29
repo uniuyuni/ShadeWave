@@ -964,7 +964,7 @@ class LightRaysCoreTest(unittest.TestCase):
         img = _base(h=180, w=260)
         guide = [{"type": "line", "mode": "parallel", "p1": (-20, 90), "p2": (240, 90)}]
 
-        def half_width(softness):
+        def profile(softness):
             out = light_rays.apply_light_rays(
                 img,
                 guide,
@@ -977,11 +977,29 @@ class LightRaysCoreTest(unittest.TestCase):
                 occlusion=0,
                 seed=1,
             )
-            profile = (out - img).mean(axis=(1, 2))
-            active = np.where(profile > float(profile.max()) * 0.5)[0]
+            return (out - img).mean(axis=(1, 2))
+
+        def half_width(p):
+            active = np.where(p > float(p.max()) * 0.5)[0]
             return int(active[-1] - active[0] + 1)
 
-        self.assertLess(half_width(0), half_width(80) * 0.45)
+        def edge_rise(p):
+            # Distance (px) between the 10% and 90% crossings on the rising side.
+            # Smaller = a crisper, harder edge.
+            pk = float(p.max())
+            c = int(p.argmax())
+            up = p[: c + 1]
+            d10 = np.where(up >= pk * 0.1)[0]
+            d90 = np.where(up >= pk * 0.9)[0]
+            return (int(d90[0]) - int(d10[0])) if len(d10) and len(d90) else c
+
+        low = profile(0)
+        high = profile(80)
+        # Low Edge Softness must produce a markedly crisper boundary (steep rise),
+        # not merely a thin line: the edge is much harder than a soft beam while
+        # the shaft stays substantially thick.
+        self.assertLess(edge_rise(low), edge_rise(high) * 0.4)
+        self.assertGreater(half_width(low), half_width(high) * 0.3)
 
     def test_point_reach_100_uses_image_diagonal(self):
         img = _base(h=120, w=160)
@@ -1228,7 +1246,7 @@ class LightRaysCoreTest(unittest.TestCase):
                 length=100,
                 decay=100,
                 width=34,
-                softness=20,
+                softness=40,
                 edge_bias=edge_bias,
                 count=2,
                 density=0,

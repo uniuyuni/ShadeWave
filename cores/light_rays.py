@@ -286,6 +286,7 @@ def _compute_additive(
                         _classic() * np.float32(1.0 - w_proj)
                         + _projected() * np.float32(w_proj)
                     )
+        layer = _harden_low_softness(layer, softness)
         overlay += layer.astype(np.float32, copy=False)
 
     if np.max(overlay, initial=0.0) <= 0.0:
@@ -940,6 +941,34 @@ def _edge_harden(values, softness):
     soft = float(np.clip(float(softness) / 100.0, 0.0, 1.0))
     power = np.float32(1.0 + 6.0 * ((1.0 - soft) ** 2.2))
     return np.power(np.clip(values, 0.0, None), power).astype(np.float32, copy=False)
+
+
+def _harden_low_softness(layer, softness):
+    """Turn the low end of the Edge Softness slider into crisp, thick shafts.
+
+    ``_edge_harden`` only narrows the per-component gaussians, so by itself a low
+    softness produced a thin spike, not a hard-edged beam (every mode also lays a
+    broad soft band/veil underneath, which keeps the composite edge soft).  Below
+    30 we additionally remap the *composited* layer through a flat-top contrast:
+    the threshold drops (so the bright core spreads into a wider plateau) and the
+    slope steepens (so the boundary turns crisp).  At/above 30 the layer is
+    returned untouched, so the rest of the slider behaves exactly as before.
+    """
+
+    soft = float(np.clip(float(softness) / 100.0, 0.0, 1.0))
+    if soft >= 0.30:
+        return layer
+    pk = float(np.max(layer, initial=0.0))
+    if pk <= 0.0:
+        return layer
+    h = float((0.30 - soft) / 0.30)
+    x = (layer / np.float32(pk)).astype(np.float32, copy=False)
+    threshold = np.float32(0.5 - 0.45 * h)
+    steepness = np.float32(1.0 + 26.0 * h)
+    hardened = np.clip((x - threshold) * steepness + np.float32(0.5), 0.0, 1.0)
+    return (
+        layer * np.float32(1.0 - h) + hardened.astype(np.float32, copy=False) * np.float32(pk) * np.float32(h)
+    ).astype(np.float32, copy=False)
 
 
 def _occlusion_map(img, occlusion):
