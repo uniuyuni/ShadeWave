@@ -29,7 +29,7 @@ def init_config(widget):
         'cat': "cat16",
         'base_resolution_scale': [4096, 4096],
         'display_output_dither': False,
-        'display_output_downscale': True,
+        'display_output_downscale': False,
         'debug_nan_inf_check': False,
         # float32 画像を .pmck などへ保存する際の圧縮形式。
         # 1: Zstd + byte shuffle (互換読み込み用)
