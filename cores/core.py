@@ -372,14 +372,12 @@ def apply_solid_color(image_rgb: np.ndarray, solid_color=(0.94, 0.94, 0.96), opa
     solod_color : tuple
         補正に使用する色（デフォルト: わずかに青みがかった白）
     """
-    # 補正色のマップを作成
-    correction = np.zeros_like(image_rgb, dtype=np.float32)
-    for i in range(3):
-        correction[:,:,i] = solid_color[i]
-        
-    # 元の画像と補正色をブレンド
-    return cv2.addWeighted(image_rgb, 1.0 - opacity, correction, opacity, 0.0)
-    #return image_rgb * (1-opacity) + correction * opacity
+    opacity = float(opacity)
+    if opacity <= 0.0:
+        return image_rgb
+
+    color = np.asarray(solid_color, dtype=np.float32)
+    return image_rgb * np.float32(1.0 - opacity) + color * np.float32(opacity)
 
 #--------------------------------------------------
 # オーバーレイ合成

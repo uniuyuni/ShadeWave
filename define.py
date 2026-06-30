@@ -1,6 +1,6 @@
 
 APPNAME = "Shade Wave"
-VERSION = "2.127.2"
+VERSION = "2.127.4"
 
 SUPPORTED_FORMATS_RGB = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif', '.heic', '.jxl')
 SUPPORTED_FORMATS_RAW = ('.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw', '.dng', '.orf', '.raf', '.rw2', '.sr2', '.pef', '.raw', '.3fr', '.fff', '.erf', '.kdc', '.dcr', '.mrw', '.rwl', '.srw', '.mef')

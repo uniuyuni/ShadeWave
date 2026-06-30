@@ -2825,7 +2825,7 @@ class GlowEffect(Effect):
         gb = self._get_param(param, 'glow_black')
         gg = int(self._get_param(param, 'glow_gauss'))
         go = self._get_param(param, 'glow_opacity')
-        if switch_glow_effect == False or (gb == 0 and gg == 0 and go == 0):
+        if switch_glow_effect == False or go <= 0 or (gb == 0 and gg == 0):
             self.diff = None
             self.hash = None
         else:
@@ -5640,7 +5640,7 @@ class VignetteEffect(Effect):
         vr = self._get_param(param, 'vignette_radius_percent')
         vs = self._get_param(param, 'vignette_softness')
         pce = getattr(efconfig, 'crop_editing', False)
-        if switch_vignette == False or (vi == 0 and vr == 0) or pce == True:
+        if switch_vignette == False or vi == 0 or pce == True:
             self.diff = None
             self.hash = None
 

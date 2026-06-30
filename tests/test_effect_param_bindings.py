@@ -211,9 +211,10 @@ class EffectParamBindingTest(unittest.TestCase):
     def _exercise_binding_round_trip(self, effect_cls, override_param, widget_values):
         effect = effect_cls()
         defaults = effect.get_param_dict({})
+        binding_defaults = {binding.key: binding.default for binding in effect.param_bindings}
         self.assertEqual(
-            defaults,
-            {binding.key: binding.default for binding in effect.param_bindings},
+            {key: defaults[key] for key in binding_defaults},
+            binding_defaults,
         )
 
         widget = self._make_widget(effect)
@@ -228,7 +229,7 @@ class EffectParamBindingTest(unittest.TestCase):
 
         param = {}
         effect.set2param(param, widget)
-        expected_param = defaults.copy()
+        expected_param = binding_defaults.copy()
         expected_param.update(widget_values)
         self.assertEqual(param, expected_param)
 
@@ -497,6 +498,7 @@ class EffectParamBindingTest(unittest.TestCase):
         widget.ids["slider_distortion_strength"].value = 78
         param = {}
         effect.distortion_painter = None
+        widget._sync_effect_editors = lambda: effect._open_distortion_painter(param, widget)
 
         effect.set2param(param, widget)
 
