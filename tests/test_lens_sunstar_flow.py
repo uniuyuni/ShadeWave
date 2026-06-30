@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import effects
+from effect_backends import lens_effect_adapter
 
 
 def _point_source_image(size=257, value=8.0, bg=0.02):
@@ -63,23 +64,23 @@ class SunstarTest(unittest.TestCase):
 
     def test_blade_count_physics(self):
         # 偶数=N本 / 奇数=2N本。
-        self.assertEqual(self.eff._spike_count_from_blades('6'), 6)
-        self.assertEqual(self.eff._spike_count_from_blades('8'), 8)
-        self.assertEqual(self.eff._spike_count_from_blades('9'), 18)
-        self.assertEqual(self.eff._spike_count_from_blades('7'), 14)
-        self.assertEqual(self.eff._spike_count_from_blades('bad'), 18)  # 既定9→18
+        self.assertEqual(lens_effect_adapter.spike_count_from_blades('6'), 6)
+        self.assertEqual(lens_effect_adapter.spike_count_from_blades('8'), 8)
+        self.assertEqual(lens_effect_adapter.spike_count_from_blades('9'), 18)
+        self.assertEqual(lens_effect_adapter.spike_count_from_blades('7'), 14)
+        self.assertEqual(lens_effect_adapter.spike_count_from_blades('bad'), 18)  # 既定9→18
 
     def test_flat_image_no_change(self):
         # 点光源が無い平坦画像では何も足さない（gating）。
         flat = np.full((129, 129, 3), 0.4, dtype=np.float32)
-        out = self.eff._sunstar(flat, strength=100, length=50, threshold=60,
-                                blades='9', aperture=11.0, mag=1.0, orig_size=None)
+        out = lens_effect_adapter.apply_sunstar(flat, strength=100, length=50, threshold=60,
+                                                blades='9', aperture=11.0, mag=1.0, orig_size=None)
         self.assertTrue(np.array_equal(out, flat))
 
     def test_emits_radial_spikes(self):
         img = _point_source_image()
-        out = self.eff._sunstar(img, strength=100, length=60, threshold=50,
-                                blades='9', aperture=11.0, mag=1.0, orig_size=None)
+        out = lens_effect_adapter.apply_sunstar(img, strength=100, length=60, threshold=50,
+                                                blades='9', aperture=11.0, mag=1.0, orig_size=None)
         self.assertEqual(out.shape, img.shape)
         diff = (out - img).mean(axis=2)
         c = img.shape[0] // 2
@@ -92,8 +93,8 @@ class SunstarTest(unittest.TestCase):
         img = _point_source_image(size=401)
         c = img.shape[0] // 2
         for blades, expected in (('6', 6), ('8', 8), ('14', 14)):
-            out = self.eff._sunstar(img, strength=100, length=80, threshold=50,
-                                    blades=blades, aperture=14.0, mag=1.0, orig_size=None)
+            out = lens_effect_adapter.apply_sunstar(img, strength=100, length=80, threshold=50,
+                                                    blades=blades, aperture=14.0, mag=1.0, orig_size=None)
             diff = (out - img).mean(axis=2)
             ring = _reach_radius(diff, c) * 0.15
             count = _count_spikes(diff, c, ring)
@@ -106,8 +107,8 @@ class SunstarTest(unittest.TestCase):
         c = img.shape[0] // 2
 
         def spikes(blades):
-            out = self.eff._sunstar(img, strength=100, length=80, threshold=50,
-                                    blades=blades, aperture=14.0, mag=1.0, orig_size=None)
+            out = lens_effect_adapter.apply_sunstar(img, strength=100, length=80, threshold=50,
+                                                    blades=blades, aperture=14.0, mag=1.0, orig_size=None)
             diff = (out - img).mean(axis=2)
             return _count_spikes(diff, c, _reach_radius(diff, c) * 0.15)
 
@@ -120,10 +121,10 @@ class SunstarTest(unittest.TestCase):
         # 絞り込む（F大）ほど光条が長い。長い光条がフレームで切れないよう大きめ画像＋短めlength。
         img = _point_source_image(size=513)
         c = img.shape[0] // 2
-        out_open = self.eff._sunstar(img, strength=100, length=30, threshold=50,
-                                     blades='9', aperture=2.0, mag=1.0, orig_size=None)
-        out_stop = self.eff._sunstar(img, strength=100, length=30, threshold=50,
-                                     blades='9', aperture=14.0, mag=1.0, orig_size=None)
+        out_open = lens_effect_adapter.apply_sunstar(img, strength=100, length=30, threshold=50,
+                                                     blades='9', aperture=2.0, mag=1.0, orig_size=None)
+        out_stop = lens_effect_adapter.apply_sunstar(img, strength=100, length=30, threshold=50,
+                                                     blades='9', aperture=14.0, mag=1.0, orig_size=None)
         reach_open = _reach_radius((out_open - img).mean(axis=2), c)
         reach_stop = _reach_radius((out_stop - img).mean(axis=2), c)
         self.assertGreater(reach_stop, reach_open * 1.3)
@@ -132,8 +133,8 @@ class SunstarTest(unittest.TestCase):
         # length=0 では光条が最小（ほぼコアのみ）。length を上げると明確に伸びる。
         img = _point_source_image(size=257)
         c = img.shape[0] // 2
-        r0 = _reach_radius((self.eff._sunstar(img, 100, 0, 50, '9', 11.0, mag=1.0, orig_size=None) - img).mean(axis=2), c)
-        r50 = _reach_radius((self.eff._sunstar(img, 100, 50, 50, '9', 11.0, mag=1.0, orig_size=None) - img).mean(axis=2), c)
+        r0 = _reach_radius((lens_effect_adapter.apply_sunstar(img, 100, 0, 50, '9', 11.0, mag=1.0, orig_size=None) - img).mean(axis=2), c)
+        r50 = _reach_radius((lens_effect_adapter.apply_sunstar(img, 100, 50, 50, '9', 11.0, mag=1.0, orig_size=None) - img).mean(axis=2), c)
         self.assertLess(r0, r50 * 0.3)        # length=0 は十分短い
         self.assertLess(r0, img.shape[0] * 0.08)  # 最小（コア近傍）
 
@@ -141,8 +142,8 @@ class SunstarTest(unittest.TestCase):
         # 各光条は中心から先端まで太さ一定（角度ガウスではなく直交距離ガウスで描くため）。
         img = _point_source_image(size=401)
         c = img.shape[0] // 2
-        out = self.eff._sunstar(img, strength=100, length=90, threshold=50,
-                                blades='8', aperture=14.0, mag=1.0, orig_size=None)
+        out = lens_effect_adapter.apply_sunstar(img, strength=100, length=90, threshold=50,
+                                                blades='8', aperture=14.0, mag=1.0, orig_size=None)
         diff = (out - img).mean(axis=2)
         R = _reach_radius(diff, c)
 
@@ -185,8 +186,8 @@ class SunstarTest(unittest.TestCase):
         small = _point_source_image(size=401)               # 3x3 の点光源
         large = np.full((401, 401, 3), 0.02, dtype=np.float32)
         large[194:207, 194:207, :] = 10.0                   # 13x13 の大きな光源
-        ds = (self.eff._sunstar(small, 100, 60, 50, '8', 11.0, mag=1.0, orig_size=None) - small).mean(axis=2)
-        dl = (self.eff._sunstar(large, 100, 60, 50, '8', 11.0, mag=1.0, orig_size=None) - large).mean(axis=2)
+        ds = (lens_effect_adapter.apply_sunstar(small, 100, 60, 50, '8', 11.0, mag=1.0, orig_size=None) - small).mean(axis=2)
+        dl = (lens_effect_adapter.apply_sunstar(large, 100, 60, 50, '8', 11.0, mag=1.0, orig_size=None) - large).mean(axis=2)
         w_small = self._spike_fwhm(ds, c, _reach_radius(ds, c) * 0.3)
         w_large = self._spike_fwhm(dl, c, _reach_radius(dl, c) * 0.3)
         ratio = w_large / max(w_small, 1e-6)
@@ -198,7 +199,7 @@ class SunstarTest(unittest.TestCase):
         c = 200
 
         def spike_rgb(src):
-            d = self.eff._sunstar(src, 100, 70, 50, '8', 12.0, mag=1.0, orig_size=None) - src
+            d = lens_effect_adapter.apply_sunstar(src, 100, 70, 50, '8', 12.0, mag=1.0, orig_size=None) - src
             R = _reach_radius(d.mean(axis=2), c)
             n = 3600
             ang = np.linspace(0.0, 2.0 * math.pi, n, endpoint=False)
@@ -242,7 +243,7 @@ class SunstarTest(unittest.TestCase):
     def test_shaped_bokeh_without_depth_spreads_hdr_point_highlight(self):
         # depth が無い場合でも、HDR点光源の周囲に絞り形状の広がりが見えること。
         img = _point_source_image(size=161, value=8.0, bg=0.02)
-        out = self.eff._shaped_bokeh(
+        out = lens_effect_adapter.apply_shaped_bokeh(
             img,
             depth_map=None,
             focus_depth=0.5,
@@ -264,7 +265,7 @@ class SunstarTest(unittest.TestCase):
     def test_shaped_bokeh_without_depth_ignores_uniform_bright_area(self):
         # depth 無しフォールバックは点状ハイライト専用。均一に明るい面は勝手に増光しない。
         img = np.full((81, 81, 3), 1.2, dtype=np.float32)
-        out = self.eff._shaped_bokeh(
+        out = lens_effect_adapter.apply_shaped_bokeh(
             img,
             depth_map=None,
             focus_depth=0.5,

@@ -1516,25 +1516,6 @@ def _kernel_white_neg_final(img, y_current, y_blur, y_orig, white_level, max_val
                 res[i, j, k] = img[i, j, k] * gain
     return res
 
-def adjust_tone(img, highlights=0, shadows=0, midtone=0, white_level=0, black_level=0, disp_scale=1.0, resolution_scale=1.0):
-    """
-    Lightroom風のシャドウ、ハイライト、白レベル、黒レベル調整を行う関数。
-    effect_backends.tone_adapter への互換 shim。
-    """
-    from effect_backends import tone_adapter
-
-    return tone_adapter.adjust_tone(
-        img,
-        highlights,
-        shadows,
-        midtone,
-        white_level,
-        black_level,
-        disp_scale,
-        resolution_scale,
-    )
-
-
 # 画像のサイズを取得する関数
 def get_exif_image_size(exif_data):
     top, left = exif_data.get("RawImageCropTopLeft", "0 0").split()
@@ -1575,11 +1556,6 @@ def get_exif_image_size_with_orientation(exif_data):
 
         return (top, left, width, height)
 
-
-def dehaze_image(img, strength=0.5):
-    from effect_backends import dehaze_adapter
-
-    return dehaze_adapter.dehaze_image(img, strength)
 
 # ガウスカーネル生成関数
 @lock_numba

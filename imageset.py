@@ -25,7 +25,6 @@ from cores.dcp_profile import DCPReader, DCPProcessor
 import cores.bit_depth_expansion as bit_depth_expansion
 import cores.core as core
 import cores.highlight_recovery as highlight_recovery
-import cores.local_contrast as local_contrast
 from effect_backends import colour_functions_adapter as colour_functions
 import cores.color as color
 from enums import ImageFidelity, LoadStage
@@ -457,7 +456,6 @@ class ImageSet:
                 # ここで補正
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
                 img_array = core.adjust_exposure(img_array, Ev)
-                #img_array = core.adjust_tone(img_array, white_level=-100)
                 #img_array = core.apply_level_adjustment(img_array, 10)
                 print(f"img_array range: [{img_array.min():.4f}, {img_array.max():.4f}]")
 

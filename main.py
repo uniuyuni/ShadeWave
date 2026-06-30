@@ -140,6 +140,7 @@ if __name__ == '__main__':
     import threads
     import os
 
+    from effect_backends import coating_adapter
     from effect_backends import colour_functions_adapter as colour_functions
     import re
     import time
@@ -169,7 +170,6 @@ if __name__ == '__main__':
     from utils import rating_io
     import macos as device
 
-    from cores.coating_simulator import CoatingSimulator
     from cores.ai_image_cache import AIImageCache
     from cores import pmck_store
     import config
@@ -5043,7 +5043,7 @@ if __name__ == '__main__':
 
         def _set_lens_presets(self):
             presets = ['None']
-            for _key, data in CoatingSimulator().presets.items():
+            for _key, data in coating_adapter.presets().items():
                 presets.append(data['name'])
             self.ids['spinner_coating_preset'].values = presets
 

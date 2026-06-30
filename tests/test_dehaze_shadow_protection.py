@@ -7,7 +7,7 @@ import cv2
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cores import core
+from effect_backends import dehaze_adapter
 
 
 def _linear_luma(rgb):
@@ -27,7 +27,7 @@ def _shadow_ramp_with_haze_patch():
 class DehazeShadowProtectionTest(unittest.TestCase):
     def test_positive_dehaze_40_does_not_crush_positive_shadow_tones(self):
         image = _shadow_ramp_with_haze_patch()
-        result = core.dehaze_image(image, 40.0 / 200.0)
+        result = dehaze_adapter.dehaze_image(image, 40.0 / 200.0)
 
         source_luma = _linear_luma(image)
         result_luma = _linear_luma(result)
@@ -41,7 +41,7 @@ class DehazeShadowProtectionTest(unittest.TestCase):
 
     def test_positive_dehaze_still_changes_midtones(self):
         image = _shadow_ramp_with_haze_patch()
-        result = core.dehaze_image(image, 40.0 / 200.0)
+        result = dehaze_adapter.dehaze_image(image, 40.0 / 200.0)
 
         source_luma = _linear_luma(image)
         midtone = (source_luma > 0.08) & (source_luma < 0.18)
@@ -60,7 +60,7 @@ class DehazeShadowProtectionTest(unittest.TestCase):
         image = np.dstack((luma * 0.96, luma, luma * 1.04)).astype(np.float32)
         image[:, 170:, :] += np.array([0.16, 0.17, 0.18], dtype=np.float32)
 
-        result = core.dehaze_image(np.ascontiguousarray(image, dtype=np.float32), 40.0 / 200.0)
+        result = dehaze_adapter.dehaze_image(np.ascontiguousarray(image, dtype=np.float32), 40.0 / 200.0)
 
         def shadow_high_frequency_std(rgb):
             y = _linear_luma(rgb)[:, :120].astype(np.float32)

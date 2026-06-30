@@ -8,7 +8,7 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cores import film_process
+from effect_backends import film_process_adapter
 
 
 def _chroma_amount(image):
@@ -20,7 +20,7 @@ class FilmProcessTest(unittest.TestCase):
     def test_off_mode_returns_original_float_image(self):
         image = np.array([[[0.2, 0.4, 0.8], [1.2, 0.5, 0.1]]], dtype=np.float32)
 
-        result = film_process.apply_film_process(image, {"film_mode": "Off"})
+        result = film_process_adapter.apply_film_process(image, mode="Off")
 
         self.assertEqual(result.dtype, np.float32)
         self.assertTrue(np.array_equal(result, image))
@@ -31,16 +31,17 @@ class FilmProcessTest(unittest.TestCase):
             dtype=np.float32,
         )
 
-        result = film_process.apply_film_process(image, {
-            "film_mode": "Negative",
-            "film_latitude": 65,
-            "film_contrast": 55,
-            "film_color_bias": 10,
-            "film_dye_purity": 70,
-            "film_layer_crosstalk": 25,
-            "film_halation": 20,
-            "film_aging": 10,
-        })
+        result = film_process_adapter.apply_film_process(
+            image,
+            mode="Negative",
+            latitude=65,
+            contrast=55,
+            color_bias=10,
+            dye_purity=70,
+            layer_crosstalk=25,
+            halation=20,
+            aging=10,
+        )
 
         self.assertEqual(result.dtype, np.float32)
         self.assertEqual(result.shape, image.shape)
@@ -52,8 +53,8 @@ class FilmProcessTest(unittest.TestCase):
             dtype=np.float32,
         )
 
-        low = film_process.apply_film_process(image, {"film_mode": "Negative", "film_dye_purity": 0})
-        high = film_process.apply_film_process(image, {"film_mode": "Negative", "film_dye_purity": 100})
+        low = film_process_adapter.apply_film_process(image, mode="Negative", dye_purity=0)
+        high = film_process_adapter.apply_film_process(image, mode="Negative", dye_purity=100)
 
         self.assertGreater(_chroma_amount(high), _chroma_amount(low))
 
@@ -63,13 +64,17 @@ class FilmProcessTest(unittest.TestCase):
             dtype=np.float32,
         )
 
-        clean = film_process.apply_film_process(
+        clean = film_process_adapter.apply_film_process(
             image,
-            {"film_mode": "Negative", "film_layer_crosstalk": 0, "film_dye_purity": 100},
+            mode="Negative",
+            layer_crosstalk=0,
+            dye_purity=100,
         )
-        mixed = film_process.apply_film_process(
+        mixed = film_process_adapter.apply_film_process(
             image,
-            {"film_mode": "Negative", "film_layer_crosstalk": 100, "film_dye_purity": 100},
+            mode="Negative",
+            layer_crosstalk=100,
+            dye_purity=100,
         )
 
         self.assertLess(_chroma_amount(mixed), _chroma_amount(clean))
@@ -80,8 +85,8 @@ class FilmProcessTest(unittest.TestCase):
             dtype=np.float32,
         )
 
-        neutral = film_process.apply_film_process(image, {"film_mode": "Negative", "film_color_drift": 0})
-        drifted = film_process.apply_film_process(image, {"film_mode": "Negative", "film_color_drift": 100})
+        neutral = film_process_adapter.apply_film_process(image, mode="Negative", color_drift=0)
+        drifted = film_process_adapter.apply_film_process(image, mode="Negative", color_drift=100)
 
         shadow_delta = drifted[0, 0] - neutral[0, 0]
         highlight_delta = drifted[0, 2] - neutral[0, 2]
@@ -92,15 +97,15 @@ class FilmProcessTest(unittest.TestCase):
         image = np.zeros((31, 31, 3), dtype=np.float32)
         image[15, 15] = 4.0
 
-        no_halo = film_process.apply_film_process(image, {"film_mode": "Negative", "film_halation": 0})
-        halo = film_process.apply_film_process(image, {"film_mode": "Negative", "film_halation": 100})
+        no_halo = film_process_adapter.apply_film_process(image, mode="Negative", halation=0)
+        halo = film_process_adapter.apply_film_process(image, mode="Negative", halation=100)
 
         self.assertGreater(float(halo[15, 16, 0]), float(no_halo[15, 16, 0]))
 
     def test_black_and_white_mode_outputs_neutral_channels(self):
         image = np.array([[[1.0, 0.1, 0.05], [0.2, 0.8, 0.1]]], dtype=np.float32)
 
-        result = film_process.apply_film_process(image, {"film_mode": "B&W"})
+        result = film_process_adapter.apply_film_process(image, mode="B&W")
 
         self.assertTrue(np.allclose(result[..., 0], result[..., 1], atol=1e-6))
         self.assertTrue(np.allclose(result[..., 1], result[..., 2], atol=1e-6))

@@ -10,7 +10,6 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cores import core
 from effect_backends import tone_adapter, tone_reference
 from effects import ToneEffect
 
@@ -75,14 +74,6 @@ class ToneBackendTest(unittest.TestCase):
 
         self.assertEqual(actual.dtype, np.float32)
         np.testing.assert_allclose(actual, expected, rtol=2e-3, atol=2e-3)
-
-    def test_core_adjust_tone_is_compatibility_shim(self):
-        image = np.linspace(0.05, 1.5, 18 * 20 * 3, dtype=np.float32).reshape(18, 20, 3)
-
-        expected = tone_adapter.adjust_tone(image, 12.0, -8.0, 20.0, 0.0, 5.0, resolution_scale=1.0)
-        actual = core.adjust_tone(image, 12.0, -8.0, 20.0, 0.0, 5.0, resolution_scale=1.0)
-
-        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
 
     def test_tone_effect_dispatches_to_adapter(self):
         image = np.ones((6, 8, 3), dtype=np.float32) * np.float32(0.5)

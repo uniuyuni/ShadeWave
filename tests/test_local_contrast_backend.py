@@ -12,7 +12,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from effect_backends import local_contrast_adapter, local_contrast_reference
-import cores.local_contrast as local_contrast_shim
 from effects import ClarityEffect, MicroContrastEffect, TextureEffect
 
 
@@ -107,14 +106,6 @@ class LocalContrastBackendTest(unittest.TestCase):
         second = local_contrast_adapter.apply_microcontrast(image, 0.5)
 
         np.testing.assert_array_equal(second, first)
-
-    def test_cores_local_contrast_is_compatibility_shim(self):
-        image = np.linspace(0.0, 1.2, 18 * 20 * 3, dtype=np.float32).reshape(18, 20, 3)
-
-        expected = local_contrast_adapter.apply_microcontrast(image, 0.4)
-        actual = local_contrast_shim.apply_microcontrast(image, 0.4)
-
-        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
 
     def test_effects_dispatch_to_adapter(self):
         image = np.ones((8, 10, 3), dtype=np.float32) * np.float32(0.5)

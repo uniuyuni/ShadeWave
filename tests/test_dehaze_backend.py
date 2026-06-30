@@ -11,7 +11,6 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cores import core
 from effect_backends import dehaze_adapter, dehaze_reference
 from effects import DehazeEffect
 
@@ -86,15 +85,6 @@ class DehazeBackendTest(unittest.TestCase):
                 os.environ.pop("PLATYPUS_DEHAZE_BACKEND", None)
             else:
                 os.environ["PLATYPUS_DEHAZE_BACKEND"] = old_value
-
-    def test_core_dehaze_image_is_compatibility_shim(self):
-        rng = np.random.default_rng(456)
-        image = rng.random((48, 64, 3), dtype=np.float32) * np.float32(1.4)
-
-        expected = dehaze_adapter.dehaze_image(image, 0.12)
-        actual = core.dehaze_image(image, 0.12)
-
-        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
 
     def test_dehaze_effect_dispatches_to_adapter(self):
         image = np.ones((8, 10, 3), dtype=np.float32) * np.float32(0.5)
