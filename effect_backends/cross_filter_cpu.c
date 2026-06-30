@@ -367,6 +367,7 @@ int cross_filter_apply_v1(
         return CROSS_FILTER_ERR_ALLOC;
     }
 
+    #pragma omp parallel for schedule(static)
     for (int y = 0; y < h; ++y) {
         const float* row = (const float*)((const unsigned char*)input->data + (size_t)y * input->stride_bytes);
         float* out_row = (float*)((unsigned char*)output->data + (size_t)y * output->stride_bytes);
@@ -386,12 +387,14 @@ int cross_filter_apply_v1(
     horizontal_max_filter(luminance, max_tmp, w, h, radius);
     vertical_max_filter(max_tmp, dilated, w, h, radius);
 
+    int peak_count = 0;
     for (int y = 0; y < h; ++y) {
         const float* row = (const float*)((const unsigned char*)input->data + (size_t)y * input->stride_bytes);
         for (int x = 0; x < w; ++x) {
             const size_t idx = (size_t)y * w + x;
             const float lum = luminance[idx];
             if (lum == dilated[idx] && lum > params->threshold) {
+                ++peak_count;
                 if (params->debug_mode) {
                     draw_debug_circle(output->data, w, h, x, y);
                 } else {
@@ -415,7 +418,7 @@ int cross_filter_apply_v1(
     free(max_tmp);
     free(dilated);
 
-    if (params->debug_mode) {
+    if (params->debug_mode || peak_count == 0) {
         free(impulse_mini);
         return CROSS_FILTER_OK;
     }
@@ -538,6 +541,7 @@ int cross_filter_apply_v1(
     }
     resize_bilinear(streaks_mini, sw, sh, streaks_full, w, h);
 
+    #pragma omp parallel for schedule(static)
     for (int y = 0; y < h; ++y) {
         const float* src_row = (const float*)((const unsigned char*)input->data + (size_t)y * input->stride_bytes);
         float* out_row = (float*)((unsigned char*)output->data + (size_t)y * output->stride_bytes);

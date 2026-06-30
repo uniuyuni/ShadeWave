@@ -62,6 +62,22 @@ class CrossFilterBackendTest(unittest.TestCase):
         self.assertGreaterEqual(float(actual[20, 24, 2]), 9.0)
         self.assertGreaterEqual(float(actual[50, 70, 2]), 9.0)
 
+    def test_no_peak_image_is_identity(self):
+        image = np.full((48, 64, 3), 0.05, dtype=np.float32)
+
+        actual = cross_filter_adapter.apply_cross_filter(
+            image,
+            num_points=4,
+            length=120,
+            threshold=2.0,
+            intensity=0.35,
+            min_distance=8,
+            speed_factor=4,
+        )
+
+        self.assertEqual(actual.dtype, np.float32)
+        np.testing.assert_allclose(actual, image, rtol=0, atol=0)
+
     def test_reference_remains_available(self):
         image = self._peak_image()
         expected = cross_filter_reference.apply_cross_filter(

@@ -31,6 +31,21 @@ class VignetteBackendTest(unittest.TestCase):
         self.assertEqual(actual.dtype, np.float32)
         np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
 
+    def test_cached_mask_path_matches_direct_backend(self):
+        rng = np.random.default_rng(124)
+        image = rng.random((64, 96, 3), dtype=np.float32) * np.float32(1.8)
+        disp_info = (3.0, -2.0, 96.0, 64.0, 1.25)
+        crop_rect = (4.0, 6.0, 88.0, 58.0)
+        offset = (1.5, -3.5)
+
+        expected = vignette_adapter.apply_vignette(image, 35.0, 82.0, disp_info, crop_rect, offset, 2.35)
+        mask = vignette_adapter.create_vignette_mask(64, 96, 82.0, disp_info, crop_rect, offset, 2.35)
+        actual = vignette_adapter.apply_vignette_mask(image, mask, 35.0)
+
+        self.assertEqual(mask.shape, (64, 96))
+        self.assertEqual(mask.dtype, np.float32)
+        np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

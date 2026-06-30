@@ -51,9 +51,11 @@ setup(
         Extension(
             "effect_backends._cross_filter_cpu",
             ["cross_filter_pybind.cpp", "cross_filter_cpu.c"],
-            include_dirs=[pybind11.get_include()],
+            include_dirs=[pybind11.get_include(), *_openmp_include_dirs],
+            library_dirs=_openmp_library_dirs,
             language="c++",
-            extra_compile_args=["-O3"],
+            extra_compile_args=_openmp_compile_args,
+            extra_link_args=_openmp_link_args,
         ),
         Extension(
             "effect_backends._colour_functions_cpu",

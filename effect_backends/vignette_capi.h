@@ -34,6 +34,18 @@ int vignette_apply_v1(
     const VignetteParams* params
 );
 
+int vignette_create_mask_v1(
+    VignetteImageF32* output,
+    const VignetteParams* params
+);
+
+int vignette_apply_mask_v1(
+    const VignetteImageF32* input,
+    const VignetteImageF32* mask,
+    VignetteImageF32* output,
+    float intensity
+);
+
 #ifdef __cplusplus
 }
 #endif

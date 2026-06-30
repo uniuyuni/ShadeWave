@@ -35,6 +35,16 @@ class AINoiseExportReuseFlowTest(unittest.TestCase):
 
         self.assertIn("efconfig.file_path = primary_param.get('_source_file_path')", source)
 
+    def test_export_pipeline_initializes_stable_upstream_hash_for_lv0_effects(self):
+        source = _load_function(PIPELINE_PATH, "export_pipeline")
+
+        self.assertIn("efconfig.upstream_hash = hash(id(img))", source)
+        self.assertIn("efconfig.stable_upstream_hash = hash((", source)
+        self.assertLess(
+            source.index("efconfig.stable_upstream_hash = hash(("),
+            source.index("pipeline_lv0("),
+        )
+
     def test_export_file_sets_source_file_path_before_pipeline(self):
         source = _load_class_function(EXPORT_PATH, "ExportFile", "write_to_file")
 

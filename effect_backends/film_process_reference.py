@@ -8,6 +8,7 @@ an explicit-kwargs public API (no param dict) per the effect-backends design.
 from __future__ import annotations
 
 import numpy as np
+import cv2
 
 import cores.core as core
 
@@ -88,7 +89,18 @@ def _apply_halation(rgb, amount):
 
     height, width = rgb.shape[:2]
     radius = max(1.0, min(height, width) * (0.004 + amount * 0.014))
-    bloom = core.gaussian_blur_cv(highlights.astype(np.float32), (0, 0), radius)
+    highlights = highlights.astype(np.float32, copy=False)
+    if radius > 6.0 and min(height, width) >= 256:
+        factor = min(4.0, max(2.0, radius / 4.0))
+        small_size = (
+            max(1, int(round(width / factor))),
+            max(1, int(round(height / factor))),
+        )
+        small = cv2.resize(highlights, small_size, interpolation=cv2.INTER_AREA)
+        small = core.gaussian_blur_cv(small, (0, 0), max(0.5, radius / factor))
+        bloom = cv2.resize(small, (width, height), interpolation=cv2.INTER_LINEAR)
+    else:
+        bloom = core.gaussian_blur_cv(highlights, (0, 0), radius)
     halo_color = np.array([1.0, 0.38, 0.16], dtype=np.float32)
     return rgb + bloom[..., np.newaxis] * halo_color * (0.10 + amount * 0.34)
 

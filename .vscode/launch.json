@@ -101,7 +101,8 @@
                 "KMP_DUPLICATE_LIB_OK": "FALSE",
                 "DYLD_FALLBACK_LIBRARY_PATH": "${workspaceFolder}/.pixi/libraw-install/lib:${workspaceFolder}/.pixi/envs/default/lib:/usr/lib:/usr/local/lib:/opt/homebrew/lib",
                 "PLATYPUS_PIPELINE_TIMING": "1",
-                "PLATYPUS_PIPELINE_TIMING_EVERY": "1"
+                "PLATYPUS_PIPELINE_TIMING_EVERY": "1",
+                "PLATYPUS_SPLASH_SCREEN": "0",
             }
         },
         {

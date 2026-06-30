@@ -43,6 +43,19 @@ class CubeLutOverrangeTest(unittest.TestCase):
 
         np.testing.assert_allclose(result, rgb, atol=1e-6)
 
+    def test_3d_lut_reuses_backend_ready_table(self):
+        lut = make_identity_3d_lut()
+        rgb = np.array([[[0.25, 0.5, 0.75]]], dtype=np.float32)
+
+        first = cubelut.apply_lut(rgb, lut)
+        cached_table = lut._backend_table
+        cached_domain = lut._backend_domain
+        second = cubelut.apply_lut(rgb, lut)
+
+        self.assertIs(lut._backend_table, cached_table)
+        self.assertIs(lut._backend_domain, cached_domain)
+        np.testing.assert_allclose(first, second, rtol=0, atol=0)
+
     def test_preserve_1d_lut_extends_endpoint_offset(self):
         table = np.linspace(0.0, 0.8, 4, dtype=np.float32)[:, None].repeat(3, axis=1)
         lut = LUT3x1D(table, size=4)

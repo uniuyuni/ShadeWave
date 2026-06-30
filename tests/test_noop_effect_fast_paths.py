@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import effects
 from cores import core
+from effect_backends import vignette_adapter
 
 
 class NoopEffectFastPathTest(unittest.TestCase):
@@ -64,6 +65,63 @@ class NoopEffectFastPathTest(unittest.TestCase):
         self.assertEqual(np.float32, actual.dtype)
         np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-7)
         self.assertGreater(float(actual.max()), 1.0)
+
+    def test_vignette_active_path_matches_backend_and_handles_missing_crop_rect(self):
+        rng = np.random.default_rng(321)
+        image = rng.random((16, 20, 3), dtype=np.float32) * np.float32(2.0)
+        param = {
+            "switch_vignette": True,
+            "vignette_intensity": -35,
+            "vignette_radius_percent": 82,
+            "vignette_softness": 55,
+            "original_img_size": (20, 16),
+        }
+        efconfig = SimpleNamespace(
+            crop_editing=False,
+            mode=effects.EffectMode.EXPORT,
+            disp_info=(1.0, -2.0, 20.0, 16.0, 1.1),
+        )
+
+        actual = effects.VignetteEffect().make_diff(image, param, efconfig)
+        expected = vignette_adapter.apply_vignette(
+            image,
+            -35,
+            82,
+            efconfig.disp_info,
+            (0, 0, 20, 16),
+            (0, 0),
+            (100 - 55) / 100.0 * 3.0 + 1.0,
+        )
+
+        self.assertEqual(np.float32, actual.dtype)
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+
+    def test_vignette_reuses_mask_without_reusing_stale_output(self):
+        rng = np.random.default_rng(322)
+        image_a = rng.random((16, 20, 3), dtype=np.float32)
+        image_b = rng.random((16, 20, 3), dtype=np.float32) * np.float32(1.5)
+        param = {
+            "switch_vignette": True,
+            "vignette_intensity": -35,
+            "vignette_radius_percent": 82,
+            "vignette_softness": 55,
+            "original_img_size": (20, 16),
+        }
+        efconfig = SimpleNamespace(
+            crop_editing=False,
+            mode=effects.EffectMode.EXPORT,
+            disp_info=(1.0, -2.0, 20.0, 16.0, 1.1),
+        )
+        effect = effects.VignetteEffect()
+
+        first = effect.make_diff(image_a, param, efconfig)
+        cached_mask = effect._vignette_mask
+        second = effect.make_diff(image_b, param, efconfig)
+        expected_second = vignette_adapter.apply_vignette_mask(image_b, cached_mask, -35)
+
+        self.assertIs(effect._vignette_mask, cached_mask)
+        self.assertFalse(np.allclose(first, second))
+        np.testing.assert_allclose(second, expected_second, rtol=0, atol=0)
 
 
 if __name__ == "__main__":

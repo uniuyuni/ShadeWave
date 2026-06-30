@@ -52,6 +52,26 @@ class ColorSeparationEffectTest(unittest.TestCase):
 
         np.testing.assert_allclose(actual, expected, rtol=2.0e-3, atol=2.0e-3)
 
+    def test_native_pointwise_path_matches_reference_when_available(self):
+        if _color_separation_cpu is None:
+            self.skipTest("native color separation backend is not built")
+
+        image = np.random.default_rng(23).random((28, 36, 3), dtype=np.float32) * 2.0 - 0.2
+        params = {
+            "shadow_chroma_clean": 0.0,
+            "shadow_threshold": 0.22,
+            "color_separation": 0.55,
+            "chroma_clarity": 0.0,
+            "color_density": 0.4,
+            "subtractive_saturation": 0.25,
+            "opponent_contrast": 0.2,
+        }
+
+        expected = color_separation_reference.apply_color_separation(image, **params)
+        actual = _color_separation_cpu.apply_color_separation(image, **params)
+
+        np.testing.assert_allclose(actual, expected, rtol=2.0e-3, atol=2.0e-3)
+
     def test_zero_parameters_are_identity_object(self):
         image = np.random.default_rng(1).random((16, 12, 3), dtype=np.float32)
 

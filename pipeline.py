@@ -705,6 +705,9 @@ def _finalize_pipeline_timing(timing):
     payload = {
         "frame_id": timing["frame_id"],
         "is_drag": timing["is_drag"],
+        "loading_flag": timing.get("loading_flag"),
+        "image_fidelity": timing.get("image_fidelity"),
+        "input_shape": timing.get("input_shape"),
         "frame_start_unix_ms": timing.get("frame_start_unix_ms"),
         "frame_start_iso": timing.get("frame_start_iso"),
         "logged_at_unix_ms": int(time.time() * 1000),
@@ -962,10 +965,21 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
     efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.file_path = primary_param.get('_source_file_path')
     efconfig.upstream_hash = hash(id(img))
+    efconfig.stable_upstream_hash = hash((
+        efconfig.file_path,
+        efconfig.image_fidelity,
+        tuple(getattr(img, "shape", ())),
+        str(getattr(img, "dtype", "")),
+        tuple(primary_param.get('original_img_size', ())),
+    ))
     efconfig.pipeline_timing = timing
     efconfig.pipeline_layer_label = "primary"
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
     _install_ai_depth_map_getter(efconfig, img, primary_param, mask_editor2=mask_editor2, ai_image_cache=ai_image_cache)
+    if timing is not None:
+        timing["loading_flag"] = loading_flag
+        timing["image_fidelity"] = efconfig.image_fidelity
+        timing["input_shape"] = tuple(getattr(img, "shape", ()))
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_setup", (time.perf_counter() - _t0) * 1000.0)
 
@@ -1147,6 +1161,14 @@ def export_pipeline(img, primary_effects, primary_param, mask_editor2):
     efconfig.full_preview = False
     efconfig.image_fidelity = primary_param.get('image_fidelity')
     efconfig.file_path = primary_param.get('_source_file_path')
+    efconfig.upstream_hash = hash(id(img))
+    efconfig.stable_upstream_hash = hash((
+        efconfig.file_path,
+        efconfig.image_fidelity,
+        tuple(getattr(img, "shape", ())),
+        str(getattr(img, "dtype", "")),
+        tuple(primary_param.get('original_img_size', ())),
+    ))
     efconfig.debug_nan_inf_check = _is_nan_inf_debug_enabled()
     _install_ai_depth_map_getter(efconfig, img, primary_param, mask_editor2=mask_editor2)
 
@@ -1349,9 +1371,11 @@ def pipeline_lv0(img, effects, param, efconfig, processor=None):
         if _iter_t0 is not None:
             _t = time.perf_counter()
             efconfig.upstream_hash = hash((efconfig.upstream_hash, n, getattr(lv0[n], 'hash', None)))
+            efconfig.stable_upstream_hash = hash((efconfig.stable_upstream_hash, n, getattr(lv0[n], 'hash', None)))
             overhead_components["upstream_hash_ms"] = (time.perf_counter() - _t) * 1000.0
         else:
             efconfig.upstream_hash = hash((efconfig.upstream_hash, n, getattr(lv0[n], 'hash', None)))
+            efconfig.stable_upstream_hash = hash((efconfig.stable_upstream_hash, n, getattr(lv0[n], 'hash', None)))
 
         # Update upstream status if layer became preview
         if _iter_t0 is not None:

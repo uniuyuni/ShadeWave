@@ -51,6 +51,8 @@ class LUT3D:
             self.domain = np.array([[0., 0., 0.], [1., 1., 1.]], dtype=np.float32)
         else:
             self.domain = np.asarray(domain, dtype=np.float32)
+        self._backend_table = None
+        self._backend_domain = None
     
     def apply(self, RGB: np.ndarray, interpolation: str = 'trilinear') -> np.ndarray:
         """
@@ -71,7 +73,11 @@ class LUT3D:
         from effect_backends import lut_adapter
 
         RGB = np.asarray(RGB, dtype=np.float32)
-        return lut_adapter.apply_lut3d(RGB, self.table, self.domain, self.size)
+        if self._backend_table is None or not np.shares_memory(self._backend_table, self.table):
+            self._backend_table = np.ascontiguousarray(self.table, dtype=np.float32)
+        if self._backend_domain is None or not np.shares_memory(self._backend_domain, self.domain):
+            self._backend_domain = np.ascontiguousarray(self.domain, dtype=np.float32)
+        return lut_adapter.apply_lut3d(RGB, self._backend_table, self._backend_domain, self.size)
 
 
 class LUT3x1D:

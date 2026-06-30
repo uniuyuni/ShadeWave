@@ -470,6 +470,100 @@ static void write_rgb_output(
     }
 }
 
+static int apply_pointwise_color_separation(
+    const ColorSeparationConstImageF32* input,
+    ColorSeparationImageF32* output,
+    const ColorSeparationParams* params
+) {
+    const int width = input->width;
+    const int height = input->height;
+    const float color_separation = params->color_separation;
+    const float color_density = params->color_density;
+    const float subtractive_saturation = params->subtractive_saturation;
+    const float opponent_contrast = params->opponent_contrast;
+
+    #pragma omp parallel for schedule(static)
+    for (int y = 0; y < height; ++y) {
+        const float* src_row = (const float*)((const unsigned char*)input->data + (size_t)y * input->stride_bytes);
+        float* dst_row = (float*)((unsigned char*)output->data + (size_t)y * output->stride_bytes);
+        for (int x = 0; x < width; ++x) {
+            const int base = x * 3;
+            const float src_r = src_row[base + 0];
+            const float src_g = src_row[base + 1];
+            const float src_b = src_row[base + 2];
+            const float yy = CS_KR * src_r + CS_KG * src_g + CS_KB * src_b;
+            float cbv = 0.5389f * (src_b - yy);
+            float crv = 0.6350f * (src_r - yy);
+
+            if (color_separation > 0.0f) {
+                const float amount = clampf(color_separation, 0.0f, 1.0f);
+                const float chroma = sqrtf(cbv * cbv + crv * crv);
+                const float relative_chroma = chroma / (fmaxf(yy, 0.0f) + 1.0e-4f);
+                const float midtone_mask = smoothstepf(0.04f, 0.22f, yy);
+                const float hdr_protect = 1.0f - smoothstepf(1.6f, 4.0f, yy);
+                const float vivid_limit = 1.0f - 0.65f * smoothstepf(0.30f, 0.90f, relative_chroma);
+                const float sep_gain = 1.0f + amount * 0.35f * midtone_mask * hdr_protect * vivid_limit;
+                cbv *= sep_gain;
+                crv *= sep_gain;
+            }
+
+            if (color_density != 0.0f) {
+                const float density_value = clampf(color_density, -1.0f, 1.0f);
+                const float chroma = sqrtf(cbv * cbv + crv * crv);
+                const float relative_chroma = chroma / (fmaxf(yy, 0.0f) + 1.0e-4f);
+                const float midtone_mask = smoothstepf(0.06f, 0.24f, yy) * (1.0f - smoothstepf(1.4f, 3.2f, yy));
+                const float neutral_gate = smoothstepf(0.025f, 0.18f, relative_chroma);
+                float density_gain = 1.0f;
+                if (density_value > 0.0f) {
+                    const float vivid_rolloff = 1.0f - 0.85f * smoothstepf(0.45f, 1.05f, relative_chroma);
+                    const float density_amount = density_value * midtone_mask * neutral_gate * vivid_rolloff;
+                    const float target_chroma = chroma + 0.10f * tanhf(chroma / 0.10f);
+                    density_gain = 1.0f + density_amount * ((target_chroma / (chroma + 1.0e-6f)) - 1.0f);
+                } else {
+                    const float vivid_rolloff = 1.0f - 0.35f * smoothstepf(0.70f, 1.60f, relative_chroma);
+                    const float density_amount = (-density_value) * midtone_mask * neutral_gate * vivid_rolloff;
+                    density_gain = 1.0f - 0.40f * density_amount;
+                }
+                cbv *= density_gain;
+                crv *= density_gain;
+            }
+
+            float r = yy + 1.5748f * crv;
+            float b = yy + 1.8556f * cbv;
+            float g = yy - 0.1873f * cbv - 0.4681f * crv;
+
+            if (subtractive_saturation != 0.0f) {
+                apply_subtractive_saturation_pixel(&r, &g, &b, subtractive_saturation);
+            }
+            if (opponent_contrast > 0.0f) {
+                const float y_opp = CS_KR * r + CS_KG * g + CS_KB * b;
+                float rg = r - g;
+                float by = b - 0.5f * (r + g);
+                const float opponent_strength = (fabsf(rg) + fabsf(by)) / (fmaxf(y_opp, 0.0f) + 1.0e-4f);
+                const float midtone_mask = smoothstepf(0.05f, 0.24f, y_opp);
+                const float hdr_protect = 1.0f - smoothstepf(1.6f, 4.0f, y_opp);
+                const float vivid_rolloff = 1.0f - 0.70f * smoothstepf(0.70f, 1.80f, opponent_strength);
+                const float opponent_gain = 1.0f
+                    + clampf(opponent_contrast, 0.0f, 1.0f) * 0.26f * midtone_mask * hdr_protect * vivid_rolloff;
+                rg *= opponent_gain;
+                by *= opponent_gain;
+                const float g_new = y_opp - (CS_KR + CS_KB * 0.5f) * rg - CS_KB * by;
+                r = g_new + rg;
+                g = g_new;
+                b = g_new + 0.5f * rg + by;
+            }
+
+            const float lower_r = src_r < 0.0f ? src_r : 0.0f;
+            const float lower_g = src_g < 0.0f ? src_g : 0.0f;
+            const float lower_b = src_b < 0.0f ? src_b : 0.0f;
+            dst_row[base + 0] = r > lower_r ? r : lower_r;
+            dst_row[base + 1] = g > lower_g ? g : lower_g;
+            dst_row[base + 2] = b > lower_b ? b : lower_b;
+        }
+    }
+    return COLOR_SEPARATION_OK;
+}
+
 int color_separation_apply_v1(
     const ColorSeparationConstImageF32* input,
     ColorSeparationImageF32* output,
@@ -483,6 +577,9 @@ int color_separation_apply_v1(
     size_t count = 0;
     if (!checked_plane_size(input->width, input->height, &count)) {
         return COLOR_SEPARATION_ERR_SHAPE;
+    }
+    if (params->shadow_chroma_clean == 0.0f && params->chroma_clarity == 0.0f) {
+        return apply_pointwise_color_separation(input, output, params);
     }
 
     float* y_plane = (float*)malloc(sizeof(float) * count);

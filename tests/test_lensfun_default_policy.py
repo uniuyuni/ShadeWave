@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import params
+from enums import ImageFidelity
 from effects import LensModifierEffect
 
 
@@ -84,6 +85,65 @@ class LensfunDefaultPolicyTest(unittest.TestCase):
             actual = effect.make_diff(image, param, efconfig)
 
         self.assertIs(actual, expected)
+
+    def test_lens_modifier_skips_embedded_preview_fidelity(self):
+        effect = LensModifierEffect()
+        image = np.ones((2, 2, 3), dtype=np.float32)
+        param = {
+            "switch_lens_modifier": True,
+            "lens_modifier": True,
+            "original_img_size": (2, 2),
+            "exif_data": {},
+        }
+        efconfig = SimpleNamespace(
+            loading_flag=-1,
+            processor=None,
+            upstream_hash="u",
+            image_fidelity=ImageFidelity.PREVIEW.value,
+        )
+
+        with (
+            patch("effects.core.setup_lensfun", side_effect=AssertionError("preview must not setup lensfun")),
+            patch("effects.core.modify_lensfun", side_effect=AssertionError("preview must not modify lensfun")),
+        ):
+            actual = effect.make_diff(image, param, efconfig)
+
+        self.assertIsNone(actual)
+        self.assertIsNone(effect.diff)
+        self.assertIsNone(effect.hash)
+
+    def test_lens_modifier_uses_stable_source_hash_to_avoid_id_only_misses(self):
+        effect = LensModifierEffect()
+        image = np.ones((2, 2, 3), dtype=np.float32)
+        expected = np.zeros_like(image)
+        param = {
+            "switch_lens_modifier": True,
+            "lens_modifier": True,
+            "original_img_size": (2, 2),
+            "exif_data": {},
+        }
+        efconfig = SimpleNamespace(
+            loading_flag=-1,
+            processor=None,
+            upstream_hash="id-based-1",
+            stable_upstream_hash="same-source",
+            image_fidelity=ImageFidelity.FULL.value,
+        )
+
+        with (
+            patch("effects.core.setup_lensfun", return_value=object()),
+            patch("effects.core.get_lensfun_capability", return_value=(True, False, True)),
+            patch("effects.core.modify_lensfun", return_value=(expected, True, False, True)) as modify,
+        ):
+            first = effect.make_diff(image, param, efconfig)
+
+        efconfig.upstream_hash = "id-based-2"
+        with patch("effects.core.modify_lensfun", side_effect=AssertionError("stable source cache should hit")):
+            second = effect.make_diff(image.copy(), param, efconfig)
+
+        self.assertIs(first, expected)
+        self.assertIs(second, expected)
+        self.assertEqual(1, modify.call_count)
 
     def test_lens_modifier_off_clears_capability_and_notifies_once(self):
         calls = []

@@ -78,6 +78,11 @@ def _loading_flag_ready_for_heavy_effects(loading_flag):
     return loading_flag <= 0
 
 
+def _full_fidelity_ready_for_lens_modifier(efconfig):
+    fidelity = getattr(efconfig, "image_fidelity", None)
+    return fidelity is None or fidelity == ImageFidelity.FULL.value
+
+
 def _geometry_preview_interpolation(crop_editing):
     if not crop_editing:
         return "area"
@@ -635,7 +640,13 @@ class LensModifierEffect(Effect):
         switch_lm = self._get_param(param, 'switch_lens_modifier')        
         lm = self._get_param(param, 'lens_modifier')
         cd, sd, gd = params.get_lensfun_user_tuple(param)
-        if switch_lm == False or lm == False or (cd == False and sd == False and gd == False) or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag):
+        if (
+            switch_lm == False
+            or lm == False
+            or (cd == False and sd == False and gd == False)
+            or not _loading_flag_ready_for_heavy_effects(efconfig.loading_flag)
+            or not _full_fidelity_ready_for_lens_modifier(efconfig)
+        ):
             lensfun_state_before = dict(param.get(params.LENSFUN_STATE_KEY, {}))
             self.diff = None
             self.hash = None
@@ -645,8 +656,11 @@ class LensModifierEffect(Effect):
                 self.callback()
         else:
             param_hash = hash((cd, sd, gd))
-
-            needed, combined_hash = self.check_sync_necessity(param_hash, efconfig)
+            upstream_key = getattr(efconfig, "stable_upstream_hash", None)
+            if upstream_key is None:
+                upstream_key = getattr(efconfig, "upstream_hash", None)
+            combined_hash = hash((param_hash, upstream_key))
+            needed = self.hash != combined_hash
             if needed:
                 self.hash = combined_hash
 
@@ -4228,15 +4242,20 @@ class LUTEffect(Effect):
         lut_name = self._get_param(param, 'lut_name')
         lut_to_log = self._get_param(param, 'lut_to_log')
         lut_intensity = self._get_param(param, 'lut_intensity')
-        lut_path = config.get_config('lut_path')
         stage_active = (
             (self.stage == "input" and lut_to_log != 'None')
             or (self.stage == "look" and lut_to_log == 'None')
         )
-        if switch_lut == False or not stage_active or lut_path is None or lut_name == 'None' or lut_intensity == 0:
+        if switch_lut == False or not stage_active or lut_name == 'None' or lut_intensity == 0:
             self.diff = None
             self.hash = None
         else:
+            lut_path = config.get_config('lut_path')
+            if lut_path is None:
+                self.diff = None
+                self.hash = None
+                return self.diff
+
             # 旧 AutoExposureEffect 統合: input stage の raw 画像のみ露出補正を適用する。
             # 露出補正条件は input LUT の描画条件と一致するため、param_hash にも含める。
             rgb_or_raw = self._get_param(param, 'rgb_or_raw')
@@ -5634,6 +5653,11 @@ class VignetteEffect(Effect):
         SliderBinding('vignette_softness', 80, "slider_vignette_softness"),
     )
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._vignette_mask_key = None
+        self._vignette_mask = None
+
     def make_diff(self, rgb, param, efconfig):
         switch_vignette = self._get_param(param, 'switch_vignette')
         vi = self._get_param(param, 'vignette_intensity')
@@ -5643,20 +5667,39 @@ class VignetteEffect(Effect):
         if switch_vignette == False or vi == 0 or pce == True:
             self.diff = None
             self.hash = None
+            self._vignette_mask_key = None
+            self._vignette_mask = None
 
         else:
-            param_hash = hash((vi, vr, vs))
-            if self.hash != param_hash:
-                self.hash = param_hash
+            if efconfig.mode == EffectMode.EXPORT:
+                offset_x, offset_y = 0, 0
+            else:
+                _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
 
-                if efconfig.mode == EffectMode.EXPORT:
-                    offset_x, offset_y = 0, 0
-                else:
-                    _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(config.get_config('preview_width'), config.get_config('preview_height'), efconfig.disp_info)
-                
-                rgb = core.type_convert(rgb, np.ndarray)
-                vs = (100 - vs) / 100.0 * 3.0 + 1.0  # 1.0-4.0
-                self.diff = backend_vignette.apply_vignette(rgb, vi, vr, efconfig.disp_info, params.get_crop_rect(param), (offset_x, offset_y), vs)
+            rgb = core.type_convert(rgb, np.ndarray)
+            crop_rect = params.get_crop_rect(param)
+            if crop_rect is None:
+                ow, oh = param.get('original_img_size', (rgb.shape[1], rgb.shape[0]))
+                crop_rect = (0, 0, ow, oh)
+            vs = (100 - vs) / 100.0 * 3.0 + 1.0  # 1.0-4.0
+            disp_info = tuple(float(v) for v in efconfig.disp_info)
+            crop_rect = tuple(float(v) for v in crop_rect)
+            offset = (float(offset_x), float(offset_y))
+            mask_key = (rgb.shape[0], rgb.shape[1], float(vr), float(vs), disp_info, crop_rect, offset)
+            if self._vignette_mask_key != mask_key or self._vignette_mask is None:
+                self._vignette_mask_key = mask_key
+                self._vignette_mask = backend_vignette.create_vignette_mask(
+                    rgb.shape[0],
+                    rgb.shape[1],
+                    vr,
+                    disp_info,
+                    crop_rect,
+                    offset,
+                    vs,
+                )
+
+            self.hash = hash((vi, mask_key, getattr(efconfig, 'upstream_hash', None)))
+            self.diff = backend_vignette.apply_vignette_mask(rgb, self._vignette_mask, vi)
         
         return self.diff
     
