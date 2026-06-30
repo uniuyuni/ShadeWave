@@ -239,6 +239,42 @@ class SunstarTest(unittest.TestCase):
         self.assertEqual(out.shape, img.shape)
         self.assertGreater(float((out - img).max()), 0.0)
 
+    def test_shaped_bokeh_without_depth_spreads_hdr_point_highlight(self):
+        # depth が無い場合でも、HDR点光源の周囲に絞り形状の広がりが見えること。
+        img = _point_source_image(size=161, value=8.0, bg=0.02)
+        out = self.eff._shaped_bokeh(
+            img,
+            depth_map=None,
+            focus_depth=0.5,
+            strength=100,
+            radius=18,
+            shape='Hexagon',
+            rim=0.0,
+        )
+        diff = (out - img).mean(axis=2)
+        c = img.shape[0] // 2
+        yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]
+        rr = np.sqrt((xx - c) ** 2 + (yy - c) ** 2)
+        outside_source = (rr > 5) & (rr < 18)
+
+        self.assertEqual(out.shape, img.shape)
+        self.assertGreater(float(diff[outside_source].max()), 0.05)
+        self.assertGreater(float(out.max()), float(img.max()))
+
+    def test_shaped_bokeh_without_depth_ignores_uniform_bright_area(self):
+        # depth 無しフォールバックは点状ハイライト専用。均一に明るい面は勝手に増光しない。
+        img = np.full((81, 81, 3), 1.2, dtype=np.float32)
+        out = self.eff._shaped_bokeh(
+            img,
+            depth_map=None,
+            focus_depth=0.5,
+            strength=100,
+            radius=14,
+            shape='Hexagon',
+            rim=0.0,
+        )
+        np.testing.assert_allclose(out, img, atol=1e-6)
+
     def test_make_diff_off_when_zero(self):
         img = _point_source_image(size=129)
         efconfig = SimpleNamespace(

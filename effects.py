@@ -4468,29 +4468,54 @@ class LensSimulatorEffect(Effect):
             return img
         s = float(strength) / 100.0
 
-        # ハイライトの寄与を少し強め、形状を見えやすく（畳み込み内なのでスタンプ化しない）。
         lum = np.mean(img, axis=2, dtype=np.float32)
-        hl_excess = np.clip(lum - np.float32(0.8), 0.0, None)
-        src = img * (np.float32(1.0) + (hl_excess * np.float32(2.0 + 6.0 * s))[..., np.newaxis])
 
         # 虹色の輪郭: ボケの縁を一周する角度(θ)で色相が変わる虹リング。
         # カーネルの縁自体を角度で虹色に塗り、各チャンネルを対応カーネルで畳み込む。
         rim_n = float(np.clip(rim / 100.0, 0.0, 1.0))
         if rim_n <= 1e-4:
             kernel = self._aperture_kernel(shape, radius)
-            blurred = cv2.filter2D(src, -1, kernel, borderType=cv2.BORDER_REFLECT)
+            kc = None
         else:
             kc = self._aperture_kernel_colored(shape, radius, rim_n)
+
+        if depth_map is None:
+            # depth 無しでは被写界深度の置換ブラーにせず、局所的なHDRハイライト成分だけを
+            # 絞り形状で広げて加算する。均一な白面や肌ハイライトを極力巻き込まず、点光源の
+            # 周囲へ形状が残るよう、局所背景から浮いたピークのみを source にする。
+            local_sigma = max(2.0, float(radius) * 0.35)
+            local_base = cv2.GaussianBlur(lum, (0, 0), local_sigma, borderType=cv2.BORDER_REFLECT)
+            peak_floor = np.maximum(np.float32(0.8), local_base + np.float32(0.2))
+            peak = np.clip(lum - peak_floor, 0.0, None).astype(np.float32)
+            if float(np.max(peak)) <= 1e-6:
+                return img
+
+            peak_ratio = peak / np.maximum(lum, np.float32(1e-6))
+            energy_boost = np.float32(1.0) + np.log1p(peak) * np.float32(1.0 + 2.0 * s)
+            highlight = img * peak_ratio[..., np.newaxis] * energy_boost[..., np.newaxis]
+            if kc is None:
+                halo = cv2.filter2D(highlight, -1, kernel, borderType=cv2.BORDER_REFLECT)
+            else:
+                halo = np.empty_like(highlight)
+                halo[..., 0] = cv2.filter2D(highlight[..., 0], -1, kc[..., 0], borderType=cv2.BORDER_REFLECT)
+                halo[..., 1] = cv2.filter2D(highlight[..., 1], -1, kc[..., 1], borderType=cv2.BORDER_REFLECT)
+                halo[..., 2] = cv2.filter2D(highlight[..., 2], -1, kc[..., 2], borderType=cv2.BORDER_REFLECT)
+            gain = np.float32(0.45 + 1.25 * s)
+            return (img + halo * gain).astype(np.float32, copy=False)
+
+        # ハイライトの寄与を少し強め、形状を見えやすく（畳み込み内なのでスタンプ化しない）。
+        hl_excess = np.clip(lum - np.float32(0.8), 0.0, None)
+        src = img * (np.float32(1.0) + (hl_excess * np.float32(2.0 + 6.0 * s))[..., np.newaxis])
+        if kc is None:
+            blurred = cv2.filter2D(src, -1, kernel, borderType=cv2.BORDER_REFLECT)
+        else:
             blurred = np.empty_like(src)
             blurred[..., 0] = cv2.filter2D(src[..., 0], -1, kc[..., 0], borderType=cv2.BORDER_REFLECT)
             blurred[..., 1] = cv2.filter2D(src[..., 1], -1, kc[..., 1], borderType=cv2.BORDER_REFLECT)
             blurred[..., 2] = cv2.filter2D(src[..., 2], -1, kc[..., 2], borderType=cv2.BORDER_REFLECT)
 
-        # 適用範囲: depth があれば非合焦量、無ければハイライト領域（被写体を守る）。
-        if depth_map is not None:
-            w = np.clip(np.abs(depth_map - np.float32(focus_depth)) * np.float32(2.5), 0.0, 1.0)
-        else:
-            w = np.clip((lum - np.float32(0.8)) / np.float32(0.5), 0.0, 1.0)
+        # 適用範囲: depth がある時は非合焦量。
+        w = np.clip(np.abs(depth_map - np.float32(focus_depth)) * np.float32(2.5), 0.0, 1.0)
         w = (w * np.float32(np.clip(0.4 + 0.6 * s, 0.0, 1.0))).astype(np.float32)[..., np.newaxis]
         return img * (np.float32(1.0) - w) + blurred * w
 
