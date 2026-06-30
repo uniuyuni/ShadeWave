@@ -262,6 +262,33 @@ def fast_median_filter(img, kernel_size=3, num_bins=1024):
                     
     return result
 
+@lock_numba
+@njit('f4[:,:,:](f4[:,:,:], f4[:,:,:], f4, f4)', parallel=True, fastmath=True, cache=True)
+def _orton_blend_kernel(base, blurred, opacity, intensity):
+    """orton_effect のスクリーン合成〜最終ブレンドを1パスに融合した版。
+
+    clip/screen_layer/where/multiply/addWeighted×2 を画素ごとに直接計算することで、
+    numpyの中間配列の確保・読み書き（フル解像度で計6回分）を避ける。数式自体は元実装と同一。
+    """
+    h, w, c = base.shape
+    out = np.empty((h, w, c), dtype=np.float32)
+    inv_opacity = np.float32(1.0) - opacity
+    inv_intensity = np.float32(1.0) - intensity
+    for i in prange(h):
+        for j in range(w):
+            for k in range(c):
+                b = base[i, j, k]
+                if b > 1.0:
+                    screen = b
+                else:
+                    bc = b if b > 0.0 else np.float32(0.0)
+                    one_minus = np.float32(1.0) - bc
+                    screen = np.float32(1.0) - one_minus * one_minus
+                mult = screen * blurred[i, j, k]
+                result = screen * inv_opacity + mult * opacity
+                out[i, j, k] = b * inv_intensity + result * intensity
+    return out
+
 def orton_effect(image, blur_radius=30, opacity=0.75, intensity=0.5):
     """
     オートン効果を適用する関数（方法B: 最上位レイヤーが乗算+ぼかし）
@@ -285,30 +312,12 @@ def orton_effect(image, blur_radius=30, opacity=0.75, intensity=0.5):
     result : np.ndarray
         オートン効果を適用した画像 (H, W, 3) のfloat32 RGB画像
     """
-    # 入力画像のコピー（ベースレイヤー）
-    base = image
-    
     # ぼかし画像の作成（各チャンネル独立にぼかし）
-    #blurred = np.zeros_like(image)
-    #for i in range(3):  # RGB各チャンネル
-    #    blurred[:, :, i] = cv2.GaussianBlur(image[:, :, i], (0, 0), blur_radius)
-    # blurred = cv2.GaussianBlur(image, (0, 0), blur_radius) # Note: The commented lines in original were using single loop
     # 大きい blur_radius（最大 sigma~100）の等方ブラーが律速。縮小→拡大で近似して高速化。
     blurred = _fast_isotropic_blur(image, blur_radius)
-    
-    # スクリーンレイヤー（中間）: 1 - (1-base) * (1-base)
-    # HDRの場合は 1.0 - (1-base)^2 が放物線を描き1.0より暗く（反転）なってしまうのを防ぐため補正する
-    base_clamped = np.clip(base, 0.0, 1.0)
-    screen_layer_sdr = 1.0 - (1.0 - base_clamped) * (1.0 - base_clamped)
-    screen_layer = np.where(base > 1.0, base, screen_layer_sdr)
-    
-    # 乗算レイヤー（最上位）: screen_layer * blurred
-    multiply_layer = screen_layer * blurred
 
-    # screen_layerとmultiply_layerをopacityでブレンド
-    result = cv2.addWeighted(screen_layer, 1.0 - opacity, multiply_layer, opacity, 0)
-    
-    # 最終合成
-    result = cv2.addWeighted(image, 1.0 - intensity, result, intensity, 0)
-    
-    return result
+    # スクリーンレイヤー（1-(1-base)^2、HDRはbaseそのまま）〜乗算〜opacity/intensityブレンドまでを
+    # 1パスのnumbaカーネルで計算（中間配列の確保・読み書きを避けるための融合。数式は従来と同一）。
+    base = np.ascontiguousarray(image, dtype=np.float32)
+    blurred = np.ascontiguousarray(blurred, dtype=np.float32)
+    return _orton_blend_kernel(base, blurred, np.float32(opacity), np.float32(intensity))

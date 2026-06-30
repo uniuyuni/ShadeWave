@@ -425,6 +425,21 @@ def adjust_contrast(img, cf, c=0.5):
         
     return adjust_img
 
+def _median_sample(y, target_samples=250_000):
+    """median計算用の間引きビュー。
+
+    medianはソートが必要で画素数に対して非常に重い（40MP超で400ms超）。
+    ピボットは厳密な中央値である必要はない（外れ値に強い代表値が取れれば十分）ため、
+    格子状ストライドで target_samples 程度まで間引いてから計算する。
+    小さい画像（しきい値以下）はストライド1＝従来通り厳密な中央値になる。
+    """
+    h, w = y.shape[:2]
+    n = h * w
+    if n <= target_samples:
+        return y
+    stride = max(1, int(np.sqrt(n / target_samples)))
+    return y[::stride, ::stride]
+
 def adjust_luminance_contrast(img, cf, c=None):
     """輝度ベースのコントラスト補正。
 
@@ -440,7 +455,7 @@ def adjust_luminance_contrast(img, cf, c=None):
 
     img_f32 = np.asarray(img, dtype=np.float32)
     y = cvtColorRGB2Gray(img_f32)
-    pivot = float(np.clip(np.median(np.clip(y, 0.0, 1.0)), 0.25, 0.75)) if c is None else c
+    pivot = float(np.clip(np.median(np.clip(_median_sample(y), 0.0, 1.0)), 0.25, 0.75)) if c is None else c
     effective_cf = float(cf)
     if effective_cf < 0.0:
         effective_cf *= 0.5
