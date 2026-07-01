@@ -383,7 +383,10 @@ class EffectParamBindingTest(unittest.TestCase):
         self.assertIsNone(diff)
         self.assertIsNone(effect.diff)
 
-    def test_patchmatch_set2widget_targets_patchmatch_predict_button(self):
+    def test_patchmatch_set2widget_does_not_touch_predict_button(self):
+        # The Erase (predict) button is a momentary one-shot, not state-bound, so
+        # set2widget must sync only the persistent "Make mask" toggle and leave the
+        # Erase button state alone.
         effect = effects.PatchmatchInpaintEffect()
         widget = SimpleNamespace(ids={
             "switch_details": DummySwitch(),
@@ -398,7 +401,7 @@ class EffectParamBindingTest(unittest.TestCase):
         })
 
         self.assertEqual(widget.ids["switch_patchmatch_inpaint"].state, "down")
-        self.assertEqual(widget.ids["button_patchmatch_inpaint_predict"].state, "down")
+        self.assertEqual(widget.ids["button_patchmatch_inpaint_predict"].state, "normal")
 
     def test_inpaint_state_bindings_run_mask_editor_hooks(self):
         effect = effects.InpaintEffect()
@@ -425,7 +428,9 @@ class EffectParamBindingTest(unittest.TestCase):
 
         self.assertFalse(widget.ids["switch_details"].active)
         self.assertEqual(widget.ids["switch_inpaint"].state, "down")
-        self.assertEqual(widget.ids["button_inpaint_predict"].state, "down")
+        # predict is a durable one-shot flag, not state-bound: set2widget leaves the
+        # momentary Erase button untouched.
+        self.assertEqual(widget.ids["button_inpaint_predict"].state, "normal")
         self.assertEqual(effect.mask_editor.added_masks, [((1, 2, 3, 4), "mask")])
         self.assertEqual(effect.mask_editor.delay_updates, 1)
 
@@ -438,7 +443,8 @@ class EffectParamBindingTest(unittest.TestCase):
 
         self.assertEqual(param["switch_details"], True)
         self.assertEqual(param["inpaint"], False)
-        self.assertEqual(param["inpaint_predict"], True)
+        # set2param must NOT resurrect the predict flag from the transient button state.
+        self.assertNotIn("inpaint_predict", param)
         self.assertEqual(preview.removed, [old_editor])
         self.assertIsNone(effect.mask_editor)
         self.assertEqual(exit_calls, ["inpaint"])
@@ -464,7 +470,8 @@ class EffectParamBindingTest(unittest.TestCase):
 
         self.assertTrue(param["switch_details"])
         self.assertFalse(param["patchmatch_inpaint"])
-        self.assertTrue(param["patchmatch_inpaint_predict"])
+        # set2param must NOT resurrect the predict flag from the transient button state.
+        self.assertNotIn("patchmatch_inpaint_predict", param)
         self.assertEqual(preview.removed, [old_editor])
         self.assertIsNone(effect.mask_editor)
         self.assertEqual(exit_calls, ["patchmatch_inpaint"])

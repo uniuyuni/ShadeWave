@@ -4645,6 +4645,20 @@ if __name__ == '__main__':
             else:
                 self._disable_patchmatch_inpaint_edit()
 
+        def _trigger_patchmatch_inpaint_predict(self):
+            # The Erase chip's transient button state can't be read reliably (it is a
+            # LongPressScaledButton), so set the one-shot predict flag durably here and
+            # let the effect's make_diff consume it on the next pipeline pass.
+            self.primary_param['patchmatch_inpaint_predict'] = True
+            self.apply_effects_lv(0, 'patchmatch_inpaint')
+
+        def _trigger_inpaint_predict(self):
+            # Same as above for the AI (async) inpaint. The flag must persist across
+            # pipeline passes until the async worker result returns, so it is a durable
+            # param flag rather than a transient button-state read.
+            self.primary_param['inpaint_predict'] = True
+            self.apply_effects_lv(0, 'inpaint')
+
         #--------------------------------
         # Mask Mesh edit (Composit 単位の TPS 変形)。MeshWarpWidget をプレビュー上に
         # マウントし、active Composit の effects_param['mask_mesh_*'] と双方向同期する。

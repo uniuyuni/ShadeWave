@@ -2057,7 +2057,7 @@
                                         ref_width: 40
                                         disabled: root.ai_inpaint_processing
                                         on_press: root.begin_history_effect_ctrl(0, 'inpaint')
-                                        on_press: root.apply_effects_lv(0, 'inpaint')
+                                        on_press: root._trigger_inpaint_predict()
                                         on_release: root._set_diff_list_to_inpaint_edit()
                                         on_release: root.end_history_effect_ctrl(0, 'inpaint')
                                         ParamChipText:
@@ -2089,7 +2089,7 @@
                                         size_hint_x: None
                                         ref_width: 40
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
-                                        on_press: root.apply_effects_lv(0, 'patchmatch_inpaint')
+                                        on_press: root._trigger_patchmatch_inpaint_predict()
                                         #on_release: root._set_diff_list_to_patchmatch_inpaint_edit()
                                         on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
                                         ParamChipText:

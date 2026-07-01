@@ -788,7 +788,12 @@ class InpaintEffect(Effect):
     param_bindings = (
         SwitchBinding('switch_details', True, "switch_details"),
         StateBinding('inpaint', False, "switch_inpaint"),
-        StateBinding('inpaint_predict', False, "button_inpaint_predict"),
+        # NOTE: 'inpaint_predict' is intentionally NOT a StateBinding. The Erase
+        # button is a LongPressScaledButton whose state is already "normal" when
+        # on_press fires, and (being async) the flag must persist across several
+        # pipeline passes until the worker result returns. It is therefore driven
+        # as a durable one-shot param flag set by root._trigger_inpaint_predict()
+        # and consumed (reset to False) here in make_diff.
     )
 
     def __init__(self, **kwargs):
@@ -897,6 +902,7 @@ class InpaintEffect(Effect):
     def get_param_dict(self, param):
         param_dict = super().get_param_dict(param)
         param_dict.update({
+            'inpaint_predict': False,
             'inpaint_diff_list': [],
             'inpaint_mask_list': [],
         })
@@ -1011,7 +1017,11 @@ class PatchmatchInpaintEffect(Effect):
     param_bindings = (
         SwitchBinding('switch_details', True, "switch_details"),
         StateBinding('patchmatch_inpaint', False, "switch_patchmatch_inpaint"),
-        StateBinding('patchmatch_inpaint_predict', False, "button_patchmatch_inpaint_predict"),
+        # NOTE: 'patchmatch_inpaint_predict' is intentionally NOT a StateBinding.
+        # The Erase button is a LongPressScaledButton whose state is already
+        # "normal" when on_press fires, so a state-read binding could never see
+        # "down". It is driven as a durable one-shot param flag set by
+        # root._trigger_patchmatch_inpaint_predict() and consumed in make_diff.
     )
 
     def __init__(self, **kwargs):
@@ -1024,6 +1034,7 @@ class PatchmatchInpaintEffect(Effect):
     def get_param_dict(self, param):
         param_dict = super().get_param_dict(param)
         param_dict.update({
+            'patchmatch_inpaint_predict': False,
             'patchmatch_inpaint_diff_list': [],
             'patchmatch_inpaint_mask_list': [],
         })
@@ -1070,10 +1081,11 @@ class PatchmatchInpaintEffect(Effect):
 
         if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True and heavy_ai_allowed(param):
             from cores.content_aware_fill import content_aware_fill
+            import processing_dialog
             param['patchmatch_inpaint_predict'] = False
-            
-            mask = self.mask_editor.get_mask()
-            if logging.getLogger().isEnabledFor(logging.DEBUG):
+
+            mask = self.mask_editor.get_mask() if self.mask_editor is not None else None
+            if mask is not None and logging.getLogger().isEnabledFor(logging.DEBUG):
                 logging.debug(
                     "[INPAINT DEBUG] Image shape: %s, dtype: %s, range: [%.4f, %.4f]",
                     img.shape,
@@ -1087,18 +1099,22 @@ class PatchmatchInpaintEffect(Effect):
                     mask.dtype,
                     np.unique(mask),
                 )
-            
-            # Inpaint once for all masks
-            img2 = content_aware_fill(img, mask)
-            
-            for inpaint_mask in self.inpaint_mask_list:
-                proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
-                
-                # 範囲を記録
-                self.inpaint_diff_list.append(
-                    InpaintDiff(type="image",
-                                disp_info=(proc_x, proc_y, proc_w, proc_h),
-                                image=img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
+
+            # Inpaint once for all masks. content_aware_fill is a heavy synchronous
+            # op (~seconds), so run it under the native processing dialog: the work
+            # runs on a worker thread while the HUD animates (see processing_dialog).
+            if mask is not None:
+                processing_dialog.set_processing_text("Content-Aware Fill...")
+                img2 = processing_dialog.wait_processing(content_aware_fill, img, mask)
+
+                for inpaint_mask in self.inpaint_mask_list:
+                    proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
+
+                    # 範囲を記録
+                    self.inpaint_diff_list.append(
+                        InpaintDiff(type="image",
+                                    disp_info=(proc_x, proc_y, proc_w, proc_h),
+                                    image=img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
 
             param['patchmatch_inpaint_diff_list'] = self.inpaint_diff_list
             

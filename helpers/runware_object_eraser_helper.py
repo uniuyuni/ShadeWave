@@ -10,11 +10,13 @@ Configuration:
     RUNWARE_OBJECT_ERASER_CFG: Optional CFG scale. Defaults to 1.
     RUNWARE_OBJECT_ERASER_BLEND_DILATE: Optional edit-mask expansion in pixels. Defaults to 8.
     RUNWARE_OBJECT_ERASER_BLEND_BLUR: Optional edit-mask blur radius in pixels. Defaults to 5.
+    RUNWARE_OBJECT_ERASER_STRENGTH: Optional inpaint strength (0..1). Unset = model default.
 
 Request shape:
-    Sends two images directly to Runware Object Eraser:
-    - inputs.image: original RGB image as PNG data URI.
-    - inputs.mask: binary mask as PNG data URI, white pixels are erased.
+    Sends an imageInference inpainting task to Runware:
+    - seedImage: original RGB image as PNG data URI.
+    - maskImage: binary mask as PNG data URI, white pixels are erased.
+    - width/height: output size (matches the seedImage).
 
 Response handling:
     Uses outputType=base64Data to avoid depending on result URL downloads.
@@ -168,33 +170,52 @@ def predict(api_key, image, mask, prompt=None):
         logging.warning("RUNWARE_API_KEY is not set.")
         return None
 
+    height, width = np.asarray(image).shape[:2]
     payload = [{
         "taskType": "imageInference",
         "taskUUID": str(uuid.uuid4()),
-        "deliveryMethod": "sync",
         "outputType": "base64Data",
         "outputFormat": "PNG",
         "includeCost": True,
         "numberResults": 1,
-        "inputs": {
-            "image": _image_data_uri(image),
-            "mask": _mask_data_uri(mask),
-        },
+        # Runware imageInference inpainting expects the base image and mask as
+        # top-level seedImage/maskImage (not a nested "inputs" object), plus the
+        # output width/height. The previous "inputs.{image,mask}" shape (and the
+        # missing width/height) is what triggered HTTP 400 Bad Request.
+        "seedImage": _image_data_uri(image),
+        "maskImage": _mask_data_uri(mask),
+        "width": int(width),
+        "height": int(height),
         "model": MODEL,
         "positivePrompt": prompt or DEFAULT_PROMPT,
         "steps": int(os.environ.get("RUNWARE_OBJECT_ERASER_STEPS", "4")),
         "CFGScale": float(os.environ.get("RUNWARE_OBJECT_ERASER_CFG", "1")),
     }]
+    strength = os.environ.get("RUNWARE_OBJECT_ERASER_STRENGTH")
+    if strength is not None:
+        payload[0]["strength"] = float(strength)
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    response = None
     try:
         response = requests.post(API_URL, json=payload, headers=headers, timeout=_request_timeout())
         response.raise_for_status()
         return _extract_result_image(response.json())
     except Exception:
-        logging.exception("Runware object erase failed")
+        # Surface Runware's actual error body (it names the offending parameter),
+        # otherwise a bare "400 Bad Request" tells us nothing.
+        body = None
+        if response is not None:
+            try:
+                body = response.text
+            except Exception:
+                body = None
+        logging.exception(
+            "Runware object erase failed (status=%s body=%s)",
+            getattr(response, "status_code", None), body,
+        )
         return None
 
 
