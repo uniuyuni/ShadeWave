@@ -49,7 +49,7 @@ _UNGROUPED_ALIAS_PRIORITY: dict[str, tuple[str, ...]] = {
     "ISO": ("ExifIFD:ISO", "Pentax:ISO"),
     "ApertureValue": ("ExifIFD:ApertureValue",),
     "Aperture": ("Composite:Aperture",),
-    "ShutterSpeedValue": ("ExifIFD:ShutterSpeedValue",),
+    "ShutterSpeedValue": ("ExifIFD:ShutterSpeedValue", "Composite:ShutterSpeed",),
     "ExposureCompensation": ("ExifIFD:ExposureCompensation", "Sony:ExposureCompensation", "Pentax:ExposureCompensation"),
     "Flash": ("ExifIFD:Flash",),
     "WhiteBalance": ("FujiFilm:WhiteBalance", "ExifIFD:WhiteBalance", "Sony:WhiteBalance", "Pentax:WhiteBalance", "XMP-crs:WhiteBalance"),

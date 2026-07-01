@@ -479,7 +479,7 @@
                         size_hint: 0.1, None
                         ref_layout_padding: 3
                         ref_height: 24
-                        text: "Select"
+                        text: "Select..."
                         disabled: root.loading == True
                         on_press: root.on_select_press()
                     ParamSlider:
@@ -501,7 +501,7 @@
                         size_hint: 0.1, None
                         ref_layout_padding: 3
                         ref_height: 24
-                        text: "Mask2"
+                        text: "Masks"
                         # image_loaded==False の間は loading==True の局面を内包するので loading 判定は不要。
                         # mask2_wait_full_load は RAW プレビュー〜フル復号間のみ True になる Mask2 専用 gate。
                         disabled: root.image_loaded == False or root.mask2_wait_full_load == True
@@ -560,27 +560,42 @@
 
                     HSpacer:
                         size_hint_x: 0.8
-                    Button:
+                    
+                    BoxLayout:
+                        orientation: 'vertical'
                         size_hint_x: None
                         ref_width: 60
-                        ref_height: 15
-                        font_size: '9pt'
-                        text: "Reset"
-                        disabled: root.image_loaded == False
-                        on_press: root.begin_history_reset_all()
-                        on_release:
-                            root.reset_all()
-                            root.end_history_reset_all()
 
-                    Button:
-                        id: auto_adjust
+                        VSpacer:
+                            size_hint_y: 2
+                        Button:
+                            size_hint_y: 7
+                            font_size: '9pt'
+                            text: "Reset"
+                            disabled: root.image_loaded == False
+                            on_press: root.begin_history_reset_all()
+                            on_release:
+                                root.reset_all()
+                                root.end_history_reset_all()
+                        VSpacer:
+                            size_hint_y: 1
+
+                    BoxLayout:
+                        orientation: 'vertical'
                         size_hint_x: None
                         ref_width: 60
-                        ref_height: 15
-                        font_size: '9pt'
-                        text: "Auto"
-                        disabled: root.image_loaded == False or root.mask2_wait_full_load == True
-                        on_release: root.on_auto_adjust_press()
+
+                        VSpacer:
+                            size_hint_y: 2
+                        Button:
+                            id: auto_adjust
+                            size_hint_y: 7
+                            font_size: '9pt'
+                            text: "Auto"
+                            disabled: root.image_loaded == False or root.mask2_wait_full_load == True
+                            on_release: root.on_auto_adjust_press()
+                        VSpacer:
+                            size_hint_y: 1
 
 
                 StableTabbedPanel:
