@@ -5253,6 +5253,7 @@ class Mask2Effect(Effect):
             'mask2_edge_refine_strength': 0,
             'mask2_edge_refine_bias': 0,
             'switch_mask2_draw_effects': True,
+            'mask2_blend_mode': 'Normal',
             'mask2_color_dodge': 0,
             'mask2_color_burn': 0,
             'mask2_mix_black': 0,
@@ -5285,6 +5286,7 @@ class Mask2Effect(Effect):
                 key: param_dict[key]
                 for key in (
                     'switch_mask2_draw_effects',
+                    'mask2_blend_mode',
                     'mask2_color_dodge',
                     'mask2_color_burn',
                     'mask2_mix_black',
@@ -5441,6 +5443,7 @@ class Mask2Effect(Effect):
         widget.ids["slider_mask2_edge_refine_strength"].set_slider_value(self._get_param(param, 'mask2_edge_refine_strength'))
         widget.ids["slider_mask2_edge_refine_bias"].set_slider_value(self._get_param(param, 'mask2_edge_refine_bias'))
         widget.ids["switch_mask2_draw_effects"].active = self._get_param(param, 'switch_mask2_draw_effects')
+        widget.ids["spinner_mask2_blend_mode"].set_text(self._get_param(param, 'mask2_blend_mode'))
         widget.ids["slider_mask2_color_dodge"].set_slider_value(self._get_param(param, 'mask2_color_dodge'))
         widget.ids["slider_mask2_color_burn"].set_slider_value(self._get_param(param, 'mask2_color_burn'))
         widget.ids["slider_mask2_mix_black"].set_slider_value(self._get_param(param, 'mask2_mix_black'))
@@ -5505,6 +5508,7 @@ class Mask2Effect(Effect):
         param['mask2_edge_refine_strength'] = widget.ids["slider_mask2_edge_refine_strength"].value
         param['mask2_edge_refine_bias'] = widget.ids["slider_mask2_edge_refine_bias"].value
         param['switch_mask2_draw_effects'] = widget.ids["switch_mask2_draw_effects"].active
+        param['mask2_blend_mode'] = widget.ids["spinner_mask2_blend_mode"].text
         param['mask2_color_dodge'] = widget.ids["slider_mask2_color_dodge"].value
         param['mask2_color_burn'] = widget.ids["slider_mask2_color_burn"].value
         param['mask2_mix_black'] = widget.ids["slider_mask2_mix_black"].value

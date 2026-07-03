@@ -3808,8 +3808,16 @@ if __name__ == '__main__':
             if disp_info is None:
                 return
 
-            self.is_zoomed = False
-            self.click_x, self.click_y = 0, 0
+            # ズーム中に mask1 (inpaint) を開いても、マスク座標は mask2 と同じ
+            # disp_info 経由の変換で整合するのでズーム表示はそのまま維持してよい。
+            # ただし crop/geometry を bypass して disp_info を作り直すため、
+            # pan アンカー (click_x/y) は旧 crop 基準のままだと無関係な位置を指してしまう。
+            # bypass 後の全体画像中心へ再計算する。
+            if self.is_zoomed:
+                dx, dy, dw, dh, _ = disp_info
+                self.click_x, self.click_y = dx + dw / 2, dy + dh / 2
+            else:
+                self.click_x, self.click_y = 0, 0
             self.drag_center_start = None
             self.crop_image = None
             self.crop_image_view_key = None
@@ -4336,6 +4344,7 @@ if __name__ == '__main__':
             self._set_disabled_for_ids(
                 (
                     'switch_mask2_draw_effects',
+                    'spinner_mask2_blend_mode',
                     'slider_mask2_color_dodge',
                     'slider_mask2_color_burn',
                     'slider_mask2_mix_black',
