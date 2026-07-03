@@ -10,13 +10,14 @@ Configuration:
     RUNWARE_OBJECT_ERASER_CFG: Optional CFG scale. Defaults to 1.
     RUNWARE_OBJECT_ERASER_BLEND_DILATE: Optional edit-mask expansion in pixels. Defaults to 8.
     RUNWARE_OBJECT_ERASER_BLEND_BLUR: Optional edit-mask blur radius in pixels. Defaults to 5.
-    RUNWARE_OBJECT_ERASER_STRENGTH: Optional inpaint strength (0..1). Unset = model default.
 
 Request shape:
-    Sends an imageInference inpainting task to Runware:
-    - seedImage: original RGB image as PNG data URI.
-    - maskImage: binary mask as PNG data URI, white pixels are erased.
-    - width/height: output size (matches the seedImage).
+    The "Object Eraser" model (runware:300@1) is documented at
+    https://runware.ai/docs/models/object-eraser with this exact shape (NOT the
+    generic seedImage/maskImage imageInference-inpainting shape used by SD-style
+    models): a nested "inputs" object plus deliveryMethod=sync.
+    - inputs.image: original RGB image as PNG data URI.
+    - inputs.mask: binary mask as PNG data URI, white pixels are erased.
 
 Response handling:
     Uses outputType=base64Data to avoid depending on result URL downloads.
@@ -98,8 +99,10 @@ def _extract_result_image(response_json):
     items = response_json
     if isinstance(response_json, dict):
         if response_json.get("errors"):
-            logging.warning("Runware error: %s", response_json["errors"])
-            return None
+            # Runware can report task-level failures with an HTTP 200 (the errors
+            # array names the actual problem), so this must raise too, not just
+            # the HTTP-status branch in predict().
+            raise RuntimeError(f"Runware error: {response_json['errors']}")
         items = response_json.get("data", response_json.get("result", response_json))
     if isinstance(items, dict):
         items = [items]
@@ -167,33 +170,25 @@ def _context_match_result(result, original, mask, ring_px=32):
 
 def predict(api_key, image, mask, prompt=None):
     if not api_key:
-        logging.warning("RUNWARE_API_KEY is not set.")
-        return None
+        raise RuntimeError("RUNWARE_API_KEY is not set.")
 
-    height, width = np.asarray(image).shape[:2]
     payload = [{
         "taskType": "imageInference",
         "taskUUID": str(uuid.uuid4()),
+        "deliveryMethod": "sync",
         "outputType": "base64Data",
         "outputFormat": "PNG",
         "includeCost": True,
         "numberResults": 1,
-        # Runware imageInference inpainting expects the base image and mask as
-        # top-level seedImage/maskImage (not a nested "inputs" object), plus the
-        # output width/height. The previous "inputs.{image,mask}" shape (and the
-        # missing width/height) is what triggered HTTP 400 Bad Request.
-        "seedImage": _image_data_uri(image),
-        "maskImage": _mask_data_uri(mask),
-        "width": int(width),
-        "height": int(height),
+        "inputs": {
+            "image": _image_data_uri(image),
+            "mask": _mask_data_uri(mask),
+        },
         "model": MODEL,
         "positivePrompt": prompt or DEFAULT_PROMPT,
         "steps": int(os.environ.get("RUNWARE_OBJECT_ERASER_STEPS", "4")),
         "CFGScale": float(os.environ.get("RUNWARE_OBJECT_ERASER_CFG", "1")),
     }]
-    strength = os.environ.get("RUNWARE_OBJECT_ERASER_STRENGTH")
-    if strength is not None:
-        payload[0]["strength"] = float(strength)
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -202,21 +197,27 @@ def predict(api_key, image, mask, prompt=None):
     try:
         response = requests.post(API_URL, json=payload, headers=headers, timeout=_request_timeout())
         response.raise_for_status()
-        return _extract_result_image(response.json())
-    except Exception:
+    except Exception as e:
         # Surface Runware's actual error body (it names the offending parameter),
-        # otherwise a bare "400 Bad Request" tells us nothing.
+        # otherwise a bare "400 Bad Request" tells us nothing. This is shown to
+        # the user verbatim in a failure dialog (see main.py update_async_results),
+        # so raise rather than silently swallowing and returning None.
         body = None
         if response is not None:
             try:
                 body = response.text
             except Exception:
                 body = None
-        logging.exception(
-            "Runware object erase failed (status=%s body=%s)",
-            getattr(response, "status_code", None), body,
-        )
-        return None
+        message = f"Runware request failed (status={getattr(response, 'status_code', None)}): {body or e}"
+        logging.exception(message)
+        raise RuntimeError(message) from e
+
+    result = _extract_result_image(response.json())
+    if result is None:
+        message = f"Runware returned no image result: {response.text[:500]}"
+        logging.error(message)
+        raise RuntimeError(message)
+    return result
 
 
 def predict_helper(api_key, image, mask, bbox, prompt=None):
@@ -236,17 +237,17 @@ def predict_helper(api_key, image, mask, bbox, prompt=None):
         block_mask = mask_blocks[i][..., 0]
         if np.any(block_mask > 0):
             logging.info("Runware object erase %s/%s %s.", i + 1, len(blocks), block.shape)
+            # predict() now raises on failure (see below) instead of silently
+            # returning None, so a failed request stops the whole erase here and
+            # propagates up to the caller rather than being masked as a no-op.
             result = _ensure_result_size(predict(api_key, block, block_mask, prompt), block.shape)
-            if result is None:
-                predict_blocks.append(block)
-            else:
-                result = _context_match_result(result, block, block_mask)
-                edit_mask = _soft_edit_mask(
-                    block_mask,
-                    dilate_px=int(os.environ.get("RUNWARE_OBJECT_ERASER_BLEND_DILATE", "8")),
-                    blur_px=int(os.environ.get("RUNWARE_OBJECT_ERASER_BLEND_BLUR", "5")),
-                )
-                predict_blocks.append(result * edit_mask + block * (1.0 - edit_mask))
+            result = _context_match_result(result, block, block_mask)
+            edit_mask = _soft_edit_mask(
+                block_mask,
+                dilate_px=int(os.environ.get("RUNWARE_OBJECT_ERASER_BLEND_DILATE", "8")),
+                blur_px=int(os.environ.get("RUNWARE_OBJECT_ERASER_BLEND_BLUR", "5")),
+            )
+            predict_blocks.append(result * edit_mask + block * (1.0 - edit_mask))
         else:
             predict_blocks.append(block)
 
