@@ -47,6 +47,13 @@ def _create_dialog_impl():
 
 
 __dialog = None
+# Reentrant "is a processing dialog currently showing" counter. The native macOS
+# HUD (MacOSProcessingOverlay) lives outside Kivy's widget tree, and pumping the
+# AppKit run loop to keep it animated (see macos.py:_pump_runloop) proved
+# unreliable for reliably swallowing clicks on the main window. So input is
+# instead blocked at the Kivy level: MainWidget.on_touch_*/on_key_* check
+# is_active() and swallow all input while this is > 0.
+__active_count = 0
 
 
 def create_processing_dialog():
@@ -54,8 +61,13 @@ def create_processing_dialog():
     __dialog = _create_dialog_impl()
 
 
+def is_active():
+    return __active_count > 0
+
+
 def show_processing_dialog(dt=0):
-    global __dialog
+    global __dialog, __active_count
+    __active_count += 1
     if __dialog:
         __dialog.show()
 
@@ -67,7 +79,8 @@ def update_processing_dialog(dt=0):
 
 
 def hide_processing_dialog(dt=0):
-    global __dialog
+    global __dialog, __active_count
+    __active_count = max(0, __active_count - 1)
     if __dialog:
         __dialog.hide()
 
