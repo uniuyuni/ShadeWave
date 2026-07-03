@@ -2043,6 +2043,7 @@
                                         size_hint_x: 0.25
                                     ParamToggleButton:
                                         id: switch_inpaint
+                                        group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 80
                                         disabled: root.ai_inpaint_processing
@@ -2064,6 +2065,7 @@
                                             text: "Erase"
                                     ToggleButton:
                                         id: toggle_inpaint_edit
+                                        group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 40
                                         disabled: root.ai_inpaint_processing
@@ -2077,6 +2079,7 @@
                                         size_hint_x: 0.25
                                     ParamToggleButton:
                                         id: switch_patchmatch_inpaint
+                                        group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 80
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
@@ -2096,6 +2099,7 @@
                                             text: "Erase"
                                     ToggleButton:
                                         id: toggle_patchmatch_inpaint_edit
+                                        group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 40
                                         text: "Edit"
