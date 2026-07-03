@@ -1365,6 +1365,22 @@ if HAS_PYOBJC:
         update() ごとに位置を同期する（マルチディスプレイ／ウィンドウ移動に追従）。
         """
 
+        # _pump_runloop で configuring 中も配送してよい「ハウスキーピング」イベント種別。
+        # ここに無いイベント（マウス／キーボード／スクロール／ジェスチャ等、ユーザー入力全般）は
+        # 宛先ウィンドウに関わらず配送しない＝処理中は裏の操作を受け付けない。
+        _HOUSEKEEPING_EVENT_TYPES = frozenset(
+            v for v in (
+                getattr(AppKit, name, None)
+                for name in (
+                    "NSEventTypeAppKitDefined",
+                    "NSEventTypeApplicationDefined",
+                    "NSEventTypePeriodic",
+                    "NSEventTypeSystemDefined",
+                    "NSEventTypeCursorUpdate",
+                )
+            ) if v is not None
+        )
+
         def __init__(
             self,
             gif_path: str,
@@ -1511,6 +1527,18 @@ if HAS_PYOBJC:
             """
             NSRunLoop のタイマー処理に加え、キューに溜まったイベントを短く処理する。
             メインスレッドが AppKit を十分に回さないとシステムが待ちカーソル（ビーチボール）を出すため。
+
+            mask=NSEventMaskAny で吸い出したイベントを無条件に sendEvent_ すると、
+            裏の Kivy/SDL メインウィンドウ宛てのクリック等まで配送されてしまい、
+            処理中ダイアログ表示中でも下のボタンが操作できてしまう（dequeue=True で
+            キューから抜いた時点でイベントは消費されるため、転送しないイベントは
+            そのまま捨てる＝実質的にブロックする）。
+
+            ウィンドウの一致判定（event.window() is self._win）だけに頼ると、PyObjC の
+            ブリッジ越しに得られるラッパーオブジェクトの同一性が信頼できない場合があり、
+            実際に「短い1回目は効くが、時間のかかる2回目は効かない」という再現が報告された。
+            そのため判定の主軸をイベント種別に置く：マウス/キーボード/スクロール/ジェスチャ
+            等のユーザー入力イベントは、宛先ウィンドウに関わらず一律に配送しない。
             """
             app = NSApplication.sharedApplication()
             try:
@@ -1536,7 +1564,23 @@ if HAS_PYOBJC:
                     )
                     if event is None:
                         break
-                    app.sendEvent_(event)
+                    try:
+                        event_type = event.type()
+                    except Exception:
+                        event_type = None
+                    if event_type in self._HOUSEKEEPING_EVENT_TYPES:
+                        app.sendEvent_(event)
+                        continue
+                    # Any other event type is user input (mouse/keyboard/scroll/
+                    # gesture/etc.). Our overlay has no interactive controls, so
+                    # forward it only if it is somehow targeted at our own panel;
+                    # otherwise drop it (do not forward to the main app window).
+                    try:
+                        event_window = event.window()
+                    except Exception:
+                        event_window = None
+                    if event_window is self._win:
+                        app.sendEvent_(event)
             except Exception:
                 pass
             try:

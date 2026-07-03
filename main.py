@@ -393,6 +393,26 @@ if __name__ == '__main__':
         PREVIEW_BAR_REF_HEIGHT = 30.0
         PREVIEW_CLICK_MARGIN_DP = 6.0
 
+        def on_touch_down(self, touch):
+            # A native processing dialog (e.g. Content-Aware Fill) lives outside
+            # Kivy's widget tree, so Kivy has no natural way to know it should be
+            # modal. Swallow all input here instead of relying on the AppKit
+            # run-loop event pump (macos.py:_pump_runloop) to drop clicks, which
+            # proved unreliable.
+            if processing_dialog.is_active():
+                return True
+            return super().on_touch_down(touch)
+
+        def on_touch_move(self, touch):
+            if processing_dialog.is_active():
+                return True
+            return super().on_touch_move(touch)
+
+        def on_touch_up(self, touch):
+            if processing_dialog.is_active():
+                return True
+            return super().on_touch_up(touch)
+
         def __init__(self, cache_system, **kwargs):
             super().__init__(**kwargs)
 
@@ -694,11 +714,13 @@ if __name__ == '__main__':
                 dirty = False
                 inpaint_completed = False
                 inpaint_failed = False
+                inpaint_error_msg = None
                 for task_id, result_image, error_msg in results:
                     if error_msg:
                         logging.error(f"Async Task {task_id} failed: {error_msg}")
                         if self.primary_param.get('inpaint_predict'):
                             inpaint_failed = True
+                            inpaint_error_msg = error_msg
                     elif result_image is not None:
                         # Update cache in manager
                         key = self.processor.update_result(task_id, result_image)
@@ -716,6 +738,11 @@ if __name__ == '__main__':
                     self._schedule_ai_inpaint_ui_sync()
                 if inpaint_failed:
                     self._reset_ai_inpaint_processing_ui()
+                    # Show the failure verbatim (the Runware helper raises with the
+                    # real HTTP status/body, which names the actual problem) rather
+                    # than only logging it, so the user isn't left thinking Erase
+                    # silently did nothing.
+                    self.show_warning_dialog(f"AI Erase (Inpaint) failed:\n\n{inpaint_error_msg}")
 
             if self.ai_job_manager:
                 ai_dirty = False
@@ -802,6 +829,7 @@ if __name__ == '__main__':
             except Exception:
                 logging.exception("failed to finish AI inpaint mask mode")
 
+        @kvmainthread
         def _remove_mask1_editor_for_effect(self, effect_name):
             effect = self.primary_effects[0].get(effect_name)
             editor = getattr(effect, "mask_editor", None) if effect is not None else None
@@ -5262,6 +5290,8 @@ if __name__ == '__main__':
                 
         def on_key_down(self, window, key, scancode, codepoint, modifier):
             #print(f"key:{key}, scancode:{scancode}, codepoint:{codepoint}, modifier:{modifier}")
+            if processing_dialog.is_active():
+                return True
 
             if self._is_force_memory_release_shortcut(key, codepoint, modifier):
                 if not self._text_input_has_focus():
@@ -5312,6 +5342,9 @@ if __name__ == '__main__':
                 return True
 
         def on_key_up(self, window, key, *args):
+            if processing_dialog.is_active():
+                return True
+
             if key == 109:
                 self.ids['mask_editor2'].set_overlay_control_points_hidden(False)
                 return True
