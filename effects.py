@@ -966,16 +966,17 @@ class InpaintEffect(Effect):
                     param['_mask1_restore_view_after_submit'] = True
                 return self.diff
 
-            import helpers.runware_object_eraser_helper as rih
+            #import helpers.runware_object_eraser_helper as helper
+            import helpers.juggernaut_helper as helper
 
             mask = self._build_mask_from_inpaint_list(img.shape)
-            client = rih.setup()
+            client = helper.setup()
 
-            # 各バウンディングごとに Runware へ渡す（predict_helper は image を in-place 更新して返す）
+            # 各バウンディングごとに渡す（predict_helper は image を in-place 更新して返す）
             img_work = img.copy()
             for inpaint_mask in self.inpaint_mask_list:
                 proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
-                img_work = rih.predict_helper(client, img_work, mask, (proc_x, proc_y, proc_w, proc_h))
+                img_work = helper.predict_helper(client, img_work, mask, (proc_x, proc_y, proc_w, proc_h))
 
             self._set_diff_list_from_result(img_work)
             param['inpaint_diff_list'] = self.inpaint_diff_list
@@ -1080,7 +1081,6 @@ class PatchmatchInpaintEffect(Effect):
         self.inpaint_mask_list = self._get_param(param, 'patchmatch_inpaint_mask_list')
 
         if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True and heavy_ai_allowed(param):
-            from cores.content_aware_fill import content_aware_fill
             import processing_dialog
             param['patchmatch_inpaint_predict'] = False
 
@@ -1101,11 +1101,19 @@ class PatchmatchInpaintEffect(Effect):
                 )
 
             # Inpaint once for all masks. content_aware_fill is a heavy synchronous
-            # op (~seconds), so run it under the native processing dialog: the work
-            # runs on a worker thread while the HUD animates (see processing_dialog).
+            # op (plus a one-time slow torch import on first use), so run the whole
+            # thing as a single span under the native processing dialog: the work
+            # runs on a worker thread while the HUD animates and all app input is
+            # blocked for the duration (see processing_dialog.is_active()). Two
+            # separate wait_processing calls (import, then fill) would leave a gap
+            # between them where input briefly unblocks.
             if mask is not None:
+                def _run_content_aware_fill():
+                    from cores.content_aware_fill import content_aware_fill
+                    return content_aware_fill(img, mask)
+
                 processing_dialog.set_processing_text("Content-Aware Fill...")
-                img2 = processing_dialog.wait_processing(content_aware_fill, img, mask)
+                img2 = processing_dialog.wait_processing(_run_content_aware_fill)
 
                 for inpaint_mask in self.inpaint_mask_list:
                     proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
