@@ -2046,7 +2046,7 @@
                                         group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 80
-                                        disabled: root.ai_inpaint_processing
+                                        disabled: root.ai_inpaint_processing or root.image_loaded == False or root.mask2_wait_full_load == True
                                         on_press: root.begin_history_effect_ctrl(0, 'inpaint')
                                         on_state: root.apply_effects_lv(0, 'inpaint')
                                         on_release: root.end_history_effect_ctrl(0, 'inpaint')
@@ -2056,7 +2056,7 @@
                                         id: button_inpaint_predict
                                         size_hint_x: None
                                         ref_width: 40
-                                        disabled: root.ai_inpaint_processing
+                                        disabled: root.ai_inpaint_processing or root.image_loaded == False or root.mask2_wait_full_load == True
                                         on_press: root.begin_history_effect_ctrl(0, 'inpaint')
                                         on_press: root._trigger_inpaint_predict()
                                         on_release: root._set_diff_list_to_inpaint_edit()
@@ -2068,7 +2068,7 @@
                                         group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 40
-                                        disabled: root.ai_inpaint_processing
+                                        disabled: root.ai_inpaint_processing or root.image_loaded == False or root.mask2_wait_full_load == True
                                         text: "Edit"
                                         on_state: root.on_inpaint_edit_press(self.state)
 
@@ -2082,6 +2082,7 @@
                                         group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 80
+                                        disabled: root.image_loaded == False or root.mask2_wait_full_load == True
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
                                         on_state: root.apply_effects_lv(0, 'patchmatch_inpaint')
                                         on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
@@ -2091,6 +2092,7 @@
                                         id: button_patchmatch_inpaint_predict
                                         size_hint_x: None
                                         ref_width: 40
+                                        disabled: root.image_loaded == False or root.mask2_wait_full_load == True
                                         on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
                                         on_press: root._trigger_patchmatch_inpaint_predict()
                                         #on_release: root._set_diff_list_to_patchmatch_inpaint_edit()
@@ -2102,6 +2104,7 @@
                                         group: 'inpaint'
                                         size_hint_x: None
                                         ref_width: 40
+                                        disabled: root.image_loaded == False or root.mask2_wait_full_load == True
                                         text: "Edit"
                                         on_state: root.on_patchmatch_inpaint_edit_press(self.state)
 
@@ -3534,6 +3537,19 @@
                                     on_press: root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
                                     on_active: root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
                                     on_release: root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Blend Mode"
+                                    VSpacer:
+                                        size_hint_x: 0.1
+                                    ParamSpinner:
+                                        id: spinner_mask2_blend_mode
+                                        values: [ 'Normal', 'Multiply', 'Screen', 'Overlay', 'Soft Light', 'Hard Light', 'Darken', 'Lighten', 'Difference', 'Exclusion', 'Linear Dodge (Add)', 'Linear Burn' ]
+                                        on_value:
+                                            root.begin_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
+                                            root.apply_effects_lv(3, 'mask2', subname='mask2_draw_effects')
+                                            root.end_history_effect_ctrl(3, 'mask2', 'mask2_draw_effects')
 
                                 ParamSlider:
                                     id: slider_mask2_color_dodge

@@ -753,6 +753,38 @@ def _resize_mask_draw_input(src, target_shape, interpolation):
     return resized
 
 
+def _blend_mode_composite(backdrop, source, mode):
+    """Photoshop 風レイヤーブレンドモード。backdrop/source は [0,1] にクリップ済みの前提。"""
+    if mode == "Multiply":
+        return backdrop * source
+    if mode == "Screen":
+        return backdrop + source - backdrop * source
+    if mode == "Overlay":
+        return np.where(backdrop <= 0.5, 2.0 * backdrop * source, 1.0 - 2.0 * (1.0 - backdrop) * (1.0 - source))
+    if mode == "Hard Light":
+        return np.where(source <= 0.5, 2.0 * backdrop * source, 1.0 - 2.0 * (1.0 - backdrop) * (1.0 - source))
+    if mode == "Soft Light":
+        d = np.where(backdrop <= 0.25, ((16.0 * backdrop - 12.0) * backdrop + 4.0) * backdrop, np.sqrt(np.maximum(backdrop, 0.0)))
+        return np.where(
+            source <= 0.5,
+            backdrop - (1.0 - 2.0 * source) * backdrop * (1.0 - backdrop),
+            backdrop + (2.0 * source - 1.0) * (d - backdrop),
+        )
+    if mode == "Darken":
+        return np.minimum(backdrop, source)
+    if mode == "Lighten":
+        return np.maximum(backdrop, source)
+    if mode == "Difference":
+        return np.abs(backdrop - source)
+    if mode == "Exclusion":
+        return backdrop + source - 2.0 * backdrop * source
+    if mode == "Linear Dodge (Add)":
+        return backdrop + source
+    if mode == "Linear Burn":
+        return backdrop + source - 1.0
+    return source  # Normal
+
+
 def apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale=1.0):
     """Mask2 の Photoshop 風 Draw Effects を適用してからマスク合成する。
 
@@ -776,8 +808,12 @@ def apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale=
     mask_boost = mask_boost[:, :, np.newaxis] if mask_boost.ndim == 2 else mask_boost
 
     effect_img = base + (layer_img - base) * mask_boost
+    blend_mode = mask2_param.get("mask2_blend_mode", "Normal")
     if not mask2_param.get("switch_mask2_draw_effects", True):
-        return base * (1.0 - mask_alpha) + effect_img * mask_alpha
+        if blend_mode == "Normal":
+            return base * (1.0 - mask_alpha) + effect_img * mask_alpha
+        blended = _blend_mode_composite(np.clip(base, 0.0, 1.0), np.clip(effect_img, 0.0, 1.0), blend_mode)
+        return base * (1.0 - mask_alpha) + blended * mask_alpha
 
     backdrop = np.clip(np.asarray(base, dtype=np.float32), 0.0, 1.0)
     source = np.clip(effect_img, 0.0, 1.0)
@@ -821,7 +857,10 @@ def apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale=
             white_amount=white_amount,
         )
 
-    return base * (1.0 - mask_alpha) + effect_img * mask_alpha
+    if blend_mode == "Normal":
+        return base * (1.0 - mask_alpha) + effect_img * mask_alpha
+    blended = _blend_mode_composite(np.clip(base, 0.0, 1.0), np.clip(effect_img, 0.0, 1.0), blend_mode)
+    return base * (1.0 - mask_alpha) + blended * mask_alpha
 
 #--------------------------------------------------
 # 周辺減光効果
