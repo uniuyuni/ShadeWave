@@ -245,6 +245,12 @@ class EffectConfig():
         self.file_path = None
         self.get_ai_depth_map = None
         self.current_level = None  # pipeline が現在実行中のレベル(0-4)を入れる。複数レベル登録の効果が判定に使う
+        # スライダードラッグ中の half-res プレビュー(pipeline.pipeline2 が制御)。
+        # drag_half_res: このフレームがドラッグ品質かどうか(キャンバス同期のスキップ判定用)。
+        # preview_res_scale: lv1-lv2 実行中のみ縮小率(例 0.5)。params.get_disp_info(param) を
+        # 直接読む効果は、この係数をスケールに掛けて縮小画像と整合させる。
+        self.drag_half_res = False
+        self.preview_res_scale = 1.0
 
     def __getstate__(self):
         """ASYNC ワーカー(別プロセス)へ pickle する際の自動仕分け。
@@ -771,6 +777,23 @@ class InpaintDiff:
         self._image_key = kwargs.get('image_key', None)
         self._image_key_source_id = id(self.image)
 
+    def __eq__(self, other):
+        """内容ベースの等価比較。履歴(history.Operation)は backup/update を deepcopy で
+        持つため、これが無いと同一内容のマスクリストでも「変化あり」と判定され、
+        undo/redo 中の set2widget → on_state 再入で幽霊 op が積まれてしまう。"""
+        if not isinstance(other, InpaintDiff):
+            return NotImplemented
+        if self.type != other.type:
+            return False
+        if tuple(self.disp_info or ()) != tuple(other.disp_info or ()):
+            return False
+        if self.image is None or other.image is None:
+            return self.image is other.image
+        return self.image_key() == other.image_key()
+
+    # __eq__ 定義で __hash__ が None になるのを避ける(同一性ハッシュを維持)。
+    __hash__ = object.__hash__
+
     def image_key(self):
         image = np.asarray(self.image)
         if self._image_key is not None and self._image_key_source_id == id(self.image):
@@ -785,6 +808,9 @@ class InpaintDiff:
         return self._image_key
 
 class InpaintEffect(Effect):
+    # inpaint_diff_list / inpaint_mask_list のデフォルト [] は参照で使い回されるため、
+    # キャッシュすると共有リストが汚染され別画像へ漏れる。キャッシュ無効化。
+    _defaults_depend_on_param = True
     param_bindings = (
         SwitchBinding('switch_details', True, "switch_details"),
         StateBinding('inpaint', False, "switch_inpaint"),
@@ -923,14 +949,24 @@ class InpaintEffect(Effect):
                 widget.enter_mask1_full_preview_mode('inpaint')
             if self.mask_editor is None:
                 from widgets.mask_editor import MaskEditor
-                
+
                 self.mask_editor = MaskEditor(param,
                                               effect_ctrl_param=(0, 'inpaint'),
                                               touch_up_callback=self.mask_editor_touch_up)
-                
+
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
-                param['inpaint_mask_list'] = self.inpaint_mask_list = []
-                        
+                # StateBinding は widget.state を直接書き換えるため、set2widget 経由の
+                # 復元(履歴 undo/redo 等)でここに再入することがある。その場合 param には
+                # 既に inpaint_mask_list が(履歴から)復元済みなので [] へ強制上書きせず、
+                # 既存の内容をそのまま新しい mask_editor へ描き戻す(after_set2widget と
+                # 同じ絵作り)。ここで [] にすると undo で復元したばかりのマスクが
+                # 消えてしまう。
+                self.inpaint_mask_list = self._get_param(param, 'inpaint_mask_list')
+                param['inpaint_mask_list'] = self.inpaint_mask_list
+                for inpaint_mask in self.inpaint_mask_list:
+                    self.mask_editor.add_mask(inpaint_mask.disp_info, inpaint_mask.image)
+                self.mask_editor.delay_update_canvas()
+
         if param['inpaint'] == False:
             if self.mask_editor is not None:
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
@@ -966,11 +1002,11 @@ class InpaintEffect(Effect):
                     param['_mask1_restore_view_after_submit'] = True
                 return self.diff
 
-            #import helpers.runware_object_eraser_helper as helper
-            import helpers.juggernaut_helper as helper
+            import helpers.runware_object_eraser_helper as helper
+            #import helpers.juggernaut_helper as helper
 
             mask = self._build_mask_from_inpaint_list(img.shape)
-            client = helper.setup()
+            client = helper.setup() # device=config.get_config('gpu_device'))
 
             # 各バウンディングごとに渡す（predict_helper は image を in-place 更新して返す）
             img_work = img.copy()
@@ -1015,6 +1051,9 @@ class InpaintEffect(Effect):
         param['inpaint_mask_list'] = self.inpaint_mask_list
 
 class PatchmatchInpaintEffect(Effect):
+    # make_diff が _get_param で得た diff_list へ直接 append するため、デフォルト [] を
+    # キャッシュすると共有リストが汚染され別画像へ漏れる。キャッシュ無効化。
+    _defaults_depend_on_param = True
     param_bindings = (
         SwitchBinding('switch_details', True, "switch_details"),
         StateBinding('patchmatch_inpaint', False, "switch_patchmatch_inpaint"),
@@ -1056,14 +1095,22 @@ class PatchmatchInpaintEffect(Effect):
                 widget.enter_mask1_full_preview_mode('patchmatch_inpaint')
             if self.mask_editor is None:
                 from widgets.mask_editor import MaskEditor
-                
+
                 self.mask_editor = MaskEditor(param,
                                               effect_ctrl_param=(0, 'patchmatch_inpaint'),
                                               touch_up_callback=self.mask_editor_touch_up)
-                
+
                 widget.ids["preview_widget"].add_widget(self.mask_editor)
-                param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
-            
+                # InpaintEffect.after_set2param と同じ理由: StateBinding が widget.state を
+                # 直接書き換えるため set2widget(履歴 undo/redo 等)経由でここへ再入することが
+                # あり、その時点で param には既に mask_list が復元済みなので [] へ強制上書き
+                # せず、既存内容を新しい mask_editor へ描き戻す。
+                self.inpaint_mask_list = self._get_param(param, 'patchmatch_inpaint_mask_list')
+                param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list
+                for inpaint_mask in self.inpaint_mask_list:
+                    self.mask_editor.add_mask(inpaint_mask.disp_info, inpaint_mask.image)
+                self.mask_editor.delay_update_canvas()
+
         if param['patchmatch_inpaint'] == False:
             if self.mask_editor is not None:
                 
@@ -1312,6 +1359,9 @@ class ColorMatchEffect(Effect):
 
 # 変形描画
 class DistortionEffect(Effect):
+    # distortion_recorded のデフォルト [] はペインタへ参照で渡され in-place に append される。
+    # キャッシュすると共有リストが汚染され、param.clear() 後もストロークが復活するため無効化。
+    _defaults_depend_on_param = True
     param_bindings = (
         SwitchBinding('switch_distortion', True, "switch_distortion", widget_attr="enabled"),
         SliderBinding('distortion_brush_size', 300, "slider_distortion_brush_size"),
@@ -1433,6 +1483,10 @@ class DistortionEffect(Effect):
     def _sync_distortion_painter_ref(self, img, param, efconfig, force=False):
         distortion_painter = self.distortion_painter
         if distortion_painter is None:
+            return
+        # half-res ドラッグフレームでは img が縮小画像・efconfig.disp_info が縮小スケールの
+        # ため、GUI エディタ(painter)には流さない。ビューはドラッグ中不変なので同期不要。
+        if getattr(efconfig, 'drag_half_res', False):
             return
         ref_key = self._make_painter_ref_key(img, param, efconfig)
         if not force and ref_key == self._painter_ref_key:
@@ -1859,21 +1913,21 @@ class GeometryEffect(Effect):
 
 
     def _store_zero_wrap_quad(self, param, full_preview, image_shape, transform_matrix, size, transform_type):
-        """apply_zero_wrap 用の正規化コンテンツ四辺形を param に格納する。
+        """apply_zero_wrap 用のコンテンツ四辺形（変換キャンバス size で正規化）を param に格納する。
 
-        full_preview（Ge タブ＝回転正方形パディング表示。Mask2 ON/OFF 問わず）の
-        ときだけ格納し、それ以外は None でクリアして stale を防ぐ。
-        main.py 側の crop_editing は current_tab=="Ge" で判定され full_preview と一致する。
+        以前は full_preview（Ge タブ）のときだけ格納していたが、通常表示でもジオメトリ回転が
+        効いていると crop 窓の外へ reflect ミラー画素がはみ出して見える。回転を考慮したマスクを
+        作れるよう常に格納する。apply_zero_wrap は crop_editing 時はこの四辺形をそのまま、
+        通常表示時は disp_info の crop 窓へ写像してマスク化する（canvas_size = 変換キャンバス一辺）。
         """
-        if not full_preview:
-            param['_zero_wrap_content_quad'] = None
-            return
         try:
             quad = core.content_quad_norm(image_shape, transform_matrix, size, transform_type)
             param['_zero_wrap_content_quad'] = quad.tolist()
+            param['_zero_wrap_canvas_size'] = float(size)
         except Exception:
             logging.exception("failed to compute zero-wrap content quad")
             param['_zero_wrap_content_quad'] = None
+            param['_zero_wrap_canvas_size'] = None
 
     def make_diff(self, img, param, efconfig):
         ang = self._get_param(param, 'rotation')
@@ -1954,6 +2008,7 @@ class GeometryEffect(Effect):
             # 二パス経路では正確なクォッドを単一行列で得にくいため、安全に旧挙動へ
             # フォールバックさせる（apply_zero_wrap はクォッド無しで矩形ロジックに戻る）。
             param['_zero_wrap_content_quad'] = None
+            param['_zero_wrap_canvas_size'] = None
 
             params.set_matrix(param, None)
 
@@ -2689,26 +2744,6 @@ class AINoiseReductonEffect(Effect):
 
         return self.diff
 
-
-# BM3Dノイズ除去
-class BM3DNoiseReductionEffect(Effect):
-    param_bindings = (
-        SliderBinding('bm3d_noise_reduction', 0, "slider_bm3d_noise_reduction"),
-    )
-
-    def make_diff(self, img, param, efconfig):
-        bm3d = int(self._get_param(param, 'bm3d_noise_reduction'))
-        if bm3d == 0 or efconfig.disp_info[4] < config.get_config('scale_threshold'):
-            self.diff = None
-            self.hash = None
-        else:
-            param_hash = hash((bm3d))
-            if self.hash != param_hash:
-                import bm3dcl
-                self.diff = bm3dcl.bm3d_denoise(img, bm3d/100.0 * efconfig.disp_info[4])
-                self.hash = param_hash
-
-        return self.diff
 
 class LightNoiseReductionEffect(Effect):
     param_bindings = (
@@ -4487,7 +4522,7 @@ class LensSimulatorEffect(Effect):
         # これで拡大すると玉ボケも比例して大きくなり、輪郭のボケ具合が一定に保たれる。
         if shaped_on:
             try:
-                mag = float(params.get_disp_info(param)[4])
+                mag = float(params.get_disp_info(param)[4]) * float(getattr(efconfig, 'preview_res_scale', 1.0))
             except Exception:
                 mag = 1.0
             ow, oh = param.get('original_img_size', (processed.shape[1], processed.shape[0]))
@@ -4516,6 +4551,10 @@ class LensSimulatorEffect(Effect):
             disp = original_size = crop_size_offset = None
             try:
                 disp = params.get_disp_info(param)
+                _res_div = float(getattr(efconfig, 'preview_res_scale', 1.0))
+                if disp is not None and _res_div != 1.0:
+                    # half-res 実行中は縮小画像に合わせてスケール成分だけ縮める
+                    disp = (disp[0], disp[1], disp[2], disp[3], disp[4] * _res_div)
                 original_size = param['original_img_size']
                 crop_size_offset = core.crop_size_and_offset_from_texture(
                     int(processed.shape[1]),
@@ -4539,7 +4578,7 @@ class LensSimulatorEffect(Effect):
         # 長さ・太さは表示倍率 mag(=disp_info[4]) と元画像サイズ基準でシーン一定にする。
         if sunstar_on:
             try:
-                sun_mag = float(params.get_disp_info(param)[4])
+                sun_mag = float(params.get_disp_info(param)[4]) * float(getattr(efconfig, 'preview_res_scale', 1.0))
             except Exception:
                 sun_mag = 1.0
             sun_orig = param.get('original_img_size', (processed.shape[1], processed.shape[0]))
@@ -5115,7 +5154,8 @@ class LightRaysEffect(Effect):
         self._ensure_projection_lengths(guides, param)
 
         view = self._view_param(param, efconfig=efconfig)
-        if self.light_rays_canvas is not None and hasattr(self.light_rays_canvas, 'set_primary_param'):
+        # half-res ドラッグ中は view の disp_info が縮小スケールなので GUI キャンバスへは流さない
+        if self.light_rays_canvas is not None and hasattr(self.light_rays_canvas, 'set_primary_param') and not getattr(efconfig, 'drag_half_res', False):
             self.light_rays_canvas.set_primary_param(view)
 
         try:
@@ -5886,8 +5926,9 @@ class LensGhostEffect(Effect):
             return None
 
         # ライブビュー(zoom/pan/Ge)の座標系。毎描画で canvas を同期して CP マーカーを追従させる。
+        # half-res ドラッグ中は view の disp_info が縮小スケールなので GUI キャンバスへは流さない。
         view = self._view_param(param, efconfig=efconfig)
-        if self.ghost_canvas is not None and hasattr(self.ghost_canvas, 'set_primary_param'):
+        if self.ghost_canvas is not None and hasattr(self.ghost_canvas, 'set_primary_param') and not getattr(efconfig, 'drag_half_res', False):
             self.ghost_canvas.set_primary_param(view)
 
         enabled = self._get_param(param, 'lens_ghost_enabled')

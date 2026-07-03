@@ -245,6 +245,10 @@ import cv2
 import file_cache_system
 import memory_manager
 
+# ヒストグラム計算の間引き率(各軸)。2 なら画素数 1/4 で計算する。
+# 512bin のヒストグラム表示にはサンプル数として十分で、視認差は出ない。1 で無効化。
+HISTOGRAM_DECIMATION = 2
+
 
 def _debug_display_stats(label, img):
     if os.getenv("PLATYPUS_DEBUG_PIPELINE_STATS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
@@ -470,6 +474,11 @@ if __name__ == '__main__':
             self.apply_draw_image_center = None
             self.apply_draw_fast_display = False
             self.apply_draw_skip_histogram = False
+            self.apply_draw_drag_quality = False
+            # ParamSlider の連続ドラッグ中フラグ。ドラッグ中のフレームは lv1-lv2 を
+            # 半解像度で回し(pipeline 側)、リリース時に必ずフル解像度で描き直す。
+            self._param_slider_dragging = False
+            self._drag_quality_frame_pending = False
             self._fast_display_transform_cache = {}
             self._auto_display_color_gamut = "sRGB"
             self._auto_display_color_gamut_last_reason = None
@@ -843,7 +852,17 @@ if __name__ == '__main__':
                 effect.inpaint_mask_list = []
 
         def _cancel_mask1_mode(self, sources=("inpaint", "patchmatch_inpaint"), redraw=False):
-            if "inpaint" in sources:
+            # mask1 (inpaint/patchmatch_inpaint) を閉じる操作は、タブ切替 (on_current_tab) や
+            # 画像切替 (on_select) から無条件に呼ばれる。以前は begin/end_history_effect_ctrl
+            # を挟まずに primary_param を直接書き換えていた (かつ switch の state を "normal" に
+            # 戻すこと自体が on_state 経由で apply_effects_lv を誘発する) ため、マスクを開いた
+            # まま閉じる操作が履歴に一切残らず、実際の param 状態と履歴スタックが食い違って
+            # 以降の undo/redo が壊れる不具合があった。実際に閉じる変化があるときだけ、
+            # 通常のトグルボタン操作(on_press/on_state/on_release)と同じ begin/end で囲む。
+            if "inpaint" in sources and (
+                self.primary_param.get('inpaint') or self.ids['switch_inpaint'].state == "down"
+            ):
+                own_op = self.current_op is None and self.begin_history_effect_ctrl(0, 'inpaint')
                 self.primary_param['inpaint'] = False
                 self.primary_param['inpaint_predict'] = False
                 self.primary_param['inpaint_mask_list'] = []
@@ -851,8 +870,13 @@ if __name__ == '__main__':
                 self.ids['button_inpaint_predict'].state = "normal"
                 self._remove_mask1_editor_for_effect("inpaint")
                 self.exit_mask1_full_preview_mode('inpaint')
+                if own_op:
+                    self.end_history_effect_ctrl(0, 'inpaint')
 
-            if "patchmatch_inpaint" in sources:
+            if "patchmatch_inpaint" in sources and (
+                self.primary_param.get('patchmatch_inpaint') or self.ids['switch_patchmatch_inpaint'].state == "down"
+            ):
+                own_op = self.current_op is None and self.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
                 self.primary_param['patchmatch_inpaint'] = False
                 self.primary_param['patchmatch_inpaint_predict'] = False
                 self.primary_param['patchmatch_inpaint_mask_list'] = []
@@ -860,6 +884,8 @@ if __name__ == '__main__':
                 self.ids['button_patchmatch_inpaint_predict'].state = "normal"
                 self._remove_mask1_editor_for_effect("patchmatch_inpaint")
                 self.exit_mask1_full_preview_mode('patchmatch_inpaint')
+                if own_op:
+                    self.end_history_effect_ctrl(0, 'patchmatch_inpaint')
 
             if redraw and self._image_interaction_ready():
                 self.start_draw_image_and_crop(self.imgset)
@@ -871,6 +897,28 @@ if __name__ == '__main__':
             elif effect == 'patchmatch_inpaint' and self.ids['switch_patchmatch_inpaint'].state == "down":
                 self.ids['switch_inpaint'].state = "normal"
                 self.ids['button_inpaint_predict'].state = "normal"
+
+        def on_mask1_make_mask_state(self, effect_name):
+            """switch_inpaint / switch_patchmatch_inpaint (Make mask) の on_state ハンドラ。
+
+            Kivy の ToggleButton は on_press が発火する前に state が変わる(= on_state が
+            先に走る)ため、kv で on_press: begin → on_state: apply → on_release: end と
+            並べる方式では、begin の backup が「開閉が反映された後」の param を撮ってしまい
+            diff が空になって Make mask の開閉が履歴に一切残らなかった。その結果、線を描く
+            op に含まれる inpaint=True だけが履歴に残り、undo/redo でボタン状態が実際の
+            操作履歴と無関係に切り替わっていた。
+
+            state 変化の時点では param がまだ旧状態なので、ここで begin → apply → end を
+            まとめて行う。set2widget からのプログラム的な state 復元(履歴 undo/redo)でも
+            発火するが、その場合は param が既に復元済みで diff が空になり履歴には追加され
+            ない。既に別の op が進行中(_cancel_mask1_mode の own_op 等)の場合は begin を
+            重ねず apply だけ行う。"""
+            if self.run_set2widget_all:
+                return
+            own_op = self.current_op is None and self.begin_history_effect_ctrl(0, effect_name)
+            self.apply_effects_lv(0, effect_name)
+            if own_op:
+                self.end_history_effect_ctrl(0, effect_name)
 
         def _restore_mask1_view_after_submit(self):
             if not self.primary_param.pop('_mask1_restore_view_after_submit', False):
@@ -1617,7 +1665,7 @@ if __name__ == '__main__':
                 self.refresh_auto_display_color_gamut(reason="lazy", redraw=False)
             return self._auto_display_color_gamut or "sRGB"
 
-        def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False, frame_version_override=None):
+        def draw_image_core(self, center_pos=None, fast_display=False, skip_histogram=False, frame_version_override=None, drag_quality=False):
             self._draw_image_core_active = True
             try:
                 with threads.primary_param_lock:
@@ -1640,6 +1688,7 @@ if __name__ == '__main__':
                         effective_fast_display = False if force_full_preview_render else fast_display
                         effective_skip_histogram = False if force_full_preview_render else skip_histogram
                         effective_is_drag = self.is_press_space and not force_full_preview_render
+                        effective_drag_quality = drag_quality and not force_full_preview_render
                         effective_allow_stale = effective_fast_display or full_preview_allow_stale
                         crop_image_view_key = "full" if current_tab == "Ge" else "crop"
                         if self.crop_image_view_key != crop_image_view_key:
@@ -1659,7 +1708,7 @@ if __name__ == '__main__':
                                 effective_is_drag,
                                 effective_allow_stale,
                             )
-                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on, ai_image_cache=self.ai_image_cache)
+                        img, self.crop_image = pipeline.process_pipeline(self.imgset.img, self.crop_image, self.is_zoomed, self.zoom_ratio, config.get_config('preview_width'), config.get_config('preview_height'), self.click_x, self.click_y, self.primary_effects, self.primary_param, self.ids['mask_editor2'], self.processor, frame_version, current_tab=current_tab, loading_flag=pipeline_loading_flag(self.imgset), is_drag=effective_is_drag, center_pos=center_pos, mask2_active=mask2_on, ai_image_cache=self.ai_image_cache, drag_quality=effective_drag_quality)
                         self._refresh_mask1_editors()
                         # depth はパイプラインのマスク描画中にキャッシュされるため、
                         # 描画後に lens の depth 連動 UI を再評価する(構造変化イベント外で
@@ -1758,11 +1807,17 @@ if __name__ == '__main__':
                         if not effective_skip_histogram:
                             hist_t0 = time.perf_counter() if debug_mask_geom else None
                             img_hist, exclude_count = core.apply_zero_wrap(img, self.primary_param, crop_editing=crop_editing)
+                            if HISTOGRAM_DECIMATION > 1:
+                                # 間引きで画素数を 1/D^2 に。zero_wrap 後に行うことでレターボックス
+                                # ジオメトリ(disp_info 基準)を壊さない。exclude_count(パッド画素数)も
+                                # 同率で縮める(bin0 のみに効く値で、sqrt スケール表示では誤差不可視)。
+                                img_hist = np.ascontiguousarray(img_hist[::HISTOGRAM_DECIMATION, ::HISTOGRAM_DECIMATION])
+                                exclude_count = exclude_count // (HISTOGRAM_DECIMATION * HISTOGRAM_DECIMATION)
                             hist_data = widgets.histogram.HistogramWidget.calculate_histogram_data(img_hist, 0, exclude_count)
                             hist_ms = (time.perf_counter() - hist_t0) * 1000.0 if debug_mask_geom else 0.0
                             if frame_version == self.pipeline_version:
                                 self.draw_histogram_view(hist_data)
-                        if frame_version == self.pipeline_version and not effective_fast_display and not effective_is_drag:
+                        if frame_version == self.pipeline_version and not effective_fast_display and not effective_is_drag and not effective_drag_quality:
                             self._remember_final_display_image_or_defer(
                                 getattr(self.imgset, "file_path", None),
                                 img_draw,
@@ -1813,6 +1868,7 @@ if __name__ == '__main__':
                     center_pos = self.apply_draw_image_center
                     fast_display = self.apply_draw_fast_display
                     skip_histogram = self.apply_draw_skip_histogram
+                    drag_quality = self.apply_draw_drag_quality
                     try:
                         current_tab = self.ids["effects"].current_tab.text
                     except Exception:
@@ -1829,17 +1885,41 @@ if __name__ == '__main__':
                         fast_display=fast_display,
                         skip_histogram=skip_histogram,
                         frame_version_override=target_version,
+                        drag_quality=drag_quality,
                     )
                     last_processed_version = target_version
                     self._last_processed_pipeline_version = target_version
             
-        def start_draw_image(self, center_pos=None, invalidate_crop=False, fast_display=False, skip_histogram=False):
+        def _is_liquify_painter_open(self):
+            try:
+                return self.primary_effects[1]['distortion'].distortion_painter is not None
+            except Exception:
+                return False
+
+        def set_param_slider_drag(self, active):
+            """ParamSlider からのドラッグ開始/終了通知。
+
+            ドラッグ中は start_draw_image(drag_quality=True) 経由で half-res プレビューを
+            許可し、終了時に half-res フレームを描いていたら必ずフル解像度で描き直す。
+            """
+            active = bool(active)
+            if self._param_slider_dragging == active:
+                return
+            self._param_slider_dragging = active
+            if not active and self._drag_quality_frame_pending:
+                self._drag_quality_frame_pending = False
+                self.start_draw_image()
+
+        def start_draw_image(self, center_pos=None, invalidate_crop=False, fast_display=False, skip_histogram=False, drag_quality=False):
             if invalidate_crop:
                 self.crop_image = None
             self.pipeline_version += 1
             self.apply_draw_image_center = center_pos
             self.apply_draw_fast_display = fast_display
             self.apply_draw_skip_histogram = skip_histogram
+            self.apply_draw_drag_quality = drag_quality
+            if drag_quality:
+                self._drag_quality_frame_pending = True
             self.processor.set_pipeline_version(self.pipeline_version)
             if os.getenv("PLATYPUS_DEBUG_MASK_GEOMETRY", "0").strip().lower() in {"1", "true", "yes", "on"} and self._is_mask2_enabled():
                 logging.warning(
@@ -2093,55 +2173,66 @@ if __name__ == '__main__':
         def _request_active_liquify_mask_render_update(self, redraw_pipeline=False):
             if not self._is_mask2_enabled():
                 return
+            # mask2 モードが有効でも、mask リストで Primary が選択されている(= どの
+            # Composit マスクもアクティブでない)ときは get_active_mask() が None を返す。
+            # その場合でも Liquify は primary の distortion を直接編集しているので、
+            # マスクレンダーキャッシュの無効化はスキップしてよいが、パイプライン再描画
+            # 自体は必ず要求する。以前はここで早期 return しており、mask2 表示中に
+            # primary の Liquify を Reset しても画面に反映されず、履歴クリック(別経路の
+            # start_draw_image_and_crop)でしか更新が見えない不具合があった。
             editor = self.ids.get('mask_editor2')
-            if editor is None:
-                return
-            try:
-                mask = editor.get_active_mask()
-                if mask is None:
-                    return
-                if not mask.is_composit():
-                    composit = editor.find_composit_mask(mask)
-                    if composit is not None:
-                        mask = composit
-                updater = getattr(editor, 'request_mask_render_update', None)
-                if callable(updater):
-                    self._liquify_debug(
-                        "request_mask_render_update mask=%s redraw_pipeline=%s",
-                        getattr(mask, 'mask_id', None),
-                        redraw_pipeline,
-                    )
-                    updater(
-                        mask,
-                        reason="liquify",
-                        structure_changed=False,
-                        refresh_visibility=False,
-                        redraw_overlay=False,
-                        redraw_pipeline=False,
-                    )
-                    if redraw_pipeline:
-                        self.start_draw_image(fast_display=False)
-            except Exception:
-                logging.exception("failed to invalidate liquify mask render cache")
+            mask = None
+            if editor is not None:
+                try:
+                    mask = editor.get_active_mask()
+                    if mask is not None and not mask.is_composit():
+                        composit = editor.find_composit_mask(mask)
+                        if composit is not None:
+                            mask = composit
+                    if mask is not None:
+                        updater = getattr(editor, 'request_mask_render_update', None)
+                        if callable(updater):
+                            self._liquify_debug(
+                                "request_mask_render_update mask=%s redraw_pipeline=%s",
+                                getattr(mask, 'mask_id', None),
+                                redraw_pipeline,
+                            )
+                            updater(
+                                mask,
+                                reason="liquify",
+                                structure_changed=False,
+                                refresh_visibility=False,
+                                redraw_overlay=False,
+                                redraw_pipeline=False,
+                            )
+                except Exception:
+                    logging.exception("failed to invalidate liquify mask render cache")
+            if redraw_pipeline:
+                self.start_draw_image(fast_display=False)
 
         def reset_distortion_painter_action(self):
             if not self.can_open_liquify_editor():
                 return
             effect, current_param = self._get_active_distortion_effect_and_param()
-            painter = getattr(effect, 'distortion_painter', None) if effect is not None else None
+            if effect is None:
+                return
+            painter = getattr(effect, 'distortion_painter', None)
+            # ペインタ未生成(ツールボタン非押下)でも記録済みストロークは param に残るので消す。
+            if painter is None and not current_param.get('distortion_recorded'):
+                return
+            self.begin_history_effect_ctrl(1, 'distortion')
             if painter is not None:
-                self.begin_history_effect_ctrl(1, 'distortion')
                 painter.reset_image(notify=False)
-                current_param['distortion_recorded'] = []
-                current_param['switch_distortion'] = True
-                switch = self.ids.get("switch_distortion")
-                if switch is not None:
-                    switch.enabled = True
-                effect.reeffect()
-                self._request_active_liquify_mask_render_update(redraw_pipeline=True)
-                if not self._is_mask2_enabled():
-                    self.start_draw_image()
-                self.end_history_effect_ctrl(1, 'distortion')
+            current_param['distortion_recorded'] = []
+            current_param['switch_distortion'] = True
+            switch = self.ids.get("switch_distortion")
+            if switch is not None:
+                switch.enabled = True
+            effect.reeffect()
+            self._request_active_liquify_mask_render_update(redraw_pipeline=True)
+            if not self._is_mask2_enabled():
+                self.start_draw_image()
+            self.end_history_effect_ctrl(1, 'distortion')
 
         def geometry_callback(self, proc, widget):
             match proc:
@@ -2597,9 +2688,18 @@ if __name__ == '__main__':
             if defer_draw:
                 return
             if sync == False:
+                # half-res ドラッグは primary の lv0-lv2 スライダーに限定する。
+                # lv3/lv4 やマスクレイヤーの操作では lv1-lv2 がキャッシュヒットするため、
+                # 解像度切替の境界再計算コストの方が高くつき、マスク系にも触れたくない。
+                # Liquify エディタ表示中も無効(painter が参照画像を持つため縮小画像を流せない)。
+                drag_quality = (
+                    self._param_slider_dragging and lv <= 2 and mask_id is None
+                    and not self._is_liquify_painter_open()
+                )
                 self.start_draw_image(
                     fast_display=mask_geometry_update,
                     skip_histogram=mask_geometry_update,
+                    drag_quality=drag_quality,
                 )
             else:
                 self.sync_draw_image()
@@ -3790,15 +3890,45 @@ if __name__ == '__main__':
             self.primary_param['matrix'] = np.eye(3)
             self.primary_param['switch_distortion'] = False
 
+        @staticmethod
+        def _mask1_identity_tcg_info():
+            """mask1 バイパス空間(回転/行列/フリップなし)の tcg_info。"""
+            return {
+                'rotation': 0.0,
+                'rotation2': 0.0,
+                'flip_mode': 0,
+                'matrix': np.eye(3),
+            }
+
+        def _mask1_map_view_center(self, center, tcg_from, tcg_to):
+            """padded-square 座標の表示中心 center を、tcg_from のジオメトリ空間から
+            tcg_to のジオメトリ空間へ写像する(同じ画像内容の位置を指し続ける)。"""
+            imax = max(self.primary_param['original_img_size']) / 2
+            cx, cy = center[0] - imax, center[1] - imax
+            cx, cy = params.center_rotate_invert(cx, cy, tcg_from)  # from空間 → オリジナル
+            cx, cy = params.center_rotate(cx, cy, tcg_to)           # オリジナル → to空間
+            return cx + imax, cy + imax
+
+        def _mask1_view_anchor_click(self, target_disp_info, content_pos):
+            """zoom_crop_source_info が content_pos(target 空間の padded-square 座標)を
+            中心にズーム窓を作るような click_x/y を逆算する。
+            crop 側: crop_center = disp[0:2] + (click - offset) / base_scale"""
+            tex_w = config.get_config('preview_width')
+            tex_h = config.get_config('preview_height')
+            _, _, offset_x, offset_y = core.crop_size_and_offset_from_texture(tex_w, tex_h, target_disp_info)
+            if target_disp_info[2] >= target_disp_info[3]:
+                base_scale = tex_w / target_disp_info[2]
+            else:
+                base_scale = tex_h / target_disp_info[3]
+            click_x = offset_x + (content_pos[0] - target_disp_info[0]) * base_scale
+            click_y = offset_y + (content_pos[1] - target_disp_info[1]) * base_scale
+            return click_x, click_y
+
         def enter_mask1_full_preview_mode(self, source, redraw=False):
             if not self._image_interaction_ready():
                 return
             if self._mask1_full_preview_backup is None:
                 self._mask1_full_preview_backup = {
-                    'is_zoomed': self.is_zoomed,
-                    'zoom_ratio': self.zoom_ratio,
-                    'click_x': self.click_x,
-                    'click_y': self.click_y,
                     'crop_image_view_key': self.crop_image_view_key,
                     'geometry_params': self._backup_mask1_geometry_params(),
                 }
@@ -3808,14 +3938,17 @@ if __name__ == '__main__':
             if disp_info is None:
                 return
 
-            # ズーム中に mask1 (inpaint) を開いても、マスク座標は mask2 と同じ
-            # disp_info 経由の変換で整合するのでズーム表示はそのまま維持してよい。
-            # ただし crop/geometry を bypass して disp_info を作り直すため、
-            # pan アンカー (click_x/y) は旧 crop 基準のままだと無関係な位置を指してしまう。
-            # bypass 後の全体画像中心へ再計算する。
+            # ズーム中は「見ていた画像内容」を維持する。現在のズーム窓中心(現ジオメトリ
+            # 空間の padded-square 座標)を回転/行列の逆変換でバイパス(オリジナル)空間へ
+            # 写像し、同じ内容位置を指す click アンカーに引き直す。以前は常に画像中心へ
+            # 飛ばしていたため、ジオメトリの状態によって見た目上「違う場所」へ移動していた。
             if self.is_zoomed:
-                dx, dy, dw, dh, _ = disp_info
-                self.click_x, self.click_y = dx + dw / 2, dy + dh / 2
+                cur_disp = params.get_disp_info(self.primary_param)
+                if cur_disp is not None:
+                    tcg_from = params.param_to_tcg_info(self.primary_param)
+                    center = (cur_disp[0] + cur_disp[2] / 2, cur_disp[1] + cur_disp[3] / 2)
+                    center = self._mask1_map_view_center(center, tcg_from, self._mask1_identity_tcg_info())
+                    self.click_x, self.click_y = self._mask1_view_anchor_click(disp_info, center)
             else:
                 self.click_x, self.click_y = 0, 0
             self.drag_center_start = None
@@ -3833,14 +3966,32 @@ if __name__ == '__main__':
 
             backup = self._mask1_full_preview_backup
             self._mask1_full_preview_backup = None
-            self.is_zoomed = backup['is_zoomed']
-            self.zoom_ratio = backup['zoom_ratio']
-            self.click_x = backup['click_x']
-            self.click_y = backup['click_y']
+            # is_zoomed/zoom_ratio は mask1 編集中にユーザーが変更している可能性があるため、
+            # 突入前の値へ強制的に戻さない。ジオメトリ復元前に、バイパス空間での現在の
+            # 表示中心を控えておく(ズーム継続時のアンカー引き直しに使う)。
+            pre_disp = params.get_disp_info(self.primary_param)
             self.drag_center_start = None
             self.crop_image = None
             self.crop_image_view_key = backup.get('crop_image_view_key')
             self._restore_mask1_geometry_params(backup.get('geometry_params', {}))
+            # 退避してあった disp_info は「突入時のビューポート」のスナップショットなので
+            # そのまま使わない(編集中にズームを変えても突入時の拡大表示へ戻ってしまう)。
+            # 復元した crop_rect から非ズーム基準の disp_info を作り直す。
+            original_img_size = self.primary_param.get('original_img_size')
+            crop_rect = params.get_crop_rect(self.primary_param)
+            if original_img_size and crop_rect is not None:
+                base_disp = core.convert_rect_to_info(
+                    crop_rect,
+                    config.get_preview_texture_side() / max(original_img_size),
+                )
+                params.set_disp_info(self.primary_param, base_disp)
+                # ズーム継続中は、バイパス空間で見ていた内容位置を復元後ジオメトリ空間へ
+                # 写像し、同じ内容を指す click アンカーへ引き直す。
+                if self.is_zoomed and pre_disp is not None:
+                    tcg_to = params.param_to_tcg_info(self.primary_param)
+                    center = (pre_disp[0] + pre_disp[2] / 2, pre_disp[1] + pre_disp[3] / 2)
+                    center = self._mask1_map_view_center(center, self._mask1_identity_tcg_info(), tcg_to)
+                    self.click_x, self.click_y = self._mask1_view_anchor_click(base_disp, center)
             effects.reeffect_all(self.primary_effects, 0)
             if redraw and self._image_interaction_ready():
                 self.start_draw_image_and_crop(self.imgset)

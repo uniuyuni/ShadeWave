@@ -2179,8 +2179,8 @@ def apply_zero_wrap(img, param, crop_editing=False):
     """
     # クロップ編集中は回転した正方形パディングのため、黒塗り範囲が矩形にならない。
     # GeometryEffect が param に格納した正規化コンテンツ四辺形からマスクを生成する。
+    quad = param.get('_zero_wrap_content_quad')
     if crop_editing:
-        quad = param.get('_zero_wrap_content_quad')
         if quad is not None:
             out_h, out_w = int(img.shape[0]), int(img.shape[1])
             mask = content_quad_mask(out_h, out_w, quad)
@@ -2190,6 +2190,27 @@ def apply_zero_wrap(img, param, crop_editing=False):
             return (img, zero_count)
 
     disp_info = params.get_disp_info(param)
+
+    # 通常表示（ジオメトリエディタ中でない）でも、回転が効いていると reflect ミラー画素が
+    # crop 窓の外へはみ出して見える。矩形マスクでは回転コンテンツ境界を覆えないため、
+    # コンテンツ四辺形を crop 窓（disp_info）へ写像してマスク化する。四辺形は変換キャンバス
+    # size で正規化されているので、size-canvas px へ戻してから disp_info の crop/scale/offset
+    # で表示座標へ変換する（回転なしの場合は矩形マスクと一致する）。
+    canvas_size = param.get('_zero_wrap_canvas_size')
+    if quad is not None and canvas_size and disp_info is not None:
+        out_w, out_h = int(img.shape[1]), int(img.shape[0])
+        dx, dy, _dw, _dh, scale = disp_info
+        _nw, _nh, offset_x, offset_y = crop_size_and_offset_from_texture(out_w, out_h, disp_info)
+        pts = np.asarray(quad, dtype=np.float64) * float(canvas_size)
+        pts[:, 0] = (pts[:, 0] - dx) * scale + offset_x
+        pts[:, 1] = (pts[:, 1] - dy) * scale + offset_y
+        mask = np.zeros((out_h, out_w), dtype=np.float32)
+        cv2.fillConvexPoly(mask, np.round(pts).astype(np.int32), 1.0)
+        content = int(np.count_nonzero(mask))
+        zero_count = out_w * out_h - content
+        img = img * mask[..., np.newaxis]
+        return (img, zero_count)
+
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
     width, height = min(width, img.shape[1]), min(height, img.shape[0]) # 安全策

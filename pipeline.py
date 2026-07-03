@@ -1,5 +1,6 @@
 
 import numpy as np
+import cv2
 import logging
 import json
 import os
@@ -65,6 +66,22 @@ def preview_allow_stale_enabled(current_tab):
     else:
         value = os.getenv("PLATYPUS_DRAG_PREVIEW_ALLOW_STALE", "1")
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def drag_half_res_enabled():
+    # スライダードラッグ中の lv1-lv2 半解像度プレビューのキルスイッチ。
+    # 0/false で完全に旧挙動へ戻る。
+    value = os.getenv("PLATYPUS_DRAG_HALF_RES", "1")
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# lv1-lv2 half-res の縮小率。座標系は efconfig.disp_info[4] / resolution_scale /
+# preview_res_scale へ同率で反映される前提なので、変更時もそこだけで完結する。
+DRAG_HALF_RES_FACTOR = 0.5
+
+# 直前フレームの half-res 状態。解像度をハッシュに含めない効果(例: UnsharpMask)が
+# 別解像度の diff を再利用しないよう、切り替わりフレームで lv1reset を強制するために持つ。
+_drag_half_res_prev_state = {"primary": False}
 
 
 def _mask_geom_debug(message, *args):
@@ -919,7 +936,7 @@ class AsyncPipelineManager:
         return len(keys)
 
 
-def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False, ai_image_cache=None):
+def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, texture_height, click_x, click_y, primary_effects, primary_param, mask_editor2, processor, pipeline_version, current_tab, loading_flag=-1, is_drag=False, center_pos=None, mask2_active=False, ai_image_cache=None, drag_quality=False):
     pipeline_drag_preview = bool(is_drag) and not preview_full_render_enabled(current_tab)
     timing = _new_pipeline_timing(is_drag)
     if timing is not None:
@@ -959,7 +976,17 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         current_tab,
         mask2_active,
     )
-    
+    # スライダードラッグ中の half-res プレビュー。Ge タブ(クロップ/ジオメトリ編集)と
+    # mask2 full-preview では座標系リスクを避けるため常に無効。テクスチャサイズや
+    # primary_param の disp_info には一切触れず、lv1-lv2 の内部だけで完結させる。
+    efconfig.drag_half_res = (
+        bool(drag_quality)
+        and not pipeline_drag_preview
+        and not mask2_geometry_full_preview
+        and current_tab != "Ge"
+        and drag_half_res_enabled()
+    )
+
     # Initialize basic input hash
     efconfig.loading_flag = loading_flag
     efconfig.image_fidelity = primary_param.get('image_fidelity')
@@ -980,6 +1007,7 @@ def process_pipeline(img, crop_image, is_zoomed, zoom_ratio, texture_width, text
         timing["loading_flag"] = loading_flag
         timing["image_fidelity"] = efconfig.image_fidelity
         timing["input_shape"] = tuple(getattr(img, "shape", ()))
+        timing["drag_half_res"] = efconfig.drag_half_res
     if timing is not None:
         _timing_add_section_ms(timing, "efconfig_setup", (time.perf_counter() - _t0) * 1000.0)
 
@@ -1211,9 +1239,50 @@ def pipeline2(imgc, crop, primary_effects, primary_param, mask_editor2, efconfig
     previous_layer_label = getattr(efconfig, "pipeline_layer_label", "primary")
     efconfig.pipeline_layer_label = "primary"
     _debug_pipeline_image_stats("primary pipeline2 input", imgc, param=primary_param)
-    img1, lv2reset, upstream_status = pipeline_lv1(imgc, primary_effects, primary_param, efconfig, lv1reset, upstream_status, processor)
-    _debug_pipeline_image_stats("primary after lv1", img1, param=primary_param)
-    img2, lv3reset, upstream_status = pipeline_lv2(img1, primary_effects, primary_param, efconfig, lv2reset, upstream_status, processor)
+
+    drag_half_res = bool(getattr(efconfig, "drag_half_res", False))
+    # half-res 状態が前フレームと切り替わったら lv1 起点で全効果を再計算させる。
+    # 解像度を param_hash に含めない効果(例: UnsharpMask)が、別解像度で作った diff を
+    # そのまま返してしまうと出力サイズが変わり表示/マスク系が壊れるため。
+    if _drag_half_res_prev_state["primary"] != drag_half_res:
+        _drag_half_res_prev_state["primary"] = drag_half_res
+        lv1reset = True
+
+    if drag_half_res:
+        src = np.asarray(core.type_convert(imgc, np.ndarray))
+        full_h, full_w = int(src.shape[0]), int(src.shape[1])
+        half_w = max(1, int(round(full_w * DRAG_HALF_RES_FACTOR)))
+        half_h = max(1, int(round(full_h * DRAG_HALF_RES_FACTOR)))
+        small = cv2.resize(src, (half_w, half_h), interpolation=cv2.INTER_AREA)
+        # スケール系だけ縮小率に合わせる。disp_info の crop 座標(元画像座標系)は不変。
+        # primary_param / mask_editor2 / テクスチャサイズには一切触れない。
+        saved_disp_info = efconfig.disp_info
+        saved_resolution_scale = efconfig.resolution_scale
+        efconfig.disp_info = (
+            saved_disp_info[0], saved_disp_info[1],
+            saved_disp_info[2], saved_disp_info[3],
+            saved_disp_info[4] * DRAG_HALF_RES_FACTOR,
+        )
+        efconfig.resolution_scale = saved_resolution_scale * DRAG_HALF_RES_FACTOR
+        efconfig.preview_res_scale = DRAG_HALF_RES_FACTOR
+        # 同一パラメータでもフル解像度時とは別キャッシュにする(async 効果等の保険)。
+        efconfig.upstream_hash = hash((efconfig.upstream_hash, "drag_half_res"))
+        try:
+            img1, lv2reset, upstream_status = pipeline_lv1(small, primary_effects, primary_param, efconfig, lv1reset, upstream_status, processor)
+            _debug_pipeline_image_stats("primary after lv1", img1, param=primary_param)
+            img2, lv3reset, upstream_status = pipeline_lv2(img1, primary_effects, primary_param, efconfig, lv2reset, upstream_status, processor)
+        finally:
+            efconfig.disp_info = saved_disp_info
+            efconfig.resolution_scale = saved_resolution_scale
+            efconfig.preview_res_scale = 1.0
+        # lv3(mask2)以降は常にフル解像度で動かすため、出力サイズを必ず元に戻す。
+        img2 = np.asarray(core.type_convert(img2, np.ndarray))
+        if img2.shape[0] != full_h or img2.shape[1] != full_w:
+            img2 = cv2.resize(img2, (full_w, full_h), interpolation=cv2.INTER_NEAREST)
+    else:
+        img1, lv2reset, upstream_status = pipeline_lv1(imgc, primary_effects, primary_param, efconfig, lv1reset, upstream_status, processor)
+        _debug_pipeline_image_stats("primary after lv1", img1, param=primary_param)
+        img2, lv3reset, upstream_status = pipeline_lv2(img1, primary_effects, primary_param, efconfig, lv2reset, upstream_status, processor)
     _debug_pipeline_image_stats("primary after lv2", img2, param=primary_param)
     img3, lv1reset, upstream_status = pipeline_lv3(img2, primary_effects, primary_param, efconfig, lv3reset, upstream_status, processor)
     _debug_pipeline_image_stats("primary after lv3", img3, param=primary_param)

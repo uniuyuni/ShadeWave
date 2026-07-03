@@ -125,6 +125,26 @@ class MaskEditor(KVFloatLayout):
     def clear_mask(self):
         self.mask = np.zeros((self.canvas_height, self.canvas_width), dtype=np.uint8)
 
+    def add_mask(self, disp_info, image):
+        """記録済みマスク矩形(disp_info=(x,y,w,h)、マスク座標系)を現在のマスクへ合成する。
+        履歴 undo/redo 時に InpaintEffect / PatchmatchInpaintEffect の after_set2widget から呼ばれる。"""
+        x, y, w, h = [int(v) for v in disp_info]
+        src = np.asarray(image)
+        if src.ndim == 3:
+            src = src[:, :, 0]
+        if src.size == 0:
+            return
+        m_h, m_w = self.mask.shape[:2]
+        x0, y0 = max(x, 0), max(y, 0)
+        x1, y1 = min(x + w, m_w), min(y + h, m_h)
+        if x1 <= x0 or y1 <= y0:
+            return
+        sx0, sy0 = x0 - x, y0 - y
+        region = src[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+        if region.dtype != self.mask.dtype:
+            region = np.clip(region, 0, 255).astype(self.mask.dtype)
+        np.maximum(self.mask[y0:y1, x0:x1], region, out=self.mask[y0:y1, x0:x1])
+
     def get_mask(self):
         # 正方形パディングされている場合はクロップして返す？ 
         # 元の実装を見ると `self.mask = np.zeros((imax, imax)...)` となっていたが、

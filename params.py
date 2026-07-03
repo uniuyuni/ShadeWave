@@ -241,8 +241,9 @@ SPECIAL_PARAM = [
     # for effects.CropEffect
     'matrix',
     'crop_enable',
-    # for core.apply_zero_wrap: クロップ編集中のコンテンツ四辺形（ランタイム専用）
+    # for core.apply_zero_wrap: ジオメトリ変換後のコンテンツ四辺形と変換キャンバス一辺（ランタイム専用）
     '_zero_wrap_content_quad',
+    '_zero_wrap_canvas_size',
     # for effecs.Inpaint
     'inpaint',
     'inpaint_predict',

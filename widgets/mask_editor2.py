@@ -2643,6 +2643,10 @@ class FreeDrawMask(BaseMask):
         self.brush_size = self._draw_brush_size()
         brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
+        # update_mask がジオメトリ回転角を self.rotate.angle にセットするが、回転原点が
+        # (0,0) のままだと円カーソルの中心 (brush/2, brush/2) が R·c-c だけ移動し、回転方向
+        # へズレる。原点をカーソル中心に合わせ、その場回転(円なので見た目不変)にする。
+        self.rotate.origin = (brush_size / 2, brush_size / 2)
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
         # 内側ハードゾーンの直径 = 外径 × hardness/100 (freedraw_raster の create_natural_brush
         # と同じ意味で、hardness=100 で同径、=0 で消失)
@@ -3284,6 +3288,10 @@ class PolylineMask(BaseMask):
         self.brush_size = self._draw_brush_size()
         brush_size = self.editor.tcg_to_window_scale(self.brush_size, 0)[0]
         self.translate.x, self.translate.y = x - brush_size / 2, y - brush_size / 2
+        # update_mask がジオメトリ回転角を self.rotate.angle にセットするが、回転原点が
+        # (0,0) のままだと円カーソルの中心 (brush/2, brush/2) が R·c-c だけ移動し、回転方向
+        # へズレる。原点をカーソル中心に合わせ、その場回転(円なので見た目不変)にする。
+        self.rotate.origin = (brush_size / 2, brush_size / 2)
         self.brush_cursor.ellipse = (0, 0, brush_size, brush_size)
         # 内側ハードゾーンの直径 = 外径 × hardness/100 (FreeDrawMask と同じ意味)
         try:

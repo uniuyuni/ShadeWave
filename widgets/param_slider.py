@@ -540,8 +540,18 @@ class ParamSlider(KVBoxLayout):
         self._set_slider_value_at(self._active_slider_index(), self._active_slider_value() + step)
         self._notify_after_edit()
 
+    def _set_pipeline_drag_state(self, active):
+        # スライダーの連続ドラッグ中だけ half-res プレビュー(main 側)を有効化する。
+        # ボタン押し/テキスト入力の瞬間編集はドラッグ扱いにしない。
+        app = KVApp.get_running_app()
+        main_widget = getattr(app, "main_widget", None) if app else None
+        notify = getattr(main_widget, "set_param_slider_drag", None)
+        if callable(notify):
+            notify(bool(active))
+
     def on_input_scrub_begin(self):
         self._notify_before_edit()
+        self._set_pipeline_drag_state(True)
         self._input_scrub_accum = 0.0
 
     def on_input_scrub_pixels(self, dx):
@@ -602,6 +612,7 @@ class ParamSlider(KVBoxLayout):
         return True
 
     def on_input_scrub_end(self):
+        self._set_pipeline_drag_state(False)
         self._notify_after_edit()
         self._input_scrub_accum = 0.0
 
@@ -621,11 +632,13 @@ class ParamSlider(KVBoxLayout):
         # これが走るとスライダーが常に初期値(例: レンズ歪み 0)のままになる。
         if self.ids['slider'].collide_point(*touch.pos):
             self._notify_before_edit()
+            self._set_pipeline_drag_state(True)
             return True
 
         return False
 
     def on_slider_touch_up(self, touch):
+        self._set_pipeline_drag_state(False)
         self._notify_after_edit()
         return False
 

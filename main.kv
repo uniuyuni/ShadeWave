@@ -2047,9 +2047,9 @@
                                         size_hint_x: None
                                         ref_width: 80
                                         disabled: root.ai_inpaint_processing or root.image_loaded == False or root.mask2_wait_full_load == True
-                                        on_press: root.begin_history_effect_ctrl(0, 'inpaint')
-                                        on_state: root.apply_effects_lv(0, 'inpaint')
-                                        on_release: root.end_history_effect_ctrl(0, 'inpaint')
+                                        # ToggleButton は on_press より先に state が変わるため、
+                                        # begin/apply/end は on_state 起点で一括処理する。
+                                        on_state: root.on_mask1_make_mask_state('inpaint')
                                         text: "Make mask"
                                     ParamChip:
                                         type: 'assist'
@@ -2083,9 +2083,9 @@
                                         size_hint_x: None
                                         ref_width: 80
                                         disabled: root.image_loaded == False or root.mask2_wait_full_load == True
-                                        on_press: root.begin_history_effect_ctrl(0, 'patchmatch_inpaint')
-                                        on_state: root.apply_effects_lv(0, 'patchmatch_inpaint')
-                                        on_release: root.end_history_effect_ctrl(0, 'patchmatch_inpaint')
+                                        # ToggleButton は on_press より先に state が変わるため、
+                                        # begin/apply/end は on_state 起点で一括処理する。
+                                        on_state: root.on_mask1_make_mask_state('patchmatch_inpaint')
                                         text: "Make mask"
                                     ParamChip:
                                         type: 'assist'

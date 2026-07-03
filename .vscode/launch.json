@@ -68,6 +68,7 @@
                 //"QS_COLOR_W_OUT": "0.9"
                 //"PLATYPUS_CROSS_FILTER_BACKEND": "reference",
                 //"PLATYPUS_DEBUG_LIQUIFY": "1",
+                //"PLATYPUS_DRAG_HALF_RES": "0",
                 "PLATYPUS_SPLASH_SCREEN": "0",
             }
         },
