@@ -443,8 +443,8 @@ class MeshWarpWidget(KVFloatLayout):
                         hit_pt = (r, c)
         
         if hit_pt:
-            # ダブルクリック判定
-            if touch.is_double_tap:
+            # 右クリック判定
+            if getattr(touch, 'button', 'left') == 'right':
                 # リセット
                 if hit_pt in self.control_offsets_tcg:
                     self.on_edit_start()

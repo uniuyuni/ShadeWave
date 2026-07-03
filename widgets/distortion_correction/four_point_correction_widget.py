@@ -11,11 +11,19 @@ from kivy.uix.image import Image as KVImage
 from kivy.clock import mainthread as kvmainthread
 import numpy as np
 import cv2
+import os
+import logging
 
 from cores.distortion_correction.four_point_correction import correct_four_points, detect_rectangle
 import params
 from utils import kvutils
 from widgets.scaled_button import ScaledButton
+
+_DEBUG_4PT = os.getenv("PLATYPUS_DEBUG_4PT", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+def _dbg4pt(msg, *args):
+    if _DEBUG_4PT:
+        logging.warning("[4PT] " + msg, *args)
 
 class FourPointCorrectionWidget(KVFloatLayout):
     """4点自由補正Widget"""
@@ -98,60 +106,85 @@ class FourPointCorrectionWidget(KVFloatLayout):
     def on_edit_start(self):
         """編集開始イベント（ヒストリー管理用）"""
         if self.on_callback:
+            _dbg4pt("-> callback('start')")
             self.on_callback('start', self)
-    
+
     def on_edit_end(self):
         """編集終了イベント（ヒストリー管理用）"""
         if self.on_callback:
+            _dbg4pt("-> callback('end')")
             self.on_callback('end', self)
 
     def on_apply_corners(self):
         """コーナー適用イベント"""
         if self.on_callback:
+            _dbg4pt("-> callback('apply')")
             self.on_callback('apply', self)
 
     def reset_corners(self, *args):
-        self.on_edit_start()
+        _dbg4pt("reset_corners (Reset button) pressed")
         self._reset_corners()
-        self.on_edit_end()  
+        self._commit_and_apply()
 
-    def _reset_corners(self):        
-        # TCG座標系で四隅を設定（正規化座標）
-        # 画像の四隅に対応
+    def _reset_corners(self):
+        # 隅を初期(画像四隅)に戻す。適用はしない (ハンドル/オーバーレイのみ更新)。
         self._using_default_corners = True
         self.corner_positions_tcg = self._default_corners()
         self._sync_tcg_to_kivy()
-        self._apply_corners()
+
+    def _commit_and_apply(self):
+        """現在の隅を param へ確定し、画像へ適用する (履歴付き)。
+        ドラッグ中は適用せず、Apply / Reset / Revert ボタン経由でのみここを通す。"""
+        _dbg4pt("_commit_and_apply corners=%s flag=%s",
+                list(self.corner_positions_tcg), self._using_default_corners)
+        self.on_edit_start()
+        self.on_edit_end()
 
     def _apply_corners(self, *args):
-        self.on_apply_corners()
-    
+        # Apply ボタン: 現在のハンドル位置を確定して適用する。
+        self._commit_and_apply()
+
     def _revert_corners(self, *args):
-        backup = self.corner_positions_tcg.copy()
-        self._reset_corners() # Reset UI and Params to Identity
-        self._apply_corners() # Apply restored state to Params
-        self.corner_positions_tcg = backup # Restore backup to internal state
-        self._sync_tcg_to_kivy() # Restore UI handles
-    
+        _dbg4pt("_revert_corners (Revert button) pressed corners=%s", list(self.corner_positions_tcg))
+        # 補正なし(未適用)状態をプレビューしつつ、ハンドル位置は維持する。
+        # (Apply を押せば維持した位置で再適用できる)
+        backup = list(self.corner_positions_tcg)
+        backup_flag = self._using_default_corners
+        self._reset_corners()       # 隅をデフォルトに (適用なし)
+        self._commit_and_apply()    # identity を適用 (未補正プレビュー)
+        # 内部状態(ハンドル位置と flag)を復元。画像/param は未補正のまま。
+        # flag を復元しないと、次回ドラッグ時に他の隅がデフォルトへ飛ぶ等の不整合になる。
+        self.corner_positions_tcg = backup
+        self._using_default_corners = backup_flag
+        self._sync_tcg_to_kivy()
+
     def get_correction_params(self) -> dict:
         """
         現在のパラメータを取得（TCG座標系）
-        
+
         Returns:
             dict: {"four_points": [(x,y), ...]}
         """
-        if self._using_default_corners:
-            return {"four_points": []}
-        return {"four_points": list(self.corner_positions_tcg)}
-    
+        # 隅が画像四隅 (デフォルト) のときのみ「未設定」として [] を返す。
+        # _using_default_corners フラグではなく実際の隅座標で判定することで、
+        # ドラッグ後に再描画 (set_correction_params) 経由でフラグが同期ずれしても、
+        # Apply が [] を返して補正がリセットされてしまう不具合を防ぐ。
+        is_default = list(self.corner_positions_tcg) == self._default_corners()
+        result = {"four_points": []} if is_default else {"four_points": list(self.corner_positions_tcg)}
+        _dbg4pt("get_correction_params -> %s (corners=%s flag=%s is_default=%s)",
+                result['four_points'], list(self.corner_positions_tcg),
+                self._using_default_corners, is_default)
+        return result
+
     def set_correction_params(self, param: dict):
         """
         パラメータを設定（TCG座標系）
-        
+
         Args:
             param: dict、{"four_points": [(x,y), ...]}
         """
         four_points = param.get('four_points', [])
+        _dbg4pt("set_correction_params incoming four_points=%s", four_points)
         self._using_default_corners = four_points == []
         # 未設定の Four Points は param としては [] のまま扱う。
         # 表示時だけ、四隅に置いたマーカー中心が画面外へ出た場合に端へ戻す。
@@ -245,16 +278,17 @@ class FourPointCorrectionWidget(KVFloatLayout):
         return handle
     
     def _on_handle_move(self, index: int):
-        """ハンドルがドラッグされた"""
+        """ハンドルがドラッグされた。
+        ここでは画像へ適用せず、内部座標とオーバーレイ(ハンドル/接続線)のみ更新する。
+        実際の画像への適用は Apply ボタン (_commit_and_apply) でのみ行う。"""
         if self.updating_handles:
             return
-        
+
         self.is_dragging = True
         preserve_default_corners = self._using_default_corners
-        self.on_edit_start()
 
         self.grab_current = index
-        
+
         self._sync_kivy_to_tcg(
             moved_index=index,
             preserve_default_corners=preserve_default_corners,
@@ -274,10 +308,12 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self._update_lines()
         
     def _on_handle_release(self, index, touch):
-        """ハンドルが離された"""
+        """ハンドルが離された。ドラッグでは適用しないので、状態を戻すだけ。
+        grab_current は必ず -1 に戻す (この bind はボタン等の無関係な touch_up でも
+        発火するため、残っていると誤動作の原因になる)。"""
         if self.grab_current == index:
             self.is_dragging = False
-            self.on_edit_end()
+            self.grab_current = -1
     
     def _update_lines(self):
         """接続線を再描画"""

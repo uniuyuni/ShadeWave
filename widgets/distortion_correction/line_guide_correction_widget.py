@@ -42,10 +42,6 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         self.selected_point_index = -1 # 0: start, 1: end
         self.dragging = False
         self.start_new_line_point = None
-        
-        # キーボードイベント
-        from kivy.core.window import Window as KVWindow
-        KVWindow.bind(on_key_down=self._on_key_down)
 
         # タッチイベントをバインド
         self.draw_overlay.bind(
@@ -122,21 +118,11 @@ class LineGuideCorrectionWidget(KVFloatLayout):
             self.on_callback('apply', self)
         
     def apply_lines(self):
-        """ラインを適用"""
-        self._apply()
+        """ラインを確定して適用する (画像への適用はここでのみ行う)。
+        描画/削除/移動では適用せず、Apply ボタン経由のこの経路でのみ適用する。"""
+        self.on_edit_start()
+        self.on_edit_end()
         self._redraw_lines()
-
-    def _on_key_down(self, window, key, scancode, codepoint, modifiers):
-        """キー入力処理"""
-        # Delete or Backspace
-        if key in [8, 127]: # 8: Backspace, 127: Delete
-            if self.selected_line_index >= 0:
-                self.lines_tcg.pop(self.selected_line_index)
-                self.selected_line_index = -1
-                self.selected_point_index = -1
-                self._redraw_lines()
-                return True
-        return False
 
     def clear_lines(self, instance=None):
         """全ての線を削除"""
@@ -218,19 +204,31 @@ class LineGuideCorrectionWidget(KVFloatLayout):
                     hit_line = i
                     hit_point = 1
         
+        is_right = getattr(touch, 'button', 'left') == 'right'
+
         if hit_line >= 0:
+            if is_right:
+                # 右クリックでラインを削除 (適用はしない。Apply で適用)
+                self.lines_tcg.pop(hit_line)
+                self.selected_line_index = -1
+                self.selected_point_index = -1
+                self._redraw_lines()
+                return True
             # 既存ポイントのドラッグ開始
             self.selected_line_index = hit_line
             self.selected_point_index = hit_point
             self.dragging = True
             self._redraw_lines()
+        elif is_right:
+            # 右クリックは何もしない（新規ライン作成はしない）
+            return True
         else:
             # 新規ライン作成開始
             self.start_new_line_point = (tx, ty)
             self.selected_line_index = -1
             self.selected_point_index = -1
             self.dragging = True
-            
+
         return True
 
     def _on_drawing_touch_move(self, instance, touch):
@@ -265,21 +263,20 @@ class LineGuideCorrectionWidget(KVFloatLayout):
         tx, ty = self._clamp_tcg(tx, ty)
         
         if self.start_new_line_point:
-            self.on_edit_start()
-            # 新規ライン確定
+            # 新規ライン確定 (適用はしない。ガイド線を追加するだけで、
+            # 実際の画像への適用は Apply ボタンでのみ行う)
             # 一定以上長さがある場合のみ
             dist = np.sqrt((self.start_new_line_point[0]-tx)**2 + (self.start_new_line_point[1]-ty)**2)
             if dist > 0.01:
                 self.lines_tcg.append((self.start_new_line_point, (tx, ty)))
                 self.selected_line_index = len(self.lines_tcg) - 1 # 選択状態にする
                 self.selected_point_index = -1 # ポイント選択解除
-            
+
             self.start_new_line_point = None
-            #self._redraw_lines()
-            self.on_edit_end()
-            
+            self._redraw_lines()
+
         elif self.dragging:
-            # 移動終了、確定
+            # 移動終了、確定 (適用はしない。Apply で適用)
             self.dragging = False
 
 

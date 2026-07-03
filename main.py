@@ -1201,6 +1201,14 @@ if __name__ == '__main__':
             KVClock.schedule_once(lambda dt: self.sync_distortion_mode_sliders(), 0)
             KVClock.schedule_once(lambda dt: self.sync_preview_widget_min_size(), 0)
 
+            # Geometry 編集タブでのダブルタップを、子 (CropEditor / geometry editor) へ
+            # 伝播する前に消費するフィルタ。KV の `on_touch_down:` ルールは式の戻り値を
+            # 伝播制御に使わないため、戻り値を尊重する Python bind を choke point にする。
+            # (これが無いとダブルタップが CropEditor 等に届き、クロップ枠がずれる)
+            self.ids['preview_widget'].bind(
+                on_touch_down=self._consume_geometry_double_tap
+            )
+
             self.mask2_panel = mask2_content.create_mask2_content_panel(self.ids['mask_editor2'])
             self.ids['masks_box'].add_widget(self.mask2_panel)
             #self.ids['masks_box'].ids['content'].add_widget(self.mask2_panel)
@@ -2235,6 +2243,11 @@ if __name__ == '__main__':
             self.end_history_effect_ctrl(1, 'distortion')
 
         def geometry_callback(self, proc, widget):
+            if os.getenv("PLATYPUS_DEBUG_4PT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                logging.warning(
+                    "[4PT] geometry_callback proc=%s | primary_param.four_points=%s",
+                    proc, self.primary_param.get('four_points'),
+                )
             match proc:
                 case 'start':
                     if self.begin_history_effect_ctrl(0, 'geometry'):
@@ -2244,6 +2257,11 @@ if __name__ == '__main__':
                     self.apply_effects_lv(0, 'geometry', sync=True)
                     # Update widget with new params (especially matrix for correct display)
                     #widget.set_correction_params(self.primary_param)
+                    if os.getenv("PLATYPUS_DEBUG_4PT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                        logging.warning(
+                            "[4PT] geometry_callback after apply_effects_lv | primary_param.four_points=%s",
+                            self.primary_param.get('four_points'),
+                        )
                 case 'end':
                     self.primary_param.update(widget.get_correction_params())
                     self.end_history_effect_ctrl(0, 'geometry')
@@ -4122,6 +4140,26 @@ if __name__ == '__main__':
                 return bool(consumer(touch))
             except Exception:
                 return False
+
+        def _consume_geometry_double_tap(self, instance, touch):
+            """preview_widget.on_touch_down に Python bind するフィルタ。
+            Geometry 編集タブ (画像/マスク mesh) 中のダブルタップを、子ウィジェット
+            (CropEditor / geometry editor) に伝播する前にここで消費 (return True) する。
+            これにより Ge タブでのダブルクリックがクロップ枠を動かす不具合を防ぐ。
+            戻り値 True が伝播を止めるのは Python bind だから (KV ルールは戻り値を無視する)。"""
+            if not getattr(touch, 'is_double_tap', False):
+                return False
+            if not instance.collide_point(*touch.pos):
+                return False
+            if not self._image_interaction_ready():
+                return False
+            # マスクが自前でダブルタップを処理する場合 (Polyline 開放確定) は消費しない
+            if self._active_mask_consumes_double_tap(touch):
+                return False
+            # 通常プレビュー (非 Geometry) のダブルタップは従来どおりズーム切替に使うので消費しない
+            if not (self._is_image_geometry_mode() or self.is_mask_mesh_editor_active()):
+                return False
+            return True
 
         def on_image_touch_down(self, touch):
             if self.ids['preview_widget'].collide_point(*touch.pos):

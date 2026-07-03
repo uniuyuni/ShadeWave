@@ -95,6 +95,108 @@ def _geometry_preview_interpolation(crop_editing):
     return "linear"
 
 
+def _geometry_signed_area(pts):
+    """多角形 (N,2) の符号付き面積 (shoelace)。"""
+    x = pts[:, 0]
+    y = pts[:, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _geometry_quad_is_convex(pts):
+    """四辺形 (4,2) が凸か (自己交差=bowtie でないか) 判定。"""
+    n = len(pts)
+    sign = 0
+    for i in range(n):
+        a = pts[i]
+        b = pts[(i + 1) % n]
+        c = pts[(i + 2) % n]
+        cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+        if abs(cross) < 1e-9:
+            continue
+        s = 1 if cross > 0 else -1
+        if sign == 0:
+            sign = s
+        elif s != sign:
+            return False
+    return True
+
+
+def _geometry_matrix_is_safe(matrix, size):
+    """合成ジオメトリ行列 (入力->出力の前進行列, 中心原点フレーム) が、表示破綻
+    (真っ黒 / 裏表反転 / 退化) を起こさないか判定する。
+
+    主な破綻要因:
+      - 透視分母 w が画像内で符号反転 = 地平線越え -> 裏返り/黒
+      - 変換後四辺形の向き反転 = 裏表逆
+      - 面積の潰れ/爆発 = 退化
+      - 自己交差 (bowtie) = 非凸
+    """
+    if matrix is None:
+        return True
+    M = np.asarray(matrix, dtype=np.float64)
+    if M.shape != (3, 3) or not np.all(np.isfinite(M)):
+        return False
+
+    half = size / 2.0
+    corners = np.array(
+        [[-half, -half], [half, -half], [half, half], [-half, half]],
+        dtype=np.float64,
+    )
+    homog = np.concatenate([corners, np.ones((4, 1), dtype=np.float64)], axis=1)
+    out = homog @ M.T
+    w = out[:, 2]
+
+    # 透視分母 w: 全頂点で同符号でないと地平線をまたいで裏返る/破綻する
+    if not (np.all(w > 0.0) or np.all(w < 0.0)):
+        return False
+    aw = np.abs(w)
+    if np.max(aw) <= 0.0:
+        return False
+    # 一部の頂点だけ w が極端に 0 に近い = 地平線ぎりぎり (極端な引き伸ばし/黒)
+    if np.min(aw) / np.max(aw) < 0.02:
+        return False
+
+    pts = out[:, :2] / w[:, None]
+    if not np.all(np.isfinite(pts)):
+        return False
+
+    src_area = _geometry_signed_area(corners)
+    dst_area = _geometry_signed_area(pts)
+    if dst_area == 0.0:
+        return False
+    # 向き反転 (裏表逆) を検出
+    if (src_area > 0.0) != (dst_area > 0.0):
+        return False
+    # 面積の極端な潰れ/爆発 (退化) のバックストップ。真の破綻要因は主に w 符号/向き/凸性。
+    ratio = abs(dst_area) / abs(src_area)
+    if ratio < 1e-3 or ratio > 1e3:
+        return False
+    if not _geometry_quad_is_convex(pts):
+        return False
+    return True
+
+
+def _safe_add_geometry_matrix(param, H, half_size, size):
+    """params.add_matrix の安全版。合成後の行列が表示破綻する場合は追加を取り消す。
+
+    追加できたら True、H が不正 or 破綻で取り消したら False を返す。
+    トラペゾイド/4点/ライン補正の組み合わせで一部だけ破綻する場合、その成分だけ
+    捨てて安全な部分は維持する (=なるべく破綻を残さず、直前の有効な状態に留める)。
+    """
+    if H is None:
+        return False
+    Harr = np.asarray(H, dtype=np.float64)
+    if Harr.shape != (3, 3) or not np.all(np.isfinite(Harr)):
+        return False
+    prev = param.get('matrix')
+    prev = prev.copy() if prev is not None else None
+    params.add_matrix(param, H, offset=(half_size, half_size))
+    if not _geometry_matrix_is_safe(param.get('matrix'), size):
+        params.set_matrix(param, prev)  # 取り消し (prev=None -> 単位行列)
+        return False
+    return True
+
+
 def _build_geometry_valid_mask(param):
     width, height = param['original_img_size']
     mask = np.ones((height, width, 3), dtype=np.float32)
@@ -143,18 +245,21 @@ def _build_geometry_valid_mask(param):
     half_size = size / 2
 
     if switch_distortion_correction:
+        # 表示側 (_build_deferred_preview_transform) と同じ安全ガードを使い、破綻する
+        # 成分はマスクにも反映しない (=表示とマスクの整合を保ちつつ真っ黒/退化を防ぐ)。
         if correct_horizontal != 0 or correct_vertical != 0:
             base_f = np.max(mask.shape[:2])
             multiplier = 0.5 + (focal_length * 0.025)
             f_pixel = base_f * multiplier
-            mask, H = correct_trapezoid(
+            new_mask, H = correct_trapezoid(
                 mask,
                 horizontal=correct_horizontal * 0.5,
                 vertical=correct_vertical * 0.5,
                 focal_length=f_pixel,
                 interpolation='bilinear',
             )
-            params.add_matrix(temp_param, H, offset=(half_size, half_size))
+            if _safe_add_geometry_matrix(temp_param, H, half_size, size):
+                mask = new_mask
 
         reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
         if four_points != [] and four_points != reset_points:
@@ -165,24 +270,28 @@ def _build_geometry_valid_mask(param):
             for cx, cy in reset_points:
                 dst_point.append(params.tcg_to_ref_image(cx, cy, mask, tcg_info))
 
-            mask, H = correct_four_points(
-                mask,
-                src_point,
-                dst_point,
-                interpolation='bilinear',
-            )
-            params.add_matrix(temp_param, H, offset=(half_size, half_size))
+            try:
+                new_mask, H = correct_four_points(
+                    mask,
+                    src_point,
+                    dst_point,
+                    interpolation='bilinear',
+                )
+            except Exception:
+                new_mask, H = mask, None
+            if _safe_add_geometry_matrix(temp_param, H, half_size, size):
+                mask = new_mask
 
         if len(reference_lines) > 0:
             line_tcg_info = _line_homography_tcg_info(tcg_info)
-            mask, H = correct_with_lines(
+            new_mask, H = correct_with_lines(
                 mask,
                 reference_lines,
                 tcg_info=line_tcg_info,
                 interpolation='bilinear',
             )
-            if H is not None:
-                params.add_matrix(temp_param, H, offset=(half_size, half_size))
+            if H is not None and _safe_add_geometry_matrix(temp_param, H, half_size, size):
+                mask = new_mask
 
         if control_points:
             cp = {}
@@ -1719,6 +1828,13 @@ class GeometryEffect(Effect):
                     }
                 param.update(d)
 
+            if os.getenv("PLATYPUS_DEBUG_4PT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                logging.warning(
+                    "[4PT] after_set2param editor=%s selected=%s param.four_points=%s",
+                    self.geometry_editor.__class__.__name__ if self.geometry_editor else None,
+                    get_selected(), param.get('four_points'),
+                )
+
             # Update Matrix Param based on current params (Visual Fix)
             self._update_matrix_param(param)
 
@@ -1759,8 +1875,8 @@ class GeometryEffect(Effect):
                 vertical=correct_vertical * 0.5,
                 focal_length=f_pixel,
             )
-            params.add_matrix(param, H, offset=(half_size, half_size))
-        
+            _safe_add_geometry_matrix(param, H, half_size, size)
+
         # 4点補正
         reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
         if four_points != [] and four_points != reset_points:
@@ -1780,12 +1896,15 @@ class GeometryEffect(Effect):
             for cx, cy in reset_points:
                 dst_point.append(params.tcg_to_ref_image(cx, cy, dummy_img, tcg_info))
 
-            # dst -> src (Inverse)
-            H_inv = calculate_four_point_homography(src_point, dst_point)
-            # src -> dst (Forward)
-            H = np.linalg.inv(H_inv)
-            
-            params.add_matrix(param, H, offset=(half_size, half_size))
+            # dst -> src (Inverse) -> src -> dst (Forward)
+            # 退化した4点 (共線/自己交差) では getPerspectiveTransform / inv が
+            # 例外や特異行列を返すので、失敗時は None にして安全ガードで捨てる。
+            try:
+                H_inv = calculate_four_point_homography(src_point, dst_point)
+                H = np.linalg.inv(H_inv)
+            except Exception:
+                H = None
+            _safe_add_geometry_matrix(param, H, half_size, size)
 
         # Lines
         if len(reference_lines) > 0:
@@ -1793,7 +1912,7 @@ class GeometryEffect(Effect):
             line_tcg_info = _line_homography_tcg_info(tcg_info)
             H = calculate_lines_homography(reference_lines, size, size, tcg_info=line_tcg_info)
             if H is not None:
-                params.add_matrix(param, H, offset=(half_size, half_size))
+                _safe_add_geometry_matrix(param, H, half_size, size)
 
     def set2param2(self, param, arg):
         if arg == 'hflip':
@@ -1848,8 +1967,7 @@ class GeometryEffect(Effect):
                     vertical=correct_vertical * 0.5,
                     focal_length=f_pixel,
                 )
-                params.add_matrix(param, H, offset=(half_size, half_size))
-                has_matrix = True
+                has_matrix = _safe_add_geometry_matrix(param, H, half_size, size) or has_matrix
 
             if four_points != [] and four_points is not None and four_points != reset_points:
                 tcg_info = params.param_to_tcg_info(param)
@@ -1866,18 +1984,19 @@ class GeometryEffect(Effect):
                 for cx, cy in reset_points:
                     dst_point.append(params.tcg_to_ref_image(cx, cy, dummy_img, tcg_info))
 
-                H_inv = calculate_four_point_homography(src_point, dst_point)
-                H = np.linalg.inv(H_inv)
-                params.add_matrix(param, H, offset=(half_size, half_size))
-                has_matrix = True
+                try:
+                    H_inv = calculate_four_point_homography(src_point, dst_point)
+                    H = np.linalg.inv(H_inv)
+                except Exception:
+                    H = None
+                has_matrix = _safe_add_geometry_matrix(param, H, half_size, size) or has_matrix
 
             if len(reference_lines or []) > 0:
                 tcg_info = params.param_to_tcg_info(param)
                 line_tcg_info = _line_homography_tcg_info(tcg_info)
                 H = calculate_lines_homography(reference_lines, size, size, tcg_info=line_tcg_info)
                 if H is not None:
-                    params.add_matrix(param, H, offset=(half_size, half_size))
-                    has_matrix = True
+                    has_matrix = _safe_add_geometry_matrix(param, H, half_size, size) or has_matrix
 
         mesh_map_x = None
         mesh_map_y = None
@@ -2057,15 +2176,17 @@ class GeometryEffect(Effect):
                     multiplier = 0.5 + (focal_length * 0.025)
                     f_pixel = base_f * multiplier # Focal len in pixels
 
-                    img, H = correct_trapezoid(
+                    # 破綻する成分は img へ反映せず捨てる (安全ガード)。
+                    new_img, H = correct_trapezoid(
                             img,
-                            horizontal=correct_horizontal * 0.5, 
+                            horizontal=correct_horizontal * 0.5,
                             vertical=correct_vertical * 0.5,
                             focal_length=f_pixel,
                             interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
-                    params.add_matrix(param, H, offset=(half_size, half_size))
-                                
+                    if _safe_add_geometry_matrix(param, H, half_size, size):
+                        img = new_img
+
                 # 4点補正
                 reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
                 if four_points != [] and four_points != reset_points:
@@ -2078,25 +2199,29 @@ class GeometryEffect(Effect):
                     for cx, cy in reset_points:
                         dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
 
-                    img, H = correct_four_points(
-                            img,
-                            src_point,
-                            dst_point,
-                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    )
-                    params.add_matrix(param, H, offset=(half_size, half_size))
-                    
+                    try:
+                        new_img, H = correct_four_points(
+                                img,
+                                src_point,
+                                dst_point,
+                                interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                        )
+                    except Exception:
+                        new_img, H = img, None
+                    if _safe_add_geometry_matrix(param, H, half_size, size):
+                        img = new_img
+
                 # Lines
-                if len(reference_lines) > 0: 
+                if len(reference_lines) > 0:
                     line_tcg_info = _line_homography_tcg_info(tcg_info)
-                    img, H = correct_with_lines(
+                    new_img, H = correct_with_lines(
                         img,
                         reference_lines,
                         tcg_info=line_tcg_info,
                         interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
                     )
-                    if H is not None:
-                        params.add_matrix(param, H, offset=(half_size, half_size))
+                    if H is not None and _safe_add_geometry_matrix(param, H, half_size, size):
+                        img = new_img
 
                 # Mesh           
                 if control_points:
