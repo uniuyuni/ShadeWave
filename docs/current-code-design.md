@@ -1,8 +1,8 @@
 # Shade Wave 現状コード詳細設計書
 
 作成日: 2026-06-19  
-更新日: 2026-06-25 (lens ghost 効果の追加に追従)  
-対象バージョン: 現行 `main` 作業ツリーのコード (`define.VERSION = 2.91.232`)  
+更新日: 2026-07-03 (バージョン追従、Effectレベル構成の実態反映、Mask2 Draw Effects/Blend Mode、ai_job_manager、Film Process実装先の修正)  
+対象バージョン: 現行 `main` 作業ツリーのコード (`define.VERSION = 2.131.0`)  
 目的: 保守、機能追加、リファクタリング、移植、オンボーディングのために、現状コードの構造・実行フロー・不変条件・落とし穴を残す。
 
 ## 0. ゴール、読者、スコープ
@@ -96,6 +96,7 @@
 | `processing_dialog.py` | ブロッキング処理中のmacOS HUD/スタブ。 |
 | `memory_manager.py` | RSS/available memory監視、Effect/processorキャッシュ破棄。 |
 | `cores/mask2/` | Kivy非依存のMask2ヘッドレス処理、AI推論ランタイム、座標コンテキスト。 |
+| `cores/ai_job_manager/` | AI系Effect(AI Noise Reduction等)のジョブ管理・結果キャッシュ。`MainWidget.ai_job_manager`(`AIJobManager`)として保持され、`effects.bind_ai_job_manager()` でEffectへ配線される。 |
 | `cores/lens_ghost.py` | Kivy非依存のレンズゴースト合成 `create_ghost()` と `GHOST_PRESETS`。合併ROI内だけで合成する高速実装。 |
 | `widgets/mask_editor2.py` | Mask2 UI。各マスク型、serialize/deserialize、画面上の操作。 |
 | `widgets/ghost_canvas.py` | preview に重ねる `LensGhostCanvas`。光源CP(コントロールポイント)を正規化TCGで配置/移動/削除。 |
@@ -108,7 +109,7 @@
 
 | コンポーネント | 所有者 | 主な状態 | 備考 |
 | --- | --- | --- | --- |
-| GUI | `MainWidget` | `imgset`, `primary_param`, `primary_effects`, `crop_image`, `history` | ほぼ全体の状態を集約するgod object。 |
+| GUI | `MainWidget` | `imgset`, `primary_param`, `primary_effects`, `crop_image`, `history`, `ai_job_manager`, `ai_image_cache`, `ai_sidecar_merge_queue` | ほぼ全体の状態を集約するgod object。 |
 | File cache | `FileCacheSystem` | `cache`, `preload_registry`, `active_processes`, `final_display_cache` | 画像ロード結果と表示用画像を保持。 |
 | Image buffer | `ImageSet` | `file_path`, `img`, `fidelity`, `color_space` | `img` は基本float32、作業色空間はProPhoto RGBリニア。 |
 | Effect graph | `effects.create_effects()` | 5段階のdictリスト | 順序はdict挿入順が仕様。 |
@@ -374,9 +375,11 @@ setup.sh
 - 古いtuple/list差は必要箇所でtupleへ戻す。
 - 旧 `rating` はparamから除去する。
 
-重いpayload:
+重いpayload(`params.HEAVY_PRIMARY_PARAM_KEYS`):
 
 - `ai_noise_reduction_result`
+- `ai_noise_reduction_content_key`
+- `ai_noise_reduction_source_signature`
 - `inpaint_diff_list`
 - `patchmatch_inpaint_diff_list`
 - `color_match_source_image`
@@ -422,6 +425,20 @@ Mask2はUI用とヘッドレス用に分かれる。
 - exportで再現できるMaskはheadless実装が必要。
 - UI座標とexport座標は `Mask2CoordinateContext` / `params` のTCG変換に依存する。
 - mask composite後は `efconfig.upstream_hash` を更新し、lv4 cacheを誤再利用しない。
+
+#### 4.4.1 Draw Effects と Blend Mode
+
+各Composit maskは、マスク自体の形状計算(depth/hue/lum/sat/quick select等)とは別に「Draw Effects」という描画系の追加効果を持てる。実処理は `cores/core.py` の `apply_mask_draw_effects(base, msk, layer_img, mask2_param, resolution_scale)` に集約されている。
+
+処理順:
+
+1. `effect_img = base + (layer_img - base) * mask_boost` で、マスク下のEffectレイヤーをまず画像全体に対して計算する(マスク領域だけを切り出して計算するのではない。近傍参照を伴う効果でも境界アーティファクトが出ないようにするため)。
+2. `switch_mask2_draw_effects` が有効なら、Skin Smooth (Inverted High Pass) → Color Dodge → Color Burn → Mix Black/White (K/S顔料混合近似) の順で `effect_img` を追加加工する。各強さは `mask2_param` の `mask2_skin_smooth_amount`, `mask2_color_dodge`, `mask2_color_burn`, `mask2_mix_black`, `mask2_mix_white` (0-100%) で決まる。
+3. 最後に `mask2_blend_mode`(既定 `'Normal'`)に従い `base` と `effect_img` をPhotoshop風ブレンド関数 `_blend_mode_composite()` で合成してから、`mask_alpha`(マスクのアルファ値)で `base` とアルファブレンドする: `result = base*(1-mask_alpha) + blend(base, effect_img, mode)*mask_alpha`。`Normal` の場合は旧来どおり `blend(...)` を経由せず `effect_img` をそのまま使い、既存プロジェクトの再現性を保つ。
+
+対応ブレンドモード(`mask2_blend_mode` の値): `Normal`, `Multiply`, `Screen`, `Overlay`, `Soft Light`, `Hard Light`, `Darken`, `Lighten`, `Difference`, `Exclusion`, `Linear Dodge (Add)`, `Linear Burn`。
+
+パラメータは `effects.Mask2Effect.get_param_dict()`(`effects.py`)で定義され、GUI側は `main.kv` の `switch_mask2_draw_effects` ブロック内 `spinner_mask2_blend_mode` / 各 `slider_mask2_*` と、`effects.py` の `Mask2Effect.param2widget`/`set2param` で双方向に同期する。`mask2_param` は `pipeline.py` の `_effective_mask2_draw_effect_param()` が `composit_mask.effects_param` をそのまま返す実装であり、専用のキャッシュキー処理は無い。パラメータ辞書全体が `pipeline2()` 内で `hash(repr(sorted(mask2_param.items())))` としてそのまま `efconfig.upstream_hash` に混ぜられるため、新しいキーを追加してもキャッシュ無効化は自動的に効く。
 
 ### 4.5 TCG座標系とMask2座標
 
@@ -697,9 +714,9 @@ previewとexportでMask2位置が一致するための条件:
 | --- | --- | --- |
 | lv0 | loading_wait, ai_noise_reduction, remove_chromatic_aberration, lens_modifier, subpixel_shift, exposure_fusion_debevec, inpaint, patchmatch_inpaint, cross_filter, color_match, geometry, crop | ロード待ち、重い復元、RAW/幾何、crop前処理。 |
 | lv1 | face, distortion, **lens_ghost**, lensblur_filter, scratch, frosted_glass, mosaic | crop後の形状/フィルタ系。`face` が先頭、`lens_ghost` は `lensblur_filter` の前。 |
-| lv2 | color_temperature, input_lut, exposure, contrast, tone, level, curves, dehaze, denoise, HLS, look_lut(Film Process/look), glow, unsharp, **lens_ghost** | 主なトーン/カラー/質感処理。LUTは `input_lut`(stage="input", log→LUT。raw自動露出補正を内包) と `look_lut`(stage="look") の2段。`lens_ghost` を末尾にも登録。 |
+| lv2 | color_temperature, input_lut, exposure, contrast, tone, level, curves, dehaze, light_noise_reduction, clarity, texture, microcontrast, color_separation, clahe, rgb2hls2, hls, vs_and_saturation, hls2rgb2, clean_highlight, look_lut(Film Process/look), lens_simulator, light_rays, film_emulation, solid_color, orton, glow, airy_glow, unsharp_mask, **lens_ghost** | 主なトーン/カラー/質感処理。LUTは `input_lut`(stage="input", log→LUT。raw自動露出補正を内包) と `look_lut`(stage="look") の2段。HLS系は `rgb2hls2 -> hls -> vs_and_saturation -> hls2rgb2` の順で変換/処理/逆変換する3段構成(単一の `denoise`/`HLS` Effectは存在しない)。`lens_ghost` を末尾にも登録。 |
 | lv3 | mask2, mask_geometry | マスク表示/マスクジオメトリ関連。 |
-| lv4 | grain, vignette | 最終段。Mask composite後の画像に適用。 |
+| lv4 | vignette, grain | 最終段。Mask composite後の画像に適用。挿入順は vignette が先、grain が後。 |
 
 #### lens_ghost のデュアルレベル登録
 
@@ -810,7 +827,7 @@ config.py のデフォルト
 - Film Process はプリセット JSON ではなく、Effect param の構造パラメータから生成する。
 - Film Process の UI モードは `Off`, `Negative`, `Slide`, `B&W`。デフォルトは `Off` で、`effects.FilmSimulationEffect.make_diff()` は no-op として `None` を返す。
 - Film Process の主な構造パラメータは `film_latitude`, `film_contrast`, `film_color_bias`, `film_color_drift`, `film_dye_purity`, `film_layer_crosstalk`, `film_halation`, `film_aging`, `film_intensity`。
-- 実処理は `cores/film_process.py` の spectral-lite モデルで、旧 `film_presets.json` / `cores/film_emulator.py` は使わない。
+- 実処理は `effect_backends/film_process_adapter.py` の spectral-lite モデルで、ネイティブ拡張 `effect_backends/film_process_cpu.c`(pybind経由)またはPythonフォールバック `effect_backends/film_process_reference.py` をラップする。旧 `film_presets.json` / `cores/film_emulator.py` は使わない。
 - レンズゴーストのプリセットは `cores/lens_ghost.py` の `GHOST_PRESETS`(コード定数、JSONではない)。`spinner_lens_ghost_preset` 選択で `MainWidget.apply_ghost_preset()` が全スライダーへ反映(履歴対応)。プリセットは min 辺 500px 基準なのでサイズ系(`base_radius`/`blur_sigma`)のみ画像サイズへスケールし、比率・強度系はそのまま。光源CPは変更しない。
 
 ## 8. 外部依存と環境差

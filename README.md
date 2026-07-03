@@ -150,7 +150,7 @@ Available ICC profiles are loaded from `icc/`, including sRGB, Display P3, Adobe
 - Global tone and color: exposure, contrast, tone, levels, curves, HLS, hue/saturation/luminance curves, color separation, LUT input/look stages.
 - Detail and restoration: AI noise reduction, SCUNet, radiance denoise, dehaze, clarity, texture, microcontrast, unsharp mask.
 - Geometry: rotation, crop, perspective/mesh-like geometry correction, distortion correction, subpixel shift, lens blur, mosaic, scratch/frosted glass style effects.
-- Local editing: mask layers, composite masks, free draw masks, quick-select style edge refinement, mask geometry, headless mask replay during export.
+- Local editing: mask layers, composite masks, free draw masks, quick-select style edge refinement, mask geometry, Photoshop-style draw effects with blend modes (Multiply, Screen, Overlay, Soft Light, and more), headless mask replay during export.
 - AI-assisted masks: SAM3 box/text segmentation, Depth Pro depth masks, face masks through helper backends.
 - Creative looks: Film Process, lens simulation, cross filter, glow, orton, grain, vignette, solid color overlays.
 - Metadata and ratings: export metadata options and rating propagation.
@@ -191,7 +191,7 @@ The high-level flow is:
 | --- | --- |
 | `libraw_enhanced` | RAW decoding and Metal shader resources |
 | `SAM3` | AI segmentation masks |
-| `ml-depth-pro` | Depth estimation for depth masks |
+| `depth_pro` | Depth estimation for depth masks |
 | `SCUNet` | PyTorch denoise model weights |
 | `SCUNet_CoreML` | Core ML SCUNet model and runtime |
 | `radiance_codec` | Float32 image serialization codec |
@@ -209,7 +209,7 @@ Important default settings live in `config.py` and are copied/migrated into `~/P
 | `preview_size` | `640` | Minimum preview texture side |
 | `raw_auto_exposure` | `true` | Enable RAW auto exposure by default |
 | `gpu_device` | `mps` | Preferred AI device on Apple Silicon |
-| `display_color_gamut` | `sRGB` | Display transform target |
+| `display_color_gamut` | `auto` | Display transform target |
 | `cat` | `cat16` | Chromatic adaptation transform |
 | `base_resolution_scale` | `[4096, 4096]` | Base processing resolution limit |
 | `mesh_rbf_function` | `mls` | Mesh warp interpolation mode |
@@ -248,7 +248,7 @@ pixi run build-macos-app
 Current application version is defined in `define.py`.
 
 ```text
-Shade Wave 2.96.1
+Shade Wave 2.131.0
 ```
 
 The active pixi environment targets `osx-arm64` and Python `>=3.11.13,<3.12`.
