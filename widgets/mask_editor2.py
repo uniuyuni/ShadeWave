@@ -17,6 +17,7 @@ import threading
 from functools import partial
 
 from kivy.app import App as KVApp
+from kivy.config import Config as KVConfig
 from kivy.core.window import Window as KVWindow
 from kivy.uix.widget import Widget as KVWidget
 from kivy.uix.image import Image as KVImage
@@ -2804,6 +2805,7 @@ class PolylineMask(BaseMask):
         self.current_polyline = None # 描画中の polyline
         self.brush_size = self._draw_brush_size()  # 線幅 (TCG)
         self._stroke_history_started = False
+        self._last_finish_time = 0.0  # 直近の polyline 確定時刻 (シングルクリック閉じ直後のダブルタップ余波抑制用)
 
         # コントロールポイント描画状態
         self._vertex_control_points = []  # [(polyline_idx, point_idx, ControlPoint)]
@@ -2951,9 +2953,11 @@ class PolylineMask(BaseMask):
 
     def consumes_double_tap(self, touch):
         """ダブルタップを polyline 確定として消費するかどうか。
-        プレビュー領域内で描画中の場合 True を返し、preview_widget のズーム切替を抑制する。"""
+        プレビュー領域内で描画中の場合、または直前のクリックで始点閉じ確定した直後
+        (ダブルクリックの 2 打目が置き去りになるケース) は True を返し、
+        preview_widget のズーム切替を抑制する。"""
         if self.current_polyline is None:
-            return False
+            return self._recently_finished_polyline()
         try:
             return bool(self.editor.collide_point(*touch.pos))
         except Exception:
@@ -3031,6 +3035,10 @@ class PolylineMask(BaseMask):
                     if self.initializing:
                         self.initializing = False
                     return True
+                # 1 打目 (シングルクリック) で既に始点閉じ確定済みなら、2 打目は
+                # 置き去りの余波なので何もせず消費するだけ (ズーム切替に流さない)。
+                if self._recently_finished_polyline():
+                    return True
                 return super().on_touch_down(touch)
 
             # 描画中で始点付近をクリックしたら閉じて確定
@@ -3083,9 +3091,18 @@ class PolylineMask(BaseMask):
         self.editor.set_active_mask(self)
         self._redraw_mask_content("polyline_begin")
 
+    def _recently_finished_polyline(self):
+        """直前の touch で polyline を確定 (単クリックでの始点閉じ含む) した直後かどうか。
+        ダブルクリックの 1 打目で閉じた場合、2 打目は current_polyline が None のまま
+        on_image_touch_down に先着されズーム切替と誤認されるため、その余波を抑制する。"""
+        elapsed = time.time() - self._last_finish_time
+        threshold = KVConfig.getint('postproc', 'double_tap_time') * 0.001
+        return 0.0 <= elapsed <= threshold
+
     def _finish_current_polyline(self, is_closed: bool):
         if self.current_polyline is None:
             return
+        self._last_finish_time = time.time()
         # 頂点 2 個未満なら破棄
         if len(self.current_polyline.points) < 2:
             self.current_polyline = None
