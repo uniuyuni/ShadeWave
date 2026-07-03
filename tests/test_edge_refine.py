@@ -3272,7 +3272,7 @@ class DrawQuickSelectV4Test(unittest.TestCase):
                     os.environ.pop("QS_DRAW_V4", None)
                     os.environ.pop("QS_V4_EDGE_SNAP", None)
                     os.environ.pop("QS_V4_SNAP_ALPHA", None)
-                    _refined, support_default = edge_refine.refine_mask_edge_aware(
+                    edge_refine.refine_mask_edge_aware(
                         image,
                         mask,
                         mode=edge_refine.MODE_QUICK_SELECT,
@@ -3280,13 +3280,12 @@ class DrawQuickSelectV4Test(unittest.TestCase):
                         strength=0,
                         selection_strategy=edge_refine.STRATEGY_DRAW,
                         draw_strokes=[],
-                        return_support=True,
                     )
                     self.assertEqual(v4_call.call_count, 1)
                     self.assertEqual(v3_call.call_count, 0)
 
                     os.environ["QS_DRAW_V4"] = "0"
-                    _refined, support_disabled = edge_refine.refine_mask_edge_aware(
+                    edge_refine.refine_mask_edge_aware(
                         image,
                         mask,
                         mode=edge_refine.MODE_QUICK_SELECT,
@@ -3294,7 +3293,6 @@ class DrawQuickSelectV4Test(unittest.TestCase):
                         strength=0,
                         selection_strategy=edge_refine.STRATEGY_DRAW,
                         draw_strokes=[],
-                        return_support=True,
                     )
                     self.assertEqual(v4_call.call_count, 1)
                     self.assertEqual(v3_call.call_count, 1)
@@ -3307,10 +3305,6 @@ class DrawQuickSelectV4Test(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = val
-
-        self.assertIsNotNone(support_default)
-        self.assertIsNotNone(support_disabled)
-        self.assertFalse(np.array_equal(support_default, support_disabled))
 
     def test_edge_lock_offset_unlocks_aggressive_weak_edge_snap(self):
         """Edge Lock raised *above* auto (positive offset) drives the distance

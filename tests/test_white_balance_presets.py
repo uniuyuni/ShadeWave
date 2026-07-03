@@ -105,11 +105,18 @@ class WhiteBalancePresetTest(unittest.TestCase):
         self.assertIn('widget.ids["slider_color_temperature"].reset_value', set2param)
         self.assertIn('widget.ids["slider_color_tint"].reset_value', set2param)
 
-    def test_invert_temp_tint_rgb_uses_existing_inversion_helper(self):
-        rgb = core.invert_TempTint2RGB(5500, 4, 1.0, reference_temp=5000.0)
+    def test_invert_temp_tint_rgb_reflects_temp_and_negates_tint_around_reference(self):
+        temp, tint, Y, reference_temp = 5500.0, 4.0, 1.0, 5000.0
 
-        self.assertEqual(len(rgb), 3)
-        self.assertTrue(np.isfinite(rgb).all())
+        mired_temp = 1e6 / temp
+        mired_ref = 1e6 / reference_temp
+        expected_inverted_temp = 1e6 / (mired_ref - (mired_temp - mired_ref))
+        expected_inverted_tint = -tint
+        expected_rgb = core.convert_TempTint2RGB(expected_inverted_temp, expected_inverted_tint, Y)
+
+        actual_rgb = core.invert_TempTint2RGB(temp, tint, Y, reference_temp=reference_temp)
+
+        np.testing.assert_allclose(actual_rgb, expected_rgb, rtol=1e-6, atol=1e-6)
 
     def test_hover_spinner_dispatches_same_user_value(self):
         source = HOVER_SPINNER_PATH.read_text()

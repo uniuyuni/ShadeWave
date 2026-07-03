@@ -24,7 +24,7 @@ SUPPORTED_SUFFIXES = {
 }
 
 
-def test_photo_paths():
+def _photo_paths():
     paths = [
         str(path)
         for path in sorted(TEST_PHOTOS.iterdir())
@@ -121,7 +121,7 @@ class FileSelectionMemoryStressTest(unittest.TestCase):
     def test_rapid_selection_changes_keep_loading_and_memory_state_consistent(self):
         cache_system = make_cache_system(max_final_display_cache=7)
         owner = FakeOwner()
-        source_paths = test_photo_paths()
+        source_paths = _photo_paths()
         if len(source_paths) < 2:
             self.skipTest(f"test photos not available: {TEST_PHOTOS}")
         paths = [source_paths[i % len(source_paths)] for i in range(50)]

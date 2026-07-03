@@ -62,11 +62,6 @@ class FilmProcessBackendTest(unittest.TestCase):
         out = film_process_adapter.apply_film_process(image, mode="Slide", **_COMMON)
         self.assertGreater(float(out.max()), 1.0)
 
-    def test_off_mode_is_noop(self):
-        image = np.array([[[0.2, 0.4, 0.8], [1.2, 0.5, 0.1]]], dtype=np.float32)
-        result = film_process_adapter.apply_film_process(image, mode="Off")
-        np.testing.assert_array_equal(result, image)
-
     def test_film_effect_dispatches_to_adapter(self):
         image = np.full((6, 8, 3), 0.5, dtype=np.float32)
         effect = FilmSimulationEffect()

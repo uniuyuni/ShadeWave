@@ -1,3 +1,4 @@
+import os
 import pathlib
 import sys
 import unittest
@@ -22,7 +23,14 @@ class CrossFilterBackendTest(unittest.TestCase):
         status = cross_filter_adapter.backend_status()
 
         self.assertEqual(status.effect, "cross_filter")
-        self.assertIn(status.backend, {"effect_backends._cross_filter_cpu", "effect_backends.cross_filter_reference"})
+        self.assertIn(
+            status.backend,
+            {
+                "effect_backends._cross_filter_metal",
+                "effect_backends._cross_filter_cpu",
+                "effect_backends.cross_filter_reference",
+            },
+        )
 
     def test_adapter_output_shape_dtype_and_effect(self):
         image = self._peak_image()
@@ -78,10 +86,9 @@ class CrossFilterBackendTest(unittest.TestCase):
         self.assertEqual(actual.dtype, np.float32)
         np.testing.assert_allclose(actual, image, rtol=0, atol=0)
 
-    def test_reference_remains_available(self):
+    def test_forced_reference_backend_matches_reference_module(self):
         image = self._peak_image()
-        expected = cross_filter_reference.apply_cross_filter(
-            image,
+        kwargs = dict(
             num_points=4,
             length=40,
             threshold=1.0,
@@ -90,9 +97,19 @@ class CrossFilterBackendTest(unittest.TestCase):
             randomness=0.0,
             speed_factor=4,
         )
+        expected = cross_filter_reference.apply_cross_filter(image, **kwargs)
 
-        self.assertEqual(expected.shape, image.shape)
-        self.assertEqual(expected.dtype, np.float32)
+        old_backend = os.environ.get("PLATYPUS_CROSS_FILTER_BACKEND")
+        os.environ["PLATYPUS_CROSS_FILTER_BACKEND"] = "reference"
+        try:
+            actual = cross_filter_adapter.apply_cross_filter(image, **kwargs)
+        finally:
+            if old_backend is None:
+                os.environ.pop("PLATYPUS_CROSS_FILTER_BACKEND", None)
+            else:
+                os.environ["PLATYPUS_CROSS_FILTER_BACKEND"] = old_backend
+
+        np.testing.assert_array_equal(actual, expected)
 
 
 if __name__ == "__main__":

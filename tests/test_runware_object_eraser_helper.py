@@ -82,11 +82,40 @@ class RunwareObjectEraserHelperTest(unittest.TestCase):
 
         self.assertLess(abs(float(matched[20, 20, 0]) - 0.4), abs(float(result[20, 20, 0]) - 0.4))
 
-    def test_predict_without_key_returns_none(self):
+    def test_predict_without_key_raises(self):
+        # predict() must raise (not silently return None) so a failure surfaces to
+        # the user as a dialog instead of looking like Erase did nothing.
         image = np.zeros((1, 1, 3), dtype=np.float32)
         mask = np.ones((1, 1), dtype=np.float32)
 
-        self.assertIsNone(runware.predict(None, image, mask))
+        with self.assertRaises(RuntimeError):
+            runware.predict(None, image, mask)
+
+    def test_predict_raises_with_response_body_on_http_error(self):
+        image = np.zeros((1, 1, 3), dtype=np.float32)
+        mask = np.ones((1, 1), dtype=np.float32)
+
+        class FailingResponse:
+            status_code = 400
+            text = '{"errors":[{"message":"seedImage is required"}]}'
+
+            def raise_for_status(self):
+                raise runware.requests.exceptions.HTTPError("400 Client Error", response=self)
+
+            def json(self):
+                return {}
+
+        with patch.object(runware.requests, "post", return_value=FailingResponse()):
+            with self.assertRaises(RuntimeError) as ctx:
+                runware.predict("test-key", image, mask)
+
+        self.assertIn("seedImage is required", str(ctx.exception))
+
+    def test_extract_result_image_raises_on_task_level_errors(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            runware._extract_result_image({"errors": [{"message": "invalid mask"}]})
+
+        self.assertIn("invalid mask", str(ctx.exception))
 
 
 if __name__ == "__main__":
