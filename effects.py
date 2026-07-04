@@ -1829,6 +1829,21 @@ class GeometryEffect(Effect):
                 'flip_mode': 0,
             }
 
+        if subname == "distortion_correction":
+            return {
+                'switch_distortion_correction': True,
+                'lens_distortion_strength': 0,
+                'lens_distortion_scale': 0,
+                'correct_horizontal': 0,
+                'correct_vertical': 0,
+                'focal_length': 20,
+                'four_points': [],
+                'reference_lines': [],
+                'mesh_size': [4, 4],
+                'control_points': {},
+                'matrix': np.eye(3),
+            }
+
         default_param = super().get_param_dict(param)
         default_param.update({
             'rotation': 0,
