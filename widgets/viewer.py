@@ -1,5 +1,6 @@
 import os
 import threading
+import concurrent.futures
 import base64
 import io
 import numpy as np
@@ -53,6 +54,8 @@ _THUMBNAIL_GEOMETRY_MAX_RETRIES = 8
 _HOVER_HINT_DELAY = 0.7
 _EMBEDDED_PREVIEW_KEYS = ("PreviewImage", "JpgFromRaw", "PreviewTIFF", "OtherImage")
 _EMBEDDED_THUMBNAIL_KEYS = ("ThumbnailImage", "ThumbnailTIFF")
+# サムネイル生成（EXIF取得/デコード/デモザイク）を並列実行するワーカー数。
+_THUMBNAIL_WORKER_COUNT = max(2, min(8, os.cpu_count() or 4))
 
 
 def _first_value(data, *keys):
@@ -517,9 +520,11 @@ class ThumbnailCard(RecycleDataViewBehavior, PlainCard):
             self.loading_spinner.opacity = 1.0
             return
 
-        self.texture = KVTexture.create(size=(thumb.shape[1], thumb.shape[0]), colorfmt='rgb', bufferfmt='float')
+        # float32(4byte/ch)ではなくubyte(1byte/ch)でGPUに転送する（転送量1/4、メインスレッド負荷軽減）。
+        thumb_u8 = np.clip(thumb * 255.0, 0, 255).astype(np.uint8)
+        self.texture = KVTexture.create(size=(thumb_u8.shape[1], thumb_u8.shape[0]), colorfmt='rgb', bufferfmt='ubyte')
         self.texture.flip_vertical()
-        self.texture.blit_buffer(thumb.tobytes(), colorfmt='rgb', bufferfmt='float')
+        self.texture.blit_buffer(thumb_u8.tobytes(), colorfmt='rgb', bufferfmt='ubyte')
         self.image.texture = self.texture
         self.loading_spinner.opacity = 0.0
         self._update_pmck_icon_layout()
@@ -987,34 +992,28 @@ class ViewerWidget(RecycleView, DraggableWidget):
         except OSError:
             return os.path.normcase(p or "")
 
-    def load_images_thread(self, file_path_dict, chunk_size):
-        file_path_list = list(file_path_dict.keys())
+    def _process_metadata_chunk(self, chunk, file_path_dict, deferred_raw, deferred_lock):
+        """1チャンク分の EXIF 取得＋軽量サムネイル生成。ワーカープールから並列実行される想定。"""
+        try:
+            # -a -G1 keeps duplicate Rating tags as group-qualified keys.
+            # safe_get_metadata also adds short-name aliases for existing UI code.
+            exif_data_list = safe_get_metadata(
+                chunk,
+                common_args=["-b", "-s", "-a", "-G1", "-x", "IFD1:PreviewTIFF", "-x", "SubIFD1:PreviewTIFF"],
+            )
+        except Exception:
+            logging.exception("load_images_thread: EXIF取得失敗。スキップして続行 (chunk size=%d)", len(chunk))
+            self._finish_failed_chunk(chunk, file_path_dict)
+            return
 
-        # 埋め込みプレビューが無く、フルデモザイクが必要な RAW は後回しにする。
-        # これらが軽いファイル(埋め込みプレビュー有り / 非RAW)の表示をブロックしないようにする。
-        deferred_raw = []  # [(file_path, exif_data), ...]
-
-        for i in range(0, len(file_path_list), chunk_size):
-            chunk = file_path_list[i:i + chunk_size]
-            try:
-                # -a -G1 keeps duplicate Rating tags as group-qualified keys.
-                # safe_get_metadata also adds short-name aliases for existing UI code.
-                exif_data_list = safe_get_metadata(
-                    chunk,
-                    common_args=["-b", "-s", "-a", "-G1", "-x", "IFD1:PreviewTIFF", "-x", "SubIFD1:PreviewTIFF"],
-                )
-            except Exception:
-                logging.exception("load_images_thread: EXIF取得失敗。スキップして続行 (chunk size=%d)", len(chunk))
-                self._finish_failed_chunk(chunk, file_path_dict)
+        for k, file_path in enumerate(chunk):
+            if file_path not in file_path_dict:
                 continue
-
-            for k, file_path in enumerate(chunk):
-                if file_path not in file_path_dict:
-                    continue
-                # 既に一覧から消えた(削除/リネーム)ファイルは処理しない（best-effort）。
-                if self._data_index_for_path(file_path) is None:
-                    continue
-                exif_data = exif_data_list[k]
+            # 既に一覧から消えた(削除/リネーム)ファイルは処理しない（best-effort）。
+            if self._data_index_for_path(file_path) is None:
+                continue
+            exif_data = exif_data_list[k]
+            try:
                 # 1) EXIF/rating/pmck を先に反映（サムネイル生成を待たない）。
                 #    rating/pmck のディスクI/O はワーカースレッドで済ませてUIスレッドを塞がない。
                 ex0 = exif_data or {}
@@ -1031,23 +1030,50 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     logging.exception("load_images_thread: thumbnail load failed for %s", file_path)
                     thumb, deferred = None, False
                 if deferred:
-                    deferred_raw.append((file_path, exif_data))
+                    with deferred_lock:
+                        deferred_raw.append((file_path, exif_data))
                 else:
                     self._apply_thumbnail(file_path_dict, file_path, thumb)
-
-        # 3) 後回しにした RAW デモザイクを順次処理（軽いファイルが出揃った後）
-        for file_path, exif_data in deferred_raw:
-            if file_path not in file_path_dict:
-                continue
-            # 待機中にファイルが消えた/リネームされたら、無駄なデモザイクと例外ログを避ける。
-            if self._data_index_for_path(file_path) is None:
-                continue
-            try:
-                thumb, _ = self._build_thumbnail(file_path, exif_data, allow_demosaic=True)
             except Exception:
-                logging.exception("load_images_thread: RAW demosaic thumbnail failed for %s", file_path)
-                thumb = None
-            self._apply_thumbnail(file_path_dict, file_path, thumb)
+                logging.exception("load_images_thread: chunk item processing failed for %s", file_path)
+
+    def _process_deferred_raw(self, file_path, exif_data, file_path_dict):
+        """後回しにした RAW デモザイクを1件処理。ワーカープールから並列実行される想定。"""
+        if file_path not in file_path_dict:
+            return
+        # 待機中にファイルが消えた/リネームされたら、無駄なデモザイクと例外ログを避ける。
+        if self._data_index_for_path(file_path) is None:
+            return
+        try:
+            thumb, _ = self._build_thumbnail(file_path, exif_data, allow_demosaic=True)
+        except Exception:
+            logging.exception("load_images_thread: RAW demosaic thumbnail failed for %s", file_path)
+            thumb = None
+        self._apply_thumbnail(file_path_dict, file_path, thumb)
+
+    def load_images_thread(self, file_path_dict, chunk_size):
+        file_path_list = list(file_path_dict.keys())
+        chunks = [file_path_list[i:i + chunk_size] for i in range(0, len(file_path_list), chunk_size)]
+
+        # 埋め込みプレビューが無く、フルデモザイクが必要な RAW は後回しにする。
+        # これらが軽いファイル(埋め込みプレビュー有り / 非RAW)の表示をブロックしないようにする。
+        deferred_raw = []  # [(file_path, exif_data), ...]
+        deferred_lock = threading.Lock()
+
+        # チャンク単位（EXIF取得＋軽量サムネイル生成）を並列実行する。
+        # 単一スレッド逐次処理だと exiftool のプロセス起動やデコード/デモザイクが
+        # 1コア分の速度に律速されるため、ワーカープールでオーバーラップさせる。
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_THUMBNAIL_WORKER_COUNT) as pool:
+            list(pool.map(
+                lambda chunk: self._process_metadata_chunk(chunk, file_path_dict, deferred_raw, deferred_lock),
+                chunks,
+            ))
+
+            # 3) 後回しにした RAW デモザイクを並列処理（軽いファイルが出揃った後）
+            list(pool.map(
+                lambda item: self._process_deferred_raw(item[0], item[1], file_path_dict),
+                deferred_raw,
+            ))
 
     @kvmainthread
     def _apply_metadata(self, file_path_dict, file_path, exif_data, rating, pmck_exists):
@@ -1200,10 +1226,12 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     thumb = np.array(vips_image)
                     if thumb.ndim == 3 and thumb.shape[2] > 3:
                         thumb = thumb[:, :, :3]
-        thumb = core.convert_to_float32(thumb)
-
+        # 先に（元の dtype のまま）縮小してから float32 化する。
+        # 逆順だとフルサイズ画像を float32 化してから縮小することになり、
+        # メモリ帯域・CPU コストが解像度に比例して無駄に増える。
         thumb_size = self._calc_resize_image((thumb.shape[1], thumb.shape[0]), self.thumb_width)
         thumb = cv2.resize(thumb, thumb_size)
+        thumb = core.convert_to_float32(thumb)
 
         # Orientation
         orientation = exif_data.get('Orientation')

@@ -126,10 +126,14 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         self.assertNotIn("scale_factor = max_length / width", source)
         self.assertNotIn("scale_factor = max_length / height", source)
 
-    def test_thumbnail_texture_buffer_format_matches_uploaded_float_data(self):
+    def test_thumbnail_texture_buffer_format_matches_uploaded_uint8_data(self):
         source = _load_class_function("ThumbnailCard", "on_thumb_source")
 
-        self.assertIn("bufferfmt='float'", source)
+        # thumb_source は float32[0,1] だが、GPU 転送は ubyte に変換してから行う
+        # （float だと 1px あたり4倍のデータ量になり転送が無駄に重くなるため）。
+        self.assertIn("astype(np.uint8)", source)
+        self.assertIn("bufferfmt='ubyte'", source)
+        self.assertNotIn("bufferfmt='float'", source)
         self.assertNotIn("bufferfmt='ushort'", source)
         self.assertIn("self.texture = None", source)
         self.assertNotIn("self.image.source = ''", source)
