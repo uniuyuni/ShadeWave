@@ -16,7 +16,7 @@ import config
 import waitinfo
 
 EFFECT_TIMEOUT_SECONDS = {
-    "InpaintEffect": 300.0,
+    "InpaintEffect": 600.0,
 }
 
 _AI_NOISE_WORKER_ONLY_KEYS = (

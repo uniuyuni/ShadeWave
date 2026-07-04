@@ -12,7 +12,7 @@ import utils.aiutils as aiutils
 # hf download RunDiffusion/Juggernaut-XI-v11 --local-dir ./checkpoints/Juggernaut-XI-Lightning
 
 _MODEL_ID = "./checkpoints/Juggernaut-XI-Lightning"
-_TILE_SIZE = 768
+_TILE_SIZE = 1024 # Lightning XLは1024x1024のタイルサイズで最適化されているため、分割時のタイルサイズは1024に設定
 _OVERLAP_SIZE = 32*3
 _EXPANSION_SCALE = 2/3
 
@@ -65,7 +65,7 @@ def setup(device="mps"):
     # M1 Mac環境の安定性のために float32 を指定
     pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
         _MODEL_ID,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.float32,
         use_safetensors=False,
         variant=None,
         local_files_only=True
@@ -75,7 +75,7 @@ def setup(device="mps"):
     # パイプラインを細分化して、必要なパーツのみを都度MPS(M1 GPU)に転送
     pipe.enable_model_cpu_offload(device=torch.device(device))
     pipe.enable_attention_slicing()
-    pipe.vae.to(dtype=torch.float32) # VAEだけは安定のためにfloat32化
+    #pipe.vae.to(dtype=torch.float32) # VAEだけは安定のためにfloat32化
     pipe.enable_vae_slicing()
 
     return pipe
@@ -100,9 +100,9 @@ def predict(pipe, image, mask):
         negative_prompt=negative_prompt,
         image=input_image_tensor,
         mask_image=input_mask_tensor,
-        #num_inference_steps=22,
-        strength=0.85,            # 1.0に近いほど元のマスク内を完全に描き換えます
-        #guidance_scale=7.0,
+        num_inference_steps=6,
+        strength=1.0,            # 1.0に近いほど元のマスク内を完全に描き換えます
+        guidance_scale=1.5,
         output_type="np"
     ).images[0]
 
@@ -150,7 +150,7 @@ def predict_helper(pipe, image, mask, bbox):
     crop_mask = mask[y:y+h, x:x+w, np.newaxis]
 
     # 画像を分割して処理
-    image_blocks, split_info = splitimage.split_image_with_overlap(crop_image, _TILE_SIZE, _TILE_SIZE, _OVERLAP_SIZE)  # オーバーラップを大きめに設定
+    image_blocks, split_info = splitimage.split_image_with_overlap(crop_image, _TILE_SIZE, _TILE_SIZE, _OVERLAP_SIZE)
     mask_blocks, _ = splitimage.split_image_with_overlap(crop_mask, _TILE_SIZE, _TILE_SIZE, _OVERLAP_SIZE)
     predict_blocks = []
     for i, block_image in enumerate(image_blocks):

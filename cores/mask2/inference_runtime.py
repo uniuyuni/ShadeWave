@@ -268,7 +268,7 @@ def release_depth_runtime() -> dict:
         released = _depth_model is not None
         _depth_model = None
     gc.collect()
-    _LOGGER.info("Depth runtime release result=%s", {"depth_model_released": int(released)})
+    _LOGGER.info("Depth runtime release result=%s", released)
     return {"depth_model_released": int(released)}
 
 
@@ -281,7 +281,7 @@ def release_face_runtime() -> dict:
             _faces.clear()
         _faces = None
     gc.collect()
-    _LOGGER.info("Face runtime release result=%s", {"face_runtime_released": int(released)})
+    _LOGGER.info("Face runtime release result=%s", released)
     return {"face_runtime_released": int(released)}
 
 
