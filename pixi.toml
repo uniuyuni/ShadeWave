@@ -1,7 +1,7 @@
 [workspace]
 authors = ["uniuyuni <uniuyuni@gmail.com>"]
 channels = ["conda-forge"]
-name = "platypus"
+name = "ShadeWave"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
