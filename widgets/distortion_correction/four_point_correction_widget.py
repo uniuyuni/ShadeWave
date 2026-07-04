@@ -125,6 +125,12 @@ class FourPointCorrectionWidget(KVFloatLayout):
         self.texture_size = texture_size
         self._sync_tcg_to_kivy()
 
+    def set_view_param(self, param):
+        """表示中 preview と同じ座標系(tcg_info)へ再同期する (resize / cmd+F 後の表示リセット)。
+        corner_positions_tcg は編集状態なので保持し、view 変換だけ差し替える。"""
+        self.tcg_info = params.param_to_tcg_info(param)
+        self._sync_tcg_to_kivy()
+
     def on_edit_start(self):
         """編集開始イベント（ヒストリー管理用）"""
         if self.on_callback:

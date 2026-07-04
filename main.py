@@ -1352,7 +1352,7 @@ if __name__ == '__main__':
 
             geometry_effect = self.primary_effects[0].get('geometry')
             if geometry_effect is not None:
-                geometry_effect.update_geometry_editor_texture_size()
+                geometry_effect.update_geometry_editor_texture_size(self.primary_param)
 
             self._sync_mask_mesh_editor_view(mask_editor=mask_editor, texture_size=texture_size)
 

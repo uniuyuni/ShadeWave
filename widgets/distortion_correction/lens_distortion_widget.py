@@ -72,6 +72,11 @@ class LensDistortionWidget(KVFloatLayout):
         self.texture_size = texture_size
         self.update_preview()
 
+    def set_view_param(self, param):
+        """表示中 preview と同じ座標系(tcg_info)へ再同期する (resize / cmd+F 後の表示リセット)"""
+        self.tcg_info = params.param_to_tcg_info(param)
+        self.update_preview()
+
     def on_edit_start(self):
         """編集開始イベント（ヒストリー管理用）"""
         if self.on_callback:

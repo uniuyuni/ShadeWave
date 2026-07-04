@@ -2400,9 +2400,14 @@ class GeometryEffect(Effect):
             widget.ids['preview_widget'].remove_widget(self.geometry_editor)
             self.geometry_editor = None
 
-    def update_geometry_editor_texture_size(self):
+    def update_geometry_editor_texture_size(self, param=None):
         if self.geometry_editor is not None and hasattr(self.geometry_editor, 'set_texture_size'):
             self.geometry_editor.set_texture_size(config.get_preview_texture_size())
+            # resize / cmd+F でプレビューサイズが変わると param 側の disp_info が
+            # 再計算されるが、エディタ生成時に取り込んだ tcg_info は古いままなので
+            # グリッド/CP 表示がズレる。param から view 座標系を再同期してリセットする。
+            if param is not None and hasattr(self.geometry_editor, 'set_view_param'):
+                self.geometry_editor.set_view_param(param)
 
 # クロップ
 class CropEffect(Effect):

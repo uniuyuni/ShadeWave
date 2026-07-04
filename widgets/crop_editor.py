@@ -206,6 +206,9 @@ class CropEditor(KVBoxLayout):
         self.input_translate.x = scaled_max / 2
         self.input_translate.y = scaled_max / 2
         self.input_rotate.angle = self.input_angle
+        # 画像全体枠は __init__ 時の scale で固定されるため、resize / cmd+F で
+        # scale が変わった後もここで追従させる (クロップ枠だけ直って全体枠がズレる)
+        self.input_line.rectangle = (-scaled_width/2, -scaled_height/2, scaled_width, scaled_height)
 
         self.update_rect()
 
