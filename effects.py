@@ -176,25 +176,74 @@ def _geometry_matrix_is_safe(matrix, size):
     return True
 
 
-def _safe_add_geometry_matrix(param, H, half_size, size):
-    """params.add_matrix の安全版。合成後の行列が表示破綻する場合は追加を取り消す。
+def _normalize_homography(H):
+    """透視ホモグラフィを h22=1 に正規化 (退化時はそのまま)。"""
+    H = np.asarray(H, dtype=np.float64)
+    d = H[2, 2]
+    if abs(d) > 1e-12:
+        return H / d
+    return H
 
-    追加できたら True、H が不正 or 破綻で取り消したら False を返す。
-    トラペゾイド/4点/ライン補正の組み合わせで一部だけ破綻する場合、その成分だけ
-    捨てて安全な部分は維持する (=なるべく破綻を残さず、直前の有効な状態に留める)。
+
+def _composite_with_component(prev, comp, half_size):
+    """prev (合成済み行列 or None) に comp を offset 付きで合成した行列を返す (非破壊)。"""
+    temp = {} if prev is None else {'matrix': np.asarray(prev, dtype=np.float64).copy()}
+    params.add_matrix(temp, comp, offset=(half_size, half_size))
+    return temp['matrix']
+
+
+def _largest_safe_fraction(prev, H, half_size, size, iters=28):
+    """単位行列 -> H の補間 H(t)=(1-t)I + t*H を prev に足しても安全な最大 t を
+    二分探索する。t=0 は無変形 (=prev, 安全)、t=1 は完全補正 (=破綻) を前提とする。"""
+    Hn = _normalize_homography(H)
+    identity = np.eye(3)
+    lo, hi = 0.0, 1.0
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        Ht = (1.0 - mid) * identity + mid * Hn
+        if _geometry_matrix_is_safe(_composite_with_component(prev, Ht, half_size), size):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _safe_add_geometry_matrix(param, H, half_size, size, damp=False):
+    """params.add_matrix の安全版。合成後の行列が表示破綻する場合、
+
+      - damp=False: その成分を捨てる (追加を取り消す)。
+      - damp=True:  単位行列側へ減衰させた H(t) を「安全な最大限」で足す
+                    (=破綻を避けつつ“それっぽく”効かせる)。
+
+    実際に param['matrix'] へ足した成分行列 (offset 適用前の生 H 相当: フル or 減衰版) を
+    返す。何も足さなかった場合は None。画像を直接ワープする呼び出し側は、この戻り値で
+    ワープすればプレビュー/確定/マスクの整合が保てる。
     """
     if H is None:
-        return False
+        return None
     Harr = np.asarray(H, dtype=np.float64)
     if Harr.shape != (3, 3) or not np.all(np.isfinite(Harr)):
-        return False
+        return None
     prev = param.get('matrix')
     prev = prev.copy() if prev is not None else None
-    params.add_matrix(param, H, offset=(half_size, half_size))
+
+    params.add_matrix(param, Harr, offset=(half_size, half_size))
+    if _geometry_matrix_is_safe(param.get('matrix'), size):
+        return Harr
+    # 破綻 -> 一旦取り消し
+    params.set_matrix(param, prev)  # prev=None -> 単位行列
+    if not damp:
+        return None
+    # 安全な最大割合まで減衰させて適用
+    t = _largest_safe_fraction(prev, Harr, half_size, size)
+    if t <= 1e-3:
+        return None  # ほぼ効かない (=無補正) なら足さない
+    Ht = (1.0 - t) * np.eye(3) + t * _normalize_homography(Harr)
+    params.add_matrix(param, Ht, offset=(half_size, half_size))
     if not _geometry_matrix_is_safe(param.get('matrix'), size):
-        params.set_matrix(param, prev)  # 取り消し (prev=None -> 単位行列)
-        return False
-    return True
+        params.set_matrix(param, prev)  # 念のためのフォールバック
+        return None
+    return Ht
 
 
 def _build_geometry_valid_mask(param):
@@ -251,15 +300,21 @@ def _build_geometry_valid_mask(param):
             base_f = np.max(mask.shape[:2])
             multiplier = 0.5 + (focal_length * 0.025)
             f_pixel = base_f * multiplier
-            new_mask, H = correct_trapezoid(
-                mask,
-                horizontal=correct_horizontal * 0.5,
-                vertical=correct_vertical * 0.5,
-                focal_length=f_pixel,
-                interpolation='bilinear',
+            th, tw = mask.shape[:2]
+            H = calculate_trapezoid_homography(
+                tw, th,
+                correct_horizontal * 0.5,
+                correct_vertical * 0.5,
+                0,
+                f_pixel,
             )
-            if _safe_add_geometry_matrix(temp_param, H, half_size, size):
-                mask = new_mask
+            applied = _safe_add_geometry_matrix(temp_param, H, half_size, size, damp=True)
+            if applied is not None:
+                mask, _ = correct_trapezoid(
+                    mask,
+                    interpolation='bilinear',
+                    homography=applied,
+                )
 
         reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
         if four_points != [] and four_points != reset_points:
@@ -271,27 +326,33 @@ def _build_geometry_valid_mask(param):
                 dst_point.append(params.tcg_to_ref_image(cx, cy, mask, tcg_info))
 
             try:
-                new_mask, H = correct_four_points(
+                H = np.linalg.inv(calculate_four_point_homography(src_point, dst_point))
+            except Exception:
+                H = None
+            applied = _safe_add_geometry_matrix(temp_param, H, half_size, size, damp=True)
+            if applied is not None:
+                mask, _ = correct_four_points(
                     mask,
                     src_point,
                     dst_point,
                     interpolation='bilinear',
+                    homography=applied,
                 )
-            except Exception:
-                new_mask, H = mask, None
-            if _safe_add_geometry_matrix(temp_param, H, half_size, size):
-                mask = new_mask
 
         if len(reference_lines) > 0:
+            # Lines は破綻時に捨てず、減衰させた行列でマスクもワープする (表示と整合)
             line_tcg_info = _line_homography_tcg_info(tcg_info)
-            new_mask, H = correct_with_lines(
-                mask,
-                reference_lines,
-                tcg_info=line_tcg_info,
-                interpolation='bilinear',
-            )
-            if H is not None and _safe_add_geometry_matrix(temp_param, H, half_size, size):
-                mask = new_mask
+            mh, mw = mask.shape[:2]
+            H = calculate_lines_homography(reference_lines, mw, mh, tcg_info=line_tcg_info)
+            applied = _safe_add_geometry_matrix(temp_param, H, half_size, size, damp=True)
+            if applied is not None:
+                mask, _ = correct_with_lines(
+                    mask,
+                    reference_lines,
+                    tcg_info=line_tcg_info,
+                    interpolation='bilinear',
+                    homography=applied,
+                )
 
         if control_points:
             cp = {}
@@ -1875,7 +1936,7 @@ class GeometryEffect(Effect):
                 vertical=correct_vertical * 0.5,
                 focal_length=f_pixel,
             )
-            _safe_add_geometry_matrix(param, H, half_size, size)
+            _safe_add_geometry_matrix(param, H, half_size, size, damp=True)
 
         # 4点補正
         reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
@@ -1904,15 +1965,15 @@ class GeometryEffect(Effect):
                 H = np.linalg.inv(H_inv)
             except Exception:
                 H = None
-            _safe_add_geometry_matrix(param, H, half_size, size)
+            _safe_add_geometry_matrix(param, H, half_size, size, damp=True)
 
-        # Lines
+        # Lines (破綻時は捨てず安全な最大限まで減衰させる)
         if len(reference_lines) > 0:
             tcg_info = params.param_to_tcg_info(param)
             line_tcg_info = _line_homography_tcg_info(tcg_info)
             H = calculate_lines_homography(reference_lines, size, size, tcg_info=line_tcg_info)
             if H is not None:
-                _safe_add_geometry_matrix(param, H, half_size, size)
+                _safe_add_geometry_matrix(param, H, half_size, size, damp=True)
 
     def set2param2(self, param, arg):
         if arg == 'hflip':
@@ -1967,7 +2028,7 @@ class GeometryEffect(Effect):
                     vertical=correct_vertical * 0.5,
                     focal_length=f_pixel,
                 )
-                has_matrix = _safe_add_geometry_matrix(param, H, half_size, size) or has_matrix
+                has_matrix = (_safe_add_geometry_matrix(param, H, half_size, size, damp=True) is not None) or has_matrix
 
             if four_points != [] and four_points is not None and four_points != reset_points:
                 tcg_info = params.param_to_tcg_info(param)
@@ -1989,14 +2050,15 @@ class GeometryEffect(Effect):
                     H = np.linalg.inv(H_inv)
                 except Exception:
                     H = None
-                has_matrix = _safe_add_geometry_matrix(param, H, half_size, size) or has_matrix
+                has_matrix = (_safe_add_geometry_matrix(param, H, half_size, size, damp=True) is not None) or has_matrix
 
             if len(reference_lines or []) > 0:
                 tcg_info = params.param_to_tcg_info(param)
                 line_tcg_info = _line_homography_tcg_info(tcg_info)
                 H = calculate_lines_homography(reference_lines, size, size, tcg_info=line_tcg_info)
                 if H is not None:
-                    has_matrix = _safe_add_geometry_matrix(param, H, half_size, size) or has_matrix
+                    # Lines は破綻時に捨てず、安全な最大限まで減衰させて適用する (damp=True)
+                    has_matrix = (_safe_add_geometry_matrix(param, H, half_size, size, damp=True) is not None) or has_matrix
 
         mesh_map_x = None
         mesh_map_y = None
@@ -2176,16 +2238,22 @@ class GeometryEffect(Effect):
                     multiplier = 0.5 + (focal_length * 0.025)
                     f_pixel = base_f * multiplier # Focal len in pixels
 
-                    # 破綻する成分は img へ反映せず捨てる (安全ガード)。
-                    new_img, H = correct_trapezoid(
-                            img,
-                            horizontal=correct_horizontal * 0.5,
-                            vertical=correct_vertical * 0.5,
-                            focal_length=f_pixel,
-                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                    # 破綻時は捨てず、安全な最大限まで減衰させた行列で画像もワープする。
+                    lh, lw = img.shape[:2]
+                    H = calculate_trapezoid_homography(
+                        lw, lh,
+                        correct_horizontal * 0.5,
+                        correct_vertical * 0.5,
+                        0,
+                        f_pixel,
                     )
-                    if _safe_add_geometry_matrix(param, H, half_size, size):
-                        img = new_img
+                    applied = _safe_add_geometry_matrix(param, H, half_size, size, damp=True)
+                    if applied is not None:
+                        img, _ = correct_trapezoid(
+                            img,
+                            interpolation='bicubic' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                            homography=applied,
+                        )
 
                 # 4点補正
                 reset_points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
@@ -2199,29 +2267,35 @@ class GeometryEffect(Effect):
                     for cx, cy in reset_points:
                         dst_point.append(params.tcg_to_ref_image(cx, cy, img, tcg_info))
 
+                    # 破綻時は捨てず、安全な最大限まで減衰させた行列で画像もワープする。
                     try:
-                        new_img, H = correct_four_points(
+                        H = np.linalg.inv(calculate_four_point_homography(src_point, dst_point))
+                    except Exception:
+                        H = None
+                    applied = _safe_add_geometry_matrix(param, H, half_size, size, damp=True)
+                    if applied is not None:
+                        img, _ = correct_four_points(
                                 img,
                                 src_point,
                                 dst_point,
                                 interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                                homography=applied,
                         )
-                    except Exception:
-                        new_img, H = img, None
-                    if _safe_add_geometry_matrix(param, H, half_size, size):
-                        img = new_img
 
-                # Lines
+                # Lines (破綻時は捨てず、安全な最大限まで減衰させた行列で画像もワープする)
                 if len(reference_lines) > 0:
                     line_tcg_info = _line_homography_tcg_info(tcg_info)
-                    new_img, H = correct_with_lines(
-                        img,
-                        reference_lines,
-                        tcg_info=line_tcg_info,
-                        interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
-                    )
-                    if H is not None and _safe_add_geometry_matrix(param, H, half_size, size):
-                        img = new_img
+                    lh, lw = img.shape[:2]
+                    H = calculate_lines_homography(reference_lines, lw, lh, tcg_info=line_tcg_info)
+                    applied = _safe_add_geometry_matrix(param, H, half_size, size, damp=True)
+                    if applied is not None:
+                        img, _ = correct_with_lines(
+                            img,
+                            reference_lines,
+                            tcg_info=line_tcg_info,
+                            interpolation='lanczos' if efconfig.mode == EffectMode.EXPORT else 'bilinear',
+                            homography=applied,
+                        )
 
                 # Mesh           
                 if control_points:

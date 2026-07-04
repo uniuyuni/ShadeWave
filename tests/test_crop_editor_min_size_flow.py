@@ -95,7 +95,10 @@ class CropEditorMinSizeFlowTest(unittest.TestCase):
         node = _load_class_function(CROP_EDITOR_PATH, "CropEditor", "_keep_crop_rect_inside_image")
         source = ast.get_source_segment(CROP_EDITOR_PATH.read_text(), node)
 
-        self.assertIn("for cx, cy in self._crop_rect_corners(rect):", source)
+        # 各角はループ内で self._crop_rect_corners(rect) から都度取得する
+        # (先頭で一度だけスナップショットすると、ある角の補正で rect 全体を平行移動した
+        #  後に残りの角が古い座標のまま判定され、同じ辺を2重補正して行き過ぎるため)。
+        self.assertIn("cx, cy = self._crop_rect_corners(rect)[i]", source)
         self.assertIn("rotate_and_correct_point(", source)
         self.assertIn("self.input_angle", source)
         self.assertIn("rect = self._translate_crop_rect(rect, dx, dy)", source)

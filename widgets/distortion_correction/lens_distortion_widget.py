@@ -52,6 +52,16 @@ class LensDistortionWidget(KVFloatLayout):
 
         self.update_preview()
 
+    def on_touch_down(self, touch):
+        """このグリッド表示エリアへの touch は、下層の CropEditor 等へ伝播させず
+        ここで消費する (FourPoints 等と同様、伝播すると Ge タブで裏の CropEditor が
+        ドラッグされてしまう)。"""
+        if super().on_touch_down(touch):
+            return True
+        if self.collide_point(*touch.pos):
+            return True
+        return False
+
     def set_image(self, image):
         self.source_image = image
 

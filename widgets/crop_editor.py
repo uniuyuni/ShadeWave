@@ -474,19 +474,22 @@ class CropEditor(KVBoxLayout):
                 )
                 was_corrected |= f4
 
-            # 固定点を保持
+            # 固定点(ドラッグ中コーナーの対角)は必ず元の位置に固定する。
+            # 対角コーナーと座標を共有する「隣接」コーナーが境界補正で動くことがあり
+            # (例: bottom_right ドラッグ時に top_right が補正されると new_y1 が動く=
+            #  top_left の Y が動く)、以前は「ドラッグ側コーナーが補正された時だけ」
+            # 戻していたため、対角コーナーが境界に接している時にその座標が毎フレーム
+            # 少しずつドリフトし、サイズが震え続ける (収束しない) 原因になっていた。
+            # ここで無条件に対角コーナーを元へ戻すことで、リサイズ中は固定コーナーが
+            # 一切動かないようにする (補正が無い通常時は no-op)。
             if corner_dragging == 'top_left':
-                if f1:  # 左上が補正された場合
-                    new_x2, new_y2 = old_x2, old_y2  # 右下を元に戻す
+                new_x2, new_y2 = old_x2, old_y2  # 右下を固定
             elif corner_dragging == 'top_right':
-                if f2:  # 右上が補正された場合
-                    new_x1, new_y2 = old_x1, old_y2  # 左下を元に戻す
+                new_x1, new_y2 = old_x1, old_y2  # 左下を固定
             elif corner_dragging == 'bottom_left':
-                if f3:  # 左下が補正された場合
-                    new_x2, new_y1 = old_x2, old_y1  # 右上を元に戻す
+                new_x2, new_y1 = old_x2, old_y1  # 右上を固定
             elif corner_dragging == 'bottom_right':
-                if f4:  # 右下が補正された場合
-                    new_x1, new_y1 = old_x1, old_y1  # 左上を元に戻す
+                new_x1, new_y1 = old_x1, old_y1  # 左上を固定
 
             # 縦横比を考慮
             old_x1, old_y1, old_x2, old_y2 = new_x1, new_y1, new_x2, new_y2
@@ -688,7 +691,12 @@ class CropEditor(KVBoxLayout):
         rect = tuple(crop_rect)
         for _ in range(8):
             moved = False
-            for cx, cy in self._crop_rect_corners(rect):
+            # 4隅は self._crop_rect_corners(rect) から都度取得する (ループ先頭で一度だけ
+            # スナップショットを取ると、ある角の補正で rect 全体を平行移動した後も
+            # 残りの角が「補正前の古い座標」のまま判定されてしまい、同じ辺を2重に
+            # 補正して行き過ぎる (震え/オーバーシュートの原因になっていた)。
+            for i in range(4):
+                cx, cy = self._crop_rect_corners(rect)[i]
                 valid_x, valid_y, corrected = rotate_and_correct_point(
                     cx,
                     cy,

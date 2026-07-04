@@ -14,7 +14,8 @@ def correct_four_points(
     image: np.ndarray,
     src_points: list,
     dst_points: list,
-    interpolation: str = 'bicubic'
+    interpolation: str = 'bicubic',
+    homography: np.ndarray = None
 ) -> np.ndarray:
     """
     4点を指定して透視変換
@@ -30,22 +31,27 @@ def correct_four_points(
     """
     if image.dtype != np.float32:
         raise TypeError(f"image.dtype must be float32, got {image.dtype}")
-    
-    if len(src_points) != 4:
-        raise ValueError(f"src_points must have 4 points, got {len(src_points)}")
-    
-    if len(dst_points) != 4:
-        raise ValueError(f"dst_points must have 4 points, got {len(dst_points)}")
 
-    # 目標点    
-    src_points = np.array(src_points, dtype=np.float32)
-    dst_points = np.array(dst_points, dtype=np.float32)
-    
     # 目的画像のサイズ
     height, width = image.shape[:2]
-    
-    # マップ生成
-    H = calculate_four_point_homography(src_points, dst_points)
+
+    if homography is not None:
+        # 呼び出し側で計算・調整済み (減衰クランプ等) の順変換(src->dst)ホモグラフィを使う。
+        # remap は出力->入力(dst->src)写像が必要なので逆行列にする。
+        H = np.linalg.inv(np.asarray(homography, dtype=np.float32))
+    else:
+        if len(src_points) != 4:
+            raise ValueError(f"src_points must have 4 points, got {len(src_points)}")
+
+        if len(dst_points) != 4:
+            raise ValueError(f"dst_points must have 4 points, got {len(dst_points)}")
+
+        # 目標点
+        src_points = np.array(src_points, dtype=np.float32)
+        dst_points = np.array(dst_points, dtype=np.float32)
+
+        # マップ生成 (dst->src)
+        H = calculate_four_point_homography(src_points, dst_points)
     
     # メッシュグリッド生成 (shape: (H, W))
     # indexing='xy' (デフォルト) で X(幅方向), Y(高さ方向) のグリッドを作成

@@ -22,6 +22,12 @@ from widgets.scaled_button import ScaledButton
 
 _MESH_DEBUG = os.getenv("PLATYPUS_DEBUG_MESH_WARP", "0").strip().lower() in ("1", "true", "yes", "on")
 
+# コントロールポイントの表示半径(通常/選択)と当たり半径(いずれもウィンドウ px)。
+# 当たり判定は表示円より少しだけ大きい程度にする (以前は TCG 0.05 で大幅に広かった)。
+_CP_SIZE_NORMAL = 5
+_CP_SIZE_SELECTED = 8
+_CP_HIT_RADIUS_PX = 12
+
 class MeshWarpWidget(KVFloatLayout):
     """メッシュワープWidget"""
     
@@ -420,27 +426,24 @@ class MeshWarpWidget(KVFloatLayout):
         touch.grab(self)
         
         tx, ty = self._get_tcg_pos(touch.pos)
-        
-        # ヒットテスト
+
+        # ヒットテスト (ウィンドウ座標=表示円と同じ空間で px 判定)
         rows, cols = self.mesh_size
         img_shape = (self.texture_size[1], self.texture_size[0]) # H, W
         base_coords = get_mesh_coordinates(img_shape, (rows, cols)) # Shape: (rows+1, cols+1, 2)
-        
-        min_dist = 1000
+
+        min_dist = _CP_HIT_RADIUS_PX
         hit_pt = None
-        
+
         for r in range(rows + 1):
             for c in range(cols + 1):
                 bx, by = base_coords[r, c]
                 off_x, off_y = self.control_offsets_tcg.get((r, c), (0, 0))
-                cx = bx + off_x
-                cy = by + off_y
-                
-                dist = np.sqrt((cx - tx)**2 + (cy - ty)**2)
-                if dist < 0.05: # Hit radius
-                    if dist < min_dist:
-                        min_dist = dist
-                        hit_pt = (r, c)
+                wx, wy = self._get_window_pos(bx + off_x, by + off_y)
+                dist = np.hypot(wx - touch.pos[0], wy - touch.pos[1])
+                if dist < min_dist:
+                    min_dist = dist
+                    hit_pt = (r, c)
         
         if hit_pt:
             # 右クリック判定
@@ -569,10 +572,10 @@ class MeshWarpWidget(KVFloatLayout):
                 for c in range(cols + 1):
                     if self.selected_point == (r, c):
                          Color(1.0, 0.8, 0.2, 1.0)
-                         size = 8
+                         size = _CP_SIZE_SELECTED
                     else:
                          Color(1.0, 1.0, 1.0, 0.8)
-                         size = 5
+                         size = _CP_SIZE_NORMAL
                          
                     ctx, cty = current_points[r, c]
                     wx, wy = self._get_window_pos(ctx, cty)

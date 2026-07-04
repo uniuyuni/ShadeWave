@@ -397,7 +397,8 @@ def correct_with_lines(
     image: np.ndarray,
     reference_lines: List[Tuple[Tuple[float, float], Tuple[float, float]]],
     tcg_info: Dict = None,
-    interpolation: str = 'bicubic'
+    interpolation: str = 'bicubic',
+    homography: Optional[np.ndarray] = None
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """
     参照線を使用して画像の透視歪みを補正する関数
@@ -463,22 +464,26 @@ def correct_with_lines(
     ...     original_pt = original_pt[:2] / original_pt[2]
     """
     
-    # エッジケース: 線が0本
-    if len(reference_lines) == 0:
-        return image, None
-    
-    # エッジケース: 線が1本の場合は入力をそのまま返す
-    if len(reference_lines) == 1:
-        return image, None
-    
-    # エッジケース: 線が5本以上の場合は最後の4本のみを使用
-    if len(reference_lines) > 4:
-        reference_lines = reference_lines[-4:]
-    
     h, w = image.shape[:2]
-    
-    H = calculate_lines_homography(reference_lines, w, h, tcg_info)
-    
+
+    if homography is not None:
+        # 呼び出し側で計算・調整済み (減衰クランプ等) のホモグラフィをそのまま使う。
+        H = np.asarray(homography, dtype=np.float64)
+    else:
+        # エッジケース: 線が0本
+        if len(reference_lines) == 0:
+            return image, None
+
+        # エッジケース: 線が1本の場合は入力をそのまま返す
+        if len(reference_lines) == 1:
+            return image, None
+
+        # エッジケース: 線が5本以上の場合は最後の4本のみを使用
+        if len(reference_lines) > 4:
+            reference_lines = reference_lines[-4:]
+
+        H = calculate_lines_homography(reference_lines, w, h, tcg_info)
+
     if H is None:
         # 計算できなかった場合（線が不足など）は元の画像を返す
         # correct_with_linesの仕様上、線が1本の場合はNoneを返す

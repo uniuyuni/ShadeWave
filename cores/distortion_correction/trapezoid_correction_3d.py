@@ -10,17 +10,22 @@ def correct_trapezoid_3d(
     focal_length: float = 0,
     offset_x: float = 0,  # Unused for now in 3D rotation center logic, or could be used to shift center
     offset_y: float = 0,  # Unused for now in 3D rotation center logic
-    interpolation: str = 'bicubic'
+    interpolation: str = 'bicubic',
+    homography: np.ndarray = None
 ) -> np.ndarray:
     """
     3D回転ベースの台形補正
     """
     if image.dtype != np.float32:
         raise TypeError(f"image.dtype must be float32, got {image.dtype}")
-    
+
     height, width = image.shape[:2]
 
-    H = calculate_trapezoid_homography(width, height, horizontal, vertical, rotation, focal_length, offset_x, offset_y)
+    if homography is not None:
+        # 呼び出し側で計算・調整済み (減衰クランプ等) の順変換ホモグラフィをそのまま使う。
+        H = np.asarray(homography, dtype=np.float64)
+    else:
+        H = calculate_trapezoid_homography(width, height, horizontal, vertical, rotation, focal_length, offset_x, offset_y)
     
     # 補間方法の選択
     interp_flags = {
