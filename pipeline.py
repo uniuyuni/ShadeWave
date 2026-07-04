@@ -1852,11 +1852,36 @@ def pipeline_curve(rgb, effects, param, efconfig):
 
     return rgb2
 
+_CURVE_GAIN_NEUTRAL = np.float32(1.0)
+
+
+def _fuse_curve_gains(effects, names, index_sources, param, efconfig):
+    """独立した乗算ゲイン系カーブ群(H/L/Sそれぞれのindexで引く)を1回の合成に畳み込む。
+
+    各カーブの make_diff は `gain(index) * accumulator` を返す実装なので、
+    accumulator に中立値 1.0 (スカラー)を渡せば副作用なく純粋なゲイン配列だけを
+    取り出せる(effect クラス自体は一切変更しない)。3本を毎フレーム逐次
+    read-modify-write していたのを、ゲインを1回だけ掛け合わせてから
+    accumulator に1回だけ適用する形に変える。index は常に元チャンネル
+    (前段カーブの出力ではない)なので、合成順序を変えても数式上は等価
+    (float32 の丸め順序だけがわずかに変わる)。
+    """
+    combined = None
+    any_active = False
+    for name, index in zip(names, index_sources):
+        gain = effects[name].make_diff([index, _CURVE_GAIN_NEUTRAL], param, efconfig)
+        if gain is None:
+            continue
+        any_active = True
+        combined = gain if combined is None else combined * gain
+    return combined, any_active
+
+
 def pipeline_vs_and_saturation(hls, effects, param, efconfig):
 
     hls_h = hls2_h = hls[..., 0]
     hls_l = hls[..., 1]
-    hls_s = hls2_s = hls[..., 2]
+    hls_s = hls[..., 2]
     changed = False
 
     # 「Lum」は実際の明るさ＝gain で扱う。L(正規化輝度)は色の性質（gainで正規化済み）で
@@ -1878,38 +1903,30 @@ def pipeline_vs_and_saturation(hls, effects, param, efconfig):
         hls2_h = effects['HuevsHue'].apply_diff(hls2_h)
         changed = True
 
-    #　Lのみ（実体は gain を操作。Lum vs の入力は実輝度 luma_index）
-    lum_list = [('HuevsLum', hls_h), ('LumvsLum', luma_index), ('SatvsLum', hls_s)]
-    lum_reset = False
-    for n, src in lum_list:
-        if lum_reset == True:
-            effects[n].reeffect()
+    # Lグループ(HuevsLum/LumvsLum/SatvsLum): 3本のゲインを1回の配列パスに畳み込んでから
+    # accumulator(gain)へ1回だけ適用する。呼び出し元の VSandSaturationEffect.make_diff は
+    # 「needed」になるたび全カーブを reeffect() してから呼ぶ(effects.py 参照)ため、ここで
+    # 個々のカーブの再計算要否を判定するカスケードは元々不要(常に全て新規計算になる)。
+    lum_gain, lum_active = _fuse_curve_gains(
+        effects, ('HuevsLum', 'LumvsLum', 'SatvsLum'), (hls_h, luma_index, hls_s), param, efconfig,
+    )
+    if lum_active:
+        lum_acc = lum_acc * lum_gain
+        changed = True
 
-        pre_diff = effects[n].diff
-        # 最新の lum_acc(gain) を使用して引数を構築
-        diff = effects[n].make_diff([src, lum_acc], param, efconfig)
-        if diff is not None:
-            lum_acc = effects[n].apply_diff(lum_acc)
-            changed = True
+    # Sグループ(HuevsSat/LumvsSat/SatvsSat)も同様に畳み込み、彩度/vibrance は
+    # 蓄積後の値に依存する非線形処理のため従来どおり最後に別ステップで適用する。
+    sat_gain, sat_active = _fuse_curve_gains(
+        effects, ('HuevsSat', 'LumvsSat', 'SatvsSat'), (hls_h, luma_index, hls_s), param, efconfig,
+    )
+    hls2_s = hls_s * sat_gain if sat_active else hls_s
+    if sat_active:
+        changed = True
 
-        if pre_diff is not diff:
-            lum_reset = True
-
-    # Sのみ（Lum vs Sat の入力も実輝度 luma_index を使う）
-    sat_list = [('HuevsSat', hls_h), ('LumvsSat', luma_index), ('SatvsSat', hls_s), ('saturation', None)]
-    sat_reset = False
-    for n, src in sat_list:
-        if sat_reset == True:
-            effects[n].reeffect()
-
-        pre_diff = effects[n].diff
-        diff = effects[n].make_diff([src, hls2_s] if n != 'saturation' else hls2_s, param, efconfig)
-        if diff is not None:
-            hls2_s = effects[n].apply_diff(hls2_s)
-            changed = True
-
-        if pre_diff is not diff:
-            sat_reset = True
+    diff = effects['saturation'].make_diff(hls2_s, param, efconfig)
+    if diff is not None:
+        hls2_s = effects['saturation'].apply_diff(hls2_s)
+        changed = True
 
     if not changed:
         return None

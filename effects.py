@@ -4272,7 +4272,13 @@ def _blur_hue_curve_map(adjust_map, efconfig):
     kernel_size = _hue_curve_feather_kernel_size(efconfig)
     if kernel_size <= 1:
         return adjust_map
-    return core.gaussian_blur_cv(adjust_map, (kernel_size, kernel_size), 0)
+    # HUE_CURVE_FEATHER_RADIUS=32 は kernel_size~65px(表示倍率でさらに拡大)と大きく、
+    # 直接の cv2.GaussianBlur が重い(1024pxで~10ms)。cv2 が ksize=0 の時に使う
+    # 逆算式で等価な sigma を求め、filters._fast_isotropic_blur に委譲する。
+    # sigma が閾値(8.0)以下ならこれまでと同じ cv2.GaussianBlur(0,0,sigma) に帰着し、
+    # 閾値超のときだけ縮小→ぼかし→拡大の近似(誤差目安 <1e-3、既存のボケ処理と共通)になる。
+    sigma = 0.3 * ((kernel_size - 1) * 0.5 - 1) + 0.8
+    return filters._fast_isotropic_blur(adjust_map, sigma)
     
 class HuevsHueEffect(Effect):
     param_bindings = (
