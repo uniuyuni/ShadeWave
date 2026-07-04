@@ -3,12 +3,15 @@
     pos_hint: {'center_x': 0.5, 'center_y': 0.5}
     size_hint: None, None
     ref_width: 340
-    ref_height: 280
+    ref_height: 210
 
     BoxLayout:
         orientation: 'vertical'
         ref_layout_padding: 8
         ref_layout_spacing: 6
+
+        VSpacer:
+            ref_height: 3
 
         # ソートセクション
         BoxLayout:
@@ -99,8 +102,9 @@
                 multiline: False
                 on_text: root.on_filter_text(self.text)
 
-        Widget:
-
+        VSpacer:
+            ref_height: 3
+        
         # ボタン行
         BoxLayout:
             orientation: 'horizontal'
