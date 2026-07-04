@@ -42,21 +42,23 @@ class HistogramWidget(KVImage):
         
         # RGB各チャンネルのヒストグラムを計算
         r_hist, g_hist, b_hist = [cv2.calcHist([pixels], [i], None, [256+256], [0, 1.5]) for i in range(3)]
-        r_hist = r_hist.squeeze(axis=-1)
+        # calcHist は通常 (bins, 1) を返すが、環境によって既に (bins,) の場合があるため
+        # squeeze(axis=-1) だと後者で ValueError になる。reshape(-1) ならどちらでも安全。
+        r_hist = r_hist.reshape(-1)
         r_hist[0] = max(0, r_hist[0] - black_count)
         r_hist = manual_scale(r_hist)
-        g_hist = g_hist.squeeze(axis=-1)
+        g_hist = g_hist.reshape(-1)
         g_hist[0] = max(0, g_hist[0] - black_count)
         g_hist = manual_scale(g_hist)
-        b_hist = b_hist.squeeze(axis=-1)
+        b_hist = b_hist.reshape(-1)
         b_hist[0] = max(0, b_hist[0] - black_count)
         b_hist[255] = max(0, b_hist[255] - blue_count)
         b_hist = manual_scale(b_hist)
-        
+
         # 輝度の計算
         luminance = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
         l_hist = cv2.calcHist([luminance], [0], None, [256+256], [0, 1.5])
-        l_hist = l_hist.squeeze(axis=-1)
+        l_hist = l_hist.reshape(-1)
         l_hist[0] = max(0, l_hist[0] - black_count)
         l_hist = manual_scale(l_hist)
         #l_hist = np.clip(l_hist, 0, 255)
