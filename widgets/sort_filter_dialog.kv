@@ -1,0 +1,117 @@
+
+<SortFilterDialog>:
+    pos_hint: {'center_x': 0.5, 'center_y': 0.5}
+    size_hint: None, None
+    ref_width: 340
+    ref_height: 280
+
+    BoxLayout:
+        orientation: 'vertical'
+        ref_layout_padding: 8
+        ref_layout_spacing: 6
+
+        # ソートセクション
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: None
+            ref_height: 20
+            ref_layout_spacing: 5
+
+            ParamLabel:
+                text: 'Sort by'
+
+            ParamSpinner:
+                id: sort_key_spinner
+                text: 'Filename'
+                values: ['Filename', 'Date', 'Rating', 'Edited']
+                size_hint_x: 0.45
+                on_text: root.on_sort_key_label(self.text)
+
+            ParamSpinner:
+                id: sort_order_spinner
+                text: 'Ascending'
+                values: ['Ascending', 'Descending']
+                size_hint_x: 0.45
+                on_text: root.on_sort_order_label(self.text)
+
+        VSeparator:
+
+        # フィルタセクション
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: None
+            ref_height: 20
+            ref_layout_spacing: 5
+
+            ParamLabel:
+                text: 'Min Rating'
+
+            ParamSpinner:
+                id: rating_spinner
+                text: 'All'
+                values: ['All', '1+', '2+', '3+', '4+', '5']
+                size_hint_x: 0.5
+                on_text: root.on_rating_label(self.text)
+
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: None
+            ref_height: 20
+            ref_layout_spacing: 5
+
+            ParamLabel:
+                text: 'Edited'
+
+            ParamSpinner:
+                id: edited_spinner
+                text: 'All'
+                values: ['All', 'Edited', 'Unedited']
+                size_hint_x: 0.5
+                on_text: root.on_edited_label(self.text)
+
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: None
+            ref_height: 20
+            ref_layout_spacing: 5
+
+            ParamLabel:
+                text: 'File Type'
+
+            ParamSpinner:
+                id: type_spinner
+                text: 'All'
+                values: ['All', 'RAW', 'RGB']
+                size_hint_x: 0.5
+                on_text: root.on_type_label(self.text)
+
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: None
+            ref_height: 25
+            ref_layout_spacing: 5
+
+            ParamLabel:
+                text: 'Name'
+
+            TextInput:
+                id: filter_text_input
+                multiline: False
+                on_text: root.on_filter_text(self.text)
+
+        Widget:
+
+        # ボタン行
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: None
+            ref_height: 25
+            ref_layout_spacing: 5
+
+            Button:
+                text: 'Reset'
+                on_press: root.reset()
+
+            Button:
+                text: 'Close'
+                on_press: root.close()

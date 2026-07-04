@@ -36,22 +36,25 @@ class ExportViewerRefreshFlowTest(unittest.TestCase):
 
         self.assertIn("self.is_visible_image(file_path)", source)
         self.assertIn("self._is_in_current_watch_directory(file_path)", source)
-        self.assertIn("self._insert_image_item_sorted(file_path)", source)
-        self.assertIn("file_path_dict[self.data[idx][\"file_path\"]] = idx", source)
-        self.assertIn("self.load_images(file_path_dict)", source)
+        self.assertIn("self._add_item_if_missing(file_path)", source)
+        self.assertIn("self._rebuild_view()", source)
+        self.assertIn("self.load_images(load_paths)", source)
 
     def test_watch_add_and_modify_share_export_refresh_path(self):
         added_source = _function_source(VIEWER_PATH, "_added_file")
         modified_source = _function_source(VIEWER_PATH, "_modified_file")
-        load_source = _function_source(VIEWER_PATH, "load_images_thread")
+        apply_meta_source = _function_source(VIEWER_PATH, "_apply_metadata")
+        apply_thumb_source = _function_source(VIEWER_PATH, "_apply_thumbnail")
         pending_source = _function_source(VIEWER_PATH, "_set_load_pending")
 
         self.assertIn("self.refresh_exported_paths([file_path])", added_source)
         self.assertIn("self.refresh_exported_paths([file_path])", modified_source)
         self.assertNotIn("self.data.insert(idx, new_item)", added_source)
         self.assertNotIn("self.load_images({file_path: idx})", added_source)
-        self.assertIn("self._mapped_or_current_index(file_path_dict, file_path)", load_source)
-        self.assertIn("self._mapped_or_current_index(file_path_dict, file_path)", pending_source)
+        # 反映時は path で現在の item を引き直す（リネーム/削除に安全）。
+        self.assertIn("self._item_for_path(file_path)", apply_meta_source)
+        self.assertIn("self._item_for_path(file_path)", apply_thumb_source)
+        self.assertIn("self._item_for_path(file_path)", pending_source)
 
     def test_viewer_ignores_hidden_temp_image_paths(self):
         refresh_source = _function_source(VIEWER_PATH, "refresh_exported_paths")

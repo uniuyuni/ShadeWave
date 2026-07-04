@@ -204,6 +204,7 @@ if __name__ == '__main__':
     import widgets.preset_content as preset_content
     from widgets.effect_selector import EffectSelector
     from widgets.export_dialog import ExportDialog, ExportConfirmDialog
+    from widgets.sort_filter_dialog import SortFilterDialog
     import widgets.collapsible_box
     import widgets.compact_switch
     import widgets.modern_checkbox
@@ -3123,9 +3124,9 @@ if __name__ == '__main__':
                 return 0
             v = self.ids.get("viewer")
             if v:
-                for d in v.data:
-                    if d.get("file_path") == file_path:
-                        return int(d.get("rating", 0) or 0)
+                r = v.get_rating_for_path(file_path)
+                if r is not None:
+                    return r
             return 0
 
         def save_current_sidecar(self):
@@ -4248,6 +4249,10 @@ if __name__ == '__main__':
             self.save_current_sidecar()
             device.FileChooser(title="Select Folder", mode="dir", filters=[("Jpeg Files", "*.jpg")], on_selection=self.handle_for_dir_selection).run()
 
+        def on_sort_filter_press(self):
+            dialog = SortFilterDialog(viewer=self.ids['viewer'])
+            dialog.open()
+
         def on_export_press(self):
             self.save_current_sidecar()
 
@@ -5345,12 +5350,8 @@ if __name__ == '__main__':
                     row.rating = 0
                 return
             fp = self.imgset.file_path
-            r = 0
-            for d in self.ids["viewer"].data:
-                if d.get("file_path") == fp:
-                    r = int(d.get("rating", 0) or 0)
-                    break
-            else:
+            r = self.ids["viewer"].get_rating_for_path(fp)
+            if r is None:
                 r = int(
                     rating_utils.effective_rating_display(
                         fp, self.primary_param.get("exif_data", {}) or {}, self.primary_param
@@ -5399,18 +5400,13 @@ if __name__ == '__main__':
                         self._rgb_xmp_rating_had[fp] = True
                     else:
                         self._rgb_xmp_rating_had[fp] = False
-                    for d in self.ids["viewer"].data:
-                        if d.get("file_path") == fp and exif is not None:
-                            d["exif_data"] = exif
-                            break
+                    if exif is not None:
+                        self.ids["viewer"].set_exif_for_path(fp, exif)
                     self.ids["viewer"].set_rating_for_path(fp, new_r)
             self._sync_exif_rating_row()
 
         def _viewer_exif_for_path(self, file_path: str):
-            for d in self.ids["viewer"].data:
-                if d.get("file_path") == file_path:
-                    return d.get("exif_data")
-            return None
+            return self.ids["viewer"].get_exif_for_path(file_path)
 
         def _export_snapshot_rating(self, file_path: str) -> int:
             """Export 用の 0～5。選択カードは常に viewer にある。"""

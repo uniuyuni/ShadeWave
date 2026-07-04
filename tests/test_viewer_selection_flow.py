@@ -26,7 +26,7 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         self.assertIn("index in self.selected_indices", source)
         self.assertIn("len(self.selected_indices) == 1", source)
         self.assertIn("if already_single_selected:", source)
-        self.assertIn("self.last_selected_index = index", source)
+        self.assertIn("self._set_last_selected(index)", source)
         self.assertIn("return", source)
         plain_click_branch = source.split("if 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers:", 1)[1]
         self.assertLess(
@@ -40,7 +40,8 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         set_state_source = _load_class_function("ViewerWidget", "set_ai_job_state_for_path")
 
         self.assertIn("'ai_job_state': \"\"", new_item_source)
-        self.assertIn("'ai_job_state': \"\"", set_path_source)
+        # set_path は _new_image_item 経由で item dict を生成する（初期値の一元化）。
+        self.assertIn("self._add_item_if_missing(file_path)", set_path_source)
         self.assertIn('else ""', set_state_source)
         self.assertNotIn("'ai_job_state': None", new_item_source)
         self.assertNotIn("'ai_job_state': None", set_path_source)

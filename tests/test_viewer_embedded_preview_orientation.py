@@ -34,11 +34,11 @@ class ViewerEmbeddedPreviewOrientationTest(unittest.TestCase):
         self.assertIn("return self._decode_embedded_preview(encoded), key", decode_source)
 
     def test_parent_orientation_is_only_applied_to_thumbnail_or_fallback_sources(self):
-        process_source = _load_class_function("ViewerWidget", "process_exif_data")
+        build_source = _load_class_function("ViewerWidget", "_build_thumbnail")
         should_source = _load_class_function("ViewerWidget", "_should_apply_parent_orientation")
 
-        self.assertIn("thumb, thumb_source_key = self._decode_embedded_thumbnail(exif_data)", process_source)
-        self.assertIn("self._should_apply_parent_orientation(thumb_source_key)", process_source)
+        self.assertIn("thumb, thumb_source_key = self._decode_embedded_thumbnail(exif_data)", build_source)
+        self.assertIn("self._should_apply_parent_orientation(thumb_source_key)", build_source)
         self.assertIn("return embedded_key not in _EMBEDDED_PREVIEW_KEYS", should_source)
 
 

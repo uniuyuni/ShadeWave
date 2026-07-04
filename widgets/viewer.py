@@ -34,6 +34,7 @@ import cores.core as core
 import utils.kvutils as kvutils
 from utils import rating_utils
 from utils import rating_io
+from utils import viewer_query
 from utils.exiftool_safe import safe_get_metadata
 from widgets.draggable_widget import DraggableWidget
 from widgets.plain_card import PlainCard
@@ -549,13 +550,21 @@ class ViewerWidget(RecycleView, DraggableWidget):
     cols = KVNumericProperty(4)
     card_width = KVNumericProperty(112)
     thumb_width = KVNumericProperty(120*2)
-    
-    # Selection state
-    selected_indices = set()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # 正データは _all_items（path キーで _items_by_key から O(1) 参照）。
+        # self.data は view_settings（ソート/フィルタ）適用後の派生ビューで、
+        # _rebuild_view() でのみ再構築する。item dict 自体は両者で共有される。
         self.data = []
+        self._all_items = []
+        self._items_by_key = {}
+        self.view_settings = dict(viewer_query.DEFAULT_SETTINGS)
+        # 選択はソート/フィルタで view インデックスが変わっても維持できるよう
+        # norm path キー集合が正。selected_indices は view 上の派生インデックス。
+        self.selected_paths = set()
+        self.selected_indices = set()
+        self._last_selected_path = None
         self.watch_directory = None
         self._watch_directory_lock = threading.Lock()
         self._watch_stop_event = None
@@ -814,12 +823,71 @@ class ViewerWidget(RecycleView, DraggableWidget):
             'ai_job_progress': "",
         }
 
-    def _data_index_for_path(self, file_path):
-        want = self._norm_path_key(file_path)
-        for i, d in enumerate(self.data):
-            if self._norm_path_key(d.get("file_path") or "") == want:
-                return i
-        return None
+    def _item_for_path(self, file_path):
+        return self._items_by_key.get(self._norm_path_key(file_path or ""))
+
+    def _add_item_if_missing(self, file_path):
+        key = self._norm_path_key(file_path)
+        if key in self._items_by_key:
+            return False
+        item = self._new_image_item(file_path)
+        self._all_items.append(item)
+        self._items_by_key[key] = item
+        return True
+
+    def _remove_item(self, file_path):
+        key = self._norm_path_key(file_path)
+        item = self._items_by_key.pop(key, None)
+        if item is None:
+            return False
+        try:
+            self._all_items.remove(item)
+        except ValueError:
+            pass
+        self.selected_paths.discard(key)
+        if self._last_selected_path == key:
+            self._last_selected_path = None
+        return True
+
+    def _rebuild_view(self):
+        """_all_items から view_settings 適用済みの self.data を再構築し、
+        選択状態（path 正）を view インデックスへ再マップする。"""
+        for item in self._all_items:
+            item['selected'] = (
+                self._norm_path_key(item.get('file_path') or "") in self.selected_paths
+            )
+        view = viewer_query.build_view(self._all_items, self.view_settings)
+        self.data = view
+        self.cols = max(1, len(view))
+        self.selected_indices = {i for i, item in enumerate(view) if item['selected']}
+        last_index = None
+        if self._last_selected_path is not None:
+            last_index = next(
+                (
+                    i for i, item in enumerate(view)
+                    if self._norm_path_key(item.get('file_path') or "") == self._last_selected_path
+                ),
+                None,
+            )
+        self.last_selected_index = last_index
+        self.refresh_from_data()
+
+    def set_view_settings(self, **changes):
+        """ソート/フィルタ設定を更新し、変化があれば view を再構築する。"""
+        changed = False
+        for key, value in changes.items():
+            if key not in self.view_settings:
+                continue
+            if self.view_settings[key] != value:
+                self.view_settings[key] = value
+                changed = True
+        if changed:
+            self._hover_index = None
+            self._cancel_hover_hint()
+            self.hide_file_hint()
+            self._rebuild_view()
+            self._schedule_hover_recheck()
+        return changed
 
     def _is_in_current_watch_directory(self, file_path):
         if not self.watch_directory:
@@ -830,36 +898,6 @@ class ViewerWidget(RecycleView, DraggableWidget):
         except OSError:
             return False
         return self._norm_path_key(file_dir) == self._norm_path_key(watch_dir)
-
-    def _insert_image_item_sorted(self, file_path):
-        idx = self._data_index_for_path(file_path)
-        if idx is not None:
-            return idx, False
-
-        new_item = self._new_image_item(file_path)
-        file_key = self._norm_path_key(file_path)
-        idx = len(self.data)
-        for i, d in enumerate(self.data):
-            if self._norm_path_key(d.get('file_path') or "") > file_key:
-                idx = i
-                break
-
-        self.data.insert(idx, new_item)
-        self.selected_indices = {
-            selected_idx + 1 if selected_idx >= idx else selected_idx
-            for selected_idx in self.selected_indices
-        }
-        if self.last_selected_index is not None and self.last_selected_index >= idx:
-            self.last_selected_index += 1
-        self.cols = max(1, len(self.data))
-        return idx, True
-
-    def _mapped_or_current_index(self, file_path_dict, file_path):
-        idx = file_path_dict.get(file_path)
-        if idx is not None and idx < len(self.data):
-            if self._norm_path_key(self.data[idx].get('file_path') or "") == self._norm_path_key(file_path):
-                return idx
-        return self._data_index_for_path(file_path)
 
     def refresh_exported_paths(self, file_paths):
         paths = []
@@ -879,20 +917,15 @@ class ViewerWidget(RecycleView, DraggableWidget):
             return False
 
         changed = False
-        for file_path in sorted(paths, key=self._norm_path_key):
-            _, inserted = self._insert_image_item_sorted(file_path)
-            changed = changed or inserted
-
-        file_path_dict = {}
         for file_path in paths:
-            idx = self._data_index_for_path(file_path)
-            if idx is not None:
-                file_path_dict[self.data[idx]["file_path"]] = idx
+            changed = self._add_item_if_missing(file_path) or changed
+
+        load_paths = [fp for fp in paths if self._item_for_path(fp) is not None]
 
         if changed:
-            self.refresh_from_data()
-        self.load_images(file_path_dict)
-        return bool(file_path_dict)
+            self._rebuild_view()
+        self.load_images(load_paths)
+        return bool(load_paths)
 
     @kvmainthread
     def _added_file(self, file_path):
@@ -911,11 +944,8 @@ class ViewerWidget(RecycleView, DraggableWidget):
             return
         if not self._is_in_current_watch_directory(file_path):
             return
-        for i, d in enumerate(self.data):
-            if d['file_path'] == file_path:
-                self.data.pop(i)
-                break
-        self.cols = max(1, len(self.data))
+        if self._remove_item(file_path):
+            self._rebuild_view()
 
     @kvmainthread
     def _modified_file(self, file_path):
@@ -936,51 +966,41 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self._cancel_hover_hint()
         self.hide_file_hint()
         preset_utils.cleanup_pmck_backup_files(directory)
-        self.data = []
-        self.selected_indices.clear()
+        self._all_items = []
+        self._items_by_key = {}
+        self.selected_paths = set()
+        self.selected_indices = set()
+        self._last_selected_path = None
         self.last_selected_index = None
+        self.data = []
 
         file_list = os.listdir(directory)
         file_list.sort()
-        
-        new_data = []
-        file_path_dict = {} # path -> index mapping for loader
-        
-        for i, file_name in enumerate(file_list):
+
+        load_paths = []
+        for file_name in file_list:
             if self.is_visible_image(file_name):
                 file_path = os.path.join(directory, file_name)
-                new_data.append({
-                    'file_path': file_path,
-                    'thumb_source': None,
-                    'exif_data': None,
-                    'load_pending': True,
-                    'selected': False,
-                    'ctx': self,
-                    'rating': 0,
-                    'pmck_exists': os.path.exists(file_path + ".pmck"),
-                    'ai_job_state': "",
-                    'ai_job_progress': "",
-                })
-                file_path_dict[file_path] = len(new_data) - 1
+                if self._add_item_if_missing(file_path):
+                    load_paths.append(file_path)
 
-        self.data = new_data
-        self.cols = max(1, len(self.data)) # Not used for logic, but might be used by UI binding?
-        
-        self.load_images(file_path_dict)
+        self._rebuild_view()
+        self.load_images(load_paths)
         self._set_watch_directory(directory)
 
-    def load_images(self, file_path_dict):
-        if len(file_path_dict) > 0:
-            self._set_load_pending(file_path_dict, True)
-            threading.Thread(target=self.load_images_thread, args=(file_path_dict, 16), daemon=True).start()
+    def load_images(self, file_paths):
+        file_paths = list(file_paths or [])
+        if len(file_paths) > 0:
+            self._set_load_pending(file_paths, True)
+            threading.Thread(target=self.load_images_thread, args=(file_paths, 16), daemon=True).start()
 
     @kvmainthread
-    def _set_load_pending(self, file_path_dict, pending):
+    def _set_load_pending(self, file_paths, pending):
         changed = False
-        for file_path in file_path_dict:
-            idx = self._mapped_or_current_index(file_path_dict, file_path)
-            if idx is not None and idx < len(self.data):
-                self.data[idx]['load_pending'] = bool(pending)
+        for file_path in file_paths:
+            item = self._item_for_path(file_path)
+            if item is not None:
+                item['load_pending'] = bool(pending)
                 changed = True
         if changed:
             self.refresh_from_data()
@@ -992,7 +1012,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         except OSError:
             return os.path.normcase(p or "")
 
-    def _process_metadata_chunk(self, chunk, file_path_dict, deferred_raw, deferred_lock):
+    def _process_metadata_chunk(self, chunk, deferred_raw, deferred_lock):
         """1チャンク分の EXIF 取得＋軽量サムネイル生成。ワーカープールから並列実行される想定。"""
         try:
             # -a -G1 keeps duplicate Rating tags as group-qualified keys.
@@ -1003,14 +1023,12 @@ class ViewerWidget(RecycleView, DraggableWidget):
             )
         except Exception:
             logging.exception("load_images_thread: EXIF取得失敗。スキップして続行 (chunk size=%d)", len(chunk))
-            self._finish_failed_chunk(chunk, file_path_dict)
+            self._finish_failed_chunk(chunk)
             return
 
         for k, file_path in enumerate(chunk):
-            if file_path not in file_path_dict:
-                continue
             # 既に一覧から消えた(削除/リネーム)ファイルは処理しない（best-effort）。
-            if self._data_index_for_path(file_path) is None:
+            if self._item_for_path(file_path) is None:
                 continue
             exif_data = exif_data_list[k]
             try:
@@ -1022,7 +1040,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 else:
                     rating = rating_utils.parse_exif_rating_value(ex0)
                 pmck_exists = os.path.exists(file_path + ".pmck")
-                self._apply_metadata(file_path_dict, file_path, exif_data, rating, pmck_exists)
+                self._apply_metadata(file_path, exif_data, rating, pmck_exists)
                 # 2) 軽い経路で作れるサムネイルは即時生成・反映。RAWデモザイクは後回し。
                 try:
                     thumb, deferred = self._build_thumbnail(file_path, exif_data, allow_demosaic=False)
@@ -1033,26 +1051,24 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     with deferred_lock:
                         deferred_raw.append((file_path, exif_data))
                 else:
-                    self._apply_thumbnail(file_path_dict, file_path, thumb)
+                    self._apply_thumbnail(file_path, thumb)
             except Exception:
                 logging.exception("load_images_thread: chunk item processing failed for %s", file_path)
 
-    def _process_deferred_raw(self, file_path, exif_data, file_path_dict):
+    def _process_deferred_raw(self, file_path, exif_data):
         """後回しにした RAW デモザイクを1件処理。ワーカープールから並列実行される想定。"""
-        if file_path not in file_path_dict:
-            return
         # 待機中にファイルが消えた/リネームされたら、無駄なデモザイクと例外ログを避ける。
-        if self._data_index_for_path(file_path) is None:
+        if self._item_for_path(file_path) is None:
             return
         try:
             thumb, _ = self._build_thumbnail(file_path, exif_data, allow_demosaic=True)
         except Exception:
             logging.exception("load_images_thread: RAW demosaic thumbnail failed for %s", file_path)
             thumb = None
-        self._apply_thumbnail(file_path_dict, file_path, thumb)
+        self._apply_thumbnail(file_path, thumb)
 
-    def load_images_thread(self, file_path_dict, chunk_size):
-        file_path_list = list(file_path_dict.keys())
+    def load_images_thread(self, file_paths, chunk_size):
+        file_path_list = list(file_paths)
         chunks = [file_path_list[i:i + chunk_size] for i in range(0, len(file_path_list), chunk_size)]
 
         # 埋め込みプレビューが無く、フルデモザイクが必要な RAW は後回しにする。
@@ -1065,38 +1081,36 @@ class ViewerWidget(RecycleView, DraggableWidget):
         # 1コア分の速度に律速されるため、ワーカープールでオーバーラップさせる。
         with concurrent.futures.ThreadPoolExecutor(max_workers=_THUMBNAIL_WORKER_COUNT) as pool:
             list(pool.map(
-                lambda chunk: self._process_metadata_chunk(chunk, file_path_dict, deferred_raw, deferred_lock),
+                lambda chunk: self._process_metadata_chunk(chunk, deferred_raw, deferred_lock),
                 chunks,
             ))
 
             # 3) 後回しにした RAW デモザイクを並列処理（軽いファイルが出揃った後）
             list(pool.map(
-                lambda item: self._process_deferred_raw(item[0], item[1], file_path_dict),
+                lambda item: self._process_deferred_raw(item[0], item[1]),
                 deferred_raw,
             ))
 
     @kvmainthread
-    def _apply_metadata(self, file_path_dict, file_path, exif_data, rating, pmck_exists):
+    def _apply_metadata(self, file_path, exif_data, rating, pmck_exists):
         """EXIF/rating/pmck を反映（load_pending は維持＝サムネイル待ち）。
 
         rating/pmck はワーカースレッドで算出済みの値を受け取り、UIスレッドでは代入のみ。
         """
-        idx = self._mapped_or_current_index(file_path_dict, file_path)
-        if idx is None or not (0 <= idx < len(self.data)):
+        item = self._item_for_path(file_path)
+        if item is None:
             return
-        item = self.data[idx]
         item['exif_data'] = exif_data
         item['rating'] = rating
         item['pmck_exists'] = pmck_exists
         self._schedule_coalesced_refresh()
 
     @kvmainthread
-    def _apply_thumbnail(self, file_path_dict, file_path, thumb):
+    def _apply_thumbnail(self, file_path, thumb):
         """サムネイルを反映し、load_pending を解除する。"""
-        idx = self._mapped_or_current_index(file_path_dict, file_path)
-        if idx is None or not (0 <= idx < len(self.data)):
+        item = self._item_for_path(file_path)
+        if item is None:
             return
-        item = self.data[idx]
         item['thumb_source'] = thumb
         item['load_pending'] = False
         self._schedule_coalesced_refresh()
@@ -1111,20 +1125,20 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self._hover_index = None
         self._cancel_hover_hint()
         self.hide_file_hint()
-        self.refresh_from_data()
+        # メタデータ到着でソート/フィルタ結果が変わり得るため view ごと再構築する。
+        self._rebuild_view()
         self._schedule_hover_recheck()
 
     @kvmainthread
-    def _finish_failed_chunk(self, chunk, file_path_dict):
+    def _finish_failed_chunk(self, chunk):
         for file_path in chunk:
-            idx = self._mapped_or_current_index(file_path_dict, file_path)
-            if idx is None:
+            item = self._item_for_path(file_path)
+            if item is None:
                 continue
-            if idx < len(self.data):
-                self.data[idx]['load_pending'] = False
-                if self.data[idx].get('exif_data') is None:
-                    self.data[idx]['exif_data'] = {}
-        self.refresh_from_data()
+            item['load_pending'] = False
+            if item.get('exif_data') is None:
+                item['exif_data'] = {}
+        self._rebuild_view()
 
     def is_supported_image(self, file_name):
         return (file_name.lower().endswith(define.SUPPORTED_FORMATS_RGB)
@@ -1150,16 +1164,15 @@ class ViewerWidget(RecycleView, DraggableWidget):
         want = self._norm_path_key(file_path)
         found = False
         pmck_exists = os.path.exists(file_path + ".pmck") if exists is None else bool(exists)
-        for d in self.data:
-            if self._norm_path_key(d.get("file_path") or "") != want:
-                continue
+        d = self._item_for_path(file_path)
+        if d is not None:
             d["pmck_exists"] = pmck_exists
             if rating_utils.is_raw_path(file_path):
                 d["rating"] = rating_io.read_raw_pmck_rating_value(file_path)
             found = True
-            break
         if found:
-            self.refresh_from_data()
+            # pmck/rating は「編集済み」ソート/フィルタの入力なので view を再構築。
+            self._rebuild_view()
             app = KVApp.get_running_app()
             main_widget = getattr(app, "main_widget", None) if app else None
             imgset = getattr(main_widget, "imgset", None) if main_widget else None
@@ -1173,19 +1186,16 @@ class ViewerWidget(RecycleView, DraggableWidget):
     def set_ai_job_state_for_path(self, file_path, state, progress_text=""):
         if not file_path:
             return False
-        want = self._norm_path_key(file_path)
         found = False
         clean_state = state if state in {"queued", "running", "error"} else ""
         clean_progress = str(progress_text or "") if clean_state == "running" else ""
-        for d in self.data:
-            if self._norm_path_key(d.get("file_path") or "") != want:
-                continue
+        d = self._item_for_path(file_path)
+        if d is not None:
             if d.get("ai_job_state") == clean_state and d.get("ai_job_progress", "") == clean_progress:
                 return True
             d["ai_job_state"] = clean_state
             d["ai_job_progress"] = clean_progress
             found = True
-            break
         if found:
             self.refresh_from_data()
         return found
@@ -1342,13 +1352,13 @@ class ViewerWidget(RecycleView, DraggableWidget):
                     should_notify = True # Toggle always changes selection
                 else:
                     if already_single_selected:
-                        self.last_selected_index = index
+                        self._set_last_selected(index)
                         return
                     self.clear_selection()
                     self.select_at(index)
                     should_notify = True
-                
-                self.last_selected_index = index
+
+                self._set_last_selected(index)
             
             if should_notify:
                  self.notify_selection_change(index)
@@ -1369,25 +1379,39 @@ class ViewerWidget(RecycleView, DraggableWidget):
              
              app.main_widget.on_select(MockCard(selected_data))
 
+    def _set_last_selected(self, index):
+        self.last_selected_index = index
+        if index is not None and 0 <= index < len(self.data):
+            self._last_selected_path = self._norm_path_key(self.data[index].get('file_path') or "")
+        else:
+            self._last_selected_path = None
+
     def select_at(self, index):
         if self._is_item_ready(index):
             self.data[index]['selected'] = True
             self.selected_indices.add(index)
+            self.selected_paths.add(self._norm_path_key(self.data[index].get('file_path') or ""))
             self.refresh_from_data()
 
     def toggle_at(self, index):
         if self._is_item_ready(index):
             val = not self.data[index]['selected']
             self.data[index]['selected'] = val
-            if val: self.selected_indices.add(index)
-            else: self.selected_indices.discard(index)
+            key = self._norm_path_key(self.data[index].get('file_path') or "")
+            if val:
+                self.selected_indices.add(index)
+                self.selected_paths.add(key)
+            else:
+                self.selected_indices.discard(index)
+                self.selected_paths.discard(key)
             self.refresh_from_data()
 
     def clear_selection(self):
-        for d in self.data:
+        for d in self._all_items:
             d['selected'] = False
+        self.selected_paths.clear()
         self.selected_indices.clear()
-        self.last_selected_index = None
+        self._set_last_selected(None)
         self.refresh_from_data()
 
     def refresh_exif_for_exported_path(self, file_path: str) -> bool:
@@ -1406,19 +1430,17 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def set_selection_silent(self, file_path):
         """サムネの選択表示だけを合わせる。on_select（画像の再ロード）は呼ばない。"""
-        if not self.data or file_path is None:
+        if not self._all_items or file_path is None:
             self.clear_selection()
             return
-        idx = next((i for i, d in enumerate(self.data) if d['file_path'] == file_path), None)
-        for i, d in enumerate(self.data):
-            d['selected'] = idx is not None and i == idx
-        if idx is not None:
-            self.selected_indices = {idx}
-            self.last_selected_index = idx
+        key = self._norm_path_key(file_path)
+        if key in self._items_by_key:
+            self.selected_paths = {key}
+            self._last_selected_path = key
         else:
-            self.selected_indices.clear()
-            self.last_selected_index = None
-        self.refresh_from_data()
+            self.selected_paths = set()
+            self._last_selected_path = None
+        self._rebuild_view()
 
     def get_selected_cards(self):
         res = []
@@ -1434,20 +1456,38 @@ class ViewerWidget(RecycleView, DraggableWidget):
         return res
 
     def set_rating_for_path(self, file_path, rating_value: int):
-        for i, d in enumerate(self.data):
-            if d.get("file_path") == file_path:
-                d["rating"] = int(rating_value)
-                break
-        self.refresh_from_data()
+        d = self._item_for_path(file_path)
+        if d is not None:
+            d["rating"] = int(rating_value)
+        # rating はソート/フィルタの入力なので view を再構築。
+        self._rebuild_view()
+
+    def get_rating_for_path(self, file_path):
+        """rating を返す。Viewer が知らないパスは None（呼び出し側でフォールバック）。"""
+        d = self._item_for_path(file_path)
+        if d is None:
+            return None
+        return int(d.get("rating", 0) or 0)
+
+    def get_exif_for_path(self, file_path):
+        d = self._item_for_path(file_path)
+        return None if d is None else d.get("exif_data")
+
+    def set_exif_for_path(self, file_path, exif_data):
+        d = self._item_for_path(file_path)
+        if d is None:
+            return False
+        d["exif_data"] = exif_data
+        return True
 
     def get_card(self, file_path):
-        for d in self.data:
-            if d['file_path'] == file_path:
-                class MockCard:
-                     def __init__(self, d):
-                         self.file_path = d['file_path']
-                         self.exif_data = d['exif_data']
-                return MockCard(d)
+        d = self._item_for_path(file_path)
+        if d is not None:
+            class MockCard:
+                 def __init__(self, d):
+                     self.file_path = d['file_path']
+                     self.exif_data = d['exif_data']
+            return MockCard(d)
         return None
 
     def set_cache_system(self, cache_system):
