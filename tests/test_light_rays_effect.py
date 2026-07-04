@@ -515,9 +515,16 @@ class LightRaysCoreTest(unittest.TestCase):
         line_diff = (line - img).mean(axis=2)
         point_center = point_diff[84:96, 72:88].mean()
         point_off_axis = point_diff[60:78, 72:88].mean() + point_diff[102:120, 72:88].mean()
+        line_center = line_diff[84:96, 72:88].mean()
         line_off_axis = line_diff[60:78, 72:88].mean() + line_diff[102:120, 72:88].mean()
         self.assertGreater(point_center, point_off_axis * 10.0)
-        self.assertLess(point_off_axis, line_off_axis * 0.20)
+        # Goal: right at the start, a point source concentrates light at its
+        # apex while a line source spreads it across the full band width.
+        # Compare centre/off-axis concentration instead of absolute off-axis
+        # brightness so the jagged/soft start tuning cannot break the pin.
+        point_conc = point_center / max(point_off_axis, 1e-6)
+        line_conc = line_center / max(line_off_axis, 1e-6)
+        self.assertGreater(point_conc, line_conc * 4.0)
         self.assertGreater(float(np.max(np.abs(point - line))), 0.02)
 
     def test_point_directional_width_does_not_stretch_behind_source(self):

@@ -56,6 +56,18 @@ class CropEditorSyncFlowTest(unittest.TestCase):
         source = MAIN_PATH.read_text()
         self.assertIn("sync_crop_editor_mode_from_widget(self, self.primary_param)", source)
 
+    def test_crop_callback_invalidates_crop_cache_and_redraws_like_geometry_callback(self):
+        # crop_callback は geometry_callback/distortion_callback と違い、以前は
+        # crop_rect を書き換えるだけで redraw を一切トリガーしていなかった。
+        # そのため、ドラッグ中もドラッグ終了後も（タブ切替など別操作が起きるまで）
+        # クロップ枠の移動が通常プレビューへ反映されなかった。
+        crop_callback = _load_class_function(MAIN_PATH, "MainWidget", "crop_callback")
+        source = ast.get_source_segment(MAIN_PATH.read_text(), crop_callback)
+
+        self.assertIn("self.crop_image = None", source)
+        self.assertIn("self.apply_effects_lv(0, 'crop', sync=True)", source)
+        self.assertIn("self.start_draw_image(invalidate_crop=True)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

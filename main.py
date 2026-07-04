@@ -2271,11 +2271,20 @@ if __name__ == '__main__':
         def crop_callback(self, proc, widget):
             match proc:
                 case 'start':
-                    self.begin_history_effect_ctrl(0, 'crop')
+                    if self.begin_history_effect_ctrl(0, 'crop'):
+                        self.crop_image = None
                 case 'update' | 'apply':
                     params.set_crop_rect(self.primary_param, widget.get_crop_rect())
+                    # geometry_callback などの他のエディタコールバックと違い、ここだけ
+                    # redraw を一切トリガーしていなかった。CropEditor はドラッグ中は
+                    # 自前の矩形を canvas に描くだけで、パイプラインで実際にクロップ
+                    # された「通常プレビュー」は touch_up まで古いままだった上、
+                    # touch_up 後もタブ切替など別の操作が起きるまで更新されなかった。
+                    self.crop_image = None
+                    self.apply_effects_lv(0, 'crop', sync=True)
                 case 'end':
                     self.end_history_effect_ctrl(0, 'crop')
+                    self.start_draw_image(invalidate_crop=True)
 
         def _get_active_effects(self, mask_id=None, lv=None, subname=None):
             editor = self.ids['mask_editor2']

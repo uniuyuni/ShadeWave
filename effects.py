@@ -2096,11 +2096,15 @@ class GeometryEffect(Effect):
     def _store_zero_wrap_quad(self, param, full_preview, image_shape, transform_matrix, size, transform_type):
         """apply_zero_wrap 用のコンテンツ四辺形（変換キャンバス size で正規化）を param に格納する。
 
-        以前は full_preview（Ge タブ）のときだけ格納していたが、通常表示でもジオメトリ回転が
-        効いていると crop 窓の外へ reflect ミラー画素がはみ出して見える。回転を考慮したマスクを
-        作れるよう常に格納する。apply_zero_wrap は crop_editing 時はこの四辺形をそのまま、
-        通常表示時は disp_info の crop 窓へ写像してマスク化する（canvas_size = 変換キャンバス一辺）。
+        full_preview（Ge タブ＝回転正方形パディング表示。Mask2 ON/OFF 問わず）のときだけ
+        格納し、それ以外は None でクリアして stale を防ぐ。通常表示はクロップ枠外の矩形
+        黒塗りのみ（枠内のミラー画素はエクスポートと同様に残す）で、quad マスクは使わない。
+        main.py 側の crop_editing は current_tab=="Ge" で判定され full_preview と一致する。
         """
+        if not full_preview:
+            param['_zero_wrap_content_quad'] = None
+            param['_zero_wrap_canvas_size'] = None
+            return
         try:
             quad = core.content_quad_norm(image_shape, transform_matrix, size, transform_type)
             param['_zero_wrap_content_quad'] = quad.tolist()
@@ -2450,8 +2454,16 @@ class CropEffect(Effect):
         if original_img_size is not None:
             param2 = param.copy()
             params.set_crop_rect(param2, core.get_initial_crop_rect(*original_img_size))
-            #params.set_disp_info(param2, core.get_initial_disp_info(*original_img_size, config.get_config('preview_size')/max(original_img_size)))
+            # disp_info は crop_rect から導出される派生値だが、undo/redo は
+            # Operation.backup/update に含まれるキーしか書き戻さない
+            # (history.py Operation.undo/redo の dict.update)。ここに含めないと
+            # crop_rect だけ戻って disp_info が古いまま残り、make_diff (下の
+            # crop_editing=False 分岐) が「disp_info はフルプレビュー状態でない
+            # ＝既に正しい」と誤判定してハッシュ不変のまま crop_image の再構築が
+            # トリガーされず、通常タブでは undo 後もクロップが反映されなかった。
+            params.set_disp_info(param2, core.convert_rect_to_info(params.get_crop_rect(param2), config.get_preview_texture_side()/max(original_img_size)))
             default_param['crop_rect'] = param2['crop_rect']
+            default_param['disp_info'] = param2['disp_info']
 
         return default_param
 

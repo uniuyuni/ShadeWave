@@ -520,7 +520,17 @@ def _directional_ray(
     band_gain = 0.20 - 0.08 * float(np.clip(float(count) / 32.0, 0.0, 1.0))
     fade = _distance_falloff(along, decay_px)
     start_feather = max(float(width_px) * (0.90 + 1.40 * soft), float(length_px) * 0.075, 6.0)
-    start = np.clip(along / np.float32(start_feather), 0.0, 1.0)
+    # A gate that depends on ``along`` alone cuts the beam with a straight edge
+    # perpendicular to the direction, which reads as a square start.  Delay the
+    # gate by perpendicular noise so the leading edge is jagged.  The noise
+    # coordinate is normalised by the local cone width (then rescaled to the
+    # width at the start), so each tooth stays pinned to the same fan line and
+    # follows the light's spread direction instead of running axis-parallel.
+    cone0 = np.float32(width_px * (1.4 + 2.8 * soft))
+    jag_coord = perp * (cone0 / np.maximum(cone, np.float32(1.0)))
+    jag = _jagged_start_offset(
+        jag_coord, start_feather * (0.45 + 2.25 * variation_n), width_px, seed + 0x3D7)
+    start = np.clip((along - jag) / np.float32(start_feather * 1.80), 0.0, 1.0)
     start = (start * start * (np.float32(3.0) - np.float32(2.0) * start)).astype(np.float32, copy=False)
     end_feather = max(float(width_px) * (1.2 + 1.8 * soft), float(length_px) * 0.04, 2.0)
     end = _end_tail(along, length_px, end_feather)
@@ -823,6 +833,38 @@ def _single_ray_texture(along, cross, width_px, length_px, density_n, variation_
         + np.float32(0.03 + 0.08 * density_n) * diagonal
     )
     return np.clip(texture, np.float32(0.55), np.float32(1.24)).astype(np.float32, copy=False)
+
+
+def _jagged_start_offset(perp, amplitude_px, width_px, seed):
+    """Per-pixel forward delay (px) that breaks up a straight ray-start edge.
+
+    The offset is a rectified multi-octave cosine of the perpendicular
+    coordinate, so it is deterministic per seed and scale-invariant with the
+    beam width.  It is non-negative: the start can only move forward, never
+    behind the user's guide line.
+    """
+    amp = float(max(float(amplitude_px), 0.0))
+    if amp <= 1e-3:
+        return np.float32(0.0)
+    w = max(float(width_px), 1.0)
+    phase = np.float32((int(seed) % 6151) / 6151.0 * 2.0 * math.pi)
+    # Tooth wavelengths are 2*pi*scale: roughly one tooth per beam width, plus
+    # finer octaves at irrational ratios so the pattern never visibly repeats.
+    coarse = np.cos(perp / np.float32(max(w * 0.20, 3.0)) + phase)
+    mid = np.cos(perp / np.float32(max(w * 0.085, 1.5)) + phase * np.float32(2.09) + np.float32(1.7))
+    fine = np.cos(perp / np.float32(max(w * 0.042, 0.8)) + phase * np.float32(4.63) + np.float32(3.9))
+    # Rectify and square each octave separately: every octave keeps its own
+    # pointy teeth (a single rectified sum only spikes where octaves align),
+    # while most of the edge stays near the guide line so the beam keeps its
+    # full-width brightness right after the start.
+    t1 = np.square(np.clip(coarse, 0.0, 1.2))
+    t2 = np.square(np.clip(mid, 0.0, 1.0))
+    t3 = np.square(np.clip(fine, 0.0, 1.0))
+    envelope = np.float32(0.55) + np.float32(0.45) * np.cos(
+        perp / np.float32(max(w * 0.85, 6.0)) + phase * np.float32(1.31))
+    teeth = (np.float32(0.52) * t1 + np.float32(0.33) * t2 + np.float32(0.1) * t3)
+    teeth = teeth * np.clip(envelope, 0.15, 1.0)
+    return (np.float32(amp) * teeth).astype(np.float32, copy=False)
 
 
 def _distance_falloff(distance, decay_px):

@@ -2219,26 +2219,10 @@ def apply_zero_wrap(img, param, crop_editing=False):
 
     disp_info = params.get_disp_info(param)
 
-    # 通常表示（ジオメトリエディタ中でない）でも、回転が効いていると reflect ミラー画素が
-    # crop 窓の外へはみ出して見える。矩形マスクでは回転コンテンツ境界を覆えないため、
-    # コンテンツ四辺形を crop 窓（disp_info）へ写像してマスク化する。四辺形は変換キャンバス
-    # size で正規化されているので、size-canvas px へ戻してから disp_info の crop/scale/offset
-    # で表示座標へ変換する（回転なしの場合は矩形マスクと一致する）。
-    canvas_size = param.get('_zero_wrap_canvas_size')
-    if quad is not None and canvas_size and disp_info is not None:
-        out_w, out_h = int(img.shape[1]), int(img.shape[0])
-        dx, dy, _dw, _dh, scale = disp_info
-        _nw, _nh, offset_x, offset_y = crop_size_and_offset_from_texture(out_w, out_h, disp_info)
-        pts = np.asarray(quad, dtype=np.float64) * float(canvas_size)
-        pts[:, 0] = (pts[:, 0] - dx) * scale + offset_x
-        pts[:, 1] = (pts[:, 1] - dy) * scale + offset_y
-        mask = np.zeros((out_h, out_w), dtype=np.float32)
-        cv2.fillConvexPoly(mask, np.round(pts).astype(np.int32), 1.0)
-        content = int(np.count_nonzero(mask))
-        zero_count = out_w * out_h - content
-        img = img * mask[..., np.newaxis]
-        return (img, zero_count)
-
+    # 通常表示（crop_editing=False）はクロップ枠の外側を矩形で黒塗りするだけにする。
+    # 枠内の回転コンテンツ外（reflect ミラー画素）はエクスポートでもミラーのまま残るため、
+    # ここで quad マスクを掛けるとプレビューだけ斜めに削れてエクスポートと不一致になる
+    # （後がけの Light Rays 等も切られる）。quad マスクは Ge タブ（crop_editing）専用。
     width = int((disp_info[2]) * disp_info[4])
     height = int((disp_info[3]) * disp_info[4])
     width, height = min(width, img.shape[1]), min(height, img.shape[0]) # 安全策

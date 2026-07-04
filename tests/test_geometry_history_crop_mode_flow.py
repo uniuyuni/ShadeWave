@@ -167,7 +167,7 @@ class GeometryHistoryCropModeFlowTest(unittest.TestCase):
         params_text = PARAMS_PATH.read_text()
         self.assertIn("'_zero_wrap_content_quad'", params_text)
         self.assertIn("'_zero_wrap_canvas_size'", params_text)
-        # GeometryEffect は通常表示でも四辺形と canvas_size を格納する（回転考慮のため）。
+        # GeometryEffect は full-preview 時に四辺形と canvas_size を格納する（通常表示はクリア）。
         store = _load_class_function(EFFECTS_PATH, "GeometryEffect", "_store_zero_wrap_quad")
         store_source = ast.get_source_segment(EFFECTS_PATH.read_text(), store)
         self.assertIn("_zero_wrap_content_quad", store_source)
@@ -226,9 +226,11 @@ class ZeroWrapQuadMathTest(unittest.TestCase):
         out, _ = core.apply_zero_wrap(img, param, crop_editing=True)
         self.assertTrue(np.all(out == 1.0))
 
-    def test_non_crop_rotation_masks_mirror_region(self):
-        # 通常表示（crop_editing=False）でもジオメトリ回転を考慮し、crop 窓の外へ
-        # はみ出す reflect ミラー領域（回転コンテンツ四辺形の外）が 0 化されること。
+    def test_non_crop_rotation_keeps_rectangular_mask_only(self):
+        # 通常表示（crop_editing=False）はクロップ枠外の矩形黒塗りのみ。回転が効いていて
+        # quad が（stale 等で）param に残っていても、枠内の reflect ミラー領域を斜めに
+        # 削ってはならない（エクスポートはミラーのまま残るため、削るとプレビューと
+        # エクスポートが不一致になり、後がけの Light Rays 等も斜めに切られる）。
         import numpy as np
         import cores.core as core
         import params
@@ -240,19 +242,28 @@ class ZeroWrapQuadMathTest(unittest.TestCase):
         dx, dy, dw, dh = size * 0.15, size * 0.15, size * 0.7, size * 0.35
         tex_w, tex_h = 400, 200
         scale = tex_w / dw
-        param = {"original_img_size": (size, size)}
-        params.set_disp_info(param, (dx, dy, dw, dh, scale))
-        param["_zero_wrap_content_quad"] = quad.tolist()
-        param["_zero_wrap_canvas_size"] = float(size)
+        base = {"original_img_size": (size, size)}
+        params.set_disp_info(base, (dx, dy, dw, dh, scale))
 
         img = np.ones((tex_h, tex_w, 3), dtype=np.float32)
-        out, zero_count = core.apply_zero_wrap(img, param, crop_editing=False)
 
-        # 回転により少なくとも一部のミラー領域が 0 化される。
-        self.assertGreater(zero_count, 0)
-        # 回転コンテンツ外の左上隅は 0、中央はコンテンツ内なので 1 のまま。
-        self.assertEqual(float(out[0, 0, 0]), 0.0)
-        self.assertEqual(float(out[tex_h // 2, tex_w // 2, 0]), 1.0)
+        p_quad = dict(base)
+        p_quad["_zero_wrap_content_quad"] = quad.tolist()
+        p_quad["_zero_wrap_canvas_size"] = float(size)
+        out_quad, zc_quad = core.apply_zero_wrap(img.copy(), p_quad, crop_editing=False)
+
+        out_rect, zc_rect = core.apply_zero_wrap(img.copy(), dict(base), crop_editing=False)
+
+        # quad の有無で通常表示の結果が変わらない（矩形マスクのみ）。
+        self.assertTrue(np.array_equal(out_quad, out_rect))
+        self.assertEqual(zc_quad, zc_rect)
+
+    def test_store_zero_wrap_quad_cleared_when_not_full_preview(self):
+        # 通常表示では quad をクリアする（quad は Ge タブ full-preview 専用。残すと
+        # mask2 オーバーレイクリップが通常タブで菱形に誤クリップされる）。
+        store = _load_class_function(EFFECTS_PATH, "GeometryEffect", "_store_zero_wrap_quad")
+        store_source = ast.get_source_segment(EFFECTS_PATH.read_text(), store)
+        self.assertIn("if not full_preview:", store_source)
 
     def test_non_crop_zero_rotation_matches_rectangular(self):
         # 回転なしのときは quad マスクが矩形フォールバックと一致（過剰マスクしない）。
@@ -280,6 +291,29 @@ class ZeroWrapQuadMathTest(unittest.TestCase):
         out_rect, _ = core.apply_zero_wrap(img.copy(), dict(base), crop_editing=False)
 
         self.assertLess(float(np.mean(np.abs(out_quad - out_rect))), 0.02)
+
+    def test_non_crop_rotation_never_cuts_inside_crop_window(self):
+        # 回転あり・crop 窓が回転コンテンツの内側に収まる通常表示では、
+        # 画像領域（レターボックス以外）を 1px も削ってはならない。
+        import numpy as np
+        import cores.core as core
+        import params
+
+        W, H = 4000, 3000
+        matrix, size, ttype = core.combined_rotation_canvas_matrix((H, W, 3), 10.0, 0, None)
+        quad = core.content_quad_norm((H, W, 3), matrix, size, ttype)
+
+        dw, dh = 2400, 1800
+        dx, dy = (size - dw) / 2, (size - dh) / 2
+        tex_w, tex_h = 1200, 900
+        param = {"original_img_size": (W, H)}
+        params.set_disp_info(param, (dx, dy, dw, dh, tex_w / dw))
+        param["_zero_wrap_content_quad"] = quad.tolist()
+        param["_zero_wrap_canvas_size"] = float(size)
+
+        img = np.ones((tex_h, tex_w, 3), dtype=np.float32)
+        out, _ = core.apply_zero_wrap(img, param, crop_editing=False)
+        self.assertEqual(int(np.count_nonzero(out[..., 0] < 0.5)), 0)
 
 
 if __name__ == "__main__":

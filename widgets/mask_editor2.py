@@ -4351,6 +4351,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         # クロップ編集/full-preview 中の回転コンテンツ四辺形（apply_zero_wrap と共用）。
         # マスクオーバーレイを回転後の有効画像領域にクリップするために保持する。
+        # 通常表示では GeometryEffect が None にクリアするので矩形クリップに落ちる。
         self._zero_wrap_content_quad = primary_param.get('_zero_wrap_content_quad')
 
         # TCG情報を設定
@@ -4435,6 +4436,8 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def _clip_mask_overlay_to_image_area(self, glayimg, disp_info):
         # クロップ編集/full-preview 中は disp_info が正方形全体になり矩形クリップが効かない。
         # 回転コンテンツ四辺形があれば、その内側だけにオーバーレイを残す（四隅のはみ出し除去）。
+        # quad は full-preview 中しか格納されない（通常表示でそのまま使うと表示テクスチャが
+        # crop 窓のため菱形に誤クリップされる）。通常表示は下の矩形クリップに落ちる。
         quad = getattr(self, '_zero_wrap_content_quad', None)
         if quad is not None:
             h, w = glayimg.shape[:2]
