@@ -40,7 +40,9 @@ class DisplayTransformFlowTest(unittest.TestCase):
 
         self.assertIn("full_preview_render = pipeline.preview_full_render_enabled(current_tab)", source)
         self.assertIn("drain_all_preview = pipeline.preview_drain_all_enabled(current_tab)", source)
-        self.assertIn("if full_preview_render and drain_all_preview and last_processed_version >= 0", source)
+        self.assertIn("full_preview_render and drain_all_preview and last_processed_version >= 0", source)
+        # 積み残しラグに上限を設け、超えたら最新版へ追いつく(ドラッグ停止後の UI 固着を防ぐ)。
+        self.assertIn("current_version - last_processed_version <= _PREVIEW_DRAIN_MAX_LAG", source)
         self.assertIn("frame_version_override=target_version", source)
 
     def test_geometry_interaction_invalidates_crop_cache_for_preview_interpolation_change(self):

@@ -1,8 +1,8 @@
 
 import os
 import sys
-if __name__ == '__main__':
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#if __name__ == '__main__':
+#    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import math
@@ -36,16 +36,13 @@ from kivy.clock import Clock as KVClock
 from kivy.uix.label import Label as KVLabel
 
 import cores.core as core
-import cores.expand_mask as expand_mask
 from cores.ai_image_cache import AIImageCache
 from cores.mask2 import mask_geometry as mask_geometry_mod
 import params
 import effects
-import config
 import threads
-import utils.dialogutils as dialogutils
 import utils.utils as utils
-from processing_dialog import wait_processing
+import processing_dialog
 from history import LayerCtrl, get_history_ctrl
 import macos as device
 
@@ -3613,9 +3610,10 @@ class SegmentMask(BaseMask):
             h = abs(cy - cry)
             
             # predict_sam3 に渡す box = [x, y, w, h]
+            processing_dialog.set_processing_text("Make SegmentMask SAM3...")
             segment_mask = self._get_or_compute_image_mask_cache(
                 cache_key,
-                lambda: wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], False),
+                lambda: processing_dialog.wait_processing(self._draw_segment, original_image_size, [min_x, min_y, w, h], False),
                 "SegmentMask SAM3",
             )
             #segment_mask = self._draw_segment(original_image_size, [min_x, min_y, w, h])
@@ -3777,9 +3775,10 @@ class DepthMapMask(BaseMask):
         from cores.mask2 import inference_runtime as mask2_inference_runtime
         cache_key = cache_keys.depth_cache_key(original_image_size, mask2_inference_runtime.DEPTH_MAP_ALGORITHM_VERSION)
         if self.initializing == False:
+            processing_dialog.set_processing_text("Make DepthMapMask...")
             depth_map_mask = self.editor.get_ai_depth_map(
                 cache_key,
-                lambda: wait_processing(self.draw_depth_map, original_image_size),
+                lambda: processing_dialog.wait_processing(self.draw_depth_map, original_image_size),
             )
             #depth_map_mask = self.draw_depth_map(original_image_size)
 
@@ -3962,9 +3961,10 @@ class FaceMask(BaseMask):
         cache_key = cache_keys.face_cache_key(original_image_size, exclude_names)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
             # 描画
+            processing_dialog.set_processing_text("Make FaceMask...")
             faces_mask = self._get_or_compute_image_mask_cache(
                 cache_key,
-                lambda: wait_processing(self.draw_face, original_image_size, exclude_names),
+                lambda: processing_dialog.wait_processing(self.draw_face, original_image_size, exclude_names),
                 "FaceMask",
             )
             #faces_mask = self.draw_face(original_image_size, exclude_names)
@@ -4181,9 +4181,10 @@ class TargetTextMask(BaseMask):
         cache_key = cache_keys.target_text_cache_key(original_image_size, text, False)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
             # predict_sam3 に渡す box = [x, y, w, h]
+            processing_dialog.set_processing_text("Make TargetTextMask SAM3...")
             segment_mask = self._get_or_compute_image_mask_cache(
                 cache_key,
-                lambda: wait_processing(self._draw_segment, original_image_size, text, False),
+                lambda: processing_dialog.wait_processing(self._draw_segment, original_image_size, text, False),
                 "TargetTextMask SAM3",
             )
             #segment_mask = self._draw_segment(original_image_size, text)

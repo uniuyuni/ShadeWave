@@ -1173,7 +1173,7 @@ class InpaintEffect(Effect):
                 return self.diff
 
             import helpers.runware_object_eraser_helper as helper
-            #import helpers.juggernaut_helper as helper
+            #import helpers.sdxl_helper as helper
 
             mask = self._build_mask_from_inpaint_list(img.shape)
             client = helper.setup() # device=config.get_config('gpu_device'))

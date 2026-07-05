@@ -250,6 +250,11 @@ import memory_manager
 # 512bin のヒストグラム表示にはサンプル数として十分で、視認差は出ない。1 で無効化。
 HISTOGRAM_DECIMATION = 2
 
+# drain-all プレビュー(中間バージョンを飛ばさず順に描くモード)で許容する
+# 未処理バージョンの最大ラグ。これを超えたら中間フレームを捨てて最新版へ追いつく。
+# ドラッグを止めた後に積み残しの描画で UI が固まる(クロップ枠が動かせない)のを防ぐ。
+_PREVIEW_DRAIN_MAX_LAG = 2
+
 
 def _debug_display_stats(label, img):
     if os.getenv("PLATYPUS_DEBUG_PIPELINE_STATS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
@@ -1884,11 +1889,20 @@ if __name__ == '__main__':
                         current_tab = ""
                     full_preview_render = pipeline.preview_full_render_enabled(current_tab)
                     drain_all_preview = pipeline.preview_drain_all_enabled(current_tab)
-                    target_version = (
-                        last_processed_version + 1
-                        if full_preview_render and drain_all_preview and last_processed_version >= 0
-                        else current_version
-                    )
+                    # drain-all は中間バージョンを飛ばさず「1バージョンずつ順に」描くモード
+                    # (Ge タブで既定 ON)。だが回転補正スライダー等をドラッグし続けて
+                    # フルレンダーが追いつかないと、未処理バージョンが際限なく溜まる。ドラッグを
+                    # 止めた後もこの積み残しを最後まで描き切るまで apply_thread が CPU を占有し、
+                    # UI スレッド(クロップ枠の移動処理)が飢餓状態になって「枠が震えて動かせない」
+                    # 状態になる。復帰時間がドラッグ時間に比例するのはこのため。
+                    # 対策として積み残し(ラグ)に上限を設け、上限を超えたら中間を捨てて最新版へ
+                    # 一気に追いつく。追いついている間は従来どおり中間フレームも描くので
+                    # プレビューの滑らかさは保ちつつ、遅延だけを定数フレームに抑える。
+                    if (full_preview_render and drain_all_preview and last_processed_version >= 0
+                            and current_version - last_processed_version <= _PREVIEW_DRAIN_MAX_LAG):
+                        target_version = last_processed_version + 1
+                    else:
+                        target_version = current_version
                     self.draw_image_core(
                         center_pos,
                         fast_display=fast_display,
@@ -3268,6 +3282,7 @@ if __name__ == '__main__':
                     items.append(item)
                 return items
 
+            processing_dialog.set_processing_text("Applying settings to selected images...")
             items = processing_dialog.wait_processing(_job)
             if current_backup is not None:
                 preset_utils.apply_partial_primary_param(self.primary_param, partial_param)

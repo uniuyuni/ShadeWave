@@ -1,22 +1,22 @@
 
 import numpy as np
 import torch
-from diffusers import StableDiffusionXLInpaintPipeline
-from diffusers.utils import load_image
+from diffusers import StableDiffusionInpaintPipeline
 import os
 import logging
 
 import cores.splitimage as splitimage
 import utils.aiutils as aiutils
 
-# hf download RunDiffusion/Juggernaut-XI-v11 --local-dir ./checkpoints/Juggernaut-XI-Lightning
+# git clone hstable-diffusion-v1-5/stable-diffusion-inpainting ./checkpoints/stable-diffusion-inpainting
 
-_MODEL_ID = "./checkpoints/Juggernaut-XI-Lightning"
-_TILE_SIZE = 1024 # Lightning XLは1024x1024のタイルサイズで最適化されているため、分割時のタイルサイズは1024に設定
-_OVERLAP_SIZE = 32*3
-_EXPANSION_SCALE = 2/3
+_MODEL_ID = "./checkpoints/stable-diffusion-inpainting"
+_TILE_SIZE = 512
+_OVERLAP_SIZE = 32
+_EXPANSION_SCALE = 2
+_TENSOR_DTYPE = torch.float32
 
-def _preprocess_numpy_inputs(img_np_f32, mask_np_f32):
+def _preprocess_numpy_inputs(img_np_f32, mask_np_f32, device):
     """
     入力の float32 NumPy 配列を Diffusers が受け付けられる PyTorch Tensor に変換する前処理
     
@@ -24,8 +24,8 @@ def _preprocess_numpy_inputs(img_np_f32, mask_np_f32):
     mask_np_f32: 形状 (H, W) または (H, W, 1)、値の範囲 0.0 ~ 1.0 の float32 ndarray
     """
     # 1. 安全のために 0.0 ~ 1.0 にクリップ
-    img_np = img_np_f32 # np.clip(img_np_f32, 0.0, 1.0)
-    mask_np = mask_np_f32 # np.clip(mask_np_f32, 0.0, 1.0)
+    img_np = np.clip(img_np_f32, 0.0, 1.0)
+    mask_np = np.clip(mask_np_f32, 0.0, 1.0)
     
     # 2. PyTorch Tensor に変換 (この時点では float32 / CPU)
     img_tensor = torch.from_numpy(img_np)
@@ -47,15 +47,15 @@ def _preprocess_numpy_inputs(img_np_f32, mask_np_f32):
     
     # 5. 💡最重要: Diffusers が内部で要求する数値レンジへ変換
     # 画像データ: [0.0, 1.0] -> [-1.0, 1.0]
-    img_tensor = img_tensor * 2.0 - 1.0
+    #img_tensor = img_tensor * 2.0 - 1.0
     
     # マスクデータ: 0.5 をしきい値として完全に 0.0 と 1.0 に二値化
     mask_tensor = torch.where(mask_tensor > 0.5, 1.0, 0.0)
     
     # 6. 8GB M1 Mac 用に float16 へキャスト（デバイスは CPU のまま維持）
     # ※ cpu_offload を有効にしているため、入力テンソルは CPU に置く必要があります
-    img_tensor = img_tensor.to(dtype=torch.float16, device="cpu")
-    mask_tensor = mask_tensor.to(dtype=torch.float16, device="cpu")
+    img_tensor = img_tensor.to(dtype=_TENSOR_DTYPE, device=device)
+    mask_tensor = mask_tensor.to(dtype=_TENSOR_DTYPE, device=device)
     
     return img_tensor, mask_tensor
 
@@ -63,46 +63,46 @@ def setup(device="mps"):
     logging.info(f"Juggernaut XL ({_MODEL_ID}) をロード中...")
     
     # M1 Mac環境の安定性のために float32 を指定
-    pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
+    pipe = StableDiffusionInpaintPipeline.from_pretrained(
         _MODEL_ID,
-        torch_dtype=torch.float32,
+        torch_dtype=_TENSOR_DTYPE,
         use_safetensors=False,
-        variant=None,
+        variant=None if _TENSOR_DTYPE == torch.float32 else "fp16",
         local_files_only=True
     )
 
     # 💡 8GBメモリのための極限最適化
     # パイプラインを細分化して、必要なパーツのみを都度MPS(M1 GPU)に転送
-    pipe.enable_model_cpu_offload(device=torch.device(device))
+    #pipe.enable_model_cpu_offload()
     pipe.enable_attention_slicing()
     #pipe.vae.to(dtype=torch.float32) # VAEだけは安定のためにfloat32化
     pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.to(device=device)
 
-    return pipe
+    return (pipe, device)
 
 def predict(pipe, image, mask):
     # Juggernaut XLのフォトリアリズムを引き出すためのプロンプトのコツ：
     # 独自のネガティブ埋め込み（Embedding）を使わない場合は、標準的なワードを明記します。
-    #prompt = "scenic historic landscape, highly detailed photography, cinematic lighting, 8k resolution, crisp focus"
-    #negative_prompt = "broken, anime, cartoon, graphic, blurry, low quality, distortion, artifacts, worst quality"
     prompt = "clean background, seamless texture, perfect blending, highly detailed scenery, cinematic lighting, crisp focus, photorealistic"
     negative_prompt = "extra objects, text, watermark, artifacts, blurry, low quality, worst quality, distortion, cartoon, anime"
 
-    logging.info("Juggernaut XL でインペイント処理を実行中...")
+    logging.info("SD XL でインペイント処理を実行中...")
 
-    input_image_tensor, input_mask_tensor = _preprocess_numpy_inputs(image, mask)
+    input_image_tensor, input_mask_tensor = _preprocess_numpy_inputs(image, mask, pipe[1])
     
     # 推論の実行
     # Juggernaut XLは通常 30〜40 ステップで本領を発揮しますが、
     # 8GB環境の速度とのトレードオフとして、まずは 25〜30 ステップあたりでテストするのがおすすめです。
-    image = pipe(
+    image = pipe[0](
         prompt=prompt,
         negative_prompt=negative_prompt,
         image=input_image_tensor,
         mask_image=input_mask_tensor,
-        num_inference_steps=6,
-        strength=1.0,            # 1.0に近いほど元のマスク内を完全に描き換えます
-        guidance_scale=1.5,
+        num_inference_steps=20,
+        strength=0.8,            # 1.0に近いほど元のマスク内を完全に描き換えます
+        guidance_scale=7.5,
         output_type="np"
     ).images[0]
 
