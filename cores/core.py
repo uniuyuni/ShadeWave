@@ -2249,12 +2249,21 @@ def apply_zero_wrap(img, param, crop_editing=False):
     return (img, zero_count)
 
 def apply_out_of_range_exposure(img, overexposure, underexposure):
-
+    """
+    img はディスプレイ用ガンマ(CCTF)エンコード後の値。閾値もこのエンコード後空間の値
+    (1/255程度)でそのまま比較すればよい。黒側はRGB各チャンネル一致(AND)判定だと、
+    影のわずかな色ノイズで3チャンネル同時に閾値以下になりにくく検出漏れしやすいため、
+    輝度(知覚重み付き平均)で判定する。
+    """
     if overexposure == True or underexposure == True:
         img = img.copy()
 
         if underexposure == True:
-            mask = (img[..., 0] <= 0.0) & (img[..., 1] <= 0.0) & (img[..., 2] <= 0.0)
+            black_threshold = 1.0 / 255.0
+            luminance = (
+                img[..., 0] * 0.2126 + img[..., 1] * 0.7152 + img[..., 2] * 0.0722
+            )
+            mask = luminance <= black_threshold
             img[mask] = [0.0, 0.0, 1.0]
 
         if overexposure == True:
