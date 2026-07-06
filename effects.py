@@ -1236,10 +1236,12 @@ class PatchmatchInpaintEffect(Effect):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        
+
         self.inpaint_diff_list = []
         self.inpaint_mask_list = []
         self.mask_editor = None
+        # Content-Aware Fill の連続失敗回数。GPU/メモリ逼迫時の一過性失敗を上限までリトライする。
+        self._predict_attempts = 0
 
     def get_param_dict(self, param):
         param_dict = super().get_param_dict(param)
@@ -1299,7 +1301,6 @@ class PatchmatchInpaintEffect(Effect):
 
         if switch_details == True and patchmatch_inpaint == True and patchmatch_inpaint_predict == True and heavy_ai_allowed(param):
             import processing_dialog
-            param['patchmatch_inpaint_predict'] = False
 
             mask = self.mask_editor.get_mask() if self.mask_editor is not None else None
             if mask is not None and logging.getLogger().isEnabledFor(logging.DEBUG):
@@ -1317,38 +1318,95 @@ class PatchmatchInpaintEffect(Effect):
                     np.unique(mask),
                 )
 
-            # Inpaint once for all masks. content_aware_fill is a heavy synchronous
-            # op (plus a one-time slow torch import on first use), so run the whole
-            # thing as a single span under the native processing dialog: the work
-            # runs on a worker thread while the HUD animates and all app input is
-            # blocked for the duration (see processing_dialog.is_active()). Two
-            # separate wait_processing calls (import, then fill) would leave a gap
-            # between them where input briefly unblocks.
-            if mask is not None:
-                def _run_content_aware_fill():
+            # Content-Aware Fill を実行して差分を作る。content_aware_fill は重い同期処理
+            # (初回は torch import も伴う)なので、native processing dialog 配下で worker
+            # スレッドに投げ、HUD を回しつつ全入力をブロックして実行する。
+            #
+            #  A(リトライ安全化): predict フラグは fill と差分作成が成功して初めて消費する。
+            #    失敗時はフラグを残して(再アーム)次パスで自動リトライする。以前は fill 前に
+            #    フラグを False にしていたため、GPU/メモリ逼迫時の一過性失敗で消し込みが
+            #    無言で失われていた(重い時に「ほとんど修復しない」症状の一因)。
+            #  B(GPU逼迫フォールバック): MPS 等での失敗時は device="cpu" で再実行し、GPU が
+            #    他タスクで逼迫している状況でも確実に修復を完了させる(CPUなので遅い)。
+            fill_ok = False
+            if mask is None:
+                # マスクが無ければ予測不能。無限リトライを避けるため成功扱いで消費する。
+                fill_ok = True
+            else:
+                def _run_content_aware_fill(device=None):
                     from cores.content_aware_fill import content_aware_fill
-                    return content_aware_fill(img, mask)
+                    return content_aware_fill(img, mask, device=device)
 
                 processing_dialog.set_processing_text("Content-Aware Fill...")
-                img2 = processing_dialog.wait_processing(_run_content_aware_fill)
+                img2 = None
+                try:
+                    img2 = processing_dialog.wait_processing(_run_content_aware_fill)
+                except Exception:
+                    logging.warning(
+                        "[PM_DIAG] content_aware_fill failed on default device (GPU?); retrying on CPU",
+                        exc_info=True,
+                    )
+                    processing_dialog.set_processing_text("Content-Aware Fill (CPU)...")
+                    try:
+                        img2 = processing_dialog.wait_processing(lambda: _run_content_aware_fill(device="cpu"))
+                    except Exception:
+                        logging.exception(
+                            "[PM_DIAG] content_aware_fill CPU fallback also failed; keeping predict flag for retry"
+                        )
+                        img2 = None
 
-                for inpaint_mask in self.inpaint_mask_list:
-                    proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
+                if img2 is not None:
+                    # [PM_DIAG] 予測時の実値。img と mask/差分座標の解像度整合を確認するためのログ。
+                    logging.warning(
+                        "[PM_DIAG] PREDICT img.shape=%s dtype=%s range=[%.4f,%.4f] | mask.shape=%s sum=%d | "
+                        "original_img_size=%s fidelity=%s | fill.shape=%s | n_masks=%d",
+                        getattr(img, "shape", None), getattr(img, "dtype", None),
+                        float(img.min()) if img is not None else float("nan"),
+                        float(img.max()) if img is not None else float("nan"),
+                        getattr(mask, "shape", None), int((mask > 0).sum()),
+                        param.get('original_img_size'), param.get('image_fidelity'),
+                        getattr(img2, "shape", None), len(self.inpaint_mask_list),
+                    )
 
-                    # 範囲を記録
-                    self.inpaint_diff_list.append(
-                        InpaintDiff(type="image",
-                                    disp_info=(proc_x, proc_y, proc_w, proc_h),
-                                    image=img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]))
+                    for inpaint_mask in self.inpaint_mask_list:
+                        proc_x, proc_y, proc_w, proc_h = inpaint_mask.disp_info
+                        _patch = img2[proc_y:proc_y+proc_h, proc_x:proc_x+proc_w]
+                        logging.warning(
+                            "[PM_DIAG]   diff disp_info=(%s,%s,%s,%s) -> patch.shape=%s (fill in-bounds=%s)",
+                            proc_x, proc_y, proc_w, proc_h, getattr(_patch, "shape", None),
+                            (proc_y + proc_h <= img2.shape[0] and proc_x + proc_w <= img2.shape[1]),
+                        )
 
-            param['patchmatch_inpaint_diff_list'] = self.inpaint_diff_list
-            
-            # マスク消去
-            param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
-            if self.mask_editor:
-                self.mask_editor.clear_mask()
-                self.mask_editor.delay_update_canvas()
-        
+                        # 範囲を記録
+                        self.inpaint_diff_list.append(
+                            InpaintDiff(type="image",
+                                        disp_info=(proc_x, proc_y, proc_w, proc_h),
+                                        image=_patch))
+                    fill_ok = True
+
+            if fill_ok:
+                # 成功: フラグ消費・差分確定・マスク消去。
+                self._predict_attempts = 0
+                param['patchmatch_inpaint_predict'] = False
+                param['patchmatch_inpaint_diff_list'] = self.inpaint_diff_list
+
+                # マスク消去
+                param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
+                if self.mask_editor:
+                    self.mask_editor.clear_mask()
+                    self.mask_editor.delay_update_canvas()
+            else:
+                # 失敗: predict フラグを残して次パスで自動リトライ(マスクも保持)。
+                # 連続失敗が続く場合は無限リトライを避けるため上限で打ち切る。
+                self._predict_attempts = getattr(self, "_predict_attempts", 0) + 1
+                if self._predict_attempts >= 3:
+                    logging.error(
+                        "[PM_DIAG] content_aware_fill failed %d times; giving up this erase (mask kept for manual retry)",
+                        self._predict_attempts,
+                    )
+                    self._predict_attempts = 0
+                    param['patchmatch_inpaint_predict'] = False
+
         param_hash = hash((len(self.inpaint_diff_list)))
         if self.hash != param_hash:
             self.hash = param_hash
@@ -1358,6 +1416,20 @@ class PatchmatchInpaintEffect(Effect):
                 for inpaint_diff in self.inpaint_diff_list:
                     if inpaint_diff.type == "image":
                         cx, cy, cw, ch = inpaint_diff.disp_info
+                        # [PM_DIAG] 適用時の実値。予測時と img 解像度が違うと座標ズレ/形状不一致で
+                        # 差分が正しく貼り戻せず「消えない」ように見える。原因切り分け用の一時ログ。
+                        dst = img2[cy:cy+ch, cx:cx+cw]
+                        if dst.shape[:2] != inpaint_diff.image.shape[:2]:
+                            logging.warning(
+                                "[PM_DIAG] APPLY MISMATCH img.shape=%s disp_info=(%s,%s,%s,%s) "
+                                "dst.shape=%s patch.shape=%s -> diff NOT applied",
+                                img2.shape, cx, cy, cw, ch, dst.shape, inpaint_diff.image.shape,
+                            )
+                        else:
+                            logging.warning(
+                                "[PM_DIAG] APPLY ok img.shape=%s disp_info=(%s,%s,%s,%s)",
+                                img2.shape, cx, cy, cw, ch,
+                            )
                         img2[cy:cy+ch, cx:cx+cw] = inpaint_diff.image
                 self.diff = img2
             else:

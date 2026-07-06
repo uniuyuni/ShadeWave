@@ -534,11 +534,20 @@ class PatchMatchInpainting:
         # 2. Multi-scale PatchMatch texture synthesis -> offset field at working res.
         #    Skip it for flat / low-texture ROIs (e.g. sky): the Laplace fill is already
         #    optimal there, and this keeps the common case fast.
-        if self._is_low_texture(roi_img_w, roi_mask_w):
+        _low_tex = self._is_low_texture(roi_img_w, roi_mask_w)
+        if _low_tex:
             self._log("low-texture ROI -> laplace-only fast path")
             off = None
         else:
             off = self._multiscale_patchmatch(roi_img_w, roi_mask_w, coarse_init)
+
+        # [PM_DIAG] どの経路を通ったか（low_texture=laplaceのみ / PatchMatch）とROIサイズの一時ログ。
+        logging.warning(
+            "[PM_DIAG] fill image=%s mask_hole=%d roi=(%d,%d) work=(%d,%d) scale=%.3f "
+            "low_texture=%s patchmatch=%s",
+            tuple(pkg.image.shape), int(pkg.mask.sum().item()), rh, rw,
+            roi_img_w.shape[-2], roi_img_w.shape[-1], scale, _low_tex, off is not None,
+        )
 
         if off is None:
             # Fallback: flat / low-context region -> Laplace fill only (e.g. sky).

@@ -4128,6 +4128,11 @@ if __name__ == '__main__':
                     editor = getattr(effect, "mask_editor", None) if effect is not None else None
                     if editor is not None:
                         editor.delay_update_canvas()
+                # inpaint/fill 結果の bbox 枠も、現在の disp_info(ズーム/パン)に追従させて再描画する
+                if self.inpaint_edit is not None:
+                    self.inpaint_edit.redraw()
+                if self.patchmatch_inpaint_edit is not None:
+                    self.patchmatch_inpaint_edit.redraw()
             except Exception:
                 logging.exception("failed to refresh mask1 editors")
 
@@ -4827,7 +4832,8 @@ if __name__ == '__main__':
         def _enable_inpaint_edit(self):
             if self.inpaint_edit is None:
                 self.update_preview_texture_size()
-                self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=config.get_preview_texture_size(),
+                self.inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(param=self.primary_param,
+                                    size=config.get_preview_texture_size(),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_inpaint_edit)
                 self._set_diff_list_to_inpaint_edit()
@@ -4866,7 +4872,8 @@ if __name__ == '__main__':
         def _enable_patchmatch_inpaint_edit(self):
             if self.patchmatch_inpaint_edit is None:
                 self.update_preview_texture_size()
-                self.patchmatch_inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(size=config.get_preview_texture_size(),
+                self.patchmatch_inpaint_edit = widgets.bbox_viewer.BoundingBoxViewer(param=self.primary_param,
+                                    size=config.get_preview_texture_size(),
                                     initial_view=params.get_disp_info(self.primary_param),
                                     on_delete=self._on_patchmatch_inpaint_edit)
                 self._set_diff_list_to_patchmatch_inpaint_edit()
