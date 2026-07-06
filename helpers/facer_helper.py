@@ -11,13 +11,19 @@ def create_faces(rgb_float32, device='cpu'):
 
     images = facer.hwc2bchw(torch.from_numpy((small_image * 255).astype(np.uint8))).to(device=device)  # image: 1 x 3 x h x w
 
-    face_detector = facer.face_detector('retinaface/mobilenet', threshold=0.9, device=device)
+    face_detector = facer.face_detector(
+        'retinaface/mobilenet',
+        model_path='checkpoints/facer/mobilenet0.25_Final.pth',
+        threshold=0.9, device=device)
     with torch.inference_mode():
         faces = face_detector(images)
     if faces['rects'].shape[0] == 0:
         return 0
 
-    face_parser = facer.face_parser('farl/lapa/448', device=device)
+    face_parser = facer.face_parser(
+        'farl/lapa/448',
+        model_path='checkpoints/facer/face_parsing.farl.lapa.main_ema_136500_jit191.pt',
+        device=device)
     with torch.inference_mode():
         faces = face_parser(images, faces)
 

@@ -279,3 +279,14 @@ fi
 if [ ! -f "checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf" ]; then
   download_file 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true' 'checkpoints/qwen2.5-1.5b-instruct-q4_k_m.gguf' -C -
 fi
+
+# facer の顔検出・顔パーツ分割モデルを事前ダウンロードしておく（実行時に
+# GitHub から取得する facer 標準動作を避け、checkpoints/facer/ から読み込む。
+# helpers/facer_helper.py 側で model_path として直接参照している）。
+mkdir -p checkpoints/facer
+if [ ! -f "checkpoints/facer/mobilenet0.25_Final.pth" ]; then
+  download_file 'https://github.com/elliottzheng/face-detection/releases/download/0.0.1/mobilenet0.25_Final.pth' 'checkpoints/facer/mobilenet0.25_Final.pth' -C -
+fi
+if [ ! -f "checkpoints/facer/face_parsing.farl.lapa.main_ema_136500_jit191.pt" ]; then
+  download_file 'https://github.com/FacePerceiver/facer/releases/download/models-v1/face_parsing.farl.lapa.main_ema_136500_jit191.pt' 'checkpoints/facer/face_parsing.farl.lapa.main_ema_136500_jit191.pt' -C -
+fi
