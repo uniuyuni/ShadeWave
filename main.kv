@@ -2750,15 +2750,6 @@
                                         on_touch_down: if self.collide_point(*args[1].pos): root.begin_history_effect_ctrl(2, 'lens_simulator')
                                         on_value: root.end_history_effect_ctrl(2, 'lens_simulator')
 
-                                VSeparator:
-
-                                HeadLabel:
-                                    id: switch_filters
-                                    text: ' Filters'
-                                    on_press: root.begin_history_effect_ctrl(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
-                                    on_active: root.apply_effects_lv(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
-                                    on_release: root.end_history_effect_ctrl(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
-
                                 ParamSlider:
                                     id: slider_lensblur_filter
                                     text: "Lensblur"
@@ -2769,6 +2760,27 @@
                                     on_slider: root.apply_effects_lv(1, 'lensblur_filter')
                                     on_before_edit: root.begin_history_effect_ctrl(1, 'lensblur_filter')
                                     on_after_edit: root.end_history_effect_ctrl(1, 'lensblur_filter')
+
+                                ParamBoxLayout:
+                                    ParamLabel:
+                                        text: "Use DepthMap"
+                                    VSpacer:
+                                        size_hint_x: 0.55
+                                    ParamSwitch:
+                                        id: switch_lensblur_use_depthmap
+                                        on_pre_active: root.begin_history_effect_ctrl(1, 'lensblur_filter')
+                                        on_active: root.apply_effects_lv(1, 'lensblur_filter')
+                                        on_post_active: root.end_history_effect_ctrl(1, 'lensblur_filter')
+                                    
+
+                                VSeparator:
+
+                                HeadLabel:
+                                    id: switch_filters
+                                    text: ' Filters'
+                                    on_press: root.begin_history_effect_ctrl(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
+                                    on_active: root.apply_effects_lv(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
+                                    on_release: root.end_history_effect_ctrl(1, ['lensblur_filter', 'scratch', 'frosted_glass', 'mosaic'])
 
                                 ParamSlider:
                                     id: slider_scratch

@@ -3074,23 +3074,44 @@ class LightNoiseReductionEffect(Effect):
 
 class LensblurFilterEffect(Effect):
     param_bindings = (
-        SwitchBinding('switch_filters', True, "switch_filters"),
+        SwitchBinding('switch_lens_simulator', True, "switch_lens_simulator"),
         SliderBinding('lensblur_filter', 0, "slider_lensblur_filter"),
+        SliderBinding('lens_focus_depth', 0.5, "slider_lens_focus_depth"),
+        SwitchBinding('switch_lensblur_use_depthmap', False, "switch_lensblur_use_depthmap")
     )
 
     def make_diff(self, img, param, efconfig):
-        switch_filters = self._get_param(param, 'switch_filters')
+        switch_ls = self._get_param(param, 'switch_lens_simulator')
         lpfr = int(self._get_param(param, 'lensblur_filter'))
-        if switch_filters == False or lpfr == 0:
+        focus_d = float(self._get_param(param, 'lens_focus_depth'))
+        use_depthmap = self._get_param(param, 'switch_lensblur_use_depthmap')
+        if switch_ls == False or lpfr == 0:
             self.diff = None
             self.hash = None
 
         else:
-            param_hash = hash((lpfr))
+            param_hash = hash((lpfr, focus_d, use_depthmap))
             if self.hash != param_hash:
                 self.hash = param_hash
 
-                self.diff = filters.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
+                depth_map = None
+                if use_depthmap:
+                    getter = getattr(efconfig, "get_ai_depth_map", None)
+                    if callable(getter):
+                        try:
+                            depth_map = getter(space="current", allow_compute=False)
+                            w, h = img.shape[1], img.shape[0]
+                            if depth_map.ndim == 3:
+                                depth_map = depth_map[..., 0]
+                            if depth_map.shape[:2] != (h, w):
+                                depth_map = cv2.resize(depth_map, (w, h), interpolation=cv2.INTER_LINEAR)
+
+                        except Exception:
+                            logging.exception("LensblurFilter: AI depth map の取得に失敗")
+                            depth_map = None
+                self.diff = filters.apply_lensblur(img, depth_map, focus_d, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
+
+                #self.diff = filters.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
 
         return self.diff
 
