@@ -5,7 +5,9 @@
 #import <Metal/Metal.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -75,7 +77,16 @@ struct TransformCropToCanvasParams {
     int mesh_enabled;
     int mesh_grid_width;
     int mesh_grid_height;
+    int use_mesh_lut;
+    int use_mesh_dense;
     float inverse_matrix[9];
+};
+
+// area/nearest の mesh bicubic を LUT 化するためのエントリ（整数キャンバス座標ごと）。
+// MSL 側の MeshCubicLut (int4 + float4) と 32 バイトレイアウトを一致させる。
+struct MeshCubicLutEntry {
+    int32_t idx[4];
+    float w[4];
 };
 
 constexpr const char* kMetalSource = R"METAL(
@@ -132,7 +143,14 @@ struct TransformCropToCanvasParams {
     int mesh_enabled;
     int mesh_grid_width;
     int mesh_grid_height;
+    int use_mesh_lut;
+    int use_mesh_dense;
     float inverse_matrix[9];
+};
+
+struct MeshCubicLut {
+    int4 idx;
+    float4 w;
 };
 
 static inline float read_channel(
@@ -229,6 +247,98 @@ static inline float sample_area(
     return weight_sum > 0.0f ? accum / weight_sum : 0.0f;
 }
 
+static inline float3 read_rgb_clamped(
+    const device float* input,
+    constant FitCropToCanvasParams& p,
+    int x,
+    int y
+) {
+    x = clamp(x, 0, p.input_width - 1);
+    y = clamp(y, 0, p.input_height - 1);
+    int base = (y * p.input_width + x) * 3;
+    return float3(input[base + 0], input[base + 1], input[base + 2]);
+}
+
+// RGB(3ch) 用の float3 特化版。1ch はスカラー経路のまま。
+static inline float3 sample_nearest_rgb(
+    const device float* input,
+    constant FitCropToCanvasParams& p,
+    int dx,
+    int dy
+) {
+    int sx = p.source_x + min(int(floor(float(dx) * float(p.source_width) / float(p.draw_width))), p.source_width - 1);
+    int sy = p.source_y + min(int(floor(float(dy) * float(p.source_height) / float(p.draw_height))), p.source_height - 1);
+    return read_rgb_clamped(input, p, sx, sy);
+}
+
+static inline float3 sample_linear_rgb(
+    const device float* input,
+    constant FitCropToCanvasParams& p,
+    int dx,
+    int dy
+) {
+    float sx = (float(dx) + 0.5f) * float(p.source_width) / float(p.draw_width) - 0.5f;
+    float sy = (float(dy) + 0.5f) * float(p.source_height) / float(p.draw_height) - 0.5f;
+    sx += float(p.source_x);
+    sy += float(p.source_y);
+
+    int x0 = int(floor(sx));
+    int y0 = int(floor(sy));
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    float ax = sx - float(x0);
+    float ay = sy - float(y0);
+
+    float3 v00 = read_rgb_clamped(input, p, x0, y0);
+    float3 v10 = read_rgb_clamped(input, p, x1, y0);
+    float3 v01 = read_rgb_clamped(input, p, x0, y1);
+    float3 v11 = read_rgb_clamped(input, p, x1, y1);
+    float3 top = mix(v00, v10, ax);
+    float3 bottom = mix(v01, v11, ax);
+    return mix(top, bottom, ay);
+}
+
+static inline float3 sample_area_rgb(
+    const device float* input,
+    constant FitCropToCanvasParams& p,
+    int dx,
+    int dy
+) {
+    float x0 = float(p.source_x) + float(dx) * float(p.source_width) / float(p.draw_width);
+    float x1 = float(p.source_x) + float(dx + 1) * float(p.source_width) / float(p.draw_width);
+    float y0 = float(p.source_y) + float(dy) * float(p.source_height) / float(p.draw_height);
+    float y1 = float(p.source_y) + float(dy + 1) * float(p.source_height) / float(p.draw_height);
+
+    if (x1 <= x0 || y1 <= y0) {
+        return float3(0.0f);
+    }
+
+    int ix0 = int(floor(x0));
+    int ix1 = int(ceil(x1));
+    int iy0 = int(floor(y0));
+    int iy1 = int(ceil(y1));
+    float3 accum = float3(0.0f);
+    float weight_sum = 0.0f;
+
+    for (int yy = iy0; yy < iy1; ++yy) {
+        float wy = max(0.0f, min(y1, float(yy + 1)) - max(y0, float(yy)));
+        if (wy <= 0.0f) {
+            continue;
+        }
+        for (int xx = ix0; xx < ix1; ++xx) {
+            float wx = max(0.0f, min(x1, float(xx + 1)) - max(x0, float(xx)));
+            float weight = wx * wy;
+            if (weight <= 0.0f) {
+                continue;
+            }
+            accum += read_rgb_clamped(input, p, xx, yy) * weight;
+            weight_sum += weight;
+        }
+    }
+
+    return weight_sum > 0.0f ? accum / weight_sum : float3(0.0f);
+}
+
 kernel void fit_crop_to_canvas_kernel(
     const device float* input [[buffer(0)]],
     device float* output [[buffer(1)]],
@@ -245,6 +355,24 @@ kernel void fit_crop_to_canvas_kernel(
     int dx = x - p.offset_x;
     int dy = y - p.offset_y;
     bool inside = dx >= 0 && dy >= 0 && dx < p.draw_width && dy < p.draw_height;
+
+    if (p.channels == 3) {
+        float3 value = float3(0.0f);
+        if (inside) {
+            if (p.interpolation == 0) {
+                value = sample_nearest_rgb(input, p, dx, dy);
+            } else if (p.interpolation == 1) {
+                value = sample_linear_rgb(input, p, dx, dy);
+            } else {
+                value = sample_area_rgb(input, p, dx, dy);
+            }
+        }
+        output[out_base + 0] = value.x;
+        output[out_base + 1] = value.y;
+        output[out_base + 2] = value.z;
+        return;
+    }
+
     for (int ch = 0; ch < p.channels; ++ch) {
         float value = 0.0f;
         if (inside) {
@@ -260,57 +388,53 @@ kernel void fit_crop_to_canvas_kernel(
     }
 }
 
+// BORDER_REFLECT（端画素複製あり）の定数時間版。周期 2*length に折り畳み、
+// 前半はそのまま・後半は鏡像。旧 while ループと同一の写像（遠距離座標でも O(1)）。
 static inline int reflect_coord(int p, int length) {
     if (length <= 1) {
         return 0;
     }
-    while (p < 0 || p >= length) {
-        if (p < 0) {
-            p = -p - 1;
-        } else {
-            p = 2 * length - p - 1;
-        }
-    }
-    return p;
+    int period = 2 * length;
+    int m = ((p % period) + period) % period;
+    return m < length ? m : period - 1 - m;
 }
 
+// BORDER_REFLECT_101 相当（端画素複製なし、周期 2*(length-1)）の定数時間版。
 static inline float reflect_coord_float(float p, int length) {
     if (length <= 1) {
         return 0.0f;
     }
     float upper = float(length - 1);
-    while (p < 0.0f || p > upper) {
-        if (p < 0.0f) {
-            p = -p;
-        } else {
-            p = 2.0f * upper - p;
-        }
+    float period = 2.0f * upper;
+    float m = fmod(p, period);
+    if (m < 0.0f) {
+        m += period;
     }
-    return p;
+    return m <= upper ? m : period - m;
 }
 
-static inline float read_transform_channel(
+static inline float3 read_transform_rgb(
     const device float* input,
     constant TransformToCanvasParams& p,
     int x,
-    int y,
-    int ch
+    int y
 ) {
     if (p.border_mode == 1) {
         x = reflect_coord(x, p.input_width);
         y = reflect_coord(y, p.input_height);
     } else if (x < 0 || y < 0 || x >= p.input_width || y >= p.input_height) {
-        return 0.0f;
+        return float3(0.0f);
     }
-    return input[(y * p.input_width + x) * p.channels + ch];
+    int base = (y * p.input_width + x) * 3;
+    return float3(input[base + 0], input[base + 1], input[base + 2]);
 }
 
-static inline float sample_transform_linear(
+// pybind 側で RGB(3ch) 必須のため float3 でベクトル化（旧スカラー per-ch ループの3倍のメモリ命令を削減）。
+static inline float3 sample_transform_linear_rgb(
     const device float* input,
     constant TransformToCanvasParams& p,
     float sx,
-    float sy,
-    int ch
+    float sy
 ) {
     int x0 = int(floor(sx));
     int y0 = int(floor(sy));
@@ -319,12 +443,12 @@ static inline float sample_transform_linear(
     float ax = sx - float(x0);
     float ay = sy - float(y0);
 
-    float v00 = read_transform_channel(input, p, x0, y0, ch);
-    float v10 = read_transform_channel(input, p, x1, y0, ch);
-    float v01 = read_transform_channel(input, p, x0, y1, ch);
-    float v11 = read_transform_channel(input, p, x1, y1, ch);
-    float top = mix(v00, v10, ax);
-    float bottom = mix(v01, v11, ax);
+    float3 v00 = read_transform_rgb(input, p, x0, y0);
+    float3 v10 = read_transform_rgb(input, p, x1, y0);
+    float3 v01 = read_transform_rgb(input, p, x0, y1);
+    float3 v11 = read_transform_rgb(input, p, x1, y1);
+    float3 top = mix(v00, v10, ax);
+    float3 bottom = mix(v01, v11, ax);
     return mix(top, bottom, ay);
 }
 
@@ -343,19 +467,20 @@ kernel void transform_to_canvas_kernel(
     float fx = float(x);
     float fy = float(y);
     float denom = p.inverse_matrix[6] * fx + p.inverse_matrix[7] * fy + p.inverse_matrix[8];
-    int out_base = (y * p.canvas_width + x) * p.channels;
+    int out_base = (y * p.canvas_width + x) * 3;
     if (fabs(denom) < 1.0e-12f) {
-        for (int ch = 0; ch < p.channels; ++ch) {
-            output[out_base + ch] = 0.0f;
-        }
+        output[out_base + 0] = 0.0f;
+        output[out_base + 1] = 0.0f;
+        output[out_base + 2] = 0.0f;
         return;
     }
 
     float sx = (p.inverse_matrix[0] * fx + p.inverse_matrix[1] * fy + p.inverse_matrix[2]) / denom;
     float sy = (p.inverse_matrix[3] * fx + p.inverse_matrix[4] * fy + p.inverse_matrix[5]) / denom;
-    for (int ch = 0; ch < p.channels; ++ch) {
-        output[out_base + ch] = sample_transform_linear(input, p, sx, sy, ch);
-    }
+    float3 value = sample_transform_linear_rgb(input, p, sx, sy);
+    output[out_base + 0] = value.x;
+    output[out_base + 1] = value.y;
+    output[out_base + 2] = value.z;
 }
 
 static inline float read_transform_crop_channel(
@@ -537,21 +662,14 @@ static inline float sample_mesh_map_cubic(
     return weight_sum != 0.0f ? accum / weight_sum : mesh_map[fallback_y * p.mesh_grid_width + fallback_x];
 }
 
-static inline float3 sample_transform_crop_at_canvas_point(
+// mesh 変位適用後の transform 座標から入力画像をサンプルする共通部
+// （行列逆変換 + レンズ + bilinear）。
+static inline float3 sample_transform_crop_project(
     const device float* input,
     constant TransformCropToCanvasParams& p,
-    const device float* mesh_map_x,
-    const device float* mesh_map_y,
     float tx,
     float ty
 ) {
-    if (p.mesh_enabled) {
-        float mapped_tx = sample_mesh_map_cubic(mesh_map_x, p, tx, ty);
-        float mapped_ty = sample_mesh_map_cubic(mesh_map_y, p, tx, ty);
-        tx = mapped_tx;
-        ty = mapped_ty;
-    }
-
     float denom = p.inverse_matrix[6] * tx + p.inverse_matrix[7] * ty + p.inverse_matrix[8];
     if (fabs(denom) < 1.0e-12f) {
         return float3(0.0f);
@@ -572,11 +690,84 @@ static inline float3 sample_transform_crop_at_canvas_point(
     return sample_transform_crop_linear_rgb(input, p, sx, sy);
 }
 
+static inline float3 sample_transform_crop_at_canvas_point(
+    const device float* input,
+    constant TransformCropToCanvasParams& p,
+    const device float* mesh_map_x,
+    const device float* mesh_map_y,
+    float tx,
+    float ty
+) {
+    if (p.mesh_enabled) {
+        float mapped_tx = sample_mesh_map_cubic(mesh_map_x, p, tx, ty);
+        float mapped_ty = sample_mesh_map_cubic(mesh_map_y, p, tx, ty);
+        tx = mapped_tx;
+        ty = mapped_ty;
+    }
+    return sample_transform_crop_project(input, p, tx, ty);
+}
+
+// LUT 化した bicubic mesh 参照。整数キャンバス座標では sample_mesh_map_cubic と
+// 同一式（重み・clamp 済みインデックスを C++ 側で事前計算）になるため、
+// area/nearest 経路の出力は従来と float 丸め誤差内で一致する。
+// x/y 両マップで重みを共有し、旧実装の 2×(16 cubic_weight + 除算) をタップ毎に削減。
+static inline float2 mesh_lut_lookup(
+    const device float* mesh_map_x,
+    const device float* mesh_map_y,
+    constant TransformCropToCanvasParams& p,
+    MeshCubicLut ex,
+    MeshCubicLut ey
+) {
+    float accum_x = 0.0f;
+    float accum_y = 0.0f;
+    float weight_sum = 0.0f;
+    for (int j = 0; j < 4; ++j) {
+        int row = ey.idx[j] * p.mesh_grid_width;
+        float wy = ey.w[j];
+        for (int i = 0; i < 4; ++i) {
+            float weight = ex.w[i] * wy;
+            int off = row + ex.idx[i];
+            accum_x += mesh_map_x[off] * weight;
+            accum_y += mesh_map_y[off] * weight;
+            weight_sum += weight;
+        }
+    }
+    if (weight_sum != 0.0f) {
+        return float2(accum_x / weight_sum, accum_y / weight_sum);
+    }
+    // 旧実装の fallback (clamp(ix) = k=0 のインデックス) と同じ
+    int off = ey.idx.y * p.mesh_grid_width + ex.idx.y;
+    return float2(mesh_map_x[off], mesh_map_y[off]);
+}
+
+static inline float3 sample_transform_crop_at_lut_point(
+    const device float* input,
+    constant TransformCropToCanvasParams& p,
+    const device float* mesh_map_x,
+    const device float* mesh_map_y,
+    const device MeshCubicLut* mesh_lut_x,
+    const device MeshCubicLut* mesh_lut_y,
+    int txi,
+    int tyi
+) {
+    float tx = float(txi);
+    float ty = float(tyi);
+    if (p.mesh_enabled) {
+        float2 mapped = mesh_lut_lookup(mesh_map_x, mesh_map_y, p, mesh_lut_x[txi], mesh_lut_y[tyi]);
+        tx = mapped.x;
+        ty = mapped.y;
+    }
+    return sample_transform_crop_project(input, p, tx, ty);
+}
+
 static inline float3 sample_transform_crop_area_rgb(
     const device float* input,
     constant TransformCropToCanvasParams& p,
     const device float* mesh_map_x,
     const device float* mesh_map_y,
+    const device MeshCubicLut* mesh_lut_x,
+    const device MeshCubicLut* mesh_lut_y,
+    const device float2* mesh_dense,
     int dx,
     int dy
 ) {
@@ -594,24 +785,67 @@ static inline float3 sample_transform_crop_area_rgb(
     int iy1 = int(ceil(ty1));
     float3 accum = float3(0.0f);
     float weight_sum = 0.0f;
+    // タップは整数キャンバス座標のみ → mesh は dense(事前 bake) / LUT 経路が使える。
+    bool use_dense = p.mesh_enabled && p.use_mesh_dense;
+    bool use_lut = p.mesh_enabled && p.use_mesh_lut;
 
     for (int yy = iy0; yy < iy1; ++yy) {
         float wy = max(0.0f, min(ty1, float(yy + 1)) - max(ty0, float(yy)));
         if (wy <= 0.0f) {
             continue;
         }
+        // y 側 LUT エントリは行内で不変なのでホイスト。
+        MeshCubicLut ey = { int4(0), float4(0.0f) };
+        if (use_lut && !use_dense) {
+            ey = mesh_lut_y[yy];
+        }
+        int dense_row = (yy - p.source_y) * p.source_width - p.source_x;
         for (int xx = ix0; xx < ix1; ++xx) {
             float wx = max(0.0f, min(tx1, float(xx + 1)) - max(tx0, float(xx)));
             float weight = wx * wy;
             if (weight <= 0.0f) {
                 continue;
             }
-            accum += sample_transform_crop_at_canvas_point(input, p, mesh_map_x, mesh_map_y, float(xx), float(yy)) * weight;
+            float3 value;
+            if (use_dense) {
+                // タップ毎の 32 ロード + LUT 参照を bake 済み float2 1 ロードに置換。
+                float2 mapped = mesh_dense[dense_row + xx];
+                value = sample_transform_crop_project(input, p, mapped.x, mapped.y);
+            } else if (use_lut) {
+                float2 mapped = mesh_lut_lookup(mesh_map_x, mesh_map_y, p, mesh_lut_x[xx], ey);
+                value = sample_transform_crop_project(input, p, mapped.x, mapped.y);
+            } else {
+                value = sample_transform_crop_at_canvas_point(input, p, mesh_map_x, mesh_map_y, float(xx), float(yy));
+            }
+            accum += value * weight;
             weight_sum += weight;
         }
     }
 
     return weight_sum > 0.0f ? accum / weight_sum : float3(0.0f);
+}
+
+// area/nearest 用の mesh 変位密マップ bake。整数キャンバス座標で mesh_lut_lookup と
+// 同一式を評価するため、メインカーネルの LUT 経路とビット一致する。
+// 対象は source_rect 領域のみ（area/nearest のタップは必ずこの範囲内）。
+kernel void bake_mesh_dense_kernel(
+    const device float* mesh_map_x [[buffer(0)]],
+    const device float* mesh_map_y [[buffer(1)]],
+    const device MeshCubicLut* mesh_lut_x [[buffer(2)]],
+    const device MeshCubicLut* mesh_lut_y [[buffer(3)]],
+    device float2* dense [[buffer(4)]],
+    constant TransformCropToCanvasParams& p [[buffer(5)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    int rx = int(gid.x);
+    int ry = int(gid.y);
+    if (rx >= p.source_width || ry >= p.source_height) {
+        return;
+    }
+    int tx = p.source_x + rx;
+    int ty = p.source_y + ry;
+    dense[ry * p.source_width + rx] =
+        mesh_lut_lookup(mesh_map_x, mesh_map_y, p, mesh_lut_x[tx], mesh_lut_y[ty]);
 }
 
 kernel void transform_crop_to_canvas_kernel(
@@ -620,6 +854,9 @@ kernel void transform_crop_to_canvas_kernel(
     constant TransformCropToCanvasParams& p [[buffer(2)]],
     const device float* mesh_map_x [[buffer(3)]],
     const device float* mesh_map_y [[buffer(4)]],
+    const device MeshCubicLut* mesh_lut_x [[buffer(5)]],
+    const device MeshCubicLut* mesh_lut_y [[buffer(6)]],
+    const device float2* mesh_dense [[buffer(7)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     int x = int(gid.x);
@@ -641,22 +878,35 @@ kernel void transform_crop_to_canvas_kernel(
 
     float3 value;
     if (p.interpolation == 2) {
-        value = sample_transform_crop_area_rgb(input, p, mesh_map_x, mesh_map_y, dx, dy);
+        value = sample_transform_crop_area_rgb(input, p, mesh_map_x, mesh_map_y, mesh_lut_x, mesh_lut_y, mesh_dense, dx, dy);
         output[out_base + 0] = value.x;
         output[out_base + 1] = value.y;
         output[out_base + 2] = value.z;
         return;
     }
 
-    float tx;
-    float ty;
     if (p.interpolation == 0) {
-        tx = float(p.source_x + min(int(floor(float(dx) * float(p.source_width) / float(p.draw_width))), p.source_width - 1));
-        ty = float(p.source_y + min(int(floor(float(dy) * float(p.source_height) / float(p.draw_height))), p.source_height - 1));
-    } else {
-        tx = float(p.source_x) + (float(dx) + 0.5f) * float(p.source_width) / float(p.draw_width) - 0.5f;
-        ty = float(p.source_y) + (float(dy) + 0.5f) * float(p.source_height) / float(p.draw_height) - 0.5f;
+        // nearest もタップは整数キャンバス座標 → dense / LUT 経路。
+        int txi = p.source_x + min(int(floor(float(dx) * float(p.source_width) / float(p.draw_width))), p.source_width - 1);
+        int tyi = p.source_y + min(int(floor(float(dy) * float(p.source_height) / float(p.draw_height))), p.source_height - 1);
+        if (p.mesh_enabled && p.use_mesh_dense) {
+            float2 mapped = mesh_dense[(tyi - p.source_y) * p.source_width + (txi - p.source_x)];
+            value = sample_transform_crop_project(input, p, mapped.x, mapped.y);
+        } else if (p.mesh_enabled && p.use_mesh_lut) {
+            value = sample_transform_crop_at_lut_point(input, p, mesh_map_x, mesh_map_y, mesh_lut_x, mesh_lut_y, txi, tyi);
+        } else {
+            value = sample_transform_crop_at_canvas_point(input, p, mesh_map_x, mesh_map_y, float(txi), float(tyi));
+        }
+        output[out_base + 0] = value.x;
+        output[out_base + 1] = value.y;
+        output[out_base + 2] = value.z;
+        return;
     }
+
+    // linear はタップが小数座標のため従来の bicubic 直接評価を維持
+    //（LUT を bilinear 参照すると reference と一致しなくなる）。
+    float tx = float(p.source_x) + (float(dx) + 0.5f) * float(p.source_width) / float(p.draw_width) - 0.5f;
+    float ty = float(p.source_y) + (float(dy) + 0.5f) * float(p.source_height) / float(p.draw_height) - 0.5f;
     value = sample_transform_crop_at_canvas_point(input, p, mesh_map_x, mesh_map_y, tx, ty);
     output[out_base + 0] = value.x;
     output[out_base + 1] = value.y;
@@ -685,6 +935,14 @@ struct MetalPipelines {
     id<MTLComputePipelineState> fit_crop_to_canvas;
     id<MTLComputePipelineState> transform_to_canvas;
     id<MTLComputePipelineState> transform_crop_to_canvas;
+    id<MTLComputePipelineState> bake_mesh_dense;
+    // mesh 変位密マップのフレーム間キャッシュ（GPU 常駐、CPU から触らない）。
+    // キーは coarse map バイト列 + grid/transform 寸法 + region の FNV-1a。
+    // ズーム/パンや crop 枠調整では mesh が不変なため bake を再利用できる。
+    std::mutex mesh_dense_mutex;
+    id<MTLBuffer> mesh_dense_buffer;
+    uint64_t mesh_dense_key;
+    size_t mesh_dense_bytes;
 };
 
 MetalPipelines& metal_pipelines() {
@@ -718,6 +976,7 @@ MetalPipelines& metal_pipelines() {
                 state.fit_crop_to_canvas = make_pipeline(state.device, state.library, @"fit_crop_to_canvas_kernel");
                 state.transform_to_canvas = make_pipeline(state.device, state.library, @"transform_to_canvas_kernel");
                 state.transform_crop_to_canvas = make_pipeline(state.device, state.library, @"transform_crop_to_canvas_kernel");
+                state.bake_mesh_dense = make_pipeline(state.device, state.library, @"bake_mesh_dense_kernel");
             } catch (const std::exception& exc) {
                 init_error = exc.what();
             }
@@ -843,6 +1102,66 @@ bool invert_3x3(const double m[9], float out[9]) {
     return true;
 }
 
+// mesh 変位密マップ bake の有効化フラグ。既定 off（メモリ使用と挙動変化を
+// 段階導入するため）。PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE=1 で有効。
+bool mesh_dense_enabled() {
+    const char* value = std::getenv("PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE");
+    if (!value) {
+        return false;
+    }
+    std::string v(value);
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
+    return v == "1" || v == "true" || v == "on" || v == "yes";
+}
+
+// 密マップの上限バイト数。超える region では LUT 経路へフォールバック。
+size_t mesh_dense_budget_bytes() {
+    const char* value = std::getenv("PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE_BUDGET_MB");
+    long mb = value ? std::strtol(value, nullptr, 10) : 256;
+    if (mb <= 0) {
+        mb = 256;
+    }
+    return static_cast<size_t>(mb) * 1024 * 1024;
+}
+
+uint64_t fnv1a_hash(const void* data, size_t length, uint64_t hash = 1469598103934665603ULL) {
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < length; ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+// MSL 側 cubic_weight (Keys, a=-0.75) と同一式のホスト版。
+// LUT に事前計算する重みがカーネル内評価と一致するよう式の形を揃える。
+float cubic_weight_host(float x) {
+    constexpr float a = -0.75f;
+    x = std::fabs(x);
+    if (x <= 1.0f) {
+        return (a + 2.0f) * x * x * x - (a + 3.0f) * x * x + 1.0f;
+    }
+    if (x < 2.0f) {
+        return a * x * x * x - 5.0f * a * x * x + 8.0f * a * x - 4.0f * a;
+    }
+    return 0.0f;
+}
+
+// 整数キャンバス座標ごとの bicubic mesh 参照 LUT（clamp 済みインデックス + 重み）。
+// gx = (t+0.5)*grid/extent - 0.5 は sample_mesh_map_cubic と同一。
+std::vector<MeshCubicLutEntry> build_mesh_cubic_lut(int extent, int grid, int transform_extent) {
+    std::vector<MeshCubicLutEntry> lut(static_cast<size_t>(std::max(1, extent)));
+    for (int t = 0; t < extent; ++t) {
+        float g = (static_cast<float>(t) + 0.5f) * static_cast<float>(grid) / static_cast<float>(transform_extent) - 0.5f;
+        int i0 = static_cast<int>(std::floor(g));
+        for (int k = -1; k <= 2; ++k) {
+            lut[static_cast<size_t>(t)].idx[k + 1] = std::min(std::max(i0 + k, 0), grid - 1);
+            lut[static_cast<size_t>(t)].w[k + 1] = cubic_weight_host(g - static_cast<float>(i0 + k));
+        }
+    }
+    return lut;
+}
+
 std::vector<double> matrix_to_3x3(const py::object& matrix) {
     py::array_t<double, py::array::c_style | py::array::forcecast> arr = py::cast<py::array_t<double, py::array::c_style | py::array::forcecast>>(matrix);
     py::buffer_info info = arr.request();
@@ -942,13 +1261,13 @@ py::array_t<float> fit_crop_to_canvas(
             offset_y,
             interpolation_code(interpolation),
         };
-        id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
 
         id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
         [encoder setBuffer:input_buffer.buffer offset:input_buffer.offset atIndex:0];
         [encoder setBuffer:output_buffer.buffer offset:output_buffer.offset atIndex:1];
-        [encoder setBuffer:params_buffer offset:0 atIndex:2];
+        // params は 4KB 未満なので毎呼び出しの MTLBuffer 確保を避けて setBytes で渡す。
+        [encoder setBytes:&params length:sizeof(params) atIndex:2];
         dispatch_2d(encoder, pipelines.fit_crop_to_canvas, canvas_width, canvas_height);
         [encoder endEncoding];
 
@@ -1026,13 +1345,13 @@ py::array_t<float> transform_to_canvas(
         for (int i = 0; i < 9; ++i) {
             params.inverse_matrix[i] = inverse_matrix[i];
         }
-        id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
 
         id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
         [encoder setBuffer:input_buffer.buffer offset:input_buffer.offset atIndex:0];
         [encoder setBuffer:output_buffer.buffer offset:output_buffer.offset atIndex:1];
-        [encoder setBuffer:params_buffer offset:0 atIndex:2];
+        // params は 4KB 未満なので毎呼び出しの MTLBuffer 確保を避けて setBytes で渡す。
+        [encoder setBytes:&params length:sizeof(params) atIndex:2];
         dispatch_2d(encoder, pipelines.transform_to_canvas, canvas_width, canvas_height);
         [encoder endEncoding];
 
@@ -1192,15 +1511,92 @@ py::array_t<float> transform_crop_to_canvas(
         for (int i = 0; i < 9; ++i) {
             params.inverse_matrix[i] = inverse_matrix[i];
         }
-        id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
+
+        // area/nearest のタップは整数キャンバス座標なので、bicubic mesh 参照の
+        // インデックス・重みを軸ごとに事前計算してカーネルの 2×16 cubic_weight
+        // 評価を LUT 読みに置き換える（linear は小数タップのため対象外）。
+        // 8192px でも軸あたり 256KB 程度、生成コストは数十 µs。
+        std::vector<MeshCubicLutEntry> mesh_lut_x_host(1);
+        std::vector<MeshCubicLutEntry> mesh_lut_y_host(1);
+        bool use_mesh_lut = mesh_enabled && params.interpolation != INTERPOLATION_LINEAR;
+        if (use_mesh_lut) {
+            mesh_lut_x_host = build_mesh_cubic_lut(transform_width, mesh_grid_width, transform_width);
+            mesh_lut_y_host = build_mesh_cubic_lut(transform_height, mesh_grid_height, transform_height);
+        }
+        params.use_mesh_lut = use_mesh_lut ? 1 : 0;
+        BufferBinding mesh_lut_x_buffer = make_buffer_for_input(
+            pipelines.device, mesh_lut_x_host.data(), mesh_lut_x_host.size() * sizeof(MeshCubicLutEntry));
+        BufferBinding mesh_lut_y_buffer = make_buffer_for_input(
+            pipelines.device, mesh_lut_y_host.data(), mesh_lut_y_host.size() * sizeof(MeshCubicLutEntry));
+
+        // 密マップ bake（env ゲート・バジェット制限付き）。coarse map と region が
+        // 前回と同じなら GPU 常駐バッファを再利用して bake をスキップする
+        // （ズーム/パン等で mesh 不変のまま fused が再実行されるケースが対象）。
+        // キャッシュバッファは commit〜完了まで差し替えられないよう mutex を保持する。
+        std::unique_lock<std::mutex> dense_lock(pipelines.mesh_dense_mutex, std::defer_lock);
+        bool use_mesh_dense = false;
+        bool dense_needs_bake = false;
+        id<MTLBuffer> dense_buffer = nil;
+        if (use_mesh_lut && mesh_dense_enabled()) {
+            const size_t dense_bytes =
+                static_cast<size_t>(source_width) * static_cast<size_t>(source_height) * sizeof(float) * 2;
+            if (dense_bytes <= mesh_dense_budget_bytes()) {
+                uint64_t key = fnv1a_hash(mesh_map_x_info->ptr, mesh_bytes);
+                key = fnv1a_hash(mesh_map_y_info->ptr, mesh_bytes, key);
+                const int32_t key_dims[8] = {
+                    mesh_grid_width, mesh_grid_height, transform_width, transform_height,
+                    source_x, source_y, source_width, source_height,
+                };
+                key = fnv1a_hash(key_dims, sizeof(key_dims), key);
+
+                dense_lock.lock();
+                if (pipelines.mesh_dense_buffer != nil && pipelines.mesh_dense_key == key) {
+                    dense_buffer = pipelines.mesh_dense_buffer;
+                } else {
+                    if (pipelines.mesh_dense_buffer == nil || pipelines.mesh_dense_bytes != dense_bytes) {
+                        pipelines.mesh_dense_buffer =
+                            [pipelines.device newBufferWithLength:dense_bytes options:MTLResourceStorageModePrivate];
+                        pipelines.mesh_dense_bytes = dense_bytes;
+                    }
+                    if (pipelines.mesh_dense_buffer != nil) {
+                        pipelines.mesh_dense_key = key;
+                        dense_buffer = pipelines.mesh_dense_buffer;
+                        dense_needs_bake = true;
+                    }
+                }
+                use_mesh_dense = dense_buffer != nil;
+                if (!use_mesh_dense) {
+                    dense_lock.unlock();
+                }
+            }
+        }
+        params.use_mesh_dense = use_mesh_dense ? 1 : 0;
 
         id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
+        if (dense_needs_bake) {
+            id<MTLComputeCommandEncoder> bake_encoder = [command_buffer computeCommandEncoder];
+            [bake_encoder setBuffer:mesh_x_buffer.buffer offset:mesh_x_buffer.offset atIndex:0];
+            [bake_encoder setBuffer:mesh_y_buffer.buffer offset:mesh_y_buffer.offset atIndex:1];
+            [bake_encoder setBuffer:mesh_lut_x_buffer.buffer offset:mesh_lut_x_buffer.offset atIndex:2];
+            [bake_encoder setBuffer:mesh_lut_y_buffer.buffer offset:mesh_lut_y_buffer.offset atIndex:3];
+            [bake_encoder setBuffer:dense_buffer offset:0 atIndex:4];
+            [bake_encoder setBytes:&params length:sizeof(params) atIndex:5];
+            dispatch_2d(bake_encoder, pipelines.bake_mesh_dense, source_width, source_height);
+            [bake_encoder endEncoding];
+        }
         id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
         [encoder setBuffer:input_buffer.buffer offset:input_buffer.offset atIndex:0];
         [encoder setBuffer:output_buffer.buffer offset:output_buffer.offset atIndex:1];
-        [encoder setBuffer:params_buffer offset:0 atIndex:2];
+        // params は 4KB 未満なので毎呼び出しの MTLBuffer 確保を避けて setBytes で渡す。
+        [encoder setBytes:&params length:sizeof(params) atIndex:2];
         [encoder setBuffer:mesh_x_buffer.buffer offset:mesh_x_buffer.offset atIndex:3];
         [encoder setBuffer:mesh_y_buffer.buffer offset:mesh_y_buffer.offset atIndex:4];
+        [encoder setBuffer:mesh_lut_x_buffer.buffer offset:mesh_lut_x_buffer.offset atIndex:5];
+        [encoder setBuffer:mesh_lut_y_buffer.buffer offset:mesh_lut_y_buffer.offset atIndex:6];
+        // 未使用時は既存バッファを流用（use_mesh_dense=0 のときカーネルは参照しない）。
+        [encoder setBuffer:(use_mesh_dense ? dense_buffer : mesh_x_buffer.buffer)
+                    offset:(use_mesh_dense ? 0 : mesh_x_buffer.offset)
+                   atIndex:7];
         dispatch_2d(encoder, pipelines.transform_crop_to_canvas, canvas_width, canvas_height);
         [encoder endEncoding];
 

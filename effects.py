@@ -96,6 +96,15 @@ def _geometry_preview_interpolation(crop_editing):
     return "linear"
 
 
+def _geometry_deferred_cache_enabled():
+    """deferred preview transform のフレーム間キャッシュを有効にするか。
+
+    キルスイッチ: PLATYPUS_GEOMETRY_DEFERRED_CACHE=0 で常に再構築（旧挙動）。
+    """
+    value = os.getenv("PLATYPUS_GEOMETRY_DEFERRED_CACHE", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def _geometry_signed_area(pts):
     """多角形 (N,2) の符号付き面積 (shoelace)。"""
     x = pts[:, 0]
@@ -1886,9 +1895,13 @@ class GeometryEffect(Effect):
 
     def __init__(self, geometry_callback=None, **kwargs):
         super().__init__(**kwargs)
-        
+
         self.geometry_editor = None
         self.geometry_editor_callback = geometry_callback
+        # deferred preview transform のフレーム間キャッシュ (build 結果)。
+        # pipeline_lv0 は毎フレーム make_diff を呼ぶため、ガード無しだと
+        # 無関係なスライダー操作中も MLS coarse map (~70ms@8K) を再構築してしまう。
+        self._deferred_preview_cache = None
 
     def _editor_update_callback(self, type, widget):
         if self.geometry_editor_callback:
@@ -2238,21 +2251,62 @@ class GeometryEffect(Effect):
         )
         if deferred_geometry_supported:
             try:
-                transform_matrix, size, transform_type, mesh_map_x, mesh_map_y = self._build_deferred_preview_transform(
-                    img,
-                    param,
-                    ang,
-                    ang2,
-                    flp,
-                    switch_distortion_correction,
-                    correct_horizontal,
-                    correct_vertical,
-                    focal_length,
-                    four_points,
-                    reference_lines,
-                    mesh_size,
-                    control_points,
+                # pipeline_lv0 は毎フレーム make_diff を呼ぶため、build（特に
+                # calculate_mesh_mls_coarse_map ~70ms@8K）を param 不変時に
+                # スキップするフレーム間キャッシュ。キーには param_hash に加え
+                # img.shape（size = max(h,w) を決める）と original_img_size
+                # （param_to_tcg_info 経由で four_points/lines/mesh の座標変換に
+                # 影響）を含める。disp_info は tcg_to_ref_image が
+                # apply_disp_info=False で呼ばれるため意図的にキーへ入れない
+                # （ズーム/パンで無効化しないことが狙い）。
+                cache_key = (
+                    param_hash,
+                    img.shape,
+                    tuple(param.get('original_img_size') or ()),
                 )
+                cache = self._deferred_preview_cache
+                if (
+                    _geometry_deferred_cache_enabled()
+                    and cache is not None
+                    and cache['key'] == cache_key
+                ):
+                    # build は param['matrix'] を変異させるため、ヒット時も
+                    # build 後と同じ値へ復元して他の消費者から見た状態を揃える。
+                    params.set_matrix(param, cache['param_matrix'])
+                    transform_matrix = cache['transform_matrix']
+                    size = cache['size']
+                    transform_type = cache['transform_type']
+                    mesh_map_x = cache['mesh_map_x']
+                    mesh_map_y = cache['mesh_map_y']
+                else:
+                    transform_matrix, size, transform_type, mesh_map_x, mesh_map_y = self._build_deferred_preview_transform(
+                        img,
+                        param,
+                        ang,
+                        ang2,
+                        flp,
+                        switch_distortion_correction,
+                        correct_horizontal,
+                        correct_vertical,
+                        focal_length,
+                        four_points,
+                        reference_lines,
+                        mesh_size,
+                        control_points,
+                    )
+                    matrix_after_build = param.get('matrix')
+                    self._deferred_preview_cache = {
+                        'key': cache_key,
+                        'param_matrix': None if matrix_after_build is None else np.array(matrix_after_build, copy=True),
+                        'transform_matrix': transform_matrix,
+                        'size': size,
+                        'transform_type': transform_type,
+                        # mesh 配列は参照共有でキャッシュ。ヒット時も同一オブジェクト
+                        # を渡すことでベースポインタが安定し Metal 側の zero-copy
+                        # (newBufferWithBytesNoCopy) が効き続ける。
+                        'mesh_map_x': mesh_map_x,
+                        'mesh_map_y': mesh_map_y,
+                    }
                 efconfig.deferred_geometry_transform = {
                     "matrix": transform_matrix,
                     "width": size,
@@ -2273,6 +2327,7 @@ class GeometryEffect(Effect):
             except Exception:
                 logging.exception("deferred geometry transform build failed; falling back to two-pass geometry")
                 efconfig.deferred_geometry_transform = None
+                self._deferred_preview_cache = None
                 self.hash = None
 
         if self.hash != param_hash:

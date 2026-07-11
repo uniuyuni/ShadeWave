@@ -21,6 +21,8 @@ def main():
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--grid-step", type=int, default=64)
+    # settle フレーム(area)が最重量なのに linear 固定だったため選択可能にする。
+    parser.add_argument("--interpolation", choices=["linear", "area", "nearest"], default="linear")
     args = parser.parse_args()
 
     os.environ["PLATYPUS_IMAGE_TRANSFORM_BACKEND"] = "metal"
@@ -81,7 +83,7 @@ def main():
         offset_x=offset_x,
         offset_y=offset_y,
         transform_type=transform_type,
-        interpolation="linear",
+        interpolation=args.interpolation,
         border_mode="constant",
         mesh_map_x=mesh_map_x,
         mesh_map_y=mesh_map_y,
@@ -127,7 +129,7 @@ def main():
             draw,
             offset_x,
             offset_y,
-            "linear",
+            args.interpolation,
         )
         two_pass_times.append((time.perf_counter() - start) * 1000.0)
 

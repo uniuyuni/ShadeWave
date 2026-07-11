@@ -339,6 +339,205 @@ class ImageTransformMetalBackendTest(unittest.TestCase):
             else:
                 os.environ["PLATYPUS_IMAGE_TRANSFORM_BACKEND"] = previous
 
+    def test_metal_transform_crop_mesh_integer_taps_match_per_tap_bicubic_replica(self):
+        """area/nearest の LUT 経路が旧 per-tap bicubic 式と一致することの厳密検証。
+
+        タップが整数キャンバス座標である area/nearest では、LUT 化した bicubic
+        mesh 参照は旧実装 (sample_mesh_map_cubic をタップ毎に評価) と同一式のため
+        float 丸め誤差 (atol~1e-4) 内で一致しなければならない。
+        """
+        from effect_backends import image_transform_adapter
+
+        previous = os.environ.get("PLATYPUS_IMAGE_TRANSFORM_BACKEND")
+        os.environ["PLATYPUS_IMAGE_TRANSFORM_BACKEND"] = "metal"
+        try:
+            status = image_transform_adapter.backend_status()
+            if status.backend != "effect_backends._image_transform_metal":
+                self.skipTest(f"Metal backend is unavailable: {status.detail}")
+
+            rng = np.random.default_rng(42)
+            th, tw = 80, 120
+            image = rng.random((th, tw, 3)).astype(np.float32)
+            grid_w, grid_h = 5, 4
+            coarse_x = np.linspace(0, tw - 1, grid_w, dtype=np.float32)
+            coarse_y = np.linspace(0, th - 1, grid_h, dtype=np.float32)
+            mesh_x, mesh_y = np.meshgrid(coarse_x, coarse_y)
+            mesh_x = (mesh_x + 3.0 * np.sin(mesh_y / (th - 1) * np.pi)).astype(np.float32)
+            mesh_y = (mesh_y + 2.0 * np.sin(mesh_x / (tw - 1) * np.pi)).astype(np.float32)
+
+            def cubic_w(x):
+                a = -0.75
+                x = abs(x)
+                if x <= 1.0:
+                    return (a + 2.0) * x**3 - (a + 3.0) * x**2 + 1.0
+                if x < 2.0:
+                    return a * x**3 - 5.0 * a * x**2 + 8.0 * a * x - 4.0 * a
+                return 0.0
+
+            def mesh_cubic(mesh, tx, ty):
+                gx = (tx + 0.5) * grid_w / tw - 0.5
+                gy = (ty + 0.5) * grid_h / th - 0.5
+                ix = int(np.floor(gx))
+                iy = int(np.floor(gy))
+                acc = 0.0
+                ws = 0.0
+                for yy in range(-1, 3):
+                    sy = min(max(iy + yy, 0), grid_h - 1)
+                    wy = cubic_w(gy - (iy + yy))
+                    for xx in range(-1, 3):
+                        sx = min(max(ix + xx, 0), grid_w - 1)
+                        wx = cubic_w(gx - (ix + xx))
+                        w = wx * wy
+                        acc += float(mesh[sy, sx]) * w
+                        ws += w
+                if ws != 0.0:
+                    return acc / ws
+                return float(mesh[min(max(iy, 0), grid_h - 1), min(max(ix, 0), grid_w - 1)])
+
+            def bilinear_const(img, sx, sy):
+                x0 = int(np.floor(sx))
+                y0 = int(np.floor(sy))
+                ax = sx - x0
+                ay = sy - y0
+
+                def rd(xx, yy):
+                    if xx < 0 or yy < 0 or xx >= tw or yy >= th:
+                        return np.zeros(3, dtype=np.float64)
+                    return img[yy, xx].astype(np.float64)
+
+                top = rd(x0, y0) * (1 - ax) + rd(x0 + 1, y0) * ax
+                bot = rd(x0, y0 + 1) * (1 - ax) + rd(x0 + 1, y0 + 1) * ax
+                return top * (1 - ay) + bot * ay
+
+            def tap(txi, tyi):
+                mtx = mesh_cubic(mesh_x, float(txi), float(tyi))
+                mty = mesh_cubic(mesh_y, float(txi), float(tyi))
+                return bilinear_const(image, mtx, mty)
+
+            dw, dh = 60, 40  # 2x 縮小 → area の footprint は 2x2 タップ
+            common = dict(
+                matrix=np.eye(3, dtype=np.float64),
+                source_rect=(0, 0, tw, th),
+                transform_width=tw,
+                transform_height=th,
+                canvas_width=dw,
+                canvas_height=dh,
+                draw_width=dw,
+                draw_height=dh,
+                offset_x=0,
+                offset_y=0,
+                transform_type="perspective",
+                border_mode="constant",
+                mesh_map_x=mesh_x,
+                mesh_map_y=mesh_y,
+            )
+
+            # --- area ---
+            actual = image_transform_adapter.transform_crop_to_canvas(
+                image, interpolation="area", **common
+            )
+            expected = np.zeros((dh, dw, 3), dtype=np.float64)
+            for dy in range(dh):
+                ty0 = dy * th / dh
+                ty1 = (dy + 1) * th / dh
+                for dx in range(dw):
+                    tx0 = dx * tw / dw
+                    tx1 = (dx + 1) * tw / dw
+                    acc = np.zeros(3, dtype=np.float64)
+                    ws = 0.0
+                    for yy in range(int(np.floor(ty0)), int(np.ceil(ty1))):
+                        wy = max(0.0, min(ty1, yy + 1) - max(ty0, yy))
+                        if wy <= 0.0:
+                            continue
+                        for xx in range(int(np.floor(tx0)), int(np.ceil(tx1))):
+                            wx = max(0.0, min(tx1, xx + 1) - max(tx0, xx))
+                            w = wx * wy
+                            if w <= 0.0:
+                                continue
+                            acc += tap(xx, yy) * w
+                            ws += w
+                    expected[dy, dx] = acc / ws if ws > 0.0 else 0.0
+            np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-4)
+
+            # --- nearest ---
+            actual_n = image_transform_adapter.transform_crop_to_canvas(
+                image, interpolation="nearest", **common
+            )
+            expected_n = np.zeros((dh, dw, 3), dtype=np.float64)
+            for dy in range(dh):
+                tyi = min(int(np.floor(dy * th / dh)), th - 1)
+                for dx in range(dw):
+                    txi = min(int(np.floor(dx * tw / dw)), tw - 1)
+                    expected_n[dy, dx] = tap(txi, tyi)
+            np.testing.assert_allclose(actual_n, expected_n, rtol=0.0, atol=1e-4)
+        finally:
+            if previous is None:
+                os.environ.pop("PLATYPUS_IMAGE_TRANSFORM_BACKEND", None)
+            else:
+                os.environ["PLATYPUS_IMAGE_TRANSFORM_BACKEND"] = previous
+
+    def test_metal_transform_crop_mesh_dense_bake_is_bit_exact(self):
+        """PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE=1 (密マップ bake) が off とビット一致すること。
+
+        bake カーネルはメインカーネルの LUT 経路 (mesh_lut_lookup) と同一式を
+        整数キャンバス座標で評価するため、構成上ビット一致しなければならない。
+        """
+        from effect_backends import image_transform_adapter
+
+        previous = os.environ.get("PLATYPUS_IMAGE_TRANSFORM_BACKEND")
+        previous_dense = os.environ.get("PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE")
+        os.environ["PLATYPUS_IMAGE_TRANSFORM_BACKEND"] = "metal"
+        try:
+            status = image_transform_adapter.backend_status()
+            if status.backend != "effect_backends._image_transform_metal":
+                self.skipTest(f"Metal backend is unavailable: {status.detail}")
+
+            rng = np.random.default_rng(7)
+            th, tw = 96, 128
+            image = rng.random((th, tw, 3)).astype(np.float32)
+            grid_w, grid_h = 6, 5
+            coarse_x = np.linspace(0, tw - 1, grid_w, dtype=np.float32)
+            coarse_y = np.linspace(0, th - 1, grid_h, dtype=np.float32)
+            mesh_x, mesh_y = np.meshgrid(coarse_x, coarse_y)
+            mesh_x = (mesh_x + 2.5 * np.sin(mesh_y / (th - 1) * np.pi)).astype(np.float32)
+            mesh_y = (mesh_y + 1.5 * np.sin(mesh_x / (tw - 1) * np.pi)).astype(np.float32)
+            common = dict(
+                matrix=np.eye(3, dtype=np.float64),
+                source_rect=(8, 4, 112, 88),
+                transform_width=tw,
+                transform_height=th,
+                canvas_width=64,
+                canvas_height=48,
+                draw_width=56,
+                draw_height=44,
+                offset_x=4,
+                offset_y=2,
+                transform_type="perspective",
+                border_mode="constant",
+                mesh_map_x=mesh_x,
+                mesh_map_y=mesh_y,
+            )
+
+            for interpolation in ("area", "nearest"):
+                os.environ["PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE"] = "0"
+                off = image_transform_adapter.transform_crop_to_canvas(
+                    image, interpolation=interpolation, **common
+                )
+                os.environ["PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE"] = "1"
+                on = image_transform_adapter.transform_crop_to_canvas(
+                    image, interpolation=interpolation, **common
+                )
+                np.testing.assert_allclose(on, off, rtol=0.0, atol=1e-6)
+        finally:
+            if previous is None:
+                os.environ.pop("PLATYPUS_IMAGE_TRANSFORM_BACKEND", None)
+            else:
+                os.environ["PLATYPUS_IMAGE_TRANSFORM_BACKEND"] = previous
+            if previous_dense is None:
+                os.environ.pop("PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE", None)
+            else:
+                os.environ["PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE"] = previous_dense
+
     def test_metal_transform_crop_to_canvas_mesh_map_runs_when_available(self):
         from effect_backends import image_transform_adapter, image_transform_reference
 

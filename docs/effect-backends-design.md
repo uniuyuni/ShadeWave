@@ -264,6 +264,10 @@ trapezoid、four-point、reference lines は同じ deferred homography として
 
 mesh warp は `mesh_rbf_function=mls` を前提に、previewではMLS coarse mapだけをCPUで生成して `transform_crop_to_canvas()` に渡す。Metal側は最終canvasの各ピクセルで crop逆変換、MLS map sample、homography逆変換、lens sampleを1回のkernelで行う。exportとMetal不可環境は従来の `warp_mesh()` pathへ戻す。preview用coarse gridは64px stepとし、既存の32px step/full remap品質はexport側に残す。8192x5120 -> 1600x1000 previewでは、MLS map生成が約69ms、融合Metal描画が約23ms、旧二段pathが約431msだった。
 
+deferred preview transform（行列 + MLS coarse map）の構築は `GeometryEffect.make_diff` でフレーム間キャッシュする。pipeline lv0 は毎フレーム `make_diff` を呼ぶため、ガード無しでは露出など無関係なスライダー操作中もMLS map生成（約20-70ms）が毎フレーム走っていた。キーは geometry param hash + `img.shape` + `original_img_size`。`tcg_to_ref_image` は `apply_disp_info=False` で呼ばれるため disp_info はキーに入れず、ズーム/パンではキャッシュが生きる。`PLATYPUS_GEOMETRY_DEFERRED_CACHE=0` で旧挙動へ戻せる。
+
+fused kernel 側の高速化は3点。(1) params の `setBytes:` 化と `transform_to_canvas` / `fit_crop_to_canvas` の float3 ベクトル化（rotation 2400px min 13.7ms -> 7.9ms、fit_crop avg 6.4ms -> 3.7ms）。(2) area/nearest のタップは整数キャンバス座標のみである性質を使い、bicubic mesh 参照のインデックス・重みを軸別LUTとしてC++側で事前計算（タップ毎の 2x16 `cubic_weight` 評価を除去。結果は旧式とfloat丸め誤差内で一致し、テストで per-tap 複製と atol=1e-4 比較）。ただし実測ではこの経路はメモリレイテンシ律速で、LUT化単体の時間短縮は小さい。(3) `PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE=1` で mesh 変位を `bake_mesh_dense_kernel` により GPU 常駐の float2 密マップへ bake し、coarse map バイト列 + region の FNV-1a キーでフレーム間再利用する。タップ毎の32ロードが1ロードになり、bake は off とビット一致（テストで検証）。4096x4096 canvas -> 1600x1000 area の mesh 有り実測は、LUT経路 約72-89ms、dense キャッシュヒット時 約58ms（mesh 無し area とほぼ同水準）、ミス時も bake 込みで同等（退行なし）。メモリは region 依存（4096²で134MB）のため `PLATYPUS_IMAGE_TRANSFORM_MESH_DENSE_BUDGET_MB`（既定256）を超える場合は自動的にLUT経路へ戻る。既定は off で段階導入とする。
+
 Vignette は sample として扱いやすいが、すでに Numba で速い。実測では 900x1200 の合成画像で、既存 Numba が約 4-5ms、C++ backend が約 2-3ms 程度だった。速度面の本命というより、移植動線の基準実装として価値がある。
 
 ## colour_functions について
