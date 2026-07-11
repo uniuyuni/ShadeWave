@@ -28,6 +28,7 @@ from effect_backends import film_grain_adapter as film_grain
 from effect_backends import image_transform_adapter
 from effect_backends import lens_aberration_adapter
 from effect_backends import lens_effect_adapter
+from effect_backends import lens_blur_adapter
 from effect_backends import local_contrast_adapter as local_contrast
 from effect_backends import subpixel_shift_adapter as subpixel_shift
 from effect_backends import tone_adapter
@@ -3109,7 +3110,7 @@ class LensblurFilterEffect(Effect):
                         except Exception:
                             logging.exception("LensblurFilter: AI depth map の取得に失敗")
                             depth_map = None
-                self.diff = filters.apply_lensblur(img, depth_map, focus_d, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
+                self.diff = lens_blur_adapter.apply_lensblur(img, depth_map, focus_d, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
 
                 #self.diff = filters.lensblur_filter(img, int(round(lpfr-1) * 4 * efconfig.resolution_scale))
 

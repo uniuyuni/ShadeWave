@@ -4710,6 +4710,7 @@ if __name__ == '__main__':
                     "slider_longitudinal_ca",
                     "slider_spherical_ca",
                     "slider_lens_focus_depth",
+                    "label_lensblur_use_depthmap",
                     "switch_lensblur_use_depthmap",
                 ),
                 disabled,

@@ -20,4 +20,5 @@ __all__ = [
     "subpixel_shift_adapter",
     "low_frequency_transfer_adapter",
     "lut_adapter",
+    "lens_blur_adapter",
 ]

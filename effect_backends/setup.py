@@ -188,5 +188,13 @@ setup(
             extra_compile_args=["-O3", "-std=c++17", "-fobjc-arc"],
             extra_link_args=["-framework", "Metal", "-framework", "Foundation"],
         ),
+        Extension(
+            "effect_backends._lens_blur_metal",
+            ["lens_blur_metal.mm"],
+            include_dirs=[pybind11.get_include()],
+            language="c++",
+            extra_compile_args=["-O3", "-std=c++17", "-fobjc-arc"],
+            extra_link_args=["-framework", "Metal", "-framework", "Foundation"],
+        ),
     ],
 )
