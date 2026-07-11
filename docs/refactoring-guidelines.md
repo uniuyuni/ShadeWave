@@ -1,8 +1,8 @@
-# Platypus リファクタリング指針
+# Shade Wave リファクタリング指針
 
 ## Context（なぜこの指針が必要か）
 
-Platypus（Shade Wave v2.14.19）は Kivy ベースの RAW/写真編集アプリで、長期間の機能追加により以下の構造的負債が蓄積している：
+Shade Wave（v2.14.19）は Kivy ベースの RAW/写真編集アプリで、長期間の機能追加により以下の構造的負債が蓄積している：
 
 - **god file 化**: `effects.py`（4963行/64エフェクトクラス）、`main.py`（`MainWidget` 単一クラスに213メソッド）、`widgets/mask_editor2.py`（5295行）、`cores/core.py`（128関数）、`main.kv`（215KB）
 - **大量の定型重複**: 各 Effect が `get_param_dict`/`set2widget`/`set2param`/`make_diff` をほぼ同型でコピペ（58〜62回反復）
@@ -131,7 +131,7 @@ Platypus（Shade Wave v2.14.19）は Kivy ベースの RAW/写真編集アプリ
 
 ```bash
 # 全テスト（プロジェクトルートで）
-cd /Users/uniuyuni/PythonProjects/platypus
+cd /Users/uniuyuni/PythonProjects/ShadeWave
 python -m unittest discover -s tests -p 'test_*.py'
 
 # headless 実パイプライン（出力同一性の要）

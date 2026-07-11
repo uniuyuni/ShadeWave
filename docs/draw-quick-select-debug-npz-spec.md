@@ -16,7 +16,7 @@
 
 ## 生成方法
 
-保存処理は [cores/mask2/draw_quick_select.py](/Users/uniuyuni/PythonProjects/platypus/cores/mask2/draw_quick_select.py) の
+保存処理は [cores/mask2/draw_quick_select.py](/Users/uniuyuni/PythonProjects/ShadeWave/cores/mask2/draw_quick_select.py) の
 `_maybe_dump_input()` にある。
 
 有効化方法:
@@ -159,9 +159,9 @@ debug_planes = dict(result.debug_planes)
 
 `qs_input_*.npz` は目視確認だけでなく、**ラベル不要のコーパス回帰テスト**の入力として使う。
 
-- メトリック計算: [cores/mask2/draw_qs_metrics.py](/Users/uniuyuni/PythonProjects/platypus/cores/mask2/draw_qs_metrics.py)
+- メトリック計算: [cores/mask2/draw_qs_metrics.py](/Users/uniuyuni/PythonProjects/ShadeWave/cores/mask2/draw_qs_metrics.py)
   （`load_dump` / `solve` / `metrics_for_dump` / `compare` / `pair_metrics`）。
-- CLI: [scripts/draw_qs_corpus.py](/Users/uniuyuni/PythonProjects/platypus/scripts/draw_qs_corpus.py)。
+- CLI: [scripts/draw_qs_corpus.py](/Users/uniuyuni/PythonProjects/ShadeWave/scripts/draw_qs_corpus.py)。
 - golden baseline: `tests/fixtures/draw_qs_baseline.json`（dump 名→stable メトリック）。
   この JSON のキーが「明示コーパス一覧」を兼ね、dump が黙って欠落しないようにする。
 - テスト: `tests/test_edge_refine.py` の corpus baseline クラス（`pixi run python -m unittest

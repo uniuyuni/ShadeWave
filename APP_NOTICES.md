@@ -3,7 +3,7 @@
 This document lists the license and notice files that should be included when
 distributing a packaged Shade Wave `.app` build.
 
-Shade Wave / PLATYPUS is licensed under the GNU General Public License version
+Shade Wave is licensed under the GNU General Public License version
 3 or later (GPL-3.0-or-later). Binary distribution of the app must provide the
 corresponding source code and the license notices for the project and bundled
 third-party components.

@@ -1,6 +1,6 @@
 # Environment Variables
 
-Shade Wave / Platypus は、通常設定に出さない実験機能、デバッグ出力、backend 切替を環境変数で制御している。
+Shade Wave は、通常設定に出さない実験機能、デバッグ出力、backend 切替を環境変数で制御している。
 この一覧は「アプリ実行時に意味があるもの」を中心にまとめる。`tests/` や benchmark script 専用のものは末尾に分ける。
 
 真偽値は特記がなければ `1`, `true`, `yes`, `on` が有効、`0`, `false`, `no`, `off` が無効として扱われる。

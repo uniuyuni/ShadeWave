@@ -1,6 +1,6 @@
 # Third Party Notices
 
-Shade Wave / PLATYPUS is licensed under the GNU General Public License
+Shade Wave is licensed under the GNU General Public License
 version 3 or later. This file records notable third-party code, ports,
 algorithms, and bundled components that require attribution or separate terms.
 

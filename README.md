@@ -27,8 +27,8 @@ The project is currently optimized for local desktop use on Apple Silicon macOS.
 Install pixi first, then run:
 
 ```bash
-git clone https://github.com/uniuyuni/platypus.git
-cd platypus
+git clone https://github.com/uniuyuni/ShadeWave.git
+cd ShadeWave
 ./setup.sh
 pixi run python main.py
 ```
@@ -86,8 +86,8 @@ You can also choose temporary build/output directories:
 
 ```bash
 pixi run python scripts/build_macos_app_pyinstaller.py \
-  --distpath /tmp/platypus-app-dist \
-  --workpath /tmp/platypus-app-build
+  --distpath /tmp/shadewave-app-dist \
+  --workpath /tmp/shadewave-app-build
 ```
 
 The `.app` build bundles the current environment and large runtime assets, so the result can be several gigabytes. Code signing and notarization are not handled by this script.
@@ -255,12 +255,12 @@ The active pixi environment targets `osx-arm64` and Python `>=3.11.13,<3.12`.
 
 ## License and Credits
 
-Shade Wave / PLATYPUS is licensed under the GNU General Public License version 3 or later. See `LICENSE`.
+Shade Wave is licensed under the GNU General Public License version 3 or later. See `LICENSE`.
 
 The repository includes and integrates third-party code and optional external projects with their own terms, including RawTherapee-derived demosaicing code in `libraw_enhanced`, LibRaw, Lensfun/lensfunpy, Adobe DNG SDK-derived temperature helpers, Colour Science-compatible colour conversion code, SAM3, Depth Pro, SCUNet, radiance_codec, and radiance_denoise. See `THIRD_PARTY_NOTICES.md` before redistributing source, binaries, model weights, or packaged `.app` builds.
 
 ## Links
 
-- Repository: https://github.com/uniuyuni/platypus
+- Repository: https://github.com/uniuyuni/ShadeWave
 - Refactoring notes: `docs/refactoring-guidelines.md`
 - SAM3 model access: https://huggingface.co/facebook/sam3.1
