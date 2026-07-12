@@ -29,6 +29,7 @@ from effect_backends import image_transform_adapter
 from effect_backends import lens_aberration_adapter
 from effect_backends import lens_effect_adapter
 from effect_backends import lens_blur_adapter
+from effect_backends import hls_adjust_adapter
 from effect_backends import local_contrast_adapter as local_contrast
 from effect_backends import subpixel_shift_adapter as subpixel_shift
 from effect_backends import tone_adapter
@@ -3800,7 +3801,7 @@ class HLSEffect(Effect):
                 if not color_settings:
                      self.diff = None
                 else:
-                    self.diff = core.adjust_hls_colors(hls, color_settings, efconfig.resolution_scale)
+                    self.diff = hls_adjust_adapter.adjust_hls_colors(hls, color_settings, efconfig.resolution_scale)
 
         return self.diff
 

@@ -21,4 +21,5 @@ __all__ = [
     "low_frequency_transfer_adapter",
     "lut_adapter",
     "lens_blur_adapter",
+    "hls_adjust_adapter",
 ]

@@ -1637,23 +1637,6 @@ def get_exif_image_size_with_orientation(exif_data):
         return (top, left, width, height)
 
 
-# ガウスカーネル生成関数
-@lock_numba
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def _gaussian_kernel(size, sigma):
-    if size % 2 == 0:
-        size += 1  # 奇数に保証
-    kernel = np.zeros(size, dtype=np.float32)
-    center = size // 2
-    sum_val = 0.0
-    
-    for i in prange(size):
-        x = i - center
-        kernel[i] = np.exp(-x*x / (2*sigma*sigma))
-        sum_val += kernel[i]
-    
-    return kernel / sum_val
-
 # 手動クリッピング関数
 @njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
 def _manual_clip(x, min_val, max_val):
@@ -1669,81 +1652,6 @@ def _smooth_step(x, edge0, edge1):
     t = (x - edge0) / (edge1 - edge0)
     t = _manual_clip(t, 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
-
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def _circular_smooth_step(hue, center, width, fade_width):
-    """円環滑らかステップ関数"""
-    # 円環距離計算
-    diff = hue - center
-    dist = np.abs(((diff + 180) % 360) - 180)
-    
-    if dist <= width:
-        return 1.0
-    elif dist <= width + fade_width:
-        # 逆方向の補間: distが大きいほど値が小さい
-        return 1.0 - _smooth_step(dist, width, width + fade_width)
-    else:
-        return 0.0
-
-# ベクトル化された円環ステップ関数
-@lock_numba
-@njit(parallel=True, fastmath=True, cache=True, boundscheck=False, error_model="numpy")
-def _vectorized_circular_smooth_step(hue_map, center, width, fade_width):
-    h, w = hue_map.shape
-    result = np.empty((h, w), dtype=np.float32)
-    
-    for i in prange(h):
-        for j in prange(w):
-            result[i, j] = _circular_smooth_step(hue_map[i, j], center, width, fade_width)
-    
-    return result
-
-@lock_numba
-@njit("f4[:,:,:](f4[:,:,:],f4[:,:],f4[:])", parallel=True, fastmath=True)
-def _adjust_hls_with_weight(hls_img, weight, adjust):
-    h, w, c = hls_img.shape
-    output = np.empty_like(hls_img)
-    
-    h_adj = adjust[0]
-    l_factor = 2.0 ** (adjust[1] * 2)
-    s_factor = 1.0 + adjust[2]
-    
-    for i in prange(h):
-        for j in range(w):
-            w_val = weight[i, j]
-            
-            # 色相調整
-            new_h = (hls_img[i, j, 0] + w_val * h_adj) % 360
-            
-            # 明度調整
-            new_l = hls_img[i, j, 1] * (l_factor ** w_val)
-            
-            # 彩度調整 (Vibrance logic)
-            s_adj = adjust[2]
-            if s_adj > 0.0:
-                # Vibrance Boost
-                w_adj = s_adj * w_val
-                new_s = hls_img[i, j, 2] + hls_img[i, j, 2] * (1.0 - hls_img[i, j, 2]) * w_adj * 2.0
-            else:
-                # Desaturation (Linear Interpolation)
-                # Power function (0.0 ** w) breaks at s_factor=0 (-100%), causing artifacts.
-                # Linear: S * (1 + adjust * w)
-                new_s = hls_img[i, j, 2] * (1.0 + adjust[2] * w_val)
-
-            # クリッピング
-            #new_l = _manual_clip(new_l, 0.0, 1.0)
-            #new_s = _manual_clip(new_s, 0.0, 1.0)
-            
-            output[i, j, 0] = new_h
-            output[i, j, 1] = new_l
-            output[i, j, 2] = new_s
-            
-            # チャンネル数が4以上の場合（Gainマップ等）、残りのチャンネルをコピー
-            if c > 3:
-                for k in range(3, c):
-                     output[i, j, k] = hls_img[i, j, k]
-    
-    return output
 
 @lock_numba
 @njit("f4[:,:,:](f4[:,:,:],f4[:,:,:])", parallel=True, fastmath=True)
@@ -1835,10 +1743,13 @@ def _calculate_elliptical_weight(hls_img, center_h, width_h, fade_h, l_range, s_
                     excess_h = 100.0 # Sharp cutoff
             
             # 2. L Excess Distance
+            # l_max >= 1.0 は「上限なし」として扱う。選択は実輝度(L×gain)で行うため
+            # HDR では 1.0 を超え、全域プリセット(上限 1.0)でハイライトが選択不能になるのを防ぐ。
+            # 白飛びに近い無彩色ハイライトは C≈0 なので s_min 側の strict fade が引き続き除外する。
             excess_l = 0.0
             if l < l_min:
                 excess_l = (l_min - l) / fade_ls
-            elif l > l_max:
+            elif l_max < 1.0 and l > l_max:
                 excess_l = (l - l_max) / fade_ls
                 
             # 3. S Excess Distance
@@ -1919,16 +1830,9 @@ def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
         cs.adjust = adjust
         cs.l_range = np.array(s['l_range'], dtype=np.float32)
         cs.s_range = np.array(s['s_range'], dtype=np.float32)
-        cs.kernel_size = np.float32(s['kernel_size'])
+        cs.kernel_size = np.int32(s['kernel_size'])
         numba_settings.append(cs)
-    
-    # カーネルサイズ計算
-    kernel_size = max(3, int(cs.kernel_size * resolution_scale))
-    if kernel_size % 2 == 0: 
-        kernel_size += 1
-    sigma = max(1.0, kernel_size / 2.0)
-    kernel = _gaussian_kernel(kernel_size, sigma)
-    
+
     # 選択マスク計算用の画像
     mask_source = hls_img
     
@@ -1947,10 +1851,13 @@ def adjust_hls_colors(hls_img, color_settings, resolution_scale=1.0):
             setting.s_range
         )
 
-        # ガウシアンブラー適用
-        if kernel_size > 1:
-            final_weight = gaussian_blur_cv(final_weight, (kernel_size, kernel_size), 0)
-        
+        # ガウシアンブラー適用。カーネルサイズは設定ごとに持ち、表示解像度に追従する。
+        # σ は cv2.GaussianBlur の自動値(sigma=0)に委ねる(現行仕様)。
+        kernel_size = max(3, int(setting.kernel_size * resolution_scale))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        final_weight = gaussian_blur_cv(final_weight, (kernel_size, kernel_size), 0)
+
         # 調整値を累積加算（Broadcasting: (H,W) -> (H,W,1) * (3,) -> (H,W,3)）
         # setting.adjust: [H, L, S]
         
@@ -2071,10 +1978,14 @@ HLS_COLOR_SETTING = {
 }
 
 def adjust_hls_color_one(hls_img, color_name, h, l, s, resolution_scale=1.0):
-    # 色相の設定
-    color_setting_one = [HLS_COLOR_SETTING[color_name]]
-    color_setting_one[0]['adjust'] = [h, l, s]
-    adjusted_hls = adjust_hls_colors(hls_img, color_setting_one, resolution_scale)
+    # グローバルの既定値を書き換えないよう、必ずコピーしてから adjust を設定する
+    setting = dict(HLS_COLOR_SETTING[color_name])
+    setting['adjust'] = [h, l, s]
+    try:
+        from effect_backends import hls_adjust_adapter
+        adjusted_hls = hls_adjust_adapter.adjust_hls_colors(hls_img, [setting], resolution_scale)
+    except ImportError:
+        adjusted_hls = adjust_hls_colors(hls_img, [setting], resolution_scale)
 
     return np.array(adjusted_hls)
 
