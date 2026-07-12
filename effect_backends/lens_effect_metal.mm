@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -679,10 +681,14 @@ py::array_t<float> apply_shaped_bokeh_no_depth(
         py::gil_scoped_release release;
         @autoreleasepool {
             MetalPipelines& pipelines = metal_pipelines();
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> source_buffer = [pipelines.device newBufferWithBytes:src.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> kernel_buffer = [pipelines.device newBufferWithBytes:ker.ptr length:kernel_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding source_binding = make_buffer_for_input(pipelines.device, src.ptr, image_bytes);
+            id<MTLBuffer> source_buffer = source_binding.buffer;
+            BufferBinding kernel_binding = make_buffer_for_input(pipelines.device, ker.ptr, kernel_bytes);
+            id<MTLBuffer> kernel_buffer = kernel_binding.buffer;
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
             ShapedBokehParams params{width, height, kw, kh, gain, 0.0f, 0.0f};
             id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
             if (!input_buffer || !source_buffer || !kernel_buffer || !output_buffer || !params_buffer) {
@@ -692,10 +698,10 @@ py::array_t<float> apply_shaped_bokeh_no_depth(
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
             id<MTLComputePipelineState> pipeline = colored_kernel ? pipelines.shaped_no_depth_color : pipelines.shaped_no_depth_mono;
             [enc setComputePipelineState:pipeline];
-            [enc setBuffer:input_buffer offset:0 atIndex:0];
-            [enc setBuffer:source_buffer offset:0 atIndex:1];
-            [enc setBuffer:kernel_buffer offset:0 atIndex:2];
-            [enc setBuffer:output_buffer offset:0 atIndex:3];
+            [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+            [enc setBuffer:source_buffer offset:source_binding.offset atIndex:1];
+            [enc setBuffer:kernel_buffer offset:kernel_binding.offset atIndex:2];
+            [enc setBuffer:output_buffer offset:output_binding.offset atIndex:3];
             [enc setBuffer:params_buffer offset:0 atIndex:4];
             dispatch_2d(enc, pipeline, width, height);
             [enc endEncoding];
@@ -705,7 +711,7 @@ py::array_t<float> apply_shaped_bokeh_no_depth(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 
@@ -753,11 +759,16 @@ py::array_t<float> apply_shaped_bokeh_depth(
         py::gil_scoped_release release;
         @autoreleasepool {
             MetalPipelines& pipelines = metal_pipelines();
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> source_buffer = [pipelines.device newBufferWithBytes:src.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> depth_buffer = [pipelines.device newBufferWithBytes:dep.ptr length:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> kernel_buffer = [pipelines.device newBufferWithBytes:ker.ptr length:kernel_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding source_binding = make_buffer_for_input(pipelines.device, src.ptr, image_bytes);
+            id<MTLBuffer> source_buffer = source_binding.buffer;
+            BufferBinding depth_binding = make_buffer_for_input(pipelines.device, dep.ptr, plane_bytes);
+            id<MTLBuffer> depth_buffer = depth_binding.buffer;
+            BufferBinding kernel_binding = make_buffer_for_input(pipelines.device, ker.ptr, kernel_bytes);
+            id<MTLBuffer> kernel_buffer = kernel_binding.buffer;
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
             ShapedBokehParams params{width, height, kw, kh, 0.0f, focus_depth, strength / 100.0f};
             id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
             if (!input_buffer || !source_buffer || !depth_buffer || !kernel_buffer || !output_buffer || !params_buffer) {
@@ -767,11 +778,11 @@ py::array_t<float> apply_shaped_bokeh_depth(
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
             id<MTLComputePipelineState> pipeline = colored_kernel ? pipelines.shaped_depth_color : pipelines.shaped_depth_mono;
             [enc setComputePipelineState:pipeline];
-            [enc setBuffer:input_buffer offset:0 atIndex:0];
-            [enc setBuffer:source_buffer offset:0 atIndex:1];
-            [enc setBuffer:depth_buffer offset:0 atIndex:2];
-            [enc setBuffer:kernel_buffer offset:0 atIndex:3];
-            [enc setBuffer:output_buffer offset:0 atIndex:4];
+            [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+            [enc setBuffer:source_buffer offset:source_binding.offset atIndex:1];
+            [enc setBuffer:depth_buffer offset:depth_binding.offset atIndex:2];
+            [enc setBuffer:kernel_buffer offset:kernel_binding.offset atIndex:3];
+            [enc setBuffer:output_buffer offset:output_binding.offset atIndex:4];
             [enc setBuffer:params_buffer offset:0 atIndex:5];
             dispatch_2d(enc, pipeline, width, height);
             [enc endEncoding];
@@ -781,7 +792,7 @@ py::array_t<float> apply_shaped_bokeh_depth(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 
@@ -821,9 +832,12 @@ py::array_t<float> render_sunstar_overlay(
         py::gil_scoped_release release;
         @autoreleasepool {
             MetalPipelines& pipelines = metal_pipelines();
-            id<MTLBuffer> sources_buffer = [pipelines.device newBufferWithBytes:src.ptr length:source_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> jitter_buffer = [pipelines.device newBufferWithBytes:jit.ptr length:jitter_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:output_bytes options:MTLResourceStorageModeShared];
+            BufferBinding sources_binding = make_buffer_for_input(pipelines.device, src.ptr, source_bytes);
+            id<MTLBuffer> sources_buffer = sources_binding.buffer;
+            BufferBinding jitter_binding = make_buffer_for_input(pipelines.device, jit.ptr, jitter_bytes);
+            id<MTLBuffer> jitter_buffer = jitter_binding.buffer;
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, output_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
             SunstarParams params{width, height, source_count, spike_count, base_rot, spacing};
             id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
             if (!sources_buffer || !jitter_buffer || !output_buffer || !params_buffer) {
@@ -833,9 +847,9 @@ py::array_t<float> render_sunstar_overlay(
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
             [enc setComputePipelineState:pipelines.sunstar_overlay];
-            [enc setBuffer:sources_buffer offset:0 atIndex:0];
-            [enc setBuffer:jitter_buffer offset:0 atIndex:1];
-            [enc setBuffer:output_buffer offset:0 atIndex:2];
+            [enc setBuffer:sources_buffer offset:sources_binding.offset atIndex:0];
+            [enc setBuffer:jitter_buffer offset:jitter_binding.offset atIndex:1];
+            [enc setBuffer:output_buffer offset:output_binding.offset atIndex:2];
             [enc setBuffer:params_buffer offset:0 atIndex:3];
             dispatch_2d(enc, pipelines.sunstar_overlay, width, height);
             [enc endEncoding];
@@ -845,7 +859,7 @@ py::array_t<float> render_sunstar_overlay(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], output_bytes);
+            finish_output_binding(output_binding, out.ptr, output_bytes);
         }
     }
 
@@ -887,10 +901,14 @@ py::array_t<float> apply_swirl_bokeh_direct(
         py::gil_scoped_release release;
         @autoreleasepool {
             MetalPipelines& pipelines = metal_pipelines();
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> depth_buffer = [pipelines.device newBufferWithBytes:dep.ptr length:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> radial_buffer = [pipelines.device newBufferWithBytes:rad.ptr length:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding depth_binding = make_buffer_for_input(pipelines.device, dep.ptr, plane_bytes);
+            id<MTLBuffer> depth_buffer = depth_binding.buffer;
+            BufferBinding radial_binding = make_buffer_for_input(pipelines.device, rad.ptr, plane_bytes);
+            id<MTLBuffer> radial_buffer = radial_binding.buffer;
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
             SwirlParams params{width, height, use_depth ? 1 : 0, center_x, center_y, focus_depth, strength};
             id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
             if (!input_buffer || !depth_buffer || !radial_buffer || !output_buffer || !params_buffer) {
@@ -900,10 +918,10 @@ py::array_t<float> apply_swirl_bokeh_direct(
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
             [enc setComputePipelineState:pipelines.swirl_bokeh];
-            [enc setBuffer:input_buffer offset:0 atIndex:0];
-            [enc setBuffer:depth_buffer offset:0 atIndex:1];
-            [enc setBuffer:radial_buffer offset:0 atIndex:2];
-            [enc setBuffer:output_buffer offset:0 atIndex:3];
+            [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+            [enc setBuffer:depth_buffer offset:depth_binding.offset atIndex:1];
+            [enc setBuffer:radial_buffer offset:radial_binding.offset atIndex:2];
+            [enc setBuffer:output_buffer offset:output_binding.offset atIndex:3];
             [enc setBuffer:params_buffer offset:0 atIndex:4];
             dispatch_2d(enc, pipelines.swirl_bokeh, width, height);
             [enc endEncoding];
@@ -913,7 +931,7 @@ py::array_t<float> apply_swirl_bokeh_direct(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 
@@ -950,8 +968,10 @@ py::array_t<float> apply_bokeh_color_fringe(
         py::gil_scoped_release release;
         @autoreleasepool {
             MetalPipelines& pipelines = metal_pipelines();
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> depth_buffer = [pipelines.device newBufferWithBytes:dep.ptr length:plane_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding depth_binding = make_buffer_for_input(pipelines.device, dep.ptr, plane_bytes);
+            id<MTLBuffer> depth_buffer = depth_binding.buffer;
             id<MTLBuffer> signed_depth = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> abs_depth = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> defocus_tmp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
@@ -960,7 +980,8 @@ py::array_t<float> apply_bokeh_color_fringe(
             id<MTLBuffer> blur_r = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> blur_g = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> blur_b = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
 
             BokehFringeParams base_params{width, height, 0, focus_depth, s};
             std::vector<float> defocus_weights = gaussian_weights(std::max(0.5f, 2.0f * rs));
@@ -987,7 +1008,7 @@ py::array_t<float> apply_bokeh_color_fringe(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.signed_abs];
-                [enc setBuffer:depth_buffer offset:0 atIndex:0];
+                [enc setBuffer:depth_buffer offset:depth_binding.offset atIndex:0];
                 [enc setBuffer:signed_depth offset:0 atIndex:1];
                 [enc setBuffer:abs_depth offset:0 atIndex:2];
                 [enc setBuffer:base_params_buffer offset:0 atIndex:3];
@@ -1000,7 +1021,7 @@ py::array_t<float> apply_bokeh_color_fringe(
             auto encode_channel_blur = [&](id<MTLBuffer> channel_buffer, id<MTLBuffer> output) {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.channel_h];
-                [enc setBuffer:input_buffer offset:0 atIndex:0];
+                [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                 [enc setBuffer:chan_tmp offset:0 atIndex:1];
                 [enc setBuffer:channel_weights_buffer offset:0 atIndex:2];
                 [enc setBuffer:channel_params_buffer offset:0 atIndex:3];
@@ -1024,13 +1045,13 @@ py::array_t<float> apply_bokeh_color_fringe(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.compose];
-                [enc setBuffer:input_buffer offset:0 atIndex:0];
+                [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                 [enc setBuffer:signed_depth offset:0 atIndex:1];
                 [enc setBuffer:defocus offset:0 atIndex:2];
                 [enc setBuffer:blur_r offset:0 atIndex:3];
                 [enc setBuffer:blur_g offset:0 atIndex:4];
                 [enc setBuffer:blur_b offset:0 atIndex:5];
-                [enc setBuffer:output_buffer offset:0 atIndex:6];
+                [enc setBuffer:output_buffer offset:output_binding.offset atIndex:6];
                 [enc setBuffer:base_params_buffer offset:0 atIndex:7];
                 dispatch_1d(enc, pipelines.compose, count);
                 [enc endEncoding];
@@ -1042,7 +1063,7 @@ py::array_t<float> apply_bokeh_color_fringe(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 

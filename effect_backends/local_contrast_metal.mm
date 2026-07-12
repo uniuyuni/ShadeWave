@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <mutex>
@@ -96,43 +98,6 @@ kernel void square_plane(
     output[idx] = input[idx] * input[idx];
 }
 
-kernel void box_horizontal(
-    const device float* input [[buffer(0)]],
-    device float* output [[buffer(1)]],
-    constant LocalContrastParams& p [[buffer(2)]],
-    uint2 gid [[thread_position_in_grid]]
-) {
-    int x = int(gid.x);
-    int y = int(gid.y);
-    if (x >= p.width || y >= p.height) {
-        return;
-    }
-    float sum = 0.0f;
-    for (int k = -p.radius; k <= p.radius; ++k) {
-        int sx = reflect101(x + k, p.width);
-        sum += input[y * p.width + sx];
-    }
-    output[y * p.width + x] = sum / float(p.radius * 2 + 1);
-}
-
-kernel void box_vertical(
-    const device float* input [[buffer(0)]],
-    device float* output [[buffer(1)]],
-    constant LocalContrastParams& p [[buffer(2)]],
-    uint2 gid [[thread_position_in_grid]]
-) {
-    int x = int(gid.x);
-    int y = int(gid.y);
-    if (x >= p.width || y >= p.height) {
-        return;
-    }
-    float sum = 0.0f;
-    for (int k = -p.radius; k <= p.radius; ++k) {
-        int sy = reflect101(y + k, p.height);
-        sum += input[sy * p.width + x];
-    }
-    output[y * p.width + x] = sum / float(p.radius * 2 + 1);
-}
 
 kernel void compute_guided_ab(
     const device float* mean [[buffer(0)]],
@@ -263,6 +228,106 @@ kernel void compose_texture(
 }
 )METAL";
 
+// box フィルタはスライディングウィンドウ(1スレッド=1行/1列)で O(1)/px にする。
+// Kahan 補正付き移動和は加減算の再結合で壊れるため、このライブラリだけ
+// fast math を無効にしてコンパイルする。
+constexpr const char* kBoxMetalSource = R"METAL(
+#include <metal_stdlib>
+using namespace metal;
+
+struct LocalContrastParams {
+    int width;
+    int height;
+    int radius;
+    float strength;
+    float eps;
+    float factor;
+};
+
+static inline int reflect101(int p, int len) {
+    if (len <= 1) {
+        return 0;
+    }
+    while (p < 0 || p >= len) {
+        if (p < 0) {
+            p = -p;
+        } else {
+            p = 2 * len - p - 2;
+        }
+    }
+    return p;
+}
+
+kernel void box_horizontal(
+    const device float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant LocalContrastParams& p [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    int y = int(gid);
+    if (y >= p.height) {
+        return;
+    }
+    const device float* row = input + y * p.width;
+    device float* out_row = output + y * p.width;
+    const int r = p.radius;
+    const int w = p.width;
+    const float norm = float(r * 2 + 1);
+    float sum = 0.0f;
+    float comp = 0.0f;
+    for (int k = -r; k <= r; ++k) {
+        float v = row[reflect101(k, w)];
+        float t = v - comp;
+        float s = sum + t;
+        comp = (s - sum) - t;
+        sum = s;
+    }
+    out_row[0] = sum / norm;
+    for (int x = 1; x < w; ++x) {
+        float v = row[reflect101(x + r, w)] - row[reflect101(x - 1 - r, w)];
+        float t = v - comp;
+        float s = sum + t;
+        comp = (s - sum) - t;
+        sum = s;
+        out_row[x] = sum / norm;
+    }
+}
+
+kernel void box_vertical(
+    const device float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant LocalContrastParams& p [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    int x = int(gid);
+    if (x >= p.width) {
+        return;
+    }
+    const int r = p.radius;
+    const int h = p.height;
+    const int w = p.width;
+    const float norm = float(r * 2 + 1);
+    float sum = 0.0f;
+    float comp = 0.0f;
+    for (int k = -r; k <= r; ++k) {
+        float v = input[reflect101(k, h) * w + x];
+        float t = v - comp;
+        float s = sum + t;
+        comp = (s - sum) - t;
+        sum = s;
+    }
+    output[x] = sum / norm;
+    for (int y = 1; y < h; ++y) {
+        float v = input[reflect101(y + r, h) * w + x] - input[reflect101(y - 1 - r, h) * w + x];
+        float t = v - comp;
+        float s = sum + t;
+        comp = (s - sum) - t;
+        sum = s;
+        output[y * w + x] = sum / norm;
+    }
+}
+)METAL";
+
 id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device, id<MTLLibrary> library, NSString* name) {
     NSError* error = nil;
     id<MTLFunction> function = [library newFunctionWithName:name];
@@ -314,6 +379,14 @@ MetalPipelines& metal_pipelines() {
                 init_error = error ? [[error localizedDescription] UTF8String] : "unknown Metal library error";
                 return;
             }
+            NSString* box_source = [NSString stringWithUTF8String:kBoxMetalSource];
+            MTLCompileOptions* box_options = [MTLCompileOptions new];
+            box_options.fastMathEnabled = NO;
+            id<MTLLibrary> box_library = [state.device newLibraryWithSource:box_source options:box_options error:&error];
+            if (!box_library) {
+                init_error = error ? [[error localizedDescription] UTF8String] : "unknown Metal box library error";
+                return;
+            }
             state.queue = [state.device newCommandQueue];
             if (!state.queue) {
                 init_error = "Metal command queue is unavailable";
@@ -323,8 +396,8 @@ MetalPipelines& metal_pipelines() {
                 state.rgb_to_gray601 = make_pipeline(state.device, state.library, @"rgb_to_gray601");
                 state.rgb_to_y709 = make_pipeline(state.device, state.library, @"rgb_to_y709");
                 state.square_plane = make_pipeline(state.device, state.library, @"square_plane");
-                state.box_horizontal = make_pipeline(state.device, state.library, @"box_horizontal");
-                state.box_vertical = make_pipeline(state.device, state.library, @"box_vertical");
+                state.box_horizontal = make_pipeline(state.device, box_library, @"box_horizontal");
+                state.box_vertical = make_pipeline(state.device, box_library, @"box_vertical");
                 state.compute_guided_ab = make_pipeline(state.device, state.library, @"compute_guided_ab");
                 state.detail_from_guided = make_pipeline(state.device, state.library, @"detail_from_guided");
                 state.add_detail_from_guided = make_pipeline(state.device, state.library, @"add_detail_from_guided");
@@ -421,10 +494,11 @@ void encode_plane_kernel(
     id<MTLBuffer> out0,
     id<MTLBuffer> params,
     int width,
-    int height
+    int height,
+    NSUInteger in0_offset = 0
 ) {
     id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
-    [enc setBuffer:in0 offset:0 atIndex:0];
+    [enc setBuffer:in0 offset:in0_offset atIndex:0];
     [enc setBuffer:out0 offset:0 atIndex:1];
     [enc setBuffer:params offset:0 atIndex:2];
     dispatch_2d(enc, pipeline, static_cast<NSUInteger>(width), static_cast<NSUInteger>(height));
@@ -441,8 +515,23 @@ void encode_box(
     int width,
     int height
 ) {
-    encode_plane_kernel(command_buffer, pipelines.box_horizontal, src, temp, params, width, height);
-    encode_plane_kernel(command_buffer, pipelines.box_vertical, temp, dst, params, width, height);
+    // スライディングウィンドウ版: horizontal は1スレッド=1行、vertical は1列。
+    {
+        id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
+        [enc setBuffer:src offset:0 atIndex:0];
+        [enc setBuffer:temp offset:0 atIndex:1];
+        [enc setBuffer:params offset:0 atIndex:2];
+        dispatch_1d(enc, pipelines.box_horizontal, static_cast<NSUInteger>(height));
+        [enc endEncoding];
+    }
+    {
+        id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
+        [enc setBuffer:temp offset:0 atIndex:0];
+        [enc setBuffer:dst offset:0 atIndex:1];
+        [enc setBuffer:params offset:0 atIndex:2];
+        dispatch_1d(enc, pipelines.box_vertical, static_cast<NSUInteger>(width));
+        [enc endEncoding];
+    }
 }
 
 void encode_guided_detail(
@@ -511,8 +600,10 @@ py::array_t<float> apply_guided_delta(
     ImageBinding img = prepare_image(image);
     @autoreleasepool {
         MetalPipelines& pipelines = metal_pipelines();
-        id<MTLBuffer> input = [pipelines.device newBufferWithBytes:img.in.ptr length:img.image_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> output = [pipelines.device newBufferWithLength:img.image_bytes options:MTLResourceStorageModeShared];
+        BufferBinding input_binding = make_buffer_for_input(pipelines.device, img.in.ptr, img.image_bytes);
+        BufferBinding output_binding = make_buffer_for_output(pipelines.device, img.out.ptr, img.image_bytes);
+        id<MTLBuffer> input = input_binding.buffer;
+        id<MTLBuffer> output = output_binding.buffer;
         id<MTLBuffer> source = [pipelines.device newBufferWithLength:img.plane_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> source_sq = [pipelines.device newBufferWithLength:img.plane_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> detail = [pipelines.device newBufferWithLength:img.plane_bytes options:MTLResourceStorageModeShared];
@@ -523,7 +614,7 @@ py::array_t<float> apply_guided_delta(
         LocalContrastParams params{img.width, img.height, 1, strength, 0.0f, factor};
         id<MTLBuffer> params_buffer = make_params(pipelines.device, params);
         id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
-        encode_plane_kernel(command_buffer, use_y709 ? pipelines.rgb_to_y709 : pipelines.rgb_to_gray601, input, source, params_buffer, img.width, img.height);
+        encode_plane_kernel(command_buffer, use_y709 ? pipelines.rgb_to_y709 : pipelines.rgb_to_gray601, input, source, params_buffer, img.width, img.height, input_binding.offset);
         encode_plane_kernel(command_buffer, pipelines.square_plane, source, source_sq, params_buffer, img.width, img.height);
 
         for (size_t i = 0; i < radii.size(); ++i) {
@@ -554,16 +645,16 @@ py::array_t<float> apply_guided_delta(
         id<MTLBuffer> compose_params_buffer = make_params(pipelines.device, compose_params);
         {
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
-            [enc setBuffer:input offset:0 atIndex:0];
+            [enc setBuffer:input offset:input_binding.offset atIndex:0];
             [enc setBuffer:detail offset:0 atIndex:1];
-            [enc setBuffer:output offset:0 atIndex:2];
+            [enc setBuffer:output offset:output_binding.offset atIndex:2];
             [enc setBuffer:compose_params_buffer offset:0 atIndex:3];
             dispatch_1d(enc, pipelines.compose_delta_rgb, static_cast<NSUInteger>(img.count));
             [enc endEncoding];
         }
         [command_buffer commit];
         [command_buffer waitUntilCompleted];
-        std::memcpy(img.out.ptr, [output contents], img.image_bytes);
+        finish_output_binding(output_binding, img.out.ptr, img.image_bytes);
     }
     return img.result;
 }
@@ -637,8 +728,10 @@ py::array_t<float> apply_texture(py::array_t<float, py::array::c_style | py::arr
 
     @autoreleasepool {
         MetalPipelines& pipelines = metal_pipelines();
-        id<MTLBuffer> input = [pipelines.device newBufferWithBytes:img.in.ptr length:img.image_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> output = [pipelines.device newBufferWithLength:img.image_bytes options:MTLResourceStorageModeShared];
+        BufferBinding input_binding = make_buffer_for_input(pipelines.device, img.in.ptr, img.image_bytes);
+        BufferBinding output_binding = make_buffer_for_output(pipelines.device, img.out.ptr, img.image_bytes);
+        id<MTLBuffer> input = input_binding.buffer;
+        id<MTLBuffer> output = output_binding.buffer;
         id<MTLBuffer> luma = [pipelines.device newBufferWithLength:img.plane_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> temp = [pipelines.device newBufferWithLength:img.plane_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> blur_small = [pipelines.device newBufferWithLength:img.plane_bytes options:MTLResourceStorageModeShared];
@@ -652,7 +745,7 @@ py::array_t<float> apply_texture(py::array_t<float, py::array::c_style | py::arr
         LocalContrastParams params{img.width, img.height, 1, strength, 0.0f, 1.5f};
         id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
         id<MTLBuffer> luma_params = make_params(pipelines.device, params);
-        encode_plane_kernel(command_buffer, pipelines.rgb_to_gray601, input, luma, luma_params, img.width, img.height);
+        encode_plane_kernel(command_buffer, pipelines.rgb_to_gray601, input, luma, luma_params, img.width, img.height, input_binding.offset);
 
         LocalContrastParams small_params{img.width, img.height, static_cast<int>(kernel_small.size() / 2), strength, 0.0f, 1.5f};
         LocalContrastParams large_params{img.width, img.height, static_cast<int>(kernel_large.size() / 2), strength, 0.0f, 1.5f};
@@ -664,17 +757,17 @@ py::array_t<float> apply_texture(py::array_t<float, py::array::c_style | py::arr
         id<MTLBuffer> compose_params = make_params(pipelines.device, params);
         {
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
-            [enc setBuffer:input offset:0 atIndex:0];
+            [enc setBuffer:input offset:input_binding.offset atIndex:0];
             [enc setBuffer:blur_small offset:0 atIndex:1];
             [enc setBuffer:blur_large offset:0 atIndex:2];
-            [enc setBuffer:output offset:0 atIndex:3];
+            [enc setBuffer:output offset:output_binding.offset atIndex:3];
             [enc setBuffer:compose_params offset:0 atIndex:4];
             dispatch_1d(enc, pipelines.compose_texture, static_cast<NSUInteger>(img.count));
             [enc endEncoding];
         }
         [command_buffer commit];
         [command_buffer waitUntilCompleted];
-        std::memcpy(img.out.ptr, [output contents], img.image_bytes);
+        finish_output_binding(output_binding, img.out.ptr, img.image_bytes);
     }
     return img.result;
 }

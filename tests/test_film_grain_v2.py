@@ -16,6 +16,13 @@ try:
 except Exception:  # pragma: no cover - depends on local build state.
     _film_grain_cpu = None
 
+try:
+    from effect_backends import _film_grain_metal
+    if not _film_grain_metal.metal_available():
+        _film_grain_metal = None
+except Exception:  # pragma: no cover - depends on local build state.
+    _film_grain_metal = None
+
 
 class FilmGrainV2Test(unittest.TestCase):
     def test_backend_status_is_reported(self):
@@ -25,10 +32,25 @@ class FilmGrainV2Test(unittest.TestCase):
         self.assertIn(
             status.backend,
             {
+                "effect_backends._film_grain_metal",
                 "effect_backends._film_grain_cpu",
                 "effect_backends.film_grain_reference",
             },
         )
+
+    def test_metal_backend_matches_cpu_when_available(self):
+        if _film_grain_cpu is None or _film_grain_metal is None:
+            self.skipTest("film grain cpu/metal backends are not both available")
+
+        image = np.random.default_rng(41).random((48, 56, 3), dtype=np.float32) * 1.4
+        for params in (
+            {"amount": 50.0},
+            {"amount": 80.0, "grain_size": 0.5, "roughness": 90.0, "color": 0.0, "seed": 7},
+            {"amount": 30.0, "grain_size": 4.0, "shadow": 90.0, "highlight": 80.0, "color": 60.0, "seed": 123},
+        ):
+            expected = _film_grain_cpu.apply_film_grain(image, **params)
+            actual = _film_grain_metal.apply_film_grain(image, **params)
+            np.testing.assert_allclose(actual, expected, rtol=1.0e-4, atol=1.0e-5)
 
     def test_amount_zero_is_noop(self):
         image = np.full((24, 32, 3), 0.5, dtype=np.float32)

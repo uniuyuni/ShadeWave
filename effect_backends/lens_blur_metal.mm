@@ -4,9 +4,12 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -108,6 +111,47 @@ kernel void lb_blur_v(
     output[obase + 2] = sum.z;
 }
 
+// blur_v と accumulate の融合。ぼかし結果を cur へ書くと同時に、
+// そのレベルの三角重みで acc/wsum へ加算する(cur の再読込を1回分省く)。
+kernel void lb_blur_v_accumulate(
+    const device float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    const device float* weights [[buffer(2)]],
+    const device float* coc [[buffer(3)]],
+    device float* acc [[buffer(4)]],
+    device float* wsum [[buffer(5)]],
+    constant LensBlurParams& p [[buffer(6)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    int x = int(gid.x);
+    int y = int(gid.y);
+    if (x >= p.width || y >= p.height) {
+        return;
+    }
+    float3 sum = float3(0.0);
+    for (int k = -p.radius; k <= p.radius; ++k) {
+        int sy = reflect101(y + k, p.height);
+        int base = (sy * p.width + x) * 3;
+        float w = weights[k + p.radius];
+        sum += float3(input[base], input[base + 1], input[base + 2]) * w;
+    }
+    int idx = y * p.width + x;
+    int obase = idx * 3;
+    output[obase] = sum.x;
+    output[obase + 1] = sum.y;
+    output[obase + 2] = sum.z;
+
+    float c = coc[idx];
+    float3 scale = float3(1.0 + p.chromatic, 1.0, 1.0 - p.chromatic);
+    float lvl = float(p.level);
+    for (int ch = 0; ch < 3; ++ch) {
+        float blf = c * scale[ch] * p.inv_max_coc_lm1;
+        float w = max(0.0f, 1.0f - fabs(blf - lvl));
+        acc[obase + ch] += sum[ch] * w;
+        wsum[obase + ch] += w;
+    }
+}
+
 kernel void lb_accumulate(
     const device float* cur [[buffer(0)]],
     const device float* coc [[buffer(1)]],
@@ -173,6 +217,7 @@ struct MetalPipelines {
     id<MTLLibrary> library;
     id<MTLComputePipelineState> blur_h;
     id<MTLComputePipelineState> blur_v;
+    id<MTLComputePipelineState> blur_v_accumulate;
     id<MTLComputePipelineState> accumulate;
     id<MTLComputePipelineState> finalize;
 };
@@ -204,6 +249,7 @@ MetalPipelines& metal_pipelines() {
             try {
                 state.blur_h = make_pipeline(state.device, state.library, @"lb_blur_h");
                 state.blur_v = make_pipeline(state.device, state.library, @"lb_blur_v");
+                state.blur_v_accumulate = make_pipeline(state.device, state.library, @"lb_blur_v_accumulate");
                 state.accumulate = make_pipeline(state.device, state.library, @"lb_accumulate");
                 state.finalize = make_pipeline(state.device, state.library, @"lb_finalize");
             } catch (const std::exception& exc) {
@@ -301,15 +347,50 @@ py::array_t<float> apply_lensblur(
     base.chromatic = chromatic_aberration;
     base.inv_max_coc_lm1 = static_cast<float>(num_levels - 1) / max_coc_radius;
 
+    // coc の値域から blf = coc * scale * inv_max_coc_lm1 の範囲を求め、
+    // 三角重み max(0, 1-|blf-level|) が全画素 0 になるレベルの accumulate を省く。
+    // 寄与ゼロのパスを削るだけなので出力は変わらない。
+    const float* coc_ptr = static_cast<const float*>(coc.ptr);
+    float coc_min = coc_ptr[0];
+    float coc_max = coc_ptr[0];
+    for (int i = 1; i < count; ++i) {
+        const float v = coc_ptr[i];
+        coc_min = std::min(coc_min, v);
+        coc_max = std::max(coc_max, v);
+    }
+    const float scales[3] = {1.0f + chromatic_aberration, 1.0f, 1.0f - chromatic_aberration};
+    float blf_lo = std::numeric_limits<float>::infinity();
+    float blf_hi = -std::numeric_limits<float>::infinity();
+    for (float scale : scales) {
+        for (float v : {coc_min, coc_max}) {
+            const float blf = v * scale * base.inv_max_coc_lm1;
+            blf_lo = std::min(blf_lo, blf);
+            blf_hi = std::max(blf_hi, blf);
+        }
+    }
+    std::vector<char> level_needed(static_cast<size_t>(num_levels));
+    int last_needed = 0;
+    for (int level = 0; level < num_levels; ++level) {
+        const bool needed = (blf_hi > static_cast<float>(level) - 1.0f)
+                            && (blf_lo < static_cast<float>(level) + 1.0f);
+        level_needed[static_cast<size_t>(level)] = needed ? 1 : 0;
+        if (needed) {
+            last_needed = level;
+        }
+    }
+
     @autoreleasepool {
         MetalPipelines& pipelines = metal_pipelines();
 
+        // cur はブラーパスの ping-pong で書き換えられるため、入力のコピーが必要。
         id<MTLBuffer> cur = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> tmp = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> acc = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> wsum = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> coc_buf = [pipelines.device newBufferWithBytes:coc.ptr length:plane_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> output = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+        BufferBinding coc_binding = make_buffer_for_input(pipelines.device, coc.ptr, plane_bytes);
+        id<MTLBuffer> coc_buf = coc_binding.buffer;
+        BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+        id<MTLBuffer> output = output_binding.buffer;
         if (!cur || !tmp || !acc || !wsum || !coc_buf || !output) {
             throw std::runtime_error("failed to allocate Metal lens blur buffers");
         }
@@ -334,7 +415,7 @@ py::array_t<float> apply_lensblur(
             id<MTLBuffer> params = make_params(level, 0);
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
             [enc setBuffer:cur offset:0 atIndex:0];
-            [enc setBuffer:coc_buf offset:0 atIndex:1];
+            [enc setBuffer:coc_buf offset:coc_binding.offset atIndex:1];
             [enc setBuffer:acc offset:0 atIndex:2];
             [enc setBuffer:wsum offset:0 atIndex:3];
             [enc setBuffer:params offset:0 atIndex:4];
@@ -343,16 +424,21 @@ py::array_t<float> apply_lensblur(
         };
 
         // level 0: cur は原画像そのまま(sigma≈0)。
-        encode_accumulate(0);
+        if (level_needed[0]) {
+            encode_accumulate(0);
+        }
 
+        // last_needed より上のレベルは accumulate が全画素ゼロ寄与なので、
+        // ブラーの逐次合成ごと打ち切れる。
         double sigma_cur = 0.0;
-        for (int level = 1; level < num_levels; ++level) {
+        for (int level = 1; level <= last_needed; ++level) {
             double sigma = static_cast<double>(level) * static_cast<double>(max_coc_radius)
                            / static_cast<double>(num_levels - 1) / 2.0;
             if (spherical_aberration > 0.0f && sigma > 1.0) {
                 sigma *= (1.0 + static_cast<double>(spherical_aberration) * 0.2);
             }
 
+            bool accumulated = false;
             if (sigma >= 0.1) {
                 double delta = std::sqrt(std::max(0.0, sigma * sigma - sigma_cur * sigma_cur));
                 if (delta > 1.0e-4) {
@@ -373,7 +459,20 @@ py::array_t<float> apply_lensblur(
                         dispatch_2d(enc, pipelines.blur_h, static_cast<NSUInteger>(width), static_cast<NSUInteger>(height));
                         [enc endEncoding];
                     }
-                    {
+                    if (level_needed[static_cast<size_t>(level)]) {
+                        // 垂直ブラーとそのレベルの accumulate を融合。
+                        id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
+                        [enc setBuffer:tmp offset:0 atIndex:0];
+                        [enc setBuffer:cur offset:0 atIndex:1];
+                        [enc setBuffer:weights offset:0 atIndex:2];
+                        [enc setBuffer:coc_buf offset:coc_binding.offset atIndex:3];
+                        [enc setBuffer:acc offset:0 atIndex:4];
+                        [enc setBuffer:wsum offset:0 atIndex:5];
+                        [enc setBuffer:params offset:0 atIndex:6];
+                        dispatch_2d(enc, pipelines.blur_v_accumulate, static_cast<NSUInteger>(width), static_cast<NSUInteger>(height));
+                        [enc endEncoding];
+                        accumulated = true;
+                    } else {
                         id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                         [enc setBuffer:tmp offset:0 atIndex:0];
                         [enc setBuffer:cur offset:0 atIndex:1];
@@ -387,7 +486,9 @@ py::array_t<float> apply_lensblur(
             }
             // sigma < 0.1 のレベルは reference が原画像を使う挙動に一致(cur は原画像のまま)。
 
-            encode_accumulate(level);
+            if (!accumulated && level_needed[static_cast<size_t>(level)]) {
+                encode_accumulate(level);
+            }
         }
 
         {
@@ -395,7 +496,7 @@ py::array_t<float> apply_lensblur(
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
             [enc setBuffer:acc offset:0 atIndex:0];
             [enc setBuffer:wsum offset:0 atIndex:1];
-            [enc setBuffer:output offset:0 atIndex:2];
+            [enc setBuffer:output offset:output_binding.offset atIndex:2];
             [enc setBuffer:params offset:0 atIndex:3];
             dispatch_1d(enc, pipelines.finalize, static_cast<NSUInteger>(count));
             [enc endEncoding];
@@ -404,7 +505,7 @@ py::array_t<float> apply_lensblur(
         [command_buffer commit];
         [command_buffer waitUntilCompleted];
 
-        std::memcpy(out.ptr, [output contents], image_bytes);
+        finish_output_binding(output_binding, out.ptr, image_bytes);
     }
 
     return result;

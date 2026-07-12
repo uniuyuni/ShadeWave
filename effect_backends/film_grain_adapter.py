@@ -16,10 +16,27 @@ from . import film_grain_reference
 
 
 _cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_film_grain_cpu")
+_metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_film_grain_metal")
 
 
 def native_available() -> bool:
-    return _cpu_backend is not None
+    return _cpu_backend is not None or _metal_backend is not None
+
+
+def _metal_backend_enabled() -> bool:
+    value = _backend_preference()
+    if value in {"reference", "python", "cpu", "off", "0", "false", "no"}:
+        return False
+    return value in {"", "auto", "metal"}
+
+
+def _metal_device_available() -> bool:
+    if _metal_backend is None:
+        return False
+    try:
+        return bool(_metal_backend.metal_available())
+    except Exception:
+        return False
 
 
 def _backend_preference() -> str:
@@ -35,6 +52,8 @@ def _native_strict() -> bool:
 
 
 def backend_status() -> BackendStatus:
+    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
+        return BackendStatus("film_grain", "effect_backends._film_grain_metal", True)
     if native_enabled():
         return BackendStatus("film_grain", "effect_backends._film_grain_cpu", True)
     if _cpu_backend is not None:
@@ -63,6 +82,28 @@ def apply_film_grain(
         return image if getattr(image, "dtype", None) == np.float32 else np.asarray(image, dtype=np.float32)
 
     image32 = np.asarray(image, dtype=np.float32)
+    if (
+        image32.ndim == 3
+        and image32.shape[-1] >= 3
+        and _metal_backend is not None
+        and _metal_backend_enabled()
+        and _metal_device_available()
+    ):
+        try:
+            return _metal_backend.apply_film_grain(
+                np.ascontiguousarray(image32),
+                amount,
+                float(grain_size),
+                float(roughness),
+                float(shadow),
+                float(highlight),
+                float(color),
+                int(seed),
+            )
+        except Exception:
+            if _native_strict():
+                raise
+
     if native_enabled() and image32.ndim == 3 and image32.shape[-1] >= 3:
         try:
             return _cpu_backend.apply_film_grain(

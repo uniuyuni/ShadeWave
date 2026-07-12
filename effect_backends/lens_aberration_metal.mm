@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -321,6 +323,8 @@ kernel void spherical_blur_sigma(
     blur_sigma[gid] = p.total_blur_strength * depth_weight[gid] * (0.5f + 0.5f * edge_weight[gid]);
 }
 
+// RGB 3ch を float3 で同時に累積する(チャンネルごとの再走査をなくす)。
+// 各チャンネルの加算順序は従来と同一なので結果はビット一致する。
 kernel void gaussian_rgb_horizontal(
     const device float* input [[buffer(0)]],
     device float* output [[buffer(1)]],
@@ -333,14 +337,16 @@ kernel void gaussian_rgb_horizontal(
     if (x >= p.width || y >= p.height) {
         return;
     }
-    for (int ch = 0; ch < 3; ++ch) {
-        float sum = 0.0f;
-        for (int k = -p.radius; k <= p.radius; ++k) {
-            int sx = reflect_scipy(x + k, p.width);
-            sum += input[(y * p.width + sx) * 3 + ch] * weights[k + p.radius];
-        }
-        output[(y * p.width + x) * 3 + ch] = sum;
+    float3 sum = float3(0.0f);
+    for (int k = -p.radius; k <= p.radius; ++k) {
+        int sx = reflect_scipy(x + k, p.width);
+        int base = (y * p.width + sx) * 3;
+        sum += float3(input[base], input[base + 1], input[base + 2]) * weights[k + p.radius];
     }
+    int obase = (y * p.width + x) * 3;
+    output[obase] = sum.x;
+    output[obase + 1] = sum.y;
+    output[obase + 2] = sum.z;
 }
 
 kernel void gaussian_rgb_vertical(
@@ -355,14 +361,16 @@ kernel void gaussian_rgb_vertical(
     if (x >= p.width || y >= p.height) {
         return;
     }
-    for (int ch = 0; ch < 3; ++ch) {
-        float sum = 0.0f;
-        for (int k = -p.radius; k <= p.radius; ++k) {
-            int sy = reflect_scipy(y + k, p.height);
-            sum += input[(sy * p.width + x) * 3 + ch] * weights[k + p.radius];
-        }
-        output[(y * p.width + x) * 3 + ch] = sum;
+    float3 sum = float3(0.0f);
+    for (int k = -p.radius; k <= p.radius; ++k) {
+        int sy = reflect_scipy(y + k, p.height);
+        int base = (sy * p.width + x) * 3;
+        sum += float3(input[base], input[base + 1], input[base + 2]) * weights[k + p.radius];
     }
+    int obase = (y * p.width + x) * 3;
+    output[obase] = sum.x;
+    output[obase + 1] = sum.y;
+    output[obase + 2] = sum.z;
 }
 
 kernel void spherical_glow_src(
@@ -521,6 +529,21 @@ MetalPipelines& metal_pipelines() {
     return state;
 }
 
+// 球面収差の edge ブラー(放射状 norm² のガウシアン)は画像内容に依存しないため、
+// 同一 (width, height, resolution_scale) の連続呼び出しで再利用する。
+struct EdgeBlurCache {
+    std::mutex mutex;
+    int width = 0;
+    int height = 0;
+    float rs = 0.0f;
+    id<MTLBuffer> blurred = nil;
+};
+
+EdgeBlurCache& edge_blur_cache() {
+    static EdgeBlurCache cache;
+    return cache;
+}
+
 void dispatch_2d(id<MTLComputeCommandEncoder> encoder, id<MTLComputePipelineState> pipeline, int width, int height) {
     NSUInteger tw = pipeline.threadExecutionWidth;
     NSUInteger th = std::max<NSUInteger>(1, std::min<NSUInteger>(16, pipeline.maxTotalThreadsPerThreadgroup / std::max<NSUInteger>(1, tw)));
@@ -574,8 +597,10 @@ py::array_t<float> apply_lateral_ca(
             MetalPipelines& pipelines = metal_pipelines();
             const size_t bytes = static_cast<size_t>(height) * static_cast<size_t>(width) * 3 * sizeof(float);
 
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
             LensAberrationParams params{width, height, strength, resolution_scale};
             id<MTLBuffer> params_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
 
@@ -586,8 +611,8 @@ py::array_t<float> apply_lateral_ca(
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
             [encoder setComputePipelineState:pipelines.lateral_ca];
-            [encoder setBuffer:input_buffer offset:0 atIndex:0];
-            [encoder setBuffer:output_buffer offset:0 atIndex:1];
+            [encoder setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+            [encoder setBuffer:output_buffer offset:output_binding.offset atIndex:1];
             [encoder setBuffer:params_buffer offset:0 atIndex:2];
             dispatch_2d(encoder, pipelines.lateral_ca, width, height);
             [encoder endEncoding];
@@ -599,7 +624,7 @@ py::array_t<float> apply_lateral_ca(
                 throw std::runtime_error(message);
             }
 
-            std::memcpy(out.ptr, [output_buffer contents], bytes);
+            finish_output_binding(output_binding, out.ptr, bytes);
         }
     }
 
@@ -638,8 +663,10 @@ py::array_t<float> apply_longitudinal_ca(
             const size_t plane_bytes = static_cast<size_t>(count) * sizeof(float);
             const size_t image_bytes = plane_bytes * 3;
 
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> depth_buffer = [pipelines.device newBufferWithBytes:dm.ptr length:plane_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding depth_binding = make_buffer_for_input(pipelines.device, dm.ptr, plane_bytes);
+            id<MTLBuffer> depth_buffer = depth_binding.buffer;
             id<MTLBuffer> defocus_raw = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> defocus_temp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> defocus_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
@@ -647,7 +674,8 @@ py::array_t<float> apply_longitudinal_ca(
             id<MTLBuffer> r_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> b_temp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> b_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
 
             const float rs = std::max(0.05f, resolution_scale);
             std::vector<float> defocus_weights = gaussian_weights(std::max(0.5f, 2.0f * rs));
@@ -672,7 +700,7 @@ py::array_t<float> apply_longitudinal_ca(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.longitudinal_defocus];
-                [enc setBuffer:depth_buffer offset:0 atIndex:0];
+                [enc setBuffer:depth_buffer offset:depth_binding.offset atIndex:0];
                 [enc setBuffer:defocus_raw offset:0 atIndex:1];
                 [enc setBuffer:defocus_params_buffer offset:0 atIndex:2];
                 NSUInteger tw = pipelines.longitudinal_defocus.threadExecutionWidth;
@@ -705,7 +733,7 @@ py::array_t<float> apply_longitudinal_ca(
             auto blur_channel = [&](id<MTLBuffer> tmp, id<MTLBuffer> dst, id<MTLBuffer> channel_buffer) {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.gaussian_channel_horizontal];
-                [enc setBuffer:input_buffer offset:0 atIndex:0];
+                [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                 [enc setBuffer:tmp offset:0 atIndex:1];
                 [enc setBuffer:fringe_weights_buffer offset:0 atIndex:2];
                 [enc setBuffer:fringe_params_buffer offset:0 atIndex:3];
@@ -729,11 +757,11 @@ py::array_t<float> apply_longitudinal_ca(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.longitudinal_compose];
-                [enc setBuffer:input_buffer offset:0 atIndex:0];
+                [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                 [enc setBuffer:defocus_blur offset:0 atIndex:1];
                 [enc setBuffer:r_blur offset:0 atIndex:2];
                 [enc setBuffer:b_blur offset:0 atIndex:3];
-                [enc setBuffer:output_buffer offset:0 atIndex:4];
+                [enc setBuffer:output_buffer offset:output_binding.offset atIndex:4];
                 [enc setBuffer:fringe_params_buffer offset:0 atIndex:5];
                 NSUInteger tw = pipelines.longitudinal_compose.threadExecutionWidth;
                 [enc dispatchThreads:MTLSizeMake(static_cast<NSUInteger>(count), 1, 1) threadsPerThreadgroup:MTLSizeMake(tw, 1, 1)];
@@ -746,7 +774,7 @@ py::array_t<float> apply_longitudinal_ca(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 
@@ -793,17 +821,39 @@ py::array_t<float> apply_spherical_ca(
             const float glow_strength = strength * 0.3f * aperture_factor;
             const float contrast_reduction = std::clamp(1.0f - strength * 0.1f * aperture_factor, 0.3f, 1.0f);
 
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> depth_buffer = [pipelines.device newBufferWithBytes:dm.ptr length:plane_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            BufferBinding depth_binding = make_buffer_for_input(pipelines.device, dm.ptr, plane_bytes);
+            id<MTLBuffer> depth_buffer = depth_binding.buffer;
+
+            // edge ブラーは画像内容に依存しない(放射状 norm² のガウシアン)ため、
+            // 同じ (width, height, rs) の間はキャッシュを再利用する。
+            id<MTLBuffer> cached_edge_blur = nil;
+            {
+                EdgeBlurCache& cache = edge_blur_cache();
+                std::lock_guard<std::mutex> lock(cache.mutex);
+                if (cache.width == width && cache.height == height && cache.rs == rs && cache.blurred) {
+                    cached_edge_blur = cache.blurred;
+                }
+            }
+
             id<MTLBuffer> highlight_raw = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> highlight_temp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> highlight_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> depth_weight = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> edge_raw = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> edge_temp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> edge_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
+            id<MTLBuffer> edge_temp = nil;
+            id<MTLBuffer> edge_blur = cached_edge_blur;
+            if (!edge_blur) {
+                edge_temp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
+                edge_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
+                if (!edge_temp) {
+                    throw std::runtime_error("failed to allocate Metal spherical CA edge buffers");
+                }
+            }
             id<MTLBuffer> blur_sigma = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
 
             std::vector<float> highlight_weights = gaussian_weights(std::max(0.5f, 5.0f * rs));
             std::vector<float> edge_weights = gaussian_weights(std::max(0.5f, 10.0f * rs));
@@ -821,7 +871,7 @@ py::array_t<float> apply_spherical_ca(
             id<MTLBuffer> highlight_weights_buffer = [pipelines.device newBufferWithBytes:highlight_weights.data() length:highlight_weights.size() * sizeof(float) options:MTLResourceStorageModeShared];
             id<MTLBuffer> edge_weights_buffer = [pipelines.device newBufferWithBytes:edge_weights.data() length:edge_weights.size() * sizeof(float) options:MTLResourceStorageModeShared];
 
-            if (!input_buffer || !depth_buffer || !highlight_raw || !highlight_temp || !highlight_blur || !depth_weight || !edge_raw || !edge_temp || !edge_blur || !blur_sigma || !output_buffer || !params_buffer || !highlight_params_buffer || !edge_params_buffer || !highlight_weights_buffer || !edge_weights_buffer) {
+            if (!input_buffer || !depth_buffer || !highlight_raw || !highlight_temp || !highlight_blur || !depth_weight || !edge_raw || !edge_blur || !blur_sigma || !output_buffer || !params_buffer || !highlight_params_buffer || !edge_params_buffer || !highlight_weights_buffer || !edge_weights_buffer) {
                 throw std::runtime_error("failed to allocate Metal spherical CA buffers");
             }
 
@@ -829,8 +879,8 @@ py::array_t<float> apply_spherical_ca(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.spherical_prepare];
-                [enc setBuffer:input_buffer offset:0 atIndex:0];
-                [enc setBuffer:depth_buffer offset:0 atIndex:1];
+                [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+                [enc setBuffer:depth_buffer offset:depth_binding.offset atIndex:1];
                 [enc setBuffer:highlight_raw offset:0 atIndex:2];
                 [enc setBuffer:depth_weight offset:0 atIndex:3];
                 [enc setBuffer:edge_raw offset:0 atIndex:4];
@@ -860,7 +910,9 @@ py::array_t<float> apply_spherical_ca(
             };
 
             blur_plane(highlight_raw, highlight_temp, highlight_blur, highlight_weights_buffer, highlight_params_buffer);
-            blur_plane(edge_raw, edge_temp, edge_blur, edge_weights_buffer, edge_params_buffer);
+            if (!cached_edge_blur) {
+                blur_plane(edge_raw, edge_temp, edge_blur, edge_weights_buffer, edge_params_buffer);
+            }
 
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
@@ -878,6 +930,14 @@ py::array_t<float> apply_spherical_ca(
             if (command_buffer.error) {
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
+            }
+            if (!cached_edge_blur) {
+                EdgeBlurCache& cache = edge_blur_cache();
+                std::lock_guard<std::mutex> lock(cache.mutex);
+                cache.width = width;
+                cache.height = height;
+                cache.rs = rs;
+                cache.blurred = edge_blur;
             }
 
             const float* blur_sigma_ptr = static_cast<const float*>([blur_sigma contents]);
@@ -908,21 +968,22 @@ py::array_t<float> apply_spherical_ca(
                 blur_weights_buffer = [pipelines.device newBufferWithBytes:blur_weights.data() length:blur_weights.size() * sizeof(float) options:MTLResourceStorageModeShared];
                 glow_weights_buffer = [pipelines.device newBufferWithBytes:glow_weights.data() length:glow_weights.size() * sizeof(float) options:MTLResourceStorageModeShared];
                 id<MTLBuffer> params2_buffer = [pipelines.device newBufferWithBytes:&params length:sizeof(params) options:MTLResourceStorageModeShared];
+                // blurred_temp は 2 系統のブラーで順次使い回し、composed は
+                // glow ブラー後に不要になる glow_src を再利用する(確保 2 面分の削減)。
                 id<MTLBuffer> blurred_temp = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
                 id<MTLBuffer> blurred_spatial = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
                 id<MTLBuffer> glow_src = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
-                id<MTLBuffer> glow_temp = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
                 id<MTLBuffer> glow_spatial = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
-                composed_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
-                if (!blur_params_buffer || !glow_params_buffer || !blur_weights_buffer || !glow_weights_buffer || !params2_buffer || !blurred_temp || !blurred_spatial || !glow_src || !glow_temp || !glow_spatial || !composed_buffer) {
+                composed_buffer = glow_src;
+                if (!blur_params_buffer || !glow_params_buffer || !blur_weights_buffer || !glow_weights_buffer || !params2_buffer || !blurred_temp || !blurred_spatial || !glow_src || !glow_spatial) {
                     throw std::runtime_error("failed to allocate Metal spherical CA blur buffers");
                 }
 
                 command_buffer = [pipelines.queue commandBuffer];
-                auto blur_rgb = [&](id<MTLBuffer> src, id<MTLBuffer> tmp, id<MTLBuffer> dst, id<MTLBuffer> weights, id<MTLBuffer> pbuf) {
+                auto blur_rgb = [&](id<MTLBuffer> src, NSUInteger src_offset, id<MTLBuffer> tmp, id<MTLBuffer> dst, id<MTLBuffer> weights, id<MTLBuffer> pbuf) {
                     id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                     [enc setComputePipelineState:pipelines.gaussian_rgb_horizontal];
-                    [enc setBuffer:src offset:0 atIndex:0];
+                    [enc setBuffer:src offset:src_offset atIndex:0];
                     [enc setBuffer:tmp offset:0 atIndex:1];
                     [enc setBuffer:weights offset:0 atIndex:2];
                     [enc setBuffer:pbuf offset:0 atIndex:3];
@@ -939,11 +1000,11 @@ py::array_t<float> apply_spherical_ca(
                     [enc endEncoding];
                 };
 
-                blur_rgb(input_buffer, blurred_temp, blurred_spatial, blur_weights_buffer, blur_params_buffer);
+                blur_rgb(input_buffer, input_binding.offset, blurred_temp, blurred_spatial, blur_weights_buffer, blur_params_buffer);
                 {
                     id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                     [enc setComputePipelineState:pipelines.spherical_glow_src];
-                    [enc setBuffer:input_buffer offset:0 atIndex:0];
+                    [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                     [enc setBuffer:highlight_blur offset:0 atIndex:1];
                     [enc setBuffer:glow_src offset:0 atIndex:2];
                     [enc setBuffer:params2_buffer offset:0 atIndex:3];
@@ -951,11 +1012,11 @@ py::array_t<float> apply_spherical_ca(
                     [enc dispatchThreads:MTLSizeMake(static_cast<NSUInteger>(count), 1, 1) threadsPerThreadgroup:MTLSizeMake(tw, 1, 1)];
                     [enc endEncoding];
                 }
-                blur_rgb(glow_src, glow_temp, glow_spatial, glow_weights_buffer, glow_params_buffer);
+                blur_rgb(glow_src, 0, blurred_temp, glow_spatial, glow_weights_buffer, glow_params_buffer);
                 {
                     id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                     [enc setComputePipelineState:pipelines.spherical_precontrast];
-                    [enc setBuffer:input_buffer offset:0 atIndex:0];
+                    [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                     [enc setBuffer:highlight_blur offset:0 atIndex:1];
                     [enc setBuffer:blur_sigma offset:0 atIndex:2];
                     [enc setBuffer:blurred_spatial offset:0 atIndex:3];
@@ -977,7 +1038,11 @@ py::array_t<float> apply_spherical_ca(
                 precontrast_buffer = composed_buffer;
             }
 
-            const float* pre_ptr = static_cast<const float*>([precontrast_buffer contents]);
+            // precontrast_buffer が zero-copy の入力バッファのままの場合は
+            // ページ先頭からのオフセットを考慮する。
+            const NSUInteger pre_offset = (precontrast_buffer == input_buffer) ? input_binding.offset : 0;
+            const float* pre_ptr = reinterpret_cast<const float*>(
+                static_cast<const unsigned char*>([precontrast_buffer contents]) + pre_offset);
             double pivot_sum = 0.0;
             for (int i = 0; i < count * 3; ++i) {
                 pivot_sum += pre_ptr[i];
@@ -993,8 +1058,8 @@ py::array_t<float> apply_spherical_ca(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.spherical_contrast];
-                [enc setBuffer:precontrast_buffer offset:0 atIndex:0];
-                [enc setBuffer:output_buffer offset:0 atIndex:1];
+                [enc setBuffer:precontrast_buffer offset:pre_offset atIndex:0];
+                [enc setBuffer:output_buffer offset:output_binding.offset atIndex:1];
                 [enc setBuffer:contrast_params_buffer offset:0 atIndex:2];
                 NSUInteger tw = pipelines.spherical_contrast.threadExecutionWidth;
                 [enc dispatchThreads:MTLSizeMake(static_cast<NSUInteger>(count * 3), 1, 1) threadsPerThreadgroup:MTLSizeMake(tw, 1, 1)];
@@ -1006,7 +1071,7 @@ py::array_t<float> apply_spherical_ca(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 

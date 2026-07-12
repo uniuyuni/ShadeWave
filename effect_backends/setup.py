@@ -141,6 +141,22 @@ setup(
             extra_link_args=["-framework", "Metal", "-framework", "Foundation"],
         ),
         Extension(
+            "effect_backends._film_grain_metal",
+            ["film_grain_metal.mm"],
+            include_dirs=[pybind11.get_include()],
+            language="c++",
+            extra_compile_args=["-O3", "-std=c++17", "-fobjc-arc"],
+            extra_link_args=["-framework", "Metal", "-framework", "Foundation"],
+        ),
+        Extension(
+            "effect_backends._color_separation_metal",
+            ["color_separation_metal.mm"],
+            include_dirs=[pybind11.get_include()],
+            language="c++",
+            extra_compile_args=["-O3", "-std=c++17", "-fobjc-arc"],
+            extra_link_args=["-framework", "Metal", "-framework", "Foundation"],
+        ),
+        Extension(
             "effect_backends._lut_metal",
             ["lut_metal.mm"],
             include_dirs=[pybind11.get_include()],

@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -1004,63 +1006,6 @@ void dispatch_2d(
     MTLSize threads_per_group = MTLSizeMake(tw, th, 1);
     MTLSize grid = MTLSizeMake(width, height, 1);
     [encoder dispatchThreads:grid threadsPerThreadgroup:threads_per_group];
-}
-
-NSUInteger page_size_bytes() {
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        page_size = 4096;
-    }
-    return static_cast<NSUInteger>(page_size);
-}
-
-struct BufferBinding {
-    id<MTLBuffer> buffer;
-    NSUInteger offset;
-    bool no_copy;
-};
-
-bool make_no_copy_binding(id<MTLDevice> device, void* ptr, size_t bytes, BufferBinding* binding) {
-    const NSUInteger page_size = page_size_bytes();
-    std::uintptr_t address = reinterpret_cast<std::uintptr_t>(ptr);
-    std::uintptr_t base_address = address & ~(static_cast<std::uintptr_t>(page_size) - 1);
-    NSUInteger offset = static_cast<NSUInteger>(address - base_address);
-    NSUInteger wrapped_length = static_cast<NSUInteger>(bytes) + offset;
-    NSUInteger rounded_length = ((wrapped_length + page_size - 1) / page_size) * page_size;
-
-    id<MTLBuffer> buffer = [device newBufferWithBytesNoCopy:reinterpret_cast<void*>(base_address)
-                                                     length:rounded_length
-                                                    options:MTLResourceStorageModeShared
-                                                deallocator:nil];
-    if (!buffer) {
-        return false;
-    }
-    binding->buffer = buffer;
-    binding->offset = offset;
-    binding->no_copy = true;
-    return true;
-}
-
-BufferBinding make_buffer_for_input(id<MTLDevice> device, const void* ptr, size_t bytes) {
-    BufferBinding binding{};
-    if (make_no_copy_binding(device, const_cast<void*>(ptr), bytes, &binding)) {
-        return binding;
-    }
-    binding.buffer = [device newBufferWithBytes:ptr length:bytes options:MTLResourceStorageModeShared];
-    binding.offset = 0;
-    binding.no_copy = false;
-    return binding;
-}
-
-BufferBinding make_buffer_for_output(id<MTLDevice> device, void* ptr, size_t bytes) {
-    BufferBinding binding{};
-    if (make_no_copy_binding(device, ptr, bytes, &binding)) {
-        return binding;
-    }
-    binding.buffer = [device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
-    binding.offset = 0;
-    binding.no_copy = false;
-    return binding;
 }
 
 int interpolation_code(const std::string& interpolation) {

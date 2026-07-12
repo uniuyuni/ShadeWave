@@ -18,6 +18,13 @@ try:
 except Exception:  # pragma: no cover - depends on local build state.
     _color_separation_cpu = None
 
+try:
+    from effect_backends import _color_separation_metal
+    if not _color_separation_metal.metal_available():
+        _color_separation_metal = None
+except Exception:  # pragma: no cover - depends on local build state.
+    _color_separation_metal = None
+
 
 class ColorSeparationEffectTest(unittest.TestCase):
     def test_backend_status_is_reported(self):
@@ -27,6 +34,7 @@ class ColorSeparationEffectTest(unittest.TestCase):
         self.assertIn(
             status.backend,
             {
+                "effect_backends._color_separation_metal",
                 "effect_backends._color_separation_cpu",
                 "effect_backends.color_separation_reference",
             },
@@ -51,6 +59,32 @@ class ColorSeparationEffectTest(unittest.TestCase):
         actual = _color_separation_cpu.apply_color_separation(image, **params)
 
         np.testing.assert_allclose(actual, expected, rtol=2.0e-3, atol=2.0e-3)
+
+    def test_metal_backend_matches_cpu_when_available(self):
+        if _color_separation_cpu is None or _color_separation_metal is None:
+            self.skipTest("color separation cpu/metal backends are not both available")
+
+        image = np.random.default_rng(31).random((48, 56, 3), dtype=np.float32) * 1.8 - 0.1
+        for params in (
+            {
+                "shadow_chroma_clean": 0.55,
+                "shadow_threshold": 0.22,
+                "color_separation": 0.65,
+                "chroma_clarity": 0.55,
+                "color_density": -0.35,
+                "subtractive_saturation": 0.4,
+                "opponent_contrast": 0.25,
+            },
+            {
+                "color_separation": 0.5,
+                "color_density": 0.45,
+                "subtractive_saturation": -0.3,
+                "opponent_contrast": 0.35,
+            },
+        ):
+            expected = _color_separation_cpu.apply_color_separation(image, **params)
+            actual = _color_separation_metal.apply_color_separation(image, **params)
+            np.testing.assert_allclose(actual, expected, rtol=1.0e-4, atol=1.0e-5)
 
     def test_native_pointwise_path_matches_reference_when_available(self):
         if _color_separation_cpu is None:

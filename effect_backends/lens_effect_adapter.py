@@ -9,8 +9,57 @@ import cv2
 from .backend_utils import BackendStatus, backend_preference, import_error_detail, optional_backend, strict_enabled
 from . import lens_effect_reference
 
+try:
+    import scipy.fft as _scipy_fft
+except ImportError:
+    _scipy_fft = None
+
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_lens_effect_metal")
+
+# 形状ボケの畳み込みコスト: Metal 直畳み込みは O(カーネル面積)/px、FFT は解像度のみ
+# 依存。この半径以上では FFT が直畳み込みを上回る(6MP 実測で決定)。
+_FFT_MIN_RADIUS = 14
+
+
+def _fft_shaped_convolve(source: np.ndarray, kernel: np.ndarray, colored_kernel: bool) -> np.ndarray | None:
+    """shaped_* Metal カーネルの畳み込み項を FFT で等価計算する。
+
+    Metal 側の reflect_edge(端画素を含む対称反射)は np.pad の 'symmetric' と一致。
+    パディング幅が画像より大きい場合は None(呼び出し元で直畳み込みへ)。
+    """
+    if _scipy_fft is None:
+        return None
+    kh, kw = int(kernel.shape[0]), int(kernel.shape[1])
+    kry, krx = kh // 2, kw // 2
+    h, w = source.shape[:2]
+    pad_t, pad_b = kry, kh - 1 - kry
+    pad_l, pad_r = krx, kw - 1 - krx
+    if max(pad_t, pad_b) >= h or max(pad_l, pad_r) >= w:
+        return None
+
+    padded = np.pad(source, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), mode="symmetric")
+    fh = padded.shape[0] + kh - 1
+    fw = padded.shape[1] + kw - 1
+    fh2 = _scipy_fft.next_fast_len(fh)
+    fw2 = _scipy_fft.next_fast_len(fw)
+
+    acc = np.empty_like(source)
+    kernel_flipped = kernel[::-1, ::-1]
+    kernel_freq = None
+    for c in range(3):
+        if colored_kernel:
+            kernel_freq = _scipy_fft.rfft2(
+                np.ascontiguousarray(kernel_flipped[:, :, c], dtype=np.float32),
+                s=(fh2, fw2), workers=-1)
+        elif kernel_freq is None:
+            kernel_freq = _scipy_fft.rfft2(
+                np.ascontiguousarray(kernel_flipped, dtype=np.float32),
+                s=(fh2, fw2), workers=-1)
+        source_freq = _scipy_fft.rfft2(padded[:, :, c], s=(fh2, fw2), workers=-1)
+        full = _scipy_fft.irfft2(source_freq * kernel_freq, s=(fh2, fw2), workers=-1)
+        acc[:, :, c] = full[kh - 1:kh - 1 + h, kw - 1:kw - 1 + w]
+    return acc
 
 
 def native_available() -> bool:
@@ -109,7 +158,14 @@ def apply_shaped_bokeh(image, depth_map, focus_depth, strength, radius, shape, r
     if strength <= 0.0 or radius < 2:
         return image
 
-    if _metal_backend is not None and _backend_preference() == "metal" and _metal_device_available():
+    # scipy FFT 経路は reference(cv2.filter2D + BORDER_REFLECT)と数学的に同一の
+    # 相関計算で、解像度のみ依存(半径非依存)。metal 指定時は小半径だけ直畳み込み、
+    # それ以外(デフォルト含む)は FFT を優先する。
+    preference = _backend_preference()
+    use_metal = _metal_backend is not None and preference == "metal" and _metal_device_available()
+    use_fft = _scipy_fft is not None and preference not in {"reference", "python", "opencv", "off", "0", "false", "no"}
+
+    if use_metal or use_fft:
         try:
             img = np.ascontiguousarray(image, dtype=np.float32)
             s = float(strength) / 100.0
@@ -120,6 +176,8 @@ def apply_shaped_bokeh(image, depth_map, focus_depth, strength, radius, shape, r
                 kernel = np.ascontiguousarray(lens_effect_reference.aperture_kernel_colored(shape, radius, rim_n), dtype=np.float32)
             else:
                 kernel = np.ascontiguousarray(lens_effect_reference.aperture_kernel(shape, radius), dtype=np.float32)
+            kernel_radius = max(kernel.shape[0], kernel.shape[1]) // 2
+            prefer_fft = use_fft and (not use_metal or kernel_radius >= _FFT_MIN_RADIUS)
 
             if depth_map is None:
                 local_sigma = max(2.0, float(radius) * 0.35)
@@ -130,27 +188,44 @@ def apply_shaped_bokeh(image, depth_map, focus_depth, strength, radius, shape, r
                     return image
                 peak_ratio = peak / np.maximum(lum, np.float32(1e-6))
                 energy_boost = np.float32(1.0) + np.log1p(peak) * np.float32(1.0 + 2.0 * s)
-                source = img * peak_ratio[..., np.newaxis] * energy_boost[..., np.newaxis]
+                source = np.ascontiguousarray(
+                    img * peak_ratio[..., np.newaxis] * energy_boost[..., np.newaxis], dtype=np.float32)
                 gain = np.float32(0.45 + 1.25 * s)
-                return _metal_backend.apply_shaped_bokeh_no_depth(
-                    img,
-                    np.ascontiguousarray(source, dtype=np.float32),
-                    kernel,
-                    bool(colored_kernel),
-                    float(gain),
-                )
-
-            hl_excess = np.clip(lum - np.float32(0.8), 0.0, None)
-            source = img * (np.float32(1.0) + (hl_excess * np.float32(2.0 + 6.0 * s))[..., np.newaxis])
-            return _metal_backend.apply_shaped_bokeh_depth(
-                img,
-                np.ascontiguousarray(source, dtype=np.float32),
-                np.ascontiguousarray(depth_map, dtype=np.float32),
-                kernel,
-                bool(colored_kernel),
-                float(focus_depth),
-                float(strength),
-            )
+                if prefer_fft:
+                    acc = _fft_shaped_convolve(source, kernel, colored_kernel)
+                    if acc is not None:
+                        return img + acc * gain
+                if use_metal:
+                    return _metal_backend.apply_shaped_bokeh_no_depth(
+                        img,
+                        source,
+                        kernel,
+                        bool(colored_kernel),
+                        float(gain),
+                    )
+            else:
+                hl_excess = np.clip(lum - np.float32(0.8), 0.0, None)
+                source = np.ascontiguousarray(
+                    img * (np.float32(1.0) + (hl_excess * np.float32(2.0 + 6.0 * s))[..., np.newaxis]),
+                    dtype=np.float32)
+                if prefer_fft:
+                    acc = _fft_shaped_convolve(source, kernel, colored_kernel)
+                    if acc is not None:
+                        w = np.clip(
+                            np.abs(np.asarray(depth_map, dtype=np.float32) - np.float32(focus_depth)) * np.float32(2.5),
+                            0.0, 1.0)
+                        w = (w * np.float32(np.clip(0.4 + 0.6 * s, 0.0, 1.0)))[..., np.newaxis]
+                        return img * (np.float32(1.0) - w) + acc * w
+                if use_metal:
+                    return _metal_backend.apply_shaped_bokeh_depth(
+                        img,
+                        source,
+                        np.ascontiguousarray(depth_map, dtype=np.float32),
+                        kernel,
+                        bool(colored_kernel),
+                        float(focus_depth),
+                        float(strength),
+                    )
         except Exception:
             if _metal_strict():
                 raise

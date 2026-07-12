@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -465,10 +467,13 @@ py::array_t<float> apply_low_frequency_transfer(
         const size_t image_bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * static_cast<size_t>(channels) * sizeof(float);
         const size_t kernel_bytes = kernel.size() * sizeof(float);
 
-        id<MTLBuffer> restored_buffer = [pipelines.device newBufferWithBytes:restored_info.ptr length:image_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> reference_buffer = [pipelines.device newBufferWithBytes:reference_info.ptr length:image_bytes options:MTLResourceStorageModeShared];
+        BufferBinding restored_binding = make_buffer_for_input(pipelines.device, restored_info.ptr, image_bytes);
+        BufferBinding reference_binding = make_buffer_for_input(pipelines.device, reference_info.ptr, image_bytes);
+        BufferBinding output_binding = make_buffer_for_output(pipelines.device, output_info.ptr, image_bytes);
+        id<MTLBuffer> restored_buffer = restored_binding.buffer;
+        id<MTLBuffer> reference_buffer = reference_binding.buffer;
         id<MTLBuffer> temp_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+        id<MTLBuffer> output_buffer = output_binding.buffer;
         id<MTLBuffer> temp_restored_buffer = use_highlight_protection
             ? [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared]
             : output_buffer;
@@ -495,8 +500,8 @@ py::array_t<float> apply_low_frequency_transfer(
 
         if (use_highlight_protection) {
             id<MTLComputeCommandEncoder> pair_h = [command_buffer computeCommandEncoder];
-            [pair_h setBuffer:restored_buffer offset:0 atIndex:0];
-            [pair_h setBuffer:reference_buffer offset:0 atIndex:1];
+            [pair_h setBuffer:restored_buffer offset:restored_binding.offset atIndex:0];
+            [pair_h setBuffer:reference_buffer offset:reference_binding.offset atIndex:1];
             [pair_h setBuffer:temp_buffer offset:0 atIndex:2];
             [pair_h setBuffer:temp_restored_buffer offset:0 atIndex:3];
             [pair_h setBuffer:kernel_buffer offset:0 atIndex:4];
@@ -507,17 +512,17 @@ py::array_t<float> apply_low_frequency_transfer(
             id<MTLComputeCommandEncoder> pair_v = [command_buffer computeCommandEncoder];
             [pair_v setBuffer:temp_buffer offset:0 atIndex:0];
             [pair_v setBuffer:temp_restored_buffer offset:0 atIndex:1];
-            [pair_v setBuffer:restored_buffer offset:0 atIndex:2];
-            [pair_v setBuffer:reference_buffer offset:0 atIndex:3];
-            [pair_v setBuffer:output_buffer offset:0 atIndex:4];
+            [pair_v setBuffer:restored_buffer offset:restored_binding.offset atIndex:2];
+            [pair_v setBuffer:reference_buffer offset:reference_binding.offset atIndex:3];
+            [pair_v setBuffer:output_buffer offset:output_binding.offset atIndex:4];
             [pair_v setBuffer:kernel_buffer offset:0 atIndex:5];
             [pair_v setBuffer:params_buffer offset:0 atIndex:6];
             dispatch_2d(pair_v, pipelines.pair_vertical_compose, width, height);
             [pair_v endEncoding];
         } else {
             id<MTLComputeCommandEncoder> diff_h = [command_buffer computeCommandEncoder];
-            [diff_h setBuffer:restored_buffer offset:0 atIndex:0];
-            [diff_h setBuffer:reference_buffer offset:0 atIndex:1];
+            [diff_h setBuffer:restored_buffer offset:restored_binding.offset atIndex:0];
+            [diff_h setBuffer:reference_buffer offset:reference_binding.offset atIndex:1];
             [diff_h setBuffer:temp_buffer offset:0 atIndex:2];
             [diff_h setBuffer:kernel_buffer offset:0 atIndex:3];
             [diff_h setBuffer:params_buffer offset:0 atIndex:4];
@@ -526,8 +531,8 @@ py::array_t<float> apply_low_frequency_transfer(
 
             id<MTLComputeCommandEncoder> diff_v = [command_buffer computeCommandEncoder];
             [diff_v setBuffer:temp_buffer offset:0 atIndex:0];
-            [diff_v setBuffer:restored_buffer offset:0 atIndex:1];
-            [diff_v setBuffer:output_buffer offset:0 atIndex:2];
+            [diff_v setBuffer:restored_buffer offset:restored_binding.offset atIndex:1];
+            [diff_v setBuffer:output_buffer offset:output_binding.offset atIndex:2];
             [diff_v setBuffer:kernel_buffer offset:0 atIndex:3];
             [diff_v setBuffer:params_buffer offset:0 atIndex:4];
             dispatch_2d(diff_v, pipelines.diff_vertical_compose, width, height);
@@ -540,7 +545,7 @@ py::array_t<float> apply_low_frequency_transfer(
             throw std::runtime_error([[[command_buffer error] localizedDescription] UTF8String]);
         }
 
-        std::memcpy(output_info.ptr, [output_buffer contents], image_bytes);
+        finish_output_binding(output_binding, output_info.ptr, image_bytes);
     }
 
     return result;

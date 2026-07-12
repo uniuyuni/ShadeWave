@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -309,7 +311,8 @@ py::array_t<float> apply_coating(
         py::gil_scoped_release release;
         @autoreleasepool {
             MetalPipelines& pipelines = metal_pipelines();
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
             id<MTLBuffer> colored = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> luma1 = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> flare_tmp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
@@ -318,7 +321,8 @@ py::array_t<float> apply_coating(
             id<MTLBuffer> luma2 = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> micro_tmp = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> micro_blur = [pipelines.device newBufferWithLength:plane_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> output_buffer = output_binding.buffer;
 
             CoatingParams base_params{
                 width, height, 0,
@@ -344,7 +348,7 @@ py::array_t<float> apply_coating(
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
                 [enc setComputePipelineState:pipelines.color_luma];
-                [enc setBuffer:input_buffer offset:0 atIndex:0];
+                [enc setBuffer:input_buffer offset:input_binding.offset atIndex:0];
                 [enc setBuffer:colored offset:0 atIndex:1];
                 [enc setBuffer:luma1 offset:0 atIndex:2];
                 [enc setBuffer:base_params_buffer offset:0 atIndex:3];
@@ -406,7 +410,7 @@ py::array_t<float> apply_coating(
                 [enc setBuffer:glare offset:0 atIndex:0];
                 [enc setBuffer:luma2 offset:0 atIndex:1];
                 [enc setBuffer:micro_blur offset:0 atIndex:2];
-                [enc setBuffer:output_buffer offset:0 atIndex:3];
+                [enc setBuffer:output_buffer offset:output_binding.offset atIndex:3];
                 [enc setBuffer:base_params_buffer offset:0 atIndex:4];
                 dispatch_1d(enc, pipelines.micro_saturation, count);
                 [enc endEncoding];
@@ -418,7 +422,7 @@ py::array_t<float> apply_coating(
                 std::string message = [[command_buffer.error localizedDescription] UTF8String];
                 throw std::runtime_error(message);
             }
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 

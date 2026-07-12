@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -386,8 +388,10 @@ py::array_t<float> apply_cross_filter(
         const size_t input_bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3 * sizeof(float);
         const size_t mini_bytes = static_cast<size_t>(mini_width) * static_cast<size_t>(mini_height) * 3 * sizeof(float);
 
-        id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:input_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:input_bytes options:MTLResourceStorageModeShared];
+        BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, input_bytes);
+        BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, input_bytes);
+        id<MTLBuffer> input_buffer = input_binding.buffer;
+        id<MTLBuffer> output_buffer = output_binding.buffer;
         id<MTLBuffer> impulse_buffer = [pipelines.device newBufferWithLength:mini_bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> streak_buffer = [pipelines.device newBufferWithLength:mini_bytes options:MTLResourceStorageModeShared];
         memset([impulse_buffer contents], 0, mini_bytes);
@@ -415,8 +419,8 @@ py::array_t<float> apply_cross_filter(
         id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
 
         id<MTLComputeCommandEncoder> peak_encoder = [command_buffer computeCommandEncoder];
-        [peak_encoder setBuffer:input_buffer offset:0 atIndex:0];
-        [peak_encoder setBuffer:output_buffer offset:0 atIndex:1];
+        [peak_encoder setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+        [peak_encoder setBuffer:output_buffer offset:output_binding.offset atIndex:1];
         [peak_encoder setBuffer:impulse_buffer offset:0 atIndex:2];
         [peak_encoder setBuffer:params_buffer offset:0 atIndex:3];
         encode_dispatch(peak_encoder, pipelines.peak, width, height);
@@ -431,9 +435,9 @@ py::array_t<float> apply_cross_filter(
             [streak_encoder endEncoding];
 
             id<MTLComputeCommandEncoder> composite_encoder = [command_buffer computeCommandEncoder];
-            [composite_encoder setBuffer:input_buffer offset:0 atIndex:0];
+            [composite_encoder setBuffer:input_buffer offset:input_binding.offset atIndex:0];
             [composite_encoder setBuffer:streak_buffer offset:0 atIndex:1];
-            [composite_encoder setBuffer:output_buffer offset:0 atIndex:2];
+            [composite_encoder setBuffer:output_buffer offset:output_binding.offset atIndex:2];
             [composite_encoder setBuffer:params_buffer offset:0 atIndex:3];
             encode_dispatch(composite_encoder, pipelines.composite, width, height);
             [composite_encoder endEncoding];
@@ -445,7 +449,7 @@ py::array_t<float> apply_cross_filter(
             throw std::runtime_error([[[command_buffer error] localizedDescription] UTF8String]);
         }
 
-        std::memcpy(out.ptr, [output_buffer contents], input_bytes);
+        finish_output_binding(output_binding, out.ptr, input_bytes);
     }
 
     return result;

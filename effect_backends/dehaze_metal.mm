@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -395,8 +397,10 @@ py::array_t<float> dehaze_image(
     PreparedImage prepared = prepare_image(image);
     @autoreleasepool {
         MetalPipelines& pipelines = metal_pipelines();
-        id<MTLBuffer> input = [pipelines.device newBufferWithBytes:prepared.in.ptr length:prepared.image_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> output = [pipelines.device newBufferWithLength:prepared.image_bytes options:MTLResourceStorageModeShared];
+        BufferBinding input_binding = make_buffer_for_input(pipelines.device, prepared.in.ptr, prepared.image_bytes);
+        BufferBinding output_binding = make_buffer_for_output(pipelines.device, prepared.out.ptr, prepared.image_bytes);
+        id<MTLBuffer> input = input_binding.buffer;
+        id<MTLBuffer> output = output_binding.buffer;
         if (!input || !output) {
             throw std::runtime_error("failed to allocate Metal dehaze image buffers");
         }
@@ -407,14 +411,14 @@ py::array_t<float> dehaze_image(
             id<MTLBuffer> params_buffer = make_params(pipelines.device, params);
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
-            [enc setBuffer:input offset:0 atIndex:0];
-            [enc setBuffer:output offset:0 atIndex:1];
+            [enc setBuffer:input offset:input_binding.offset atIndex:0];
+            [enc setBuffer:output offset:output_binding.offset atIndex:1];
             [enc setBuffer:params_buffer offset:0 atIndex:2];
             dispatch_1d(enc, pipelines.haze_add, static_cast<NSUInteger>(prepared.count));
             [enc endEncoding];
             [command_buffer commit];
             [command_buffer waitUntilCompleted];
-            std::memcpy(prepared.out.ptr, [output contents], prepared.image_bytes);
+            finish_output_binding(output_binding, prepared.out.ptr, prepared.image_bytes);
             return prepared.result;
         }
 
@@ -433,7 +437,7 @@ py::array_t<float> dehaze_image(
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             {
                 id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
-                [enc setBuffer:input offset:0 atIndex:0];
+                [enc setBuffer:input offset:input_binding.offset atIndex:0];
                 [enc setBuffer:depth_raw offset:0 atIndex:1];
                 [enc setBuffer:params_buffer offset:0 atIndex:2];
                 dispatch_1d(enc, pipelines.depth_raw, static_cast<NSUInteger>(prepared.count));
@@ -475,16 +479,16 @@ py::array_t<float> dehaze_image(
         {
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             id<MTLComputeCommandEncoder> enc = [command_buffer computeCommandEncoder];
-            [enc setBuffer:input offset:0 atIndex:0];
+            [enc setBuffer:input offset:input_binding.offset atIndex:0];
             [enc setBuffer:depth offset:0 atIndex:1];
-            [enc setBuffer:output offset:0 atIndex:2];
+            [enc setBuffer:output offset:output_binding.offset atIndex:2];
             [enc setBuffer:apply_params_buffer offset:0 atIndex:3];
             dispatch_1d(enc, pipelines.dehaze_apply, static_cast<NSUInteger>(prepared.count));
             [enc endEncoding];
             [command_buffer commit];
             [command_buffer waitUntilCompleted];
         }
-        std::memcpy(prepared.out.ptr, [output contents], prepared.image_bytes);
+        finish_output_binding(output_binding, prepared.out.ptr, prepared.image_bytes);
     }
     return prepared.result;
 }

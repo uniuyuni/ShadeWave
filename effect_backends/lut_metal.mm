@@ -4,6 +4,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include "metal_buffer_utils.h"
+
 #include <algorithm>
 #include <cstring>
 #include <mutex>
@@ -218,9 +220,12 @@ py::array_t<float> apply_lut3d(
             const size_t image_bytes = static_cast<size_t>(pixel_count) * 3 * sizeof(float);
             const size_t table_bytes = expected_table * sizeof(float);
 
-            id<MTLBuffer> input_buffer = [pipelines.device newBufferWithBytes:in.ptr length:image_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> table_buffer = [pipelines.device newBufferWithBytes:tbl.ptr length:table_bytes options:MTLResourceStorageModeShared];
-            id<MTLBuffer> output_buffer = [pipelines.device newBufferWithLength:image_bytes options:MTLResourceStorageModeShared];
+            BufferBinding input_binding = make_buffer_for_input(pipelines.device, in.ptr, image_bytes);
+            BufferBinding table_binding = make_buffer_for_input(pipelines.device, tbl.ptr, table_bytes);
+            BufferBinding output_binding = make_buffer_for_output(pipelines.device, out.ptr, image_bytes);
+            id<MTLBuffer> input_buffer = input_binding.buffer;
+            id<MTLBuffer> table_buffer = table_binding.buffer;
+            id<MTLBuffer> output_buffer = output_binding.buffer;
 
             LutMetalParams params{
                 pixel_count,
@@ -233,9 +238,9 @@ py::array_t<float> apply_lut3d(
             id<MTLCommandBuffer> command_buffer = [pipelines.queue commandBuffer];
             id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
             [encoder setComputePipelineState:pipelines.trilinear];
-            [encoder setBuffer:input_buffer offset:0 atIndex:0];
-            [encoder setBuffer:table_buffer offset:0 atIndex:1];
-            [encoder setBuffer:output_buffer offset:0 atIndex:2];
+            [encoder setBuffer:input_buffer offset:input_binding.offset atIndex:0];
+            [encoder setBuffer:table_buffer offset:table_binding.offset atIndex:1];
+            [encoder setBuffer:output_buffer offset:output_binding.offset atIndex:2];
             [encoder setBuffer:params_buffer offset:0 atIndex:3];
 
             NSUInteger tpg = std::max<NSUInteger>(1, pipelines.trilinear.maxTotalThreadsPerThreadgroup);
@@ -250,7 +255,7 @@ py::array_t<float> apply_lut3d(
                 throw std::runtime_error([[[command_buffer error] localizedDescription] UTF8String]);
             }
 
-            std::memcpy(out.ptr, [output_buffer contents], image_bytes);
+            finish_output_binding(output_binding, out.ptr, image_bytes);
         }
     }
 
