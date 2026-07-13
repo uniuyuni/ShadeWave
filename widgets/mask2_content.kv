@@ -69,6 +69,16 @@
         height: kvutils.dpi_scale_height(self.ref_height)
         on_release: root.add_layer()
 
+    Label:
+        # コピー元選択モードのヒント(優先)か、選択中マスクの操作ヒントを表示する。
+        # どちらも無いとき(空)は高さ0で非表示。
+        text: "Tap a mask to copy from it (ESC to cancel)" if root.copy_mode else root.active_hint
+        size_hint_y: None
+        height: kvutils.dpi_scale_height(20) if (root.copy_mode or root.active_hint) else 0
+        opacity: 1 if (root.copy_mode or root.active_hint) else 0
+        font_size: '11sp'
+        color: 1, 1, 0.4, 1
+
     RecycleView:
         id: mask2_rv
         viewclass: 'Mask2Item'

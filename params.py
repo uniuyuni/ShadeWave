@@ -548,6 +548,70 @@ def _pmck_shell_empty_primary() -> dict:
     return pmck_store.empty_pmck()
 
 
+def _iter_mask2_dicts(mask2_list):
+    """mask_editor2.serialize() が返す mask2 ツリー(コンポジットの mask_list を含む)を
+    再帰的に平坦化する。"""
+    for m in mask2_list or []:
+        yield m
+        for child, _maskop in m.get('mask_list', []) or []:
+            yield from _iter_mask2_dicts([child])
+
+
+def _mask2_bitmap_key_to_str(cache_key):
+    """cache_keys の msgpack セーフなキー(list)を mask2_bitmaps の辞書キー用文字列に変換する。
+    _msgpack_safe_key の comma-join は TargetText の自由入力テキスト等を含むキーでは非可逆
+    なため使わず、json でロスレスに往復できる形にする。"""
+    return json.dumps(cache_key, sort_keys=True, ensure_ascii=True)
+
+
+def _mask2_bitmap_key_from_str(key_str):
+    return json.loads(key_str)
+
+
+def _collect_mask2_bitmaps(mask2_list, mask_editor2):
+    """シリアライズ済みマスクツリーが参照する image_mask_cache_key を集め、AIImageCache
+    共有ストアから圧縮済みビットマップを取得する(保存時点で参照されているキーのみ =自然GC)。
+    同じキーを複数マスクが共有していても1回だけ含める。"""
+    store = getattr(mask_editor2, "ai_image_cache", None)
+    if store is None or not hasattr(store, "get_serialized_mask_bitmap"):
+        return None
+    result = {}
+    for m in _iter_mask2_dicts(mask2_list):
+        key = m.get('image_mask_cache_key')
+        if key is None:
+            continue
+        key_str = _mask2_bitmap_key_to_str(key)
+        if key_str in result:
+            continue
+        compressed = store.get_serialized_mask_bitmap(key)
+        if compressed is None:
+            continue
+        result[key_str] = compressed
+    return result or None
+
+
+def _merge_mask2_bitmaps(ser, mask_editor2):
+    """mask2_bitmaps を AIImageCache 共有ストアへマージ put する。
+    mask_editor2.deserialize(ser) の前に呼ぶこと(マスク側の get_mask_bitmap が参照できるように)。"""
+    bitmaps = ser.get("mask2_bitmaps") if isinstance(ser, dict) else None
+    if not bitmaps:
+        return
+    store = getattr(mask_editor2, "ai_image_cache", None)
+    if store is None or not hasattr(store, "put_mask_bitmap"):
+        return
+    for key_str, compressed in bitmaps.items():
+        try:
+            cache_key = _mask2_bitmap_key_from_str(key_str)
+            # キー→内容は不変(キーは推論入力由来)なので、既にストアにあれば解凍も put も
+            # 省略する。undo/redo のたびに再解凍・圧縮キャッシュ破棄が起きるのを防ぐ。
+            if store.get_mask_bitmap(cache_key) is not None:
+                continue
+            image = utils.convert_image_from_list(compressed)
+            store.put_mask_bitmap(cache_key, image)
+        except Exception:
+            logging.exception("mask2_bitmaps のマージに失敗しました key=%s", key_str)
+
+
 def serialize(param, mask_editor2, file_path=None):
     tdatetime = dt.now()
     tstr = tdatetime.strftime('%Y/%m/%d')
@@ -600,6 +664,9 @@ def serialize(param, mask_editor2, file_path=None):
     }
     if mask_dict is not None:
         ser.update(mask_dict)
+        mask2_bitmaps = _collect_mask2_bitmaps(mask_dict.get("mask2"), mask_editor2)
+        if mask2_bitmaps is not None:
+            ser["mask2_bitmaps"] = mask2_bitmaps
     if ai_image_cache is not None:
         ser["ai_image_cache"] = ai_image_cache
 
@@ -609,6 +676,10 @@ def deserialize(ser, param, mask_editor2, load_heavy=True):
     set_ai_image_cache = getattr(mask_editor2, "set_serialized_ai_image_cache", None)
     if callable(set_ai_image_cache):
         set_ai_image_cache(ser.get("ai_image_cache"))
+
+    # mask_editor2.deserialize(ser) より前に AI マスクビットマップ共有ストアへ復元しておく
+    # (各マスクの deserialize が get_mask_bitmap で参照できるように)。
+    _merge_mask2_bitmaps(ser, mask_editor2)
 
     pp = ser.get("primary_param")
     if not isinstance(pp, dict):

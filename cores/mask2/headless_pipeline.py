@@ -37,6 +37,16 @@ class Mask2HeadlessPipeline:
     def peek_ai_depth_map(self, cache_key):
         return self.ai_image_cache.peek_depth_map(cache_key)
 
+    def get_ai_mask_bitmap(self, cache_key):
+        # AI マスク(Segment/Face/TargetText)共有ストアの参照。get_ai_depth_map と対称。
+        return self.ai_image_cache.get_mask_bitmap(cache_key)
+
+    def put_ai_mask_bitmap(self, cache_key, image):
+        self.ai_image_cache.put_mask_bitmap(cache_key, image)
+
+    def sweep_ai_mask_bitmaps(self, live_keys):
+        return self.ai_image_cache.sweep_mask_bitmaps(live_keys)
+
     def set_texture_size(self, tx, ty):
         self.ctx.set_texture_size(tx, ty)
 

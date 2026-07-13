@@ -9,6 +9,8 @@ import math
 import cv2
 import time
 import uuid
+import hashlib
+import re
 from enum import Enum
 import copy
 import logging
@@ -302,6 +304,37 @@ class MaskType(str, Enum):
     FACE = 'face'
     TARGET_TEXT = 'target_text'
 
+# マスク「コピー」で引き継ぐ「形状決定系」の mask2_* effects_param キーのホワイトリスト。
+# 調整・描画系(mask2_blend_mode, mask2_color_dodge/burn, mask2_mix_black/white,
+# mask2_skin_smooth_amount 等)や非 mask2 キー(mask_rotation 等のマスク Geometry)は
+# コピー対象外(新規デフォルトのまま)。実キー名は effects.py Mask2Effect.get_param_dict()
+# の定義に準拠(widgets/mask2_content.py の copy 選択フローから参照される)。
+MASK2_SHAPE_PARAM_KEYS = (
+    'mask2_invert', 'mask2_allow_over_one', 'mask2_allow_under_zero',
+    'mask2_blur', 'mask2_open_space', 'mask2_close_space',
+    'mask2_freedraw_brush_size', 'mask2_freedraw_brush_hardness', 'mask2_polyline_fill',
+    'mask2_hue_min', 'mask2_hue_max', 'mask2_hue_distance',
+    'mask2_lum_min', 'mask2_lum_max', 'mask2_lum_distance',
+    'mask2_sat_min', 'mask2_sat_max', 'mask2_sat_distance',
+    'mask2_depth_min', 'mask2_depth_max', 'mask2_depth_balance',
+    'mask2_edge_refine_mode', 'mask2_edge_refine_radius', 'mask2_edge_refine_strength', 'mask2_edge_refine_bias',
+    'mask2_face_face', 'mask2_face_brows', 'mask2_face_eyes', 'mask2_face_nose', 'mask2_face_mouth', 'mask2_face_lips',
+)
+
+def _next_copy_name(name):
+    """コピー時のマスク名を生成する。末尾の ' copy' / ' copy N' を検出して連番を振り、
+    'copy copy ...' の連鎖を防ぐ。
+      'Circle'        -> 'Circle copy'
+      'Circle copy'   -> 'Circle copy 2'
+      'Circle copy 2' -> 'Circle copy 3'
+    """
+    m = re.match(r'^(.*) copy(?: (\d+))?$', name)
+    if m:
+        base = m.group(1)
+        n = int(m.group(2)) if m.group(2) else 1
+        return f"{base} copy {n + 1}"
+    return f"{name} copy"
+
 # コントロールポイントのクラス
 class ControlPoint(KVWidget):
     HIT_RADIUS_PX = 10.0
@@ -452,17 +485,27 @@ class BaseMask(KVWidget):
             if pending_error is not None:
                 raise pending_error
 
-        try:
-            result = compute_func()
-        except BaseException as exc:
-            with self._image_mask_pending_lock:
-                if self._image_mask_pending_event is event:
-                    self._image_mask_pending_error = exc
-                    self._image_mask_pending_event = None
-                    self._image_mask_pending_key = None
-                    self.image_mask_cache_key = None
-                event.set()
-            raise
+        # 共有ストア(AIImageCache)に同一キーの結果が既にあれば推論をスキップして再利用する。
+        # DepthMapMask の self.editor.get_ai_depth_map と対称の到達経路。
+        store_get = getattr(self.editor, "get_ai_mask_bitmap", None)
+        cached = store_get(cache_key) if callable(store_get) else None
+        if cached is not None:
+            result = cached
+        else:
+            try:
+                result = compute_func()
+            except BaseException as exc:
+                with self._image_mask_pending_lock:
+                    if self._image_mask_pending_event is event:
+                        self._image_mask_pending_error = exc
+                        self._image_mask_pending_event = None
+                        self._image_mask_pending_key = None
+                        self.image_mask_cache_key = None
+                    event.set()
+                raise
+            store_put = getattr(self.editor, "put_ai_mask_bitmap", None)
+            if callable(store_put):
+                store_put(cache_key, result)
 
         with self._image_mask_pending_lock:
             if self._image_mask_pending_event is event:
@@ -473,6 +516,36 @@ class BaseMask(KVWidget):
                 self._image_mask_pending_key = None
             event.set()
         return result
+
+    def _serialize_image_mask_cache(self, dict):
+        """AI マスク(Segment/Face/TargetText)用: インラインを出さず参照キーのみ保存する。
+        実体は AIImageCache 共有ストア(image_mask_cache_key で参照)側にある。"""
+        if self.image_mask_cache_key is not None:
+            dict['image_mask_cache_key'] = self.image_mask_cache_key
+
+    def _deserialize_image_mask_cache(self, dict):
+        """image_mask_cache のストア対応 deserialize。
+        旧形式(インライン圧縮の image_mask_cache)はデコードしてストアへ移行し、
+        新形式(image_mask_cache_key のみ)はストアから引く(無ければ既存の再計算パスに委ねる)。"""
+        self.image_mask_cache = None
+        self.image_mask_cache_key = None
+        legacy_inline = dict.get('image_mask_cache', None)
+        key = dict.get('image_mask_cache_key', None)
+        if legacy_inline is not None:
+            image = utils.convert_image_from_list(legacy_inline)
+            if key is None:
+                # キー欠損の旧ファイル: 内容の sha1 で代替キーを生成
+                key = ['mask2-ai-cache-legacy', hashlib.sha1(image.tobytes()).hexdigest()]
+            self.image_mask_cache = image
+            self.image_mask_cache_key = key
+            store_put = getattr(self.editor, "put_ai_mask_bitmap", None)
+            if callable(store_put):
+                store_put(key, image)
+        elif key is not None:
+            self.image_mask_cache_key = key
+            store_get = getattr(self.editor, "get_ai_mask_bitmap", None)
+            if callable(store_get):
+                self.image_mask_cache = store_get(key)
 
     def invalidate_render_cache(self):
         old_hash = self.image_mask_cache_hash
@@ -3506,10 +3579,8 @@ class SegmentMask(BaseMask):
             'corner': [crx, cry],
             'effects_param': param
         }
-        # マスクデータ保存
-        if self.image_mask_cache is not None:
-            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_key'] = self.image_mask_cache_key
+        # マスクデータはストア参照のみ保存(実体は AIImageCache 共有ストア側にある)
+        self._serialize_image_mask_cache(dict)
 
         return dict
 
@@ -3522,15 +3593,12 @@ class SegmentMask(BaseMask):
         self.center = params.denorm_param(self.effects_param, (cx, cy))
         self.corner = params.denorm_param(self.effects_param, (crx, cry))
 
-        # マスクデータ展開
-        self.image_mask_cache = dict.get('image_mask_cache', None)
-        if self.image_mask_cache is not None:
-            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
+        # マスクデータ展開(ストア参照。旧形式は移行)
+        self._deserialize_image_mask_cache(dict)
 
         # 描き直し
         self.create_control_points()
-        #self.update_mask()     
+        #self.update_mask()
 
     def update_control_points(self):
         if len(self.control_points) > 0:
@@ -3892,10 +3960,8 @@ class FaceMask(BaseMask):
             'center': [cx, cy],
             'effects_param': param
         }
-        # マスクデータ保存
-        if self.image_mask_cache is not None:
-            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_key'] = self.image_mask_cache_key
+        # マスクデータはストア参照のみ保存(実体は AIImageCache 共有ストア側にある)
+        self._serialize_image_mask_cache(dict)
 
         return dict
 
@@ -3905,14 +3971,11 @@ class FaceMask(BaseMask):
         self.name = dict['name']
         self.effects_param.update(dict['effects_param'])
         self.center = params.denorm_param(self.effects_param, (cx, cy))
-        # マスクデータ展開
-        self.image_mask_cache = dict.get('image_mask_cache', None)
-        if self.image_mask_cache is not None:
-            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
+        # マスクデータ展開(ストア参照。旧形式は移行)
+        self._deserialize_image_mask_cache(dict)
 
         # 描き直し
-        self.create_control_points()     
+        self.create_control_points()
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -3927,7 +3990,7 @@ class FaceMask(BaseMask):
         with self.canvas:
             cx, cy = self.tcg_to_window_for_overlay(*self.center)
             self.translate.x, self.translate.y = cx, cy
-        
+
         if self.is_draw_mask == True:
             if self.do_draw_composit_mask == True:
                 composit_mask = self.editor.find_composit_mask(self)
@@ -4118,10 +4181,8 @@ class TargetTextMask(BaseMask):
             'target_text': self.target_text,
             'effects_param': param
         }
-        # マスクデータ保存
-        if self.image_mask_cache is not None:
-            dict['image_mask_cache'] = utils.convert_image_to_list(self.image_mask_cache)
-            dict['image_mask_cache_key'] = self.image_mask_cache_key
+        # マスクデータはストア参照のみ保存(実体は AIImageCache 共有ストア側にある)
+        self._serialize_image_mask_cache(dict)
 
         return dict
 
@@ -4132,15 +4193,12 @@ class TargetTextMask(BaseMask):
         self.target_text = dict.get('target_text', "All")
         self.effects_param.update(dict['effects_param'])
         self.center = params.denorm_param(self.effects_param, (cx, cy))
-        # マスクデータ展開
-        self.image_mask_cache = dict.get('image_mask_cache', None)
-        if self.image_mask_cache is not None:
-            self.image_mask_cache = utils.convert_image_from_list(self.image_mask_cache)
-            self.image_mask_cache_key = dict.get('image_mask_cache_key', None)
+        # マスクデータ展開(ストア参照。旧形式は移行)
+        self._deserialize_image_mask_cache(dict)
 
         # 描き直し
         self.create_control_points()
-        #self.update_mask()     
+        #self.update_mask()
 
     def update_control_points(self):
         cp_center = self.control_points[0]
@@ -4276,7 +4334,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         logging.info("MaskEditor: 初期化完了")
 
     def on_structure_change(self, *args):
-        pass
+        # マスク追加/削除・コンポジット変更・deserialize 完了はすべてここを通るため、
+        # AI マスクビットマップ共有ストアの mark-and-sweep 自動削除もここでまとめて行う。
+        self._sweep_mask_bitmaps()
 
     # 終了処理
     def end(self):
@@ -4337,6 +4397,22 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if self.ai_image_cache is None:
             return None
         return self.ai_image_cache.peek_depth_map(cache_key)
+
+    def get_ai_mask_bitmap(self, cache_key):
+        # AI マスク(Segment/Face/TargetText)共有ストアの参照。get_ai_depth_map と対称。
+        if self.ai_image_cache is None:
+            return None
+        return self.ai_image_cache.get_mask_bitmap(cache_key)
+
+    def put_ai_mask_bitmap(self, cache_key, image):
+        if self.ai_image_cache is None:
+            return
+        self.ai_image_cache.put_mask_bitmap(cache_key, image)
+
+    def sweep_ai_mask_bitmaps(self, live_keys):
+        if self.ai_image_cache is None:
+            return {"mask_bitmap_entries": 0, "mask_bitmap_bytes": 0}
+        return self.ai_image_cache.sweep_mask_bitmaps(live_keys)
 
     def get_original_image_hls(self):
         if self.original_image_hls is None and self.original_image_rgb is not None:
@@ -4981,6 +5057,64 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         #self.dispatch('on_structure_change')
         return mask
 
+    def copy_mask_into(self, src_mask, target_composit, maskop='Add'):
+        """src_mask の形状のみを target_composit へコピーする(マスク作成モード「コピー」)。
+        調整パラメータは MASK2_SHAPE_PARAM_KEYS ホワイトリストのみ引き継ぎ、それ以外は
+        新規デフォルトのまま。AI マスク(Segment/Face/TargetText)は image_mask_cache_key
+        をコピーするだけでストア経由に自動共有される(ビットマップの複製は行わない)。
+        src_mask の状態は変更しない。"""
+        if src_mask is None or src_mask.is_composit():
+            logging.error("copy_mask_into: src_mask が None か composit です(copy_composit_children_into を使用)")
+            return None
+
+        src_dict = src_mask.serialize()
+        mask_type = src_dict['type']
+
+        # type / center / inner_radius / outer_radius / rotate_rad / lines / polylines /
+        # corner / image_mask_cache_key 等、タイプ固有の形状キーをそのまま引き継ぐ
+        # (name と effects_param は作り直す)。
+        new_dict = {k: v for k, v in src_dict.items() if k not in ('name', 'effects_param')}
+        new_dict['name'] = _next_copy_name(src_mask.name)
+        # 調整パラメータはホワイトリストのみ、コピー元の「現在値」から引き継ぐ
+        # (serialize() 済みの sparse dict ではなく src_mask.effects_param を直接参照することで、
+        # sticky 設定等の残留値に左右されず常に決定的な値になる)。
+        new_dict['effects_param'] = {
+            key: effects.Mask2Effect.get_param(src_mask.effects_param, key)
+            for key in MASK2_SHAPE_PARAM_KEYS
+        }
+
+        index = self.get_mask_list().index(target_composit) + 1
+        new_mask = self._create_mask(mask_type, index, new_dict)
+        target_composit.add_mask(new_mask, maskop, 0)
+
+        self.request_mask_render_update(
+            new_mask,
+            reason="copy_mask_into",
+            structure_changed=True,
+            redraw_overlay=True,
+            redraw_pipeline=True,
+        )
+        return new_mask
+
+    def copy_composit_children_into(self, src_composit, target_composit):
+        """src_composit の子マスクを全て target_composit へ展開コピーする(各子の maskop は
+        コピー元の値を維持)。src_composit が target_composit 自身(またはその子)であっても
+        安全: 現在の子リストのスナップショットを取ってからコピーするため、無限追加にならない。"""
+        if src_composit is None or not src_composit.is_composit():
+            logging.error("copy_composit_children_into: src_composit が composit ではありません")
+            return []
+
+        snapshot = list(src_composit.get_mask_list())  # [(mask, maskop), ...] のスナップショット
+        # copy_mask_into は単体追加と同じ挿入方式(target_composit の直後 / composit-local
+        # 先頭へ prepend)を使うため、逆順に処理することで最終的にソース順を保持する。
+        created = []
+        for child, maskop in reversed(snapshot):
+            new_mask = self.copy_mask_into(child, target_composit, maskop)
+            if new_mask is not None:
+                created.append(new_mask)
+        created.reverse()
+        return created
+
     def _remove_mask(self, mask):
         if mask is None:
             return
@@ -5074,6 +5208,16 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         for mask in list(self.mask_list):
             yield from visit(mask)
 
+    def _sweep_mask_bitmaps(self):
+        """AI マスク(Segment/Face/TargetText)が保持する image_mask_cache_key の生存集合を
+        mask_list ツリー全体(コンポジット含む)から収集し、共有ストアの未参照エントリを削除する。"""
+        live_keys = [
+            key
+            for key in (getattr(mask, 'image_mask_cache_key', None) for mask in self._iter_masks_for_memory())
+            if key is not None
+        ]
+        self.sweep_ai_mask_bitmaps(live_keys)
+
     def clear_ai_intermediate_caches(self):
         ai_mask_types = (SegmentMask, TargetTextMask, DepthMapMask, FaceMask)
         cache_attrs = (
@@ -5108,7 +5252,9 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
                 if hasattr(mask, attr):
                     setattr(mask, attr, None)
         if self.ai_image_cache is not None:
-            cache_result = self.ai_image_cache.clear()
+            # メモリ逼迫パスでは深度+派生のみ解放し、AI マスクビットマップ共有ストアは保持する
+            # (スイープによる mark-and-sweep 削除に委ねる)。
+            cache_result = self.ai_image_cache.clear_transient()
             removed += int(cache_result.get("ai_image_cache_entries", 0) or 0)
             removed_bytes += int(cache_result.get("ai_image_cache_bytes", 0) or 0)
         if removed:

@@ -6,10 +6,45 @@ from kivy.uix.behaviors import FocusBehavior
 from kivy.uix.recycleview.layout import LayoutSelectionBehavior
 from kivy.uix.boxlayout import BoxLayout as KVBoxLayout
 from kivy.core.window import Window as KVWindow
+from kivy.clock import Clock
 from utils import dialogutils, kvutils
+from history import Operation, get_history_ctrl
 
+import logging
 import re
 
+
+# マスク作成メニューの 'Copy' はここだけの UI 専用アクション(MaskType には追加しない)
+_COPY_ACTION = 'copy'
+
+# マスクを選択/作成した直後に表示する操作ヒントの表示秒数(この後 自動的に消す)。
+_MASK_HINT_SECONDS = 5.0
+
+# マスククラス -> 1行の操作ヒント。widgets.mask_editor2 との循環 import を避けるため
+# 初回参照時に遅延構築する(Composit / 未知タイプはヒントなし)。
+_MASK_HINTS = None
+
+
+def _mask_hint_for(mask):
+    global _MASK_HINTS
+    if _MASK_HINTS is None:
+        import widgets.mask_editor2 as me2
+        # 作成直後に最初に行う操作だけを短く示す。点設定系(Full/Depth/Face/TargetText)は
+        # まず画像をタップして点を置く必要があるため、その手順を明示する。
+        _MASK_HINTS = {
+            me2.CircularGradientMask: "Drag to draw an ellipse",
+            me2.GradientMask: "Drag to draw a gradient line",
+            me2.FullMask: "Tap the image to place a point",
+            me2.FreeDrawMask: "Paint to draw the mask",
+            me2.PolylineMask: "Click to add points",
+            me2.SegmentMask: "Drag a box around the subject",
+            me2.DepthMapMask: "Tap to place a point, then set the depth range",
+            me2.FaceMask: "Tap to place a point, then pick face parts",
+            me2.TargetTextMask: "Tap to place a point, then type the target",
+        }
+    if mask is None:
+        return ""
+    return _MASK_HINTS.get(type(mask), "")
 
 _ADD_MASK_POPUP_WIDTH_REF = 300
 _ADD_MASK_POPUP_BUTTON_HEIGHT_REF = 36
@@ -71,6 +106,11 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         if super().on_touch_down(touch):
             return True
         if self.collide_point(*touch.pos):
+            panel = self.parent.parent.parent
+            if getattr(panel, 'copy_mode', False):
+                # コピー元選択モード中は行タップを既存の active 切り替えより先に横取りする
+                panel.handle_copy_selection(self.mask_ref)
+                return True
             self.set_active()
             return True
         return False
@@ -106,6 +146,9 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         from functools import partial
         import widgets.mask_editor2 as me2
 
+        # 別の +/- 押下で以前のコピー選択モードは解除する
+        self.parent.parent.parent.cancel_copy_mode()
+
         types = [
             ('Circle', me2.MaskType.CIRCULAR),
             ('Line', me2.MaskType.GRADIENT),
@@ -115,7 +158,8 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
             ('Segment', me2.MaskType.SEGMENT),
             ('Depth', me2.MaskType.DEPTHMAP),
             ('Face', me2.MaskType.FACE),
-            ('Target Text', me2.MaskType.TARGET_TEXT)
+            ('Target Text', me2.MaskType.TARGET_TEXT),
+            ('Copy', _COPY_ACTION),
         ]
 
         content = KVBoxLayout(orientation='vertical')
@@ -140,6 +184,10 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
 
     def _add_child_mask(self, type_key, maskop, popup, instance):
         popup.dismiss()
+        if type_key == _COPY_ACTION:
+            # コピー元選択モードへ移行(対象コンポジットは押した +/- のあった行自身)
+            self.parent.parent.parent.start_copy_mode(self.mask_ref, maskop)
+            return
         self.mask_ref.editor.set_active_mask(None) # 一旦アクティブなし
         new_mask = self.mask_ref.editor.add_mask(type_key, maskop,self.mask_ref.editor.get_mask_list().index(self.mask_ref)+1)
         self.mask_ref.add_mask(new_mask, maskop) # CompositMask.add_mask -> dispatch event
@@ -148,12 +196,35 @@ class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior, KVRecyc
     pass
 
 class Mask2ContentPanel(KVBoxLayout):
+    # コピー元選択モード中かどうか(kv からヒント表示の bool として参照)
+    copy_mode = KVBooleanProperty(False)
+    # アクティブなマスクの操作ヒント(kv から表示。空なら非表示。copy_mode が優先)
+    active_hint = KVStringProperty("")
 
     def __init__(self, mask2_editor, **kwargs):
         self.editor = mask2_editor
+        self._copy_target_composit = None
+        self._copy_target_maskop = None
+        self._hint_clock = None
         super().__init__(**kwargs)
         self.editor.bind(on_structure_change=self.refresh_list)
         self.editor.bind(active_mask=self.refresh_list)
+        self.editor.bind(active_mask=self._update_active_hint)
+        KVWindow.bind(on_key_down=self._on_key_down)
+
+    def _update_active_hint(self, *args):
+        # マスクを選択/作成したときにそのタイプの操作ヒントを表示し、数秒後に自動的に消す。
+        hint = _mask_hint_for(self.editor.active_mask)
+        self.active_hint = hint
+        if self._hint_clock is not None:
+            self._hint_clock.cancel()
+            self._hint_clock = None
+        if hint:
+            self._hint_clock = Clock.schedule_once(self._clear_active_hint, _MASK_HINT_SECONDS)
+
+    def _clear_active_hint(self, *args):
+        self.active_hint = ""
+        self._hint_clock = None
 
     def on_kv_post(self, *args, **kwargs):
         super(Mask2ContentPanel, self).on_kv_post(*args, **kwargs)
@@ -163,7 +234,68 @@ class Mask2ContentPanel(KVBoxLayout):
 
     def set_active_index(self, index):
         pass
-    
+
+    def _on_key_down(self, window, key, scancode, codepoint, modifier):
+        if self.copy_mode and key == 27:  # ESC
+            self.cancel_copy_mode()
+            return True
+        return False
+
+    def on_touch_down(self, touch):
+        if self.copy_mode and self.collide_point(*touch.pos):
+            # 行タップは Mask2Item.on_touch_down 側で処理されるので、ここに来るのは
+            # パネル内の行以外(余白等)のタップ。コピー選択モードを解除する。
+            handled = super().on_touch_down(touch)
+            if not handled:
+                self.cancel_copy_mode()
+            return handled
+        return super().on_touch_down(touch)
+
+    def start_copy_mode(self, target_composit, maskop):
+        self._copy_target_composit = target_composit
+        self._copy_target_maskop = maskop
+        self.copy_mode = True
+
+    def cancel_copy_mode(self):
+        self._copy_target_composit = None
+        self._copy_target_maskop = None
+        self.copy_mode = False
+
+    def handle_copy_selection(self, src_mask):
+        target_composit = self._copy_target_composit
+        maskop = self._copy_target_maskop
+        self.cancel_copy_mode()
+
+        if src_mask is None or target_composit is None:
+            return
+        if target_composit not in self.editor.get_mask_list():
+            return
+
+        # マスク追加と同じ経路(set_backup_all/set_update_all)で 1 操作 = 1 undo として記録する。
+        # コンポジット展開で複数マスクが増えても、この方式なら全体が 1 操作で戻る。
+        main_widget = get_history_ctrl()
+        op = Operation(type="All")
+        op.set_backup_all(main_widget.primary_param, self.editor)
+
+        try:
+            if src_mask.is_composit():
+                created = self.editor.copy_composit_children_into(src_mask, target_composit)
+            else:
+                new_mask = self.editor.copy_mask_into(src_mask, target_composit, maskop)
+                created = [new_mask] if new_mask is not None else []
+        except Exception:
+            logging.exception("mask copy failed")
+            created = []
+
+        if created:
+            self.editor.set_active_mask(created[-1])
+
+        if op.set_update_all(main_widget.primary_param, self.editor, "Copy Mask") is not None:
+            main_widget.history.append(op)
+            main_widget.history_panel.set_history(main_widget.history)
+
+        self.refresh_list()
+
     def refresh_list(self, *args):
         # レイヤーリストを再構築
         data = []
