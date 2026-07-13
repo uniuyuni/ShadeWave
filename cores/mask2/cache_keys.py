@@ -39,6 +39,12 @@ def make_cache_key(kind: str, *parts: Any):
 
 
 def segment_cache_key(original_image_size, center, corner, invert):
+    # center/corner は元画像ピクセル座標。保存時の正規化→読込時の非正規化
+    # (params.norm_param / denorm_param) は IEEE754 の丸めで完全には可逆でないため、
+    # 生の float を鍵に埋めると再読み込み時に 1-ULP ズレて鍵が不一致になり、復元済み
+    # ビットマップがあっても AI 再推論が走る。整数ピクセルへ量子化して鍵を安定化する。
+    center = [int(round(float(center[0]))), int(round(float(center[1])))]
+    corner = [int(round(float(corner[0]))), int(round(float(corner[1])))]
     return make_cache_key("segment", original_image_size, center, corner)
 
 

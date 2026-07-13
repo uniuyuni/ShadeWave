@@ -546,6 +546,12 @@ class BaseMask(KVWidget):
             store_get = getattr(self.editor, "get_ai_mask_bitmap", None)
             if callable(store_get):
                 self.image_mask_cache = store_get(key)
+            logging.warning(
+                "[DIAG-REINFER] deserialize %s key=%s bitmap_found=%s read_store_id=%s suspend=%s",
+                self.__class__.__name__, key, self.image_mask_cache is not None,
+                id(getattr(self.editor, "ai_image_cache", None)),
+                getattr(self.editor, "_bitmap_sweep_suspend_depth", "n/a"),
+            )
 
     def invalidate_render_cache(self):
         old_hash = self.image_mask_cache_hash
@@ -3667,6 +3673,25 @@ class SegmentMask(BaseMask):
         # _draw_segmentを呼び出さなければならない用
         cache_key = cache_keys.segment_cache_key(original_image_size, center, corner, False)
         if (self.image_mask_cache is None or self.image_mask_cache_key != cache_key) and self.initializing == False:
+            # [DIAG-REINFER] 再推論判定の診断ログ（原因特定後に削除）
+            try:
+                _store_get = getattr(self.editor, "get_ai_mask_bitmap", None)
+                _in_store = _store_get(cache_key) is not None if callable(_store_get) else None
+                _orig = self.editor.get_original_image_rgb()
+                logging.warning(
+                    "[DIAG-REINFER] segment reinfer-trigger cache_present=%s key_match=%s in_store=%s store_id=%s\n"
+                    "  stored_key   =%s\n  recomputed_key=%s\n"
+                    "  self.center=%s self.corner=%s original_image_size=%s orig_rgb_shape=%s",
+                    self.image_mask_cache is not None,
+                    self.image_mask_cache_key == cache_key,
+                    _in_store,
+                    id(getattr(self.editor, "ai_image_cache", None)),
+                    self.image_mask_cache_key, cache_key,
+                    self.center, self.corner, original_image_size,
+                    (None if _orig is None else getattr(_orig, "shape", None)),
+                )
+            except Exception:
+                logging.exception("[DIAG-REINFER] logging failed")
             # 描画
             cx, cy = center
             crx, cry = corner
@@ -4310,6 +4335,12 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.original_image_rgb = None
         self.original_image_hls = None
         self.ai_image_cache = AIImageCache()
+        # AI マスクビットマップ共有ストアの mark-and-sweep 抑止カウンタ。
+        # deserialize 中は mask_list が段階的に構築されるため、途中の on_structure_change で
+        # sweep すると復元直後・生成前のビットマップを誤って掃除してしまう。>0 の間は sweep を
+        # 保留し、resume 時に一度だけ実行する。
+        self._bitmap_sweep_suspend_depth = 0
+        self._bitmap_sweep_pending = False
 
         # mask Geometry: image Geom のみの matrix を退避し、active Composit の
         # mask Geom matrix を左乗算したものを tcg_info['matrix'] に書き込む。
@@ -4336,7 +4367,25 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
     def on_structure_change(self, *args):
         # マスク追加/削除・コンポジット変更・deserialize 完了はすべてここを通るため、
         # AI マスクビットマップ共有ストアの mark-and-sweep 自動削除もここでまとめて行う。
+        # ただし deserialize 中(suspend 中)は mask_list が未完成なので保留し、resume 時に走らせる。
+        if self._bitmap_sweep_suspend_depth > 0:
+            self._bitmap_sweep_pending = True
+            return
         self._sweep_mask_bitmaps()
+
+    def suspend_bitmap_sweep(self):
+        """AI マスクビットマップ共有ストアの mark-and-sweep を一時停止する(再入可能)。
+        deserialize のようにマスクを段階構築する処理を囲い、途中の on_structure_change による
+        sweep で復元途中のビットマップが消えるのを防ぐ。resume と対で使う。"""
+        self._bitmap_sweep_suspend_depth += 1
+
+    def resume_bitmap_sweep(self):
+        """suspend_bitmap_sweep を解除する。最外で解除された時点で保留中の sweep を一度だけ実行。"""
+        if self._bitmap_sweep_suspend_depth > 0:
+            self._bitmap_sweep_suspend_depth -= 1
+        if self._bitmap_sweep_suspend_depth == 0 and self._bitmap_sweep_pending:
+            self._bitmap_sweep_pending = False
+            self._sweep_mask_bitmaps()
 
     # 終了処理
     def end(self):
@@ -5216,7 +5265,15 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
             for key in (getattr(mask, 'image_mask_cache_key', None) for mask in self._iter_masks_for_memory())
             if key is not None
         ]
-        self.sweep_ai_mask_bitmaps(live_keys)
+        import traceback
+        _before = list(getattr(self.ai_image_cache, "_mask_bitmaps", {}).keys())
+        result = self.sweep_ai_mask_bitmaps(live_keys)
+        _after = list(getattr(self.ai_image_cache, "_mask_bitmaps", {}).keys())
+        logging.warning(
+            "[DIAG-REINFER] _sweep_mask_bitmaps store_id=%s n_live_keys=%d before=%d after=%d result=%s\n  live=%s\n  caller=%s",
+            id(self.ai_image_cache), len(live_keys), len(_before), len(_after), result,
+            live_keys, "".join(traceback.format_stack(limit=6)[:-1]),
+        )
 
     def clear_ai_intermediate_caches(self):
         ai_mask_types = (SegmentMask, TargetTextMask, DepthMapMask, FaceMask)

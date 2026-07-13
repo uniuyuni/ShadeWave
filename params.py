@@ -594,6 +594,10 @@ def _merge_mask2_bitmaps(ser, mask_editor2):
     """mask2_bitmaps を AIImageCache 共有ストアへマージ put する。
     mask_editor2.deserialize(ser) の前に呼ぶこと(マスク側の get_mask_bitmap が参照できるように)。"""
     bitmaps = ser.get("mask2_bitmaps") if isinstance(ser, dict) else None
+    logging.warning("[DIAG-REINFER] _merge_mask2_bitmaps called n_bitmaps=%s store_id=%s suspend=%s",
+                    None if bitmaps is None else len(bitmaps),
+                    id(getattr(mask_editor2, "ai_image_cache", None)),
+                    getattr(mask_editor2, "_bitmap_sweep_suspend_depth", "n/a"))
     if not bitmaps:
         return
     store = getattr(mask_editor2, "ai_image_cache", None)
@@ -677,10 +681,6 @@ def deserialize(ser, param, mask_editor2, load_heavy=True):
     if callable(set_ai_image_cache):
         set_ai_image_cache(ser.get("ai_image_cache"))
 
-    # mask_editor2.deserialize(ser) より前に AI マスクビットマップ共有ストアへ復元しておく
-    # (各マスクの deserialize が get_mask_bitmap で参照できるように)。
-    _merge_mask2_bitmaps(ser, mask_editor2)
-
     pp = ser.get("primary_param")
     if not isinstance(pp, dict):
         pp = {}
@@ -698,10 +698,28 @@ def deserialize(ser, param, mask_editor2, load_heavy=True):
     # 色々処理変換
     _deserialize_param(param, load_heavy=load_heavy)
 
-    mask_editor2.clear_mask()
-    mask_dict = ser.get("mask2", None)
-    if mask_dict is not None:
-        mask_editor2.deserialize(ser)
+    # AI マスクビットマップ共有ストアの復元とマスク生成は sweep 抑止下で行う。
+    # clear_mask() は on_structure_change 経由で mark-and-sweep を走らせるため、先に
+    # _merge_mask2_bitmaps を呼ぶと mask_list が空の状態で sweep され、復元したばかりの
+    # ビットマップが即座に掃除されてしまう(→ 再読み込み時に AI 再推論)。そこで
+    #   1. clear_mask (sweep はここでは無害)
+    #   2. _merge_mask2_bitmaps でストアへ復元(各マスクの deserialize が参照する)
+    #   3. mask_editor2.deserialize でマスク生成
+    # の順に並べ、全体を suspend_bitmap_sweep で囲って中間 sweep を止め、最後に一度だけ
+    # 掃除する(複数 AI マスクが別コンポジットにいても互いのビットマップを消さないため)。
+    suspend = getattr(mask_editor2, "suspend_bitmap_sweep", None)
+    resume = getattr(mask_editor2, "resume_bitmap_sweep", None)
+    if callable(suspend):
+        suspend()
+    try:
+        mask_editor2.clear_mask()
+        _merge_mask2_bitmaps(ser, mask_editor2)
+        mask_dict = ser.get("mask2", None)
+        if mask_dict is not None:
+            mask_editor2.deserialize(ser)
+    finally:
+        if callable(resume):
+            resume()
 
 
 def merge_heavy_from_pmck(file_path, param, mask_editor2, cached_dict=None):
