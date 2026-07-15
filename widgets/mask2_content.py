@@ -191,6 +191,8 @@ class Mask2Item(KVBoxLayout, KVRecycleDataViewBehavior):
         self.mask_ref.editor.set_active_mask(None) # 一旦アクティブなし
         new_mask = self.mask_ref.editor.add_mask(type_key, maskop,self.mask_ref.editor.get_mask_list().index(self.mask_ref)+1)
         self.mask_ref.add_mask(new_mask, maskop) # CompositMask.add_mask -> dispatch event
+        # 作成直後の初動を案内する操作ヒントを表示する(パネル = 行の3つ上の親)
+        self.parent.parent.parent.show_creation_hint(new_mask)
 
 class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior, KVRecycleBoxLayout):
     pass
@@ -209,12 +211,13 @@ class Mask2ContentPanel(KVBoxLayout):
         super().__init__(**kwargs)
         self.editor.bind(on_structure_change=self.refresh_list)
         self.editor.bind(active_mask=self.refresh_list)
-        self.editor.bind(active_mask=self._update_active_hint)
         KVWindow.bind(on_key_down=self._on_key_down)
 
-    def _update_active_hint(self, *args):
-        # マスクを選択/作成したときにそのタイプの操作ヒントを表示し、数秒後に自動的に消す。
-        hint = _mask_hint_for(self.editor.active_mask)
+    def show_creation_hint(self, mask):
+        # マスクを新規作成した直後(作成メニューからの生成時)に、そのタイプの操作ヒントを
+        # 表示し、数秒後に自動的に消す。既存マスクの再選択では呼ばない(作成直後の初動案内に限定)。
+        # ※ editor.created_mask は Kivy Property ではなく bind 不可のため、作成 UI から直接呼ぶ。
+        hint = _mask_hint_for(mask)
         self.active_hint = hint
         if self._hint_clock is not None:
             self._hint_clock.cancel()
