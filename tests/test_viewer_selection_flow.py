@@ -1,9 +1,15 @@
 import ast
 import pathlib
+import sys
 import unittest
 
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
+
+from utils import viewer_query
+
+
 VIEWER_PATH = PROJECT_ROOT / "widgets" / "viewer.py"
 
 
@@ -16,6 +22,16 @@ def _load_class_function(class_name, function_name):
                 if isinstance(child, ast.FunctionDef) and child.name == function_name:
                     return ast.get_source_segment(source, child)
     raise AssertionError(f"{class_name}.{function_name} was not found")
+
+
+def _load_viewer_method(function_name):
+    namespace = {}
+    exec(
+        _load_class_function("ViewerWidget", function_name),
+        {"viewer_query": viewer_query},
+        namespace,
+    )
+    return namespace[function_name]
 
 
 class ViewerSelectionFlowTest(unittest.TestCase):
@@ -31,8 +47,69 @@ class ViewerSelectionFlowTest(unittest.TestCase):
         plain_click_branch = source.split("if 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers:", 1)[1]
         self.assertLess(
             plain_click_branch.index("if already_single_selected:"),
-            plain_click_branch.index("self.clear_selection()"),
+            plain_click_branch.index("self.clear_selection(notify=False)"),
         )
+
+    def test_modifier_selection_keeps_current_until_it_is_deselected(self):
+        handle_source = _load_class_function("ViewerWidget", "handle_selection")
+        reconcile_source = _load_class_function("ViewerWidget", "_reconcile_current_selection")
+
+        self.assertIn("current_index = self._current_view_index()", handle_source)
+        self.assertIn("self._reconcile_current_selection(reference_index)", handle_source)
+        self.assertIn("self._current_path in self.selected_paths", reconcile_source)
+        self.assertIn("viewer_query.nearest_selected_index", reconcile_source)
+
+    def test_nearest_remaining_selection_is_used_for_current(self):
+        self.assertEqual(4, viewer_query.nearest_selected_index({1, 4, 9}, 5))
+        self.assertEqual(9, viewer_query.nearest_selected_index({1, 4, 9}, 8))
+        self.assertEqual(4, viewer_query.nearest_selected_index({4, 6}, 5))
+        self.assertIsNone(viewer_query.nearest_selected_index(set(), 5))
+
+    def test_reconcile_current_selection_behavior(self):
+        reconcile = _load_viewer_method("_reconcile_current_selection")
+
+        class StubViewer:
+            def __init__(self, current_path, selected_paths, selected_indices):
+                self._current_path = current_path
+                self.selected_paths = set(selected_paths)
+                self.selected_indices = set(selected_indices)
+                self.notifications = []
+
+            def notify_selection_change(self, index):
+                self.notifications.append(index)
+
+        retained = StubViewer("current", {"current", "other"}, {2, 6})
+        reconcile(retained, 2)
+        self.assertEqual([], retained.notifications)
+
+        replaced = StubViewer("current", {"near", "far"}, {4, 9})
+        reconcile(replaced, 5)
+        self.assertEqual([4], replaced.notifications)
+
+        emptied = StubViewer("current", set(), set())
+        reconcile(emptied, 5)
+        self.assertEqual([None], emptied.notifications)
+
+        initially_empty = StubViewer(None, set(), set())
+        reconcile(initially_empty, None)
+        self.assertEqual([], initially_empty.notifications)
+
+    def test_empty_selection_notifies_main_widget_with_none(self):
+        reconcile_source = _load_class_function("ViewerWidget", "_reconcile_current_selection")
+        notify_source = _load_class_function("ViewerWidget", "notify_selection_change")
+        clear_source = _load_class_function("ViewerWidget", "clear_selection")
+
+        self.assertIn("self.notify_selection_change(None)", reconcile_source)
+        self.assertIn("app.main_widget.on_select(None)", notify_source)
+        self.assertIn("self._reconcile_current_selection(current_index)", clear_source)
+
+    def test_select_all_does_not_replace_an_existing_current_image(self):
+        source = _load_class_function("ViewerWidget", "on_key_down")
+
+        self.assertIn("current_index = self._current_view_index()", source)
+        self.assertIn("self.clear_selection(notify=False)", source)
+        self.assertIn("self._reconcile_current_selection(current_index)", source)
+        self.assertNotIn("self.notify_selection_change(len(self.data)-1)", source)
 
     def test_ai_job_state_never_initializes_recycle_data_as_none(self):
         new_item_source = _load_class_function("ViewerWidget", "_new_image_item")

@@ -20,6 +20,21 @@ DEFAULT_SETTINGS = {
     "filter_text": "",
 }
 
+
+def nearest_selected_index(selected_indices, reference_index):
+    """Return the selected view index nearest to ``reference_index``.
+
+    A stable lower-index tie break keeps the result deterministic when the
+    current item sits exactly between two remaining selections.
+    """
+    indices = sorted(set(selected_indices or ()))
+    if not indices:
+        return None
+    if reference_index is None:
+        return indices[0]
+    return min(indices, key=lambda index: (abs(index - reference_index), index))
+
+
 # EXIF 撮影日時の優先順（viewer のホバーヒントと同じ）。exiftool の
 # "YYYY:MM:DD HH:MM:SS" 形式は文字列比較で時系列順になる。
 _DATE_EXIF_KEYS = ("CreateDate", "DateCreated", "FileModifyDate", "ModifyDate")

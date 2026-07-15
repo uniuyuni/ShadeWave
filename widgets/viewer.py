@@ -565,6 +565,9 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self.selected_paths = set()
         self.selected_indices = set()
         self._last_selected_path = None
+        # Shift range のアンカーとは別に、preview に表示している画像を保持する。
+        # 修飾キーによる複数選択では、この path が選択内に残る限り再ロードしない。
+        self._current_path = None
         self.watch_directory = None
         self._watch_directory_lock = threading.Lock()
         self._watch_stop_event = None
@@ -971,6 +974,7 @@ class ViewerWidget(RecycleView, DraggableWidget):
         self.selected_paths = set()
         self.selected_indices = set()
         self._last_selected_path = None
+        self._current_path = None
         self.last_selected_index = None
         self.data = []
 
@@ -1320,12 +1324,11 @@ class ViewerWidget(RecycleView, DraggableWidget):
         return None, None
 
     def handle_selection(self, index, touch):
-        # We also need to notify MainWidget about selection change
         if not self._is_item_ready(index):
             return
-        should_notify = False
-        
+
         if not touch.is_mouse_scrolling and touch.button == 'left':
+            current_index = self._current_view_index()
             already_single_selected = (
                 index in self.selected_indices
                 and len(self.selected_indices) == 1
@@ -1337,47 +1340,79 @@ class ViewerWidget(RecycleView, DraggableWidget):
             ):
                 anchor = self.last_selected_index
                 if not( 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers ):
-                    self.clear_selection()
+                    self.clear_selection(notify=False)
                 
                 start = min(anchor, index)
                 end = max(anchor, index)
                 
                 for i in range(start, end + 1):
                     self.select_at(i)
-                should_notify = True
+                # clear_selection() で消える Shift range のアンカーを維持する。
+                self._set_last_selected(anchor)
                     
             else:
                 if 'ctrl' in KVWindow.modifiers or 'meta' in KVWindow.modifiers:
                     self.toggle_at(index)
-                    should_notify = True # Toggle always changes selection
                 else:
                     if already_single_selected:
                         self._set_last_selected(index)
                         return
-                    self.clear_selection()
+                    self.clear_selection(notify=False)
                     self.select_at(index)
-                    should_notify = True
 
                 self._set_last_selected(index)
-            
-            if should_notify:
-                 self.notify_selection_change(index)
+
+            # 複数選択にカレントが残っていれば preview は変えない。外れた時だけ、
+            # 元のカレント位置に最も近い選択項目へ移す。初回選択ではクリック位置を使う。
+            reference_index = current_index if current_index is not None else index
+            self._reconcile_current_selection(reference_index)
+
+    def _current_view_index(self):
+        if self._current_path is None:
+            return None
+        return next(
+            (
+                i for i, item in enumerate(self.data)
+                if self._norm_path_key(item.get('file_path') or "") == self._current_path
+            ),
+            None,
+        )
+
+    def _reconcile_current_selection(self, reference_index=None):
+        if self._current_path is not None and self._current_path in self.selected_paths:
+            return
+
+        next_index = viewer_query.nearest_selected_index(
+            self.selected_indices,
+            reference_index,
+        )
+        if next_index is None:
+            if self._current_path is not None:
+                self.notify_selection_change(None)
+            return
+        self.notify_selection_change(next_index)
 
     def notify_selection_change(self, index):
-        if not self._is_item_ready(index):
+        if index is not None and not self._is_item_ready(index):
             return
+        selected_data = self.data[index] if index is not None else None
+        self._current_path = (
+            self._norm_path_key(selected_data.get('file_path') or "")
+            if selected_data is not None
+            else None
+        )
         app = KVApp.get_running_app()
         if app and hasattr(app, 'main_widget'):
-             # Create a mock card object for the newly selected item
-             # If multiple items selected, MainWidget usually takes the last one or iterates.
-             # MainWidget.on_select takes a single 'card' argument.
-             selected_data = self.data[index]
-             class MockCard:
-                 def __init__(self, d):
-                     self.file_path = d['file_path']
-                     self.exif_data = d['exif_data']
-             
-             app.main_widget.on_select(MockCard(selected_data))
+            if selected_data is None:
+                app.main_widget.on_select(None)
+                return
+
+            class MockCard:
+                def __init__(self, d):
+                    self.file_path = d['file_path']
+                    self.exif_data = d['exif_data']
+
+            app.main_widget.on_select(MockCard(selected_data))
 
     def _set_last_selected(self, index):
         self.last_selected_index = index
@@ -1406,13 +1441,16 @@ class ViewerWidget(RecycleView, DraggableWidget):
                 self.selected_paths.discard(key)
             self.refresh_from_data()
 
-    def clear_selection(self):
+    def clear_selection(self, *, notify=True):
+        current_index = self._current_view_index()
         for d in self._all_items:
             d['selected'] = False
         self.selected_paths.clear()
         self.selected_indices.clear()
         self._set_last_selected(None)
         self.refresh_from_data()
+        if notify:
+            self._reconcile_current_selection(current_index)
 
     def refresh_exif_for_exported_path(self, file_path: str) -> bool:
         """
@@ -1431,15 +1469,18 @@ class ViewerWidget(RecycleView, DraggableWidget):
     def set_selection_silent(self, file_path):
         """サムネの選択表示だけを合わせる。on_select（画像の再ロード）は呼ばない。"""
         if not self._all_items or file_path is None:
-            self.clear_selection()
+            self.clear_selection(notify=False)
+            self._current_path = None
             return
         key = self._norm_path_key(file_path)
         if key in self._items_by_key:
             self.selected_paths = {key}
             self._last_selected_path = key
+            self._current_path = key
         else:
             self.selected_paths = set()
             self._last_selected_path = None
+            self._current_path = None
         self._rebuild_view()
 
     def get_selected_cards(self):
@@ -1555,12 +1596,11 @@ class ViewerWidget(RecycleView, DraggableWidget):
 
     def on_key_down(self, window, key, scancode, codepoint, modifier):
         if (key == 97 and ('ctrl' in modifier or 'meta' in modifier)):  # A
-            self.clear_selection()
+            current_index = self._current_view_index()
+            self.clear_selection(notify=False)
             for i in range(len(self.data)):
                 self.select_at(i)
-            # Notify MainWidget via last item?
-            if self.data:
-                self.notify_selection_change(len(self.data)-1)
+            self._reconcile_current_selection(current_index)
             return True
 
     def on_rating_slot(self, index, slot: int):
