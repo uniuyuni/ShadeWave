@@ -12,63 +12,46 @@ from __future__ import annotations
 import numpy as np
 import cv2
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_hls_adjust_metal")
 
+_SELECTOR = BackendSelector(
+    "hls_adjust",
+    globals(),
+    env="PLATYPUS_HLS_ADJUST_BACKEND",
+    metal_strict_env="PLATYPUS_HLS_ADJUST_METAL_STRICT",
+    metal_name="effect_backends._hls_adjust_metal",
+    reference_name="cores.core",
+    metal_disabled_values={"reference", "python", "cpu", "off", "0", "false", "no"},
+    metal_forced_values={"metal"},
+    reference_requested_detail=True,
+)
+
 
 def native_available() -> bool:
-    return _metal_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_HLS_ADJUST_BACKEND")
+    return _SELECTOR.preference()
 
 
 def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "cpu", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal"}
+    return _SELECTOR.metal_enabled()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_HLS_ADJUST_METAL_STRICT")
+    return _SELECTOR.metal_strict()
 
 
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("hls_adjust", "effect_backends._hls_adjust_metal", True)
-    if _backend_preference() == "metal":
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("hls_adjust", "cores.core", False, detail)
-    if _metal_backend is not None:
-        return BackendStatus(
-            "hls_adjust",
-            "cores.core",
-            False,
-            "Metal backend available; PLATYPUS_HLS_ADJUST_BACKEND requested reference",
-        )
-    return BackendStatus("hls_adjust", "cores.core", False, import_error_detail(_METAL_IMPORT_ERROR))
+    return _SELECTOR.status()
 
 
 def _normalize_settings(color_settings, resolution_scale):

@@ -134,6 +134,9 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                         pass
                     continue
             
+            existing_shm = None
+            result_shm = None
+            result_shm_queued = False
             try:
                 # Access shared memory
                 existing_shm = shared_memory.SharedMemory(name=shm_name)
@@ -151,7 +154,6 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                 # Actually, `effects.create_effects()` returns a structure.
                 # We need to find the specific effect by name.
                 
-                target_effect = None
                 target_effect = None
                 for layer in worker_effects:
                     # Search by key match first (fast)
@@ -205,6 +207,11 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                         'shape': result_image.shape,
                         'dtype': str(result_image.dtype)
                     })
+                    # Ownership of result_shm now transfers to the main process (it
+                    # opens the SHM by name and unlinks it in poll_results). Only mark
+                    # it as queued AFTER put() succeeds, so a failed put still falls
+                    # through to our own close+unlink in the finally block below.
+                    result_shm_queued = True
                     logging.info(
                         "AsyncWorker task success: task_id=%s effect=%s elapsed=%.3fs result_shape=%s result_dtype=%s",
                         task_id,
@@ -213,16 +220,10 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                         result_image.shape,
                         result_image.dtype,
                     )
-                    
-                    # Close result_shm in worker (it's still open in main via name)
-                    result_shm.close()
-                    
+
                 else:
                     logging.error(f"Worker: Effect {effect_name} not found.")
                     result_queue.put({'task_id': task_id, 'status': 'error', 'message': 'Effect not found'})
-
-                # Close input shm
-                existing_shm.close()
 
             except Exception as e:
                 logging.error(
@@ -234,7 +235,31 @@ def worker_process(input_queue, result_queue, msg_queue, stop_event, config_dict
                 )
                 traceback.print_exc()
                 result_queue.put({'task_id': task_id, 'status': 'error', 'message': str(e)})
-                
+
+            finally:
+                # Always release the input SHM handle, whether processing succeeded,
+                # failed, or the effect wasn't found.
+                if existing_shm is not None:
+                    existing_shm.close()
+                # result_shm is only still open/unlinked-pending here if something
+                # raised between its creation and the 'success' message reaching
+                # result_queue (make_diff, _worker_result_image, or result_queue.put
+                # itself). In that case the main process never learns its name, so we
+                # still own the segment and must unlink it ourselves or it leaks
+                # permanently. If the 'success' message was queued, ownership passed
+                # to the main process, which unlinks it itself in poll_results.
+                if result_shm is not None:
+                    result_shm.close()
+                    if not result_shm_queued:
+                        try:
+                            result_shm.unlink()
+                        except Exception as unlink_err:
+                            logging.warning(
+                                "AsyncWorker failed to unlink orphaned result SHM: task_id=%s error=%s",
+                                task_id,
+                                unlink_err,
+                            )
+
         except Empty:
             continue
         except Exception as e:
@@ -489,9 +514,13 @@ class AsyncWorker:
         # We set latest_tasks[effect_name] = self.task_counter + 1
         # So any task (id <= task_counter) will be seen as old.
         self.latest_tasks[effect_name] = self.task_counter + 1
-        
-        # Also force restart to stop CPU usage immediately
-        self.restart()
+
+        # Only pay the worker-restart cost (terminate/kill -> join -> spawn) when this
+        # effect actually has in-flight work. The logical cancel above already makes
+        # the worker skip stale tasks it hasn't started yet, so a restart would just
+        # be wasted spawn cost on e.g. frequent slider-driven cancels.
+        if self.has_pending_effect(effect_name):
+            self.restart()
 
     def cancel_all(self):
         """
@@ -499,13 +528,14 @@ class AsyncWorker:
         """
         while not self.input_queue.empty():
             try:
-                task = self.input_queue.get_nowait()
-                pass
+                self.input_queue.get_nowait()
             except Empty:
                 break
-        
-        # Forcefully restart the worker to stop any currently executing heavy task 
-        self.restart()
+
+        # Only restart if something is actually in flight; otherwise there is no
+        # running task for a restart to stop.
+        if self.has_pending_tasks():
+            self.restart()
 
     def has_pending_tasks(self):
         """
@@ -519,6 +549,10 @@ class AsyncWorker:
         return len(self.active_shms) > 0 or bool(self.active_effects)
 
     def has_pending_effect(self, effect_name):
+        # reap_dead_worker() is only otherwise invoked via has_pending_tasks(); call
+        # it here too so a crashed process doesn't leave stale active_effects entries
+        # making this report in-flight work that no longer exists.
+        self.reap_dead_worker()
         return any(name == effect_name for name in self.active_effects.values())
 
     def effect_elapsed_seconds(self, effect_name):

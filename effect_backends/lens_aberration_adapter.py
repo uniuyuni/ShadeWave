@@ -4,62 +4,46 @@ from __future__ import annotations
 
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import lens_aberration_reference
 
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_lens_aberration_metal")
 
+_SELECTOR = BackendSelector(
+    "lens_aberration",
+    globals(),
+    env="PLATYPUS_LENS_ABERRATION_BACKEND",
+    metal_strict_env="PLATYPUS_LENS_ABERRATION_METAL_STRICT",
+    metal_name="effect_backends._lens_aberration_metal",
+    reference_name="effect_backends.lens_aberration_reference",
+    metal_disabled_values={"reference", "python", "opencv", "off", "0", "false", "no"},
+    metal_forced_values={"metal"},
+)
+
 
 def native_available() -> bool:
-    return _metal_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_LENS_ABERRATION_BACKEND")
+    return _SELECTOR.preference()
 
 
 def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "opencv", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal"}
+    return _SELECTOR.metal_enabled()
 
 
 def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_LENS_ABERRATION_METAL_STRICT")
+    return _SELECTOR.metal_strict()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("lens_aberration", "effect_backends._lens_aberration_metal", True)
-    if _backend_preference() == "metal":
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("lens_aberration", "effect_backends.lens_aberration_reference", False, detail)
-    return BackendStatus(
-        "lens_aberration",
-        "effect_backends.lens_aberration_reference",
-        False,
-        import_error_detail(_METAL_IMPORT_ERROR),
-    )
+    return _SELECTOR.status()
 
 
 def apply_lateral_chromatic_aberration(

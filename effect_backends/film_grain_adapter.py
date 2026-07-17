@@ -4,67 +4,51 @@ from __future__ import annotations
 
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    native_backend_enabled,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import film_grain_reference
 
 
 _cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_film_grain_cpu")
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_film_grain_metal")
 
+_SELECTOR = BackendSelector(
+    "film_grain",
+    globals(),
+    env="PLATYPUS_FILM_GRAIN_BACKEND",
+    native_strict_env="PLATYPUS_FILM_GRAIN_STRICT",
+    metal_name="effect_backends._film_grain_metal",
+    cpu_name="effect_backends._film_grain_cpu",
+    reference_name="effect_backends.film_grain_reference",
+    metal_disabled_values={"reference", "python", "cpu", "off", "0", "false", "no"},
+)
+
 
 def native_available() -> bool:
-    return _cpu_backend is not None or _metal_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "cpu", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal"}
+    return _SELECTOR.metal_enabled()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_FILM_GRAIN_BACKEND")
+    return _SELECTOR.preference()
 
 
 def native_enabled() -> bool:
-    return native_backend_enabled(_cpu_backend, _backend_preference())
+    return _SELECTOR.native_enabled()
 
 
 def _native_strict() -> bool:
-    return strict_enabled("PLATYPUS_FILM_GRAIN_STRICT")
+    return _SELECTOR.native_strict()
 
 
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("film_grain", "effect_backends._film_grain_metal", True)
-    if native_enabled():
-        return BackendStatus("film_grain", "effect_backends._film_grain_cpu", True)
-    if _cpu_backend is not None:
-        return BackendStatus(
-            "film_grain",
-            "effect_backends.film_grain_reference",
-            False,
-            "cpu backend available; PLATYPUS_FILM_GRAIN_BACKEND requested reference",
-        )
-    detail = import_error_detail(_CPU_IMPORT_ERROR)
-    return BackendStatus("film_grain", "effect_backends.film_grain_reference", False, detail)
+    return _SELECTOR.status()
 
 
 def apply_film_grain(

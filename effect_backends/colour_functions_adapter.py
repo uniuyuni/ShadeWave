@@ -8,19 +8,21 @@ from __future__ import annotations
 
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    native_backend_enabled,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import colour_functions_reference as reference
 from .colour_functions_reference import *  # noqa: F401,F403
 
 
 _cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_colour_functions_cpu")
+
+_SELECTOR = BackendSelector(
+    "colour_functions",
+    globals(),
+    env="PLATYPUS_COLOUR_FUNCTIONS_BACKEND",
+    native_strict_env="PLATYPUS_COLOUR_FUNCTIONS_STRICT",
+    cpu_name="effect_backends._colour_functions_cpu",
+    reference_name="effect_backends.colour_functions_reference",
+)
 
 
 _ENCODING_CODES = {
@@ -37,29 +39,19 @@ _ENCODING_CODES = {
 
 
 def native_available() -> bool:
-    return _cpu_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_COLOUR_FUNCTIONS_BACKEND")
+    return _SELECTOR.preference()
 
 
 def native_enabled() -> bool:
-    return native_backend_enabled(_cpu_backend, _backend_preference())
+    return _SELECTOR.native_enabled()
 
 
 def backend_status() -> BackendStatus:
-    if native_enabled():
-        return BackendStatus("colour_functions", "effect_backends._colour_functions_cpu", True)
-    if _cpu_backend is not None:
-        return BackendStatus(
-            "colour_functions",
-            "effect_backends.colour_functions_reference",
-            False,
-            "cpu backend available; PLATYPUS_COLOUR_FUNCTIONS_BACKEND requested reference",
-        )
-    detail = import_error_detail(_CPU_IMPORT_ERROR)
-    return BackendStatus("colour_functions", "effect_backends.colour_functions_reference", False, detail)
+    return _SELECTOR.status()
 
 
 def encoding_code(encoding: str) -> int:
@@ -130,7 +122,7 @@ def encode_display_output(rgb: np.ndarray, colourspace) -> np.ndarray:
 
 
 def _native_strict() -> bool:
-    return strict_enabled("PLATYPUS_COLOUR_FUNCTIONS_STRICT")
+    return _SELECTOR.native_strict()
 
 
 __all__ = [

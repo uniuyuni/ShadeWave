@@ -6,22 +6,28 @@ from typing import Any
 
 import numpy as np
 
-from .backend_utils import BackendStatus, import_error_detail, optional_backend
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import vignette_reference
 
 
 _cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_vignette_cpu")
 
+# No preference env var: the cpu backend is always used when it is built.
+_SELECTOR = BackendSelector(
+    "vignette",
+    globals(),
+    cpu_name="effect_backends._vignette_cpu",
+    reference_name="effect_backends.vignette_reference",
+    cpu_disabled_values=frozenset(),
+)
+
 
 def native_available() -> bool:
-    return _cpu_backend is not None
+    return _SELECTOR.native_available()
 
 
 def backend_status() -> BackendStatus:
-    if _cpu_backend is not None:
-        return BackendStatus("vignette", "effect_backends._vignette_cpu", True)
-    detail = import_error_detail(_CPU_IMPORT_ERROR)
-    return BackendStatus("vignette", "effect_backends.vignette_reference", False, detail)
+    return _SELECTOR.status()
 
 
 def apply_vignette(

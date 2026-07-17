@@ -67,10 +67,17 @@ class MaskEditor(KVFloatLayout):
 
         # ウィンドウのマウスイベントをバインド（カーソル追従用）
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
+        self._mouse_pos_bound = True
 
         # 描画更新
         self.bind(size=self.delay_update_canvas, pos=self.delay_update_canvas)
         self.delay_update_canvas()
+
+    def release(self):
+        # 破棄時に Window の bind を解除する(unbind は二重に呼んでも安全)。
+        if getattr(self, '_mouse_pos_bound', False):
+            KVWindow.unbind(mouse_pos=self.on_mouse_pos)
+            self._mouse_pos_bound = False
 
     def _sync_texture_size(self):
         self.texture_size = (config.get_config('preview_width'), config.get_config('preview_height'))

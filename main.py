@@ -852,6 +852,7 @@ if __name__ == '__main__':
                 try:
                     if getattr(editor, "parent", None) is not None:
                         self.ids['preview_widget'].remove_widget(editor)
+                    editor.release()
                 except Exception:
                     logging.exception("failed to remove mask1 editor for %s", effect_name)
                 effect.mask_editor = None

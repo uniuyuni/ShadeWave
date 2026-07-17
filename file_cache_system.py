@@ -87,18 +87,26 @@ def _task_callback(file_callbacks, shared_resources, future):
 
         # キャッシュに追加
         # 既存のキャッシュがある場合はHistoryを維持する
+        # このコールバックはThreadPoolExecutorのワーカースレッドから呼ばれるため、
+        # 既存Historyの読み取り→上書きを cache_lock でアトミックにする
+        # （delete_cache/clear_cache 等の別スレッド操作との競合を防ぐ）
         current_history = None
-        if file_path in shared_resources['cache']:
-            try:
-                # 既存のキャッシュからHistoryを取得
-                # 形式: (imgset, exif_data, param, history)
-                current_history = shared_resources['cache'][file_path][3]
-            except Exception:
-                pass
+        with shared_resources['cache_lock']:
+            if file_path in shared_resources['cache']:
+                try:
+                    # 既存のキャッシュからHistoryを取得
+                    # 形式: (imgset, exif_data, param, history)
+                    current_history = shared_resources['cache'][file_path][3]
+                except Exception:
+                    pass
 
-        shared_resources['cache'][file_path] = (imgset, exif_data, param.copy(), current_history)
+            shared_resources['cache'][file_path] = (imgset, exif_data, param.copy(), current_history)
 
         # コールバックを実行
+        # 注意: このコールバックは executor のワーカースレッド上で直接呼び出される。
+        # UI更新が必要な場合、呼び出し側（main.py）で @kvmainthread 等により
+        # メインスレッドへマーシャリングする責任を持つ（file_cache_system は Kivy 非依存）。
+        # ロックは保持しない: コールバックは重い処理を行いうるため critical section の外で実行する。
         callback = file_callbacks.get(file_path, None)
         if callback:
             callback(file_path, imgset, exif_data, param, current_history, stage)
@@ -290,7 +298,10 @@ class FileCacheSystem:
             'preload_registry': {},
             'active_processes': {},
             'process_queue_flag': False,
-            'executor': self.ppe
+            'executor': self.ppe,
+            # 'cache' 辞書はThreadPoolExecutorの完了コールバックスレッドと
+            # メインスレッドの双方からread-modify-writeされるため専用ロックで保護する
+            'cache_lock': threading.Lock()
         }
         self.final_display_cache = OrderedDict()
         # ダミーを走らせる（プロセスのwarm-up）
@@ -302,6 +313,7 @@ class FileCacheSystem:
         
         # 各共有リソースへの参照を設定
         self.cache = self.shared_resources['cache']
+        self.cache_lock = self.shared_resources['cache_lock']
         self.preload_registry = self.shared_resources['preload_registry']
         self.active_processes = self.shared_resources['active_processes']
         self.file_callbacks = {}  # コールバックはpickle化できないので共有しない
@@ -355,10 +367,13 @@ class FileCacheSystem:
             result = (exif_data, imgset)  # imgsetはまだ利用不可
 
         # キャッシュにある場合
-        if file_path in self.cache:
+        # 存在チェックと取得を1回のロックでアトミックに行う（check-then-actレース回避）
+        with self.cache_lock:
+            cache_entry = self.cache.get(file_path)
+        if cache_entry is not None:
             logging.info(f"FCS Cache hit: {file_path}")
-            imgset, exif_data, param, history = self.cache[file_path]
-            
+            imgset, exif_data, param, history = cache_entry
+
             # コールバックが指定されていればすぐに呼び出す
             if callback:
                 if file_path not in self.file_callbacks:
@@ -393,7 +408,9 @@ class FileCacheSystem:
             param = {}
             
         # すでにキャッシュにある場合は何もしない
-        if file_path in self.cache:
+        with self.cache_lock:
+            already_cached = file_path in self.cache
+        if already_cached:
             return
         
         # すでに先行読み込み登録されている場合は何もしない
@@ -417,9 +434,12 @@ class FileCacheSystem:
             self.process_preload_queue(max_concurrent_loads=self.max_concurrent_loads)
 
     def set_history(self, file_path, history):
-        if file_path in self.cache:
-            imgset, exif_data, param, _ = self.cache[file_path]
-            self.cache[file_path] = (imgset, exif_data, param, history)
+        # 読み取り→上書きをアトミックに（_task_callback 等との競合防止）
+        with self.cache_lock:
+            entry = self.cache.get(file_path)
+            if entry is not None:
+                imgset, exif_data, param, _ = entry
+                self.cache[file_path] = (imgset, exif_data, param, history)
 
     def _entry_memory_bytes(self, entry):
         try:
@@ -433,7 +453,11 @@ class FileCacheSystem:
 
     def cache_memory_bytes(self):
         total = 0
-        for entry in self.cache.values():
+        # values() のイテレーション中に別スレッドが辞書を変更すると
+        # RuntimeError になり得るため、スナップショットを取ってからロック外で集計する
+        with self.cache_lock:
+            cache_entries = list(self.cache.values())
+        for entry in cache_entries:
             total += self._entry_memory_bytes(entry)
         for entry in self.preload_registry.values():
             total += self._entry_memory_bytes((entry[2], entry[0], entry[1], entry[3]))
@@ -587,8 +611,10 @@ class FileCacheSystem:
         if file_path in self.preload_registry:
             del self.preload_registry[file_path]
 
-        if file_path in self.cache:
-            del self.cache[file_path]
+        # 存在チェックと削除をアトミックに（_task_callback 等との競合防止）
+        with self.cache_lock:
+            if file_path in self.cache:
+                del self.cache[file_path]
 
 
     def delete_file(self, file_path):
@@ -613,7 +639,10 @@ class FileCacheSystem:
             keep_files = []
         
         # キャッシュからkeep_files以外の全てのアイテムを削除
-        for file_path in list(self.cache.keys()):
+        # キー一覧はロック内でスナップショットし、削除自体は delete_cache 側でロックする
+        with self.cache_lock:
+            keys_snapshot = list(self.cache.keys())
+        for file_path in keys_snapshot:
             if file_path not in keep_files:
                 self.delete_cache(self.cache, file_path)
     
@@ -624,12 +653,15 @@ class FileCacheSystem:
         Returns:
             Dict: キャッシュの状態
         """
+        with self.cache_lock:
+            cache_size = len(self.cache)
+            cached_files = list(self.cache.keys())
         return {
-            "cache_size": len(self.cache),
+            "cache_size": cache_size,
             "preload_registry_size": len(self.preload_registry),
             "active_processes": len(self.active_processes),
             "max_cache_size": self.max_cache_size,
-            "cached_files": list(self.cache.keys()),
+            "cached_files": cached_files,
             "preload_registered_files": list(self.preload_registry.keys()),
             "active_process_files": list(self.active_processes.keys())
         }
@@ -653,11 +685,14 @@ class FileCacheSystem:
         available_slots = float('inf') if max_concurrent_loads is None else max_concurrent_loads - current_processes
         
         # キャッシュの空き容量を確認
-        available_cache_slots = self.max_cache_size - (len(self.cache) + current_processes)
-        
+        with self.cache_lock:
+            cache_len = len(self.cache)
+        available_cache_slots = self.max_cache_size - (cache_len + current_processes)
+
         # いっぱいなら古いものから削除
         while available_cache_slots <= 0:
-            file_to_delete = list(self.cache)[:1]
+            with self.cache_lock:
+                file_to_delete = list(self.cache)[:1]
             if not file_to_delete:
                 break
             file_to_delete = file_to_delete[0]

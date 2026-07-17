@@ -4,64 +4,50 @@ from __future__ import annotations
 
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import local_contrast_reference
 
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_local_contrast_metal")
 
+_SELECTOR = BackendSelector(
+    "local_contrast",
+    globals(),
+    env="PLATYPUS_LOCAL_CONTRAST_BACKEND",
+    metal_strict_env="PLATYPUS_LOCAL_CONTRAST_METAL_STRICT",
+    metal_name="effect_backends._local_contrast_metal",
+    reference_name="effect_backends.local_contrast_reference",
+    metal_enabled_values=None,
+    metal_disabled_values={"reference", "python", "off", "0", "false", "no"},
+    metal_forced_values={"metal", "gpu"},
+    available_requires_device=True,
+    reference_requested_detail=True,
+    fallback_import_detail=False,
+)
+
 
 def native_available() -> bool:
-    return _metal_backend is not None and _metal_device_available()
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_LOCAL_CONTRAST_BACKEND")
+    return _SELECTOR.preference()
 
 
 def native_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "off", "0", "false", "no"}:
-        return False
-    return _metal_backend is not None and _metal_device_available()
+    return _SELECTOR.metal_ready()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_LOCAL_CONTRAST_METAL_STRICT")
+    return _SELECTOR.metal_strict()
 
 
 def backend_status() -> BackendStatus:
-    if native_enabled():
-        return BackendStatus("local_contrast", "effect_backends._local_contrast_metal", True)
-    if _backend_preference() in {"metal", "gpu"}:
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("local_contrast", "effect_backends.local_contrast_reference", False, detail)
-    if _metal_backend is not None:
-        return BackendStatus(
-            "local_contrast",
-            "effect_backends.local_contrast_reference",
-            False,
-            "Metal backend available; PLATYPUS_LOCAL_CONTRAST_BACKEND requested reference",
-        )
-    return BackendStatus("local_contrast", "effect_backends.local_contrast_reference", False)
+    return _SELECTOR.status()
 
 
 def _metal_compatible(image) -> bool:

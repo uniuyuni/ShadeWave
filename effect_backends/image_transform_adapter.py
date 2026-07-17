@@ -7,13 +7,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import image_transform_reference
 
 
@@ -22,39 +16,8 @@ _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_image_tran
 _METAL_DEVICE_AVAILABLE_CACHE: bool | None = None
 
 
-def native_available() -> bool:
-    return _metal_backend is not None and _metal_device_available()
-
-
-def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_IMAGE_TRANSFORM_BACKEND")
-
-
-def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "opencv", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal", "gpu"}
-
-
-def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_IMAGE_TRANSFORM_METAL_STRICT")
-
-
-def _metal_forced() -> bool:
-    return _backend_preference() in {"metal", "gpu"}
-
-
-def _area_mode() -> str:
-    value = os.getenv("PLATYPUS_IMAGE_TRANSFORM_AREA_MODE", "exact").strip().lower()
-    if value in {"reference", "opencv", "cpu"}:
-        return "reference"
-    if value in {"exact", "quality", "area"}:
-        return "exact"
-    return "linear"
-
-
 def _metal_device_available() -> bool:
+    # Cached because this adapter sits on the interactive preview hot path.
     global _METAL_DEVICE_AVAILABLE_CACHE
     if _METAL_DEVICE_AVAILABLE_CACHE is not None:
         return _METAL_DEVICE_AVAILABLE_CACHE
@@ -73,21 +36,52 @@ def _clear_metal_device_available_cache() -> None:
     _METAL_DEVICE_AVAILABLE_CACHE = None
 
 
+_SELECTOR = BackendSelector(
+    "image_transform",
+    globals(),
+    env="PLATYPUS_IMAGE_TRANSFORM_BACKEND",
+    metal_strict_env="PLATYPUS_IMAGE_TRANSFORM_METAL_STRICT",
+    metal_name="effect_backends._image_transform_metal",
+    reference_name="effect_backends.image_transform_reference",
+    metal_enabled_values={"", "auto", "metal", "gpu"},
+    metal_disabled_values={"reference", "python", "opencv", "off", "0", "false", "no"},
+    metal_forced_values={"metal", "gpu"},
+    available_requires_device=True,
+    device_available=_metal_device_available,
+)
+
+
+def native_available() -> bool:
+    return _SELECTOR.native_available()
+
+
+def _backend_preference() -> str:
+    return _SELECTOR.preference()
+
+
+def _metal_backend_enabled() -> bool:
+    return _SELECTOR.metal_enabled()
+
+
+def _metal_strict() -> bool:
+    return _SELECTOR.metal_strict()
+
+
+def _metal_forced() -> bool:
+    return _backend_preference() in {"metal", "gpu"}
+
+
+def _area_mode() -> str:
+    value = os.getenv("PLATYPUS_IMAGE_TRANSFORM_AREA_MODE", "exact").strip().lower()
+    if value in {"reference", "opencv", "cpu"}:
+        return "reference"
+    if value in {"exact", "quality", "area"}:
+        return "exact"
+    return "linear"
+
+
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("image_transform", "effect_backends._image_transform_metal", True)
-    if _backend_preference() in {"metal", "gpu"}:
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("image_transform", "effect_backends.image_transform_reference", False, detail)
-    return BackendStatus(
-        "image_transform",
-        "effect_backends.image_transform_reference",
-        False,
-        import_error_detail(_METAL_IMPORT_ERROR),
-    )
+    return _SELECTOR.status()
 
 
 def fit_crop_to_canvas(

@@ -448,6 +448,9 @@ class BaseMask(KVWidget):
         self.image_mask_cache_key = None
         self.do_draw_composit_mask = True
         self._initial_touch_started = False
+        # CP ドラッグで begin_history_layer_ctrl("Update") を発行したかどうか。
+        # begin と end のペアを厳密に保つためのフラグ(作成中は begin しない)。
+        self._cp_history_started = False
         self._image_mask_pending_lock = threading.Lock()
         self._image_mask_pending_event = None
         self._image_mask_pending_key = None
@@ -589,6 +592,16 @@ class BaseMask(KVWidget):
 
     def end(self):
         pass
+
+    def release(self):
+        # マスク破棄時のリソース解放フック(既定は何もしない)。
+        # Window.bind 等マスクの生存期間全体を跨ぐバインドを持つサブクラスはここで unbind する。
+        pass
+
+    def in_creation_stroke(self):
+        # 作成確定(_create_end_new_mask)を初回ストローク完了まで遅らせたいマスクは
+        # True を返す(Polyline のように複数タッチで初期形状を作るマスク用)。
+        return False
 
     def is_composit(self):
         return isinstance(self, CompositMask)
@@ -780,13 +793,19 @@ class BaseMask(KVWidget):
                 if cp.is_center:
                     self.editor.set_active_mask(self)
                     cp.on_touch_down(touch)
-                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
+                    # マスク作成中は Create 用の begin が保留中のため、Update の begin で
+                    # 上書きしない(begin/end ペア崩壊 → undo ずれの原因になる)
+                    if self.editor.created_mask is None:
+                        get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
+                        self._cp_history_started = True
                     self.is_draw_mask = True
                     return True
 
                 elif self.active:
                     cp.on_touch_down(touch)
-                    get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
+                    if self.editor.created_mask is None:
+                        get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
+                        self._cp_history_started = True
                     self.is_draw_mask = True
                     return True
 
@@ -811,7 +830,10 @@ class BaseMask(KVWidget):
         for cp in self.control_points:
             if cp.touching:
                 cp.on_touch_up(touch)
-                get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
+                # begin したときだけ end する(ペア厳守)
+                if self._cp_history_started:
+                    get_history_ctrl().end_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self))
+                    self._cp_history_started = False
                 self.editor.request_mask_render_update(
                     self,
                     reason="control_point_touch_up",
@@ -1153,6 +1175,11 @@ class CompositMask(BaseMask):
         if mask is None:
             logging.warning("CompositMask.add_mask: mask is None; ignored")
             return
+        # 履歴 replay やシリアライズ経由で None 等の不正な op が入ると
+        # get_mask_image の合成で落ちるため、挿入時点で正規化する
+        if maskop not in ('Add', 'Subtract'):
+            logging.error(f"CompositMask.add_mask: invalid maskop {maskop!r}; falling back to 'Add'")
+            maskop = 'Add'
         self.mask_list.insert(index, (mask, maskop))
         if self.editor is not None:
             ready = not getattr(mask, 'initializing', False)
@@ -1436,8 +1463,10 @@ class CompositMask(BaseMask):
                         case 'Subtract':
                             composit = _clip_mask_range(composit - mimage, mask_allow_over_one, mask_allow_under_zero)
                         case _:
-                            logger.error(f"Unknown mask operation: {maskop}")
-                            assert False
+                            # add_mask で正規化しているため通常は到達しない。
+                            # 古い履歴/保存データに不正 op が残っていても描画は止めない。
+                            logging.error(f"Unknown mask operation: {maskop}; treating as 'Add'")
+                            composit = _clip_mask_range(composit + mimage, mask_allow_over_one, mask_allow_under_zero)
 
                 # mask Mesh warp: 合成済 composit に非線形 TPS 変形を適用 (空なら no-op)。
                 # 変形場は image-only matrix で固定し、Mask Geom の回転/scale/flip には
@@ -2510,7 +2539,11 @@ class FreeDrawMask(BaseMask):
             self.editor.pop_scissor()
             KVPopMatrix()
 
+        # マスクの生存期間全体で bind したままにする(start/end で張り直さない)。
+        # 選択されていない間も on_mouse_pos は届くが、ハンドラ内で active/created を見て
+        # 表示を抑制している。release() で unbind する。
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
+        self._mouse_pos_bound = True
 
     def _edge_refine_fill_grown_region(self):
         return True
@@ -2526,11 +2559,15 @@ class FreeDrawMask(BaseMask):
 
     def start(self):
         self.brush_color.rgba = (1, 1, 1, 1)
-        KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
     def end(self):
         self.brush_color.rgba = (0, 0, 0, 0)
-        KVWindow.unbind(mouse_pos=self.on_mouse_pos)
+
+    def release(self):
+        # マスク削除時に Window の bind を解除する(unbind は二重に呼んでも安全)。
+        if getattr(self, '_mouse_pos_bound', False):
+            KVWindow.unbind(mouse_pos=self.on_mouse_pos)
+            self._mouse_pos_bound = False
 
     def clear(self):
         self.lines = []
@@ -2642,8 +2679,8 @@ class FreeDrawMask(BaseMask):
             self.initializing = False
 
         # 右クリックで消去モード、左クリックで描画モード
-        is_erasing = (touch.button == 'right')            
-        if not was_initializing:
+        is_erasing = (touch.button == 'right')
+        if not was_initializing and self.editor.created_mask is None:
             get_history_ctrl().begin_history_layer_ctrl(self.editor, "Update", self.editor.get_mask_list().index(self), None)
             self._stroke_history_started = True
 
@@ -2913,7 +2950,10 @@ class PolylineMask(BaseMask):
             self.editor.pop_scissor()
             KVPopMatrix()
 
+        # マスクの生存期間全体で bind したままにする(start/end で張り直さない)。
+        # FreeDrawMask と同様、選択されていない間の表示抑制はハンドラ側で行う。
         KVWindow.bind(mouse_pos=self.on_mouse_pos)
+        self._mouse_pos_bound = True
 
     def _edge_refine_fill_grown_region(self):
         return True
@@ -2930,7 +2970,6 @@ class PolylineMask(BaseMask):
     # ---- ライフサイクル ----
     def start(self):
         self.brush_color.rgba = (1, 1, 1, 1)
-        KVWindow.bind(mouse_pos=self.on_mouse_pos)
 
     def end(self):
         # 描画中の polyline は終了扱い (開いた折れ線として確定 or 破棄)
@@ -2938,7 +2977,17 @@ class PolylineMask(BaseMask):
         self.brush_color.rgba = (0, 0, 0, 0)
         self.preview_color.rgba = (1, 1, 0, 0)
         self.start_color.rgba = (0, 1, 1, 0)
-        KVWindow.unbind(mouse_pos=self.on_mouse_pos)
+
+    def release(self):
+        # マスク削除時に Window の bind を解除する(unbind は二重に呼んでも安全)。
+        if getattr(self, '_mouse_pos_bound', False):
+            KVWindow.unbind(mouse_pos=self.on_mouse_pos)
+            self._mouse_pos_bound = False
+
+    def in_creation_stroke(self):
+        # 描画中の polyline がある間は作成確定を遅らせる(確定は初回 polyline の
+        # コミット後。これで Create オペレーションに初期形状が正しく入る)。
+        return self.current_polyline is not None
 
     def clear(self):
         self.polylines = []
@@ -3154,7 +3203,10 @@ class PolylineMask(BaseMask):
 
     # ---- 描画中 polyline 制御 ----
     def _begin_new_polyline(self, tcg_x, tcg_y, is_erasing):
-        if not self._stroke_history_started:
+        # マスク作成中は Create 用の begin が保留中のため Update を begin しない
+        # (FreeDrawMask の was_initializing ガードと同じ意図。初回ストロークは
+        # Create オペレーションのシリアライズに含まれる)
+        if not self._stroke_history_started and self.editor.created_mask is None:
             get_history_ctrl().begin_history_layer_ctrl(
                 self.editor, "Update", self.editor.get_mask_list().index(self), None)
             self._stroke_history_started = True
@@ -3255,8 +3307,9 @@ class PolylineMask(BaseMask):
     def _vertex_cp_set(self):
         return {cp for _, _, cp in self._vertex_control_points}
 
-    def show_all_control_points(self):
-        """BaseMask の実装は非中心 CP を全部赤に塗るが、Polyline では頂点 CP は青を維持する。"""
+    def show_all_control_points(self, redraw=True):
+        """BaseMask の実装は非中心 CP を全部赤に塗るが、Polyline では頂点 CP は青を維持する。
+        redraw=False は refresh_mask_visibility 等の一括更新用(最後にまとめて再描画される)。"""
         self.opacity = 1.0
         vertex_cps = self._vertex_cp_set()
         for cp in self.control_points:
@@ -3268,9 +3321,10 @@ class PolylineMask(BaseMask):
             else:
                 cp.color = [1, 0, 0]
         self.is_draw_mask = True
-        self.update_mask()
+        if redraw:
+            self.update_mask()
 
-    def show_center_control_point_only(self):
+    def show_center_control_point_only(self, redraw=True):
         """非アクティブ時: 中心 CP のみ表示 (頂点 CP は隠す)。"""
         self.opacity = 0.2
         vertex_cps = self._vertex_cp_set()
@@ -3284,7 +3338,8 @@ class PolylineMask(BaseMask):
                 if cp in vertex_cps:
                     cp.color = [0.2, 0.6, 1.0]  # 復帰時用に色だけ保持
         self.is_draw_mask = False
-        self.update_mask()
+        if redraw:
+            self.update_mask()
 
     def _clear_vertex_control_points(self):
         for _, _, cp in self._vertex_control_points:
@@ -4774,9 +4829,15 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         if is_composit:
             maskop = 'Composit'
         else:
+            # find_composit_mask/find_mask_op が失敗しても None を履歴に記録しない
+            # (undo 時に add_mask(mask, None) となり描画が壊れるため 'Add' に倒す)
+            maskop = 'Add'
             composit_mask = self.find_composit_mask(mask, index)
-            if composit_mask:
-                maskop = composit_mask.find_mask_op(mask)
+            found_op = composit_mask.find_mask_op(mask) if composit_mask else None
+            if found_op is not None:
+                maskop = found_op
+            else:
+                logging.error(f"del_mask: maskop not found for mask index={index}; recording 'Add'")
 
         get_history_ctrl().begin_history_layer_ctrl(self, "Create", index, maskop)
         get_history_ctrl().end_history_layer_ctrl(self, "Delete", index)
@@ -5045,7 +5106,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
 
         # こっちを後でやらないとまだコントロールポイントが作られてない
         if self.created_mask is not None:
-            if self.created_mask.initializing == False:
+            # Polyline のように複数タッチで初期形状を作るマスクは、初回ストロークが
+            # コミットされるまで作成確定を遅らせる(早期確定すると後続ストロークの
+            # begin("Update") が Create の begin を上書きし、undo が1つずれる)
+            if self.created_mask.initializing == False and not self.created_mask.in_creation_stroke():
                 self._create_end_new_mask()
 
         return result
@@ -5196,6 +5260,7 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         # コンテナから削除
         self.mask_container.remove_widget(mask)
         self.mask_list.remove(mask)
+        mask.release()  # Window.bind 等マスク固有のリソースを解放
 
         # 再描画
         self.request_mask_render_update(
@@ -5211,6 +5276,10 @@ class MaskEditor2(KVFloatLayout, LayerCtrl):
         self.set_active_mask(None)
         self._last_active_mask_id = None
         self.draw_mask_image(None)
+        # mask_list はコンポジットの子も含む全マスクのフラットなリスト。
+        # 破棄前に全マスクの release() を呼び、Window.bind 等を解除する。
+        for mask in self.mask_list:
+            mask.release()
         self.mask_container.clear_widgets()
         self.mask_list.clear()
         self._set_active_composit_matrix()

@@ -11,7 +11,6 @@ import cores.exposure_fusion_debevec as exposure_fusion_debevec
 from effect_backends import film_process_adapter as film_process
 import cores.linear_to_log_lut as linear_to_log
 import cores.filters as filters
-import cores.highlight_recovery as highlight_recovery
 import cores.light_rays as light_rays
 import cores.hlsrgb as hlsrgb
 from cores.fringe_removal import remove_chromatic_aberration
@@ -1151,6 +1150,7 @@ class InpaintEffect(Effect):
         if param['inpaint'] == False:
             if self.mask_editor is not None:
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
+                self.mask_editor.release()
                 self.mask_editor = None
                 param['inpaint_mask_list'] = self.inpaint_mask_list = []
             if hasattr(widget, 'exit_mask1_full_preview_mode'):
@@ -1296,8 +1296,9 @@ class PatchmatchInpaintEffect(Effect):
 
         if param['patchmatch_inpaint'] == False:
             if self.mask_editor is not None:
-                
+
                 widget.ids["preview_widget"].remove_widget(self.mask_editor)
+                self.mask_editor.release()
                 self.mask_editor = None
                 param['patchmatch_inpaint_mask_list'] = self.inpaint_mask_list = []
             if hasattr(widget, 'exit_mask1_full_preview_mode'):

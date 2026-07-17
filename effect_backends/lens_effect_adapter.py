@@ -6,7 +6,7 @@ import math
 import numpy as np
 import cv2
 
-from .backend_utils import BackendStatus, backend_preference, import_error_detail, optional_backend, strict_enabled
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import lens_effect_reference
 
 try:
@@ -16,6 +16,17 @@ except ImportError:
 
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_lens_effect_metal")
+
+_SELECTOR = BackendSelector(
+    "lens_effect",
+    globals(),
+    env="PLATYPUS_LENS_EFFECT_BACKEND",
+    metal_strict_env="PLATYPUS_LENS_EFFECT_METAL_STRICT",
+    metal_name="effect_backends._lens_effect_metal",
+    reference_name="effect_backends.lens_effect_reference",
+    metal_disabled_values={"reference", "python", "opencv", "off", "0", "false", "no"},
+    metal_forced_values={"metal"},
+)
 
 # 形状ボケの畳み込みコスト: Metal 直畳み込みは O(カーネル面積)/px、FFT は解像度のみ
 # 依存。この半径以上では FFT が直畳み込みを上回る(6MP 実測で決定)。
@@ -63,43 +74,27 @@ def _fft_shaped_convolve(source: np.ndarray, kernel: np.ndarray, colored_kernel:
 
 
 def native_available() -> bool:
-    return _metal_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_LENS_EFFECT_BACKEND")
+    return _SELECTOR.preference()
 
 
 def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "opencv", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal"}
+    return _SELECTOR.metal_enabled()
 
 
 def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_LENS_EFFECT_METAL_STRICT")
+    return _SELECTOR.metal_strict()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("lens_effect", "effect_backends._lens_effect_metal", True)
-    if _backend_preference() == "metal":
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("lens_effect", "effect_backends.lens_effect_reference", False, detail)
-    return BackendStatus("lens_effect", "effect_backends.lens_effect_reference", False, import_error_detail(_METAL_IMPORT_ERROR))
+    return _SELECTOR.status()
 
 
 def apply_bokeh_color_fringe(

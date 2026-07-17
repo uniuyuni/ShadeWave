@@ -4,29 +4,38 @@ from __future__ import annotations
 
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import cross_filter_reference
 
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_cross_filter_metal")
 _cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_cross_filter_cpu")
 
+_SELECTOR = BackendSelector(
+    "cross_filter",
+    globals(),
+    env="PLATYPUS_CROSS_FILTER_BACKEND",
+    metal_strict_env="PLATYPUS_CROSS_FILTER_METAL_STRICT",
+    metal_name="effect_backends._cross_filter_metal",
+    cpu_name="effect_backends._cross_filter_cpu",
+    reference_name="effect_backends.cross_filter_reference",
+    metal_disabled_values={"reference", "python", "opencv", "cpu", "native", "off", "0", "false", "no"},
+    cpu_disabled_values={"reference", "python", "opencv", "off", "0", "false", "no"},
+    metal_forced_values={"metal"},
+)
+
 
 def native_available() -> bool:
-    return _metal_backend is not None or _cpu_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_CROSS_FILTER_BACKEND")
+    return _SELECTOR.preference()
 
 
 def _cpu_backend_enabled() -> bool:
+    # Kept local: unlike the shared cpu decision, the apply path also yields
+    # to Metal when the preference is empty/"metal" and a device is present.
     value = _backend_preference()
     if value in {"metal", ""} and _metal_backend is not None and _metal_device_available():
         return False
@@ -36,45 +45,19 @@ def _cpu_backend_enabled() -> bool:
 
 
 def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "opencv", "cpu", "native", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal"}
+    return _SELECTOR.metal_enabled()
 
 
 def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_CROSS_FILTER_METAL_STRICT")
+    return _SELECTOR.metal_strict()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("cross_filter", "effect_backends._cross_filter_metal", True)
-    if _backend_preference() == "metal":
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("cross_filter", "effect_backends.cross_filter_reference", False, detail)
-    if _cpu_backend is not None and _cpu_backend_enabled():
-        return BackendStatus("cross_filter", "effect_backends._cross_filter_cpu", True)
-    if _cpu_backend is not None:
-        return BackendStatus(
-            "cross_filter",
-            "effect_backends.cross_filter_reference",
-            False,
-            "cpu backend available; PLATYPUS_CROSS_FILTER_BACKEND requested reference",
-        )
-    detail = import_error_detail(_CPU_IMPORT_ERROR)
-    return BackendStatus("cross_filter", "effect_backends.cross_filter_reference", False, detail)
+    return _SELECTOR.status()
 
 
 def apply_cross_filter(

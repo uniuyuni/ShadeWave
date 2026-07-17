@@ -24,7 +24,6 @@ import params
 from cores.dcp_profile import DCPReader, DCPProcessor
 import cores.bit_depth_expansion as bit_depth_expansion
 import cores.core as core
-import cores.highlight_recovery as highlight_recovery
 from effect_backends import colour_functions_adapter as colour_functions
 import cores.color as color
 from enums import ImageFidelity, LoadStage

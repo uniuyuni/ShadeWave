@@ -7,59 +7,56 @@ import os
 import cv2
 import numpy as np
 
-from .backend_utils import (
-    BackendStatus,
-    backend_preference,
-    import_error_detail,
-    native_backend_enabled,
-    optional_backend,
-    strict_enabled,
-)
+from .backend_utils import BackendSelector, BackendStatus, optional_backend
 from . import low_frequency_transfer_reference
 
 
 _metal_backend, _METAL_IMPORT_ERROR = optional_backend(__package__, "_low_frequency_transfer_metal")
 _cpu_backend, _CPU_IMPORT_ERROR = optional_backend(__package__, "_low_frequency_transfer_cpu")
 
+_SELECTOR = BackendSelector(
+    "low_frequency_transfer",
+    globals(),
+    env="PLATYPUS_LOW_FREQUENCY_TRANSFER_BACKEND",
+    metal_strict_env="PLATYPUS_LOW_FREQUENCY_TRANSFER_METAL_STRICT",
+    native_strict_env="PLATYPUS_LOW_FREQUENCY_TRANSFER_STRICT",
+    metal_name="effect_backends._low_frequency_transfer_metal",
+    cpu_name="effect_backends._low_frequency_transfer_cpu",
+    reference_name="effect_backends.low_frequency_transfer_reference",
+    metal_enabled_values={"", "auto", "metal", "exact", "gpu"},
+    metal_disabled_values={"reference", "python", "opencv", "cpu", "cpu_exact", "off", "0", "false", "no"},
+    cpu_disabled_values={"reference", "python", "opencv", "off", "0", "false", "no"},
+    metal_forced_values={"metal", "gpu"},
+    available_requires_device=True,
+)
+
 
 def native_available() -> bool:
-    return (_metal_backend is not None and _metal_device_available()) or _cpu_backend is not None
+    return _SELECTOR.native_available()
 
 
 def _backend_preference() -> str:
-    return backend_preference("PLATYPUS_LOW_FREQUENCY_TRANSFER_BACKEND")
+    return _SELECTOR.preference()
 
 
 def native_enabled() -> bool:
-    return native_backend_enabled(
-        _cpu_backend,
-        _backend_preference(),
-        disabled_values={"reference", "python", "opencv", "off", "0", "false", "no"},
-    )
+    return _SELECTOR.native_enabled()
 
 
 def _metal_backend_enabled() -> bool:
-    value = _backend_preference()
-    if value in {"reference", "python", "opencv", "cpu", "cpu_exact", "off", "0", "false", "no"}:
-        return False
-    return value in {"", "auto", "metal", "exact", "gpu"}
+    return _SELECTOR.metal_enabled()
 
 
 def _metal_strict() -> bool:
-    return strict_enabled("PLATYPUS_LOW_FREQUENCY_TRANSFER_METAL_STRICT")
+    return _SELECTOR.metal_strict()
 
 
 def _metal_device_available() -> bool:
-    if _metal_backend is None:
-        return False
-    try:
-        return bool(_metal_backend.metal_available())
-    except Exception:
-        return False
+    return _SELECTOR.metal_device_available()
 
 
 def _native_strict() -> bool:
-    return strict_enabled("PLATYPUS_LOW_FREQUENCY_TRANSFER_STRICT")
+    return _SELECTOR.native_strict()
 
 
 def _luminance_transfer_strength(value) -> float:
@@ -73,25 +70,7 @@ def _luminance_transfer_strength(value) -> float:
 
 
 def backend_status() -> BackendStatus:
-    if _metal_backend is not None and _metal_backend_enabled() and _metal_device_available():
-        return BackendStatus("low_frequency_transfer", "effect_backends._low_frequency_transfer_metal", True)
-    if _backend_preference() in {"metal", "gpu"}:
-        if _metal_backend is not None:
-            detail = "Metal backend is built, but no Metal device is available"
-        else:
-            detail = import_error_detail(_METAL_IMPORT_ERROR)
-        return BackendStatus("low_frequency_transfer", "effect_backends.low_frequency_transfer_reference", False, detail)
-    if _cpu_backend is not None and native_enabled():
-        return BackendStatus("low_frequency_transfer", "effect_backends._low_frequency_transfer_cpu", True)
-    if _cpu_backend is not None:
-        return BackendStatus(
-            "low_frequency_transfer",
-            "effect_backends.low_frequency_transfer_reference",
-            False,
-            "cpu backend available; PLATYPUS_LOW_FREQUENCY_TRANSFER_BACKEND requested reference",
-        )
-    detail = import_error_detail(_CPU_IMPORT_ERROR)
-    return BackendStatus("low_frequency_transfer", "effect_backends.low_frequency_transfer_reference", False, detail)
+    return _SELECTOR.status()
 
 
 def _normalize_inputs(restored_img, reference_img):
